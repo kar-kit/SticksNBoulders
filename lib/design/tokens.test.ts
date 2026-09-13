@@ -86,15 +86,22 @@ describe("the fill and line split", () => {
   });
 
   it.each(["accent-line", "danger-line"])(
-    "--%s is large-text-only, which is why a separate fill token exists",
+    "--%s clears the large-text threshold it is scoped to",
     (line) => {
-      // Documents the constraint rather than asserting a nicety: these two fail
-      // AA for normal text on the base background, pass for 24px+, and must
-      // never be used as a small-text colour or a fill behind one.
-      expect(meetsAA(token(line), token("background"), 13)).toBe(false);
+      // Scoped to borders, icon strokes, chart lines and 24px+ figures. Only
+      // the positive half is asserted: pinning "and fails at 13px" would make
+      // the test fail if anyone ever lightened these to pass AA outright, which
+      // would be an improvement, not a regression.
       expect(meetsAA(token(line), token("background"), 24)).toBe(true);
     },
   );
+
+  it.each([
+    ["accent-fill", "on-accent"],
+    ["danger-fill", "on-danger-fill"],
+  ])("--%s is the one of the pair that may sit behind small text", (fill, label) => {
+    expect(meetsAA(token(label), token(fill), 13)).toBe(true);
+  });
 
   it("keeps a fill token distinct from its line token", () => {
     expect(token("accent-fill")).not.toBe(token("accent-line"));
@@ -110,5 +117,14 @@ describe("stylesheet invariants", () => {
 
   it("sets tabular lining figures globally, not per component", () => {
     expect(css).toMatch(/font-variant-numeric:\s*tabular-nums lining-nums/);
+  });
+
+  it("clears the Tailwind namespaces it redefines", () => {
+    // @theme EXTENDS the defaults. Without these, `text-lg` and `rounded-xl`
+    // still compile to values that are nowhere in the design, and our own
+    // radius names shadow Tailwind's at different pixel sizes.
+    for (const ns of ["--color-*", "--text-*", "--radius-*"]) {
+      expect(css).toContain(`${ns}: initial;`);
+    }
   });
 });

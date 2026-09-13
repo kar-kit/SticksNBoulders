@@ -73,32 +73,59 @@
 }
 
 @theme inline {
+  /*
+   * Tailwind's @theme EXTENDS the default theme, it does not replace it. Left
+   * alone, `text-lg` (18px), `rounded-xl` (12px) and `bg-red-500` all keep
+   * working and emit values that are nowhere in the design -- and worse, our
+   * own --radius-md/lg/xl would shadow Tailwind's with different pixel values.
+   * Clearing each namespace first means an off-design utility fails to compile
+   * instead of quietly rendering.
+   */
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+
+  /* --- Surfaces and text --- */
   --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-border: var(--border);
-
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-muted-2: var(--muted-2);
 
+  /* --- Accent, split fill vs line --- */
   --color-accent-line: var(--accent-line);
   --color-accent-fill: var(--accent-fill);
   --color-accent-pressed: var(--accent-pressed);
   --color-on-accent: var(--on-accent);
   --color-on-accent-pressed: var(--on-accent-pressed);
 
+  /* --- Status --- */
   --color-success: var(--success);
   --color-danger-line: var(--danger-line);
   --color-danger-fill: var(--danger-fill);
   --color-on-danger-fill: var(--on-danger-fill);
 
+  /*
+   * Kept because Google and Apple mandate their own button colours. Nothing
+   * else in the product may reach for them.
+   */
+  --color-black: #000000;
+  --color-white: #ffffff;
+
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 
   /*
-   * Type scale, taken from the canvas. Sans sizes carry content; mono sizes
-   * carry labels only and never drop below 9px.
+   * Type scale, every size the canvas uses more than four times. Named by role,
+   * not by t-shirt size, so `text-lg` cannot be typed from muscle memory and
+   * silently resolve. The label sizes are IBM Plex Mono; everything else is
+   * Archivo. Sizes below label-xs do not exist.
+   *
+   * Genuine one-offs -- 30px and 42px on chart figures, 32px and 34px on two
+   * hero numerals -- stay as arbitrary values at their call site rather than
+   * earning a token each.
    */
   --text-label-xs: 9px;
   --text-label-xs--line-height: 1;
@@ -110,18 +137,24 @@
   --text-meta--line-height: 1.4;
   --text-caption: 12px;
   --text-caption--line-height: 1.6;
-  --text-sm: 13px;
-  --text-sm--line-height: 1.5;
-  --text-base: 14px;
-  --text-base--line-height: 1.5;
+  --text-note: 13px;
+  --text-note--line-height: 1.5;
+  --text-ui: 14px;
+  --text-ui--line-height: 1.5;
   --text-body: 15px;
   --text-body--line-height: 1.6;
   --text-action: 16px;
   --text-action--line-height: 1;
   --text-title: 17px;
   --text-title--line-height: 1.4;
+  --text-subtitle: 18px;
+  --text-subtitle--line-height: 1.4;
   --text-value-sm: 19px;
   --text-value-sm--line-height: 1;
+  --text-heading: 20px;
+  --text-heading--line-height: 1.3;
+  --text-wordmark: 21px;
+  --text-wordmark--line-height: 1.2;
   --text-value: 22px;
   --text-value--line-height: 1;
   --text-value-lg: 24px;
@@ -133,11 +166,12 @@
   --text-hero--line-height: 1;
   --text-hero--letter-spacing: -0.02em;
 
-  --radius-xs: 2px;
-  --radius-sm: 4px;
-  --radius-md: 5px;
-  --radius-lg: 6px;
-  --radius-xl: 8px;
+  /* Radii, named by what they wrap. */
+  --radius-hairline: 2px;
+  --radius-chip: 4px;
+  --radius-control: 5px;
+  --radius-row: 6px;
+  --radius-card: 8px;
 }
 
 /*
