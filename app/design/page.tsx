@@ -296,6 +296,63 @@ export default function DesignSystemPage() {
           </div>
         </Panel>
 
+        <Panel label="Athlete frame — 390 × 852, true baseline" width={438}>
+          <Caption>
+            The real width the set row has to survive: 390pt with 16px gutters. Not a scaled
+            preview — this is the viewport the athlete holds.
+          </Caption>
+          <div
+            data-shot="athlete-frame"
+            className="flex h-[852px] w-[390px] flex-col overflow-hidden rounded-card border border-border bg-background"
+          >
+            <div className="flex flex-none items-center justify-between px-4 py-3">
+              <span className="text-body font-semibold">Week 3 Day 2</span>
+              <span className="flex flex-col items-end">
+                <span className="text-action font-semibold">0:47:12</span>
+                <span className="font-mono text-label-xs text-muted-2">TAP TO FINISH</span>
+              </span>
+            </div>
+            <div className="flex flex-1 flex-col gap-3.5 overflow-hidden px-4">
+              <div className="flex flex-col gap-0.5">
+                <div className="text-wordmark font-semibold">Squat</div>
+                <ExerciseTarget scheme="Target 3 × 5 @ 75%" resolvedKg={142.5} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <SetRowHeader />
+                <SetRow index="W" set={{ loadKg: 60, reps: 5, rpe: null, isWarmup: true }} state="logged" />
+                <SetRow index={1} set={{ loadKg: 142.5, reps: 5, rpe: 7, isWarmup: false }} state="logged" />
+                <SetRow
+                  index={2}
+                  set={{ loadKg: 142.5, reps: 5, rpe: 8, isWarmup: false }}
+                  state="logged"
+                  pendingSync
+                />
+                {/* 347.5 is the widest realistic load: a heavy deadlift in kilos. */}
+                <SetRow
+                  index={3}
+                  set={{ loadKg: 347.5, reps: 5, rpe: null, isWarmup: false }}
+                  state="active"
+                  note="suggested from RPE 7 @ 142.5"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button variant="secondary" className="w-12 px-0" aria-label="Film a set">
+                  <span className="text-accent-line">
+                    <CameraIcon />
+                  </span>
+                </Button>
+                <Button variant="secondary" className="flex-1">
+                  Add set
+                </Button>
+                <Button variant="secondary" className="flex-1 text-muted">
+                  Add note
+                </Button>
+              </div>
+            </div>
+            <TabBar />
+          </div>
+        </Panel>
+
         <Panel label="Athlete shell — tab bar" width={390}>
           <Caption>
             Four tabs, no more. Bodyweight, Lift Detail, My Program and Coach Feedback are reached

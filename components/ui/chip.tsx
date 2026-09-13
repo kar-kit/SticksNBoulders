@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 export type ChipTone = "neutral" | "selected" | "outline" | "success" | "accent";
@@ -13,13 +13,20 @@ const TONES: Record<ChipTone, string> = {
   accent: "border border-accent-line text-foreground font-semibold text-sm",
 };
 
-export interface ChipProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+/**
+ * Props are the intersection of what a <span> and a <button> both accept, so
+ * nothing button-only (disabled, form, type) can be spread onto the span
+ * branch and land as an invalid DOM attribute. `disabled` is declared
+ * separately and only reaches the button.
+ */
+export interface ChipProps extends HTMLAttributes<HTMLElement> {
   tone?: ChipTone;
+  disabled?: boolean;
   children: ReactNode;
 }
 
 /** Renders a button when interactive, a span when it is only a label. */
-export function Chip({ tone = "neutral", className, children, onClick, ...props }: ChipProps) {
+export function Chip({ tone = "neutral", className, children, onClick, disabled, ...props }: ChipProps) {
   const classes = cn(
     "inline-flex h-9 items-center justify-center rounded-chip px-[14px] text-ui",
     TONES[tone],
@@ -28,7 +35,7 @@ export function Chip({ tone = "neutral", className, children, onClick, ...props 
 
   if (!onClick) {
     return (
-      <span className={classes} {...(props as Record<string, unknown>)}>
+      <span className={classes} {...props}>
         {children}
       </span>
     );
@@ -38,8 +45,10 @@ export function Chip({ tone = "neutral", className, children, onClick, ...props 
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={cn(
         classes,
+        "disabled:text-muted-2",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
       )}
       {...props}
