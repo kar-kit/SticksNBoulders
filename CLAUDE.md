@@ -126,7 +126,7 @@ Nearly every screen is an aggregate. Appwrite will not compute them.
 ## Non-negotiable product constraints
 
 1. **Speed is a feature.** Ruairi's first and loudest complaint about RTS was load time. Interactive under 2.5s on 4G. Logging a set is instant because it writes locally first. If a screen cannot hit that, redesign the screen.
-2. **No passwords.** Magic link only. No password field exists in this product.
+2. **Sign in three ways, all first-class.** Email and password, Continue with Apple, Continue with Google. Magic link was considered and cut — Joey's call, 13 Sep. Ruairi's complaint was managing a login per athlete, and the single-account-plus-invite-code model solves that on its own, so the auth method was never the fix. What matters instead: long sessions, silent refresh, correct `autocomplete` attributes so password managers fill the fields, and never signing someone out mid-workout.
 3. **Type, never hunt.** Every exercise / athlete / lift selector is free-text typeahead with fuzzy matching and create-on-the-fly. Never a filter tree or a 400-item dropdown. This is Ruairi's complaint #2, directly.
 4. **Offline is normal, not an error.** A queued set looks like a logged set with a small pending mark. No spinners, no error toasts, no blocking.
 5. **Logged work is immutable; prescriptions are not.** A coach editing a block mid-way never rewrites what an athlete already did.
@@ -142,7 +142,7 @@ From the Notion feature list. Dates work backwards from two commitments made to 
 
 | Phase | Scope                                                                                          | Target                            |
 | ----- | ---------------------------------------------------------------------------------------------- | --------------------------------- |
-| 0     | Appwrite, schema as code, write helper + permissions, magic-link auth, Next.js shell, backups  | late Sep 2026                     |
+| 0     | Appwrite, schema as code, write helper + permissions, email/password + OAuth auth, Next.js shell, backups  | late Sep 2026                     |
 | 1     | Athlete logger: sessions, set logging, typeahead, offline, history, lift detail, e1RM, rollups | mid Oct 2026                      |
 | 2a    | Coach link, invite codes, program editor, prescription model, reference maxes                  | mid Nov 2026                      |
 | 2b    | RPE engine: chart, e1RM derivation, next-set suggestions                                       | end Nov 2026                      |
@@ -185,7 +185,7 @@ Do not build these, do not scaffold for them, do not add "just the data model fo
 ### Verify before hardcoding
 
 - **The RPE → %1RM chart.** Values in the Build Plan are the widely circulated Tuchscherer/RTS figures and are **[Unverified]**. Check row 11 first (the curve has a suspicious kink). Wrong numbers here are wrong numbers in every athlete's program.
-- **Appwrite passkey support.** Magic link alone is fine for v1 if it does not exist.
+- ~~**Appwrite passkey support.**~~ Resolved: auth is email + password, Google and Apple. Google is configured; Apple needs an Apple Developer account and is hidden behind `NEXT_PUBLIC_APPWRITE_APPLE_ENABLED` until it exists. App Store Review Guideline 4.8 forces Sign in with Apple only for store-distributed apps, and this is a PWA, so Apple is offered rather than mandatory.
 - **Appwrite chunked upload resume** — does it resume after a dropped connection or restart from zero? Gym wifi makes this matter.
 
 ### Design workflow

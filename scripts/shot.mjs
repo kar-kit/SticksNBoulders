@@ -32,7 +32,15 @@ const page = await browser.newPage({
 });
 
 const problems = [];
-page.on("console", (m) => m.type() === "error" && problems.push(m.text()));
+// A 401 from account.get() on a signed-out page is the app working correctly,
+// and the browser logs every non-2xx as a console error regardless. Only real
+// script failures and non-auth resource errors are worth failing a shot over.
+const EXPECTED = /Failed to load resource.*status of (401|403)/;
+page.on("console", (m) => {
+  if (m.type() !== "error") return;
+  const text = m.text();
+  if (!EXPECTED.test(text)) problems.push(text);
+});
 page.on("pageerror", (e) => problems.push(String(e)));
 
 const response = await page.goto(`${base}${route}`, { waitUntil: "networkidle" });
