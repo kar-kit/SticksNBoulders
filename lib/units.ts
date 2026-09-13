@@ -1,4 +1,4 @@
-import type { UnitPreference } from "./types";
+export type UnitPreference = "kg" | "lb";
 
 const KG_PER_LB = 0.45359237;
 

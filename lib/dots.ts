@@ -1,4 +1,4 @@
-import type { Sex } from "./types";
+export type Sex = "male" | "female";
 
 // DOTS coefficients, applied per-lift rather than to the traditional 3-lift total.
 const DOTS_COEFFICIENTS: Record<Sex, { a: number; b: number; c: number; d: number; e: number }> = {

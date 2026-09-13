@@ -1,9 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { AuthProvider } from "@/lib/auth-context";
-import AppShell from "@/components/AppShell";
-import RegisterServiceWorker from "@/components/RegisterServiceWorker";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,12 +13,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SticksNBoulders",
-  description: "Bodyweight-fair strength training leaderboards for a small group of friends.",
+  title: "Sticks N Boulders",
+  description: "Powerlifting coaching software. Programming, logging and video review.",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "SticksNBoulders",
+    title: "Sticks N Boulders",
   },
 };
 
@@ -42,10 +39,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        <RegisterServiceWorker />
-        <AuthProvider>
-          <AppShell>{children}</AppShell>
-        </AuthProvider>
+        {children}
       </body>
     </html>
   );

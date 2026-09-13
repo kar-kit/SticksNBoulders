@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "SticksNBoulders",
-    short_name: "S&B",
-    description: "Bodyweight-fair strength training leaderboards for a small group of friends.",
+    name: "Sticks N Boulders",
+    short_name: "SnB",
+    description: "Powerlifting coaching software. Programming, logging and video review.",
     start_url: "/",
     scope: "/",
     display: "standalone",
