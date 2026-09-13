@@ -9,13 +9,18 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "appwrite:setup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-setup.mts",
+    "appwrite:reset": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-reset.mts",
+    "appwrite:probe": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-permission-probe.mts"
   },
   "dependencies": {
     "appwrite": "^26.2.0",
     "next": "16.3.4",
+    "node-appwrite": "^28.0.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.6.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -31,6 +36,7 @@
     "jsdom": "^30.0.1",
     "playwright": "^1.63.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5",
     "vitest": "^5.0.0"
   }
