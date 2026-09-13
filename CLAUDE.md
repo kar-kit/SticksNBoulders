@@ -142,7 +142,7 @@ From the Notion feature list. Dates work backwards from two commitments made to 
 
 | Phase | Scope                                                                                          | Target                            |
 | ----- | ---------------------------------------------------------------------------------------------- | --------------------------------- |
-| 0     | Appwrite, schema as code, write helper + permissions, magic-link auth, Next.js shell, backups  | late Sep 2026                     |
+| 0     | Appwrite, schema as code, write helper + permissions, email/password + OAuth auth, Next.js shell, backups  | late Sep 2026                     |
 | 1     | Athlete logger: sessions, set logging, typeahead, offline, history, lift detail, e1RM, rollups | mid Oct 2026                      |
 | 2a    | Coach link, invite codes, program editor, prescription model, reference maxes                  | mid Nov 2026                      |
 | 2b    | RPE engine: chart, e1RM derivation, next-set suggestions                                       | end Nov 2026                      |
