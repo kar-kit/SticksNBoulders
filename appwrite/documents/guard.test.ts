@@ -74,11 +74,31 @@ describe("the write helper is the only write path", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("keeps the API key out of anything the browser could bundle", () => {
-    // A NEXT_PUBLIC_ prefix would ship the admin key to every athlete's phone.
+  it("never gives a secret a NEXT_PUBLIC_ prefix", () => {
+    // This is the leak that matters. Next inlines NEXT_PUBLIC_ values into the
+    // client bundle, so prefixing the admin key would ship it to every
+    // athlete's phone. A non-prefixed name is simply undefined in the browser.
+    const offenders = files.filter((file) =>
+      /NEXT_PUBLIC_\w*(API_KEY|SECRET|TOKEN|PASSWORD)/.test(readFileSync(file, "utf8")),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("reads the API key only where the code is server-only", () => {
+    // Route handlers and scripts never reach the browser. A client component
+    // reaching for it would get undefined and fail confusingly at runtime.
+    const serverOnly = [/^appwrite\//, /^scripts\//, /^app\/api\//];
+    const offenders = files
+      .filter((file) => !serverOnly.some((p) => p.test(file)))
+      .filter((file) => /\bAPPWRITE_API_KEY\b/.test(readFileSync(file, "utf8")));
+    expect(offenders).toEqual([]);
+  });
+
+  it("keeps a client component from importing the admin client", () => {
     const offenders = files
       .filter((file) => file.startsWith("app/") || file.startsWith("components/"))
-      .filter((file) => /APPWRITE_API_KEY/.test(readFileSync(file, "utf8")));
+      .filter((file) => !file.startsWith("app/api/"))
+      .filter((file) => /from "@\/appwrite\/server-client"/.test(readFileSync(file, "utf8")));
     expect(offenders).toEqual([]);
   });
 

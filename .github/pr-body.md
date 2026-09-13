@@ -1,149 +1,125 @@
-## FTP1-2 — Document write helper and permission model
+## FTP1-3 — Sign in: email + password, Google, Apple
 
-**Notion:** https://app.notion.com/3da64699b43c81e7aaccd2091df64fd4
-**Depends on:** #1 (merged)
+**Notion:** https://app.notion.com/3da64699b43c8128b527d64ec55746aa
+**Depends on:** #1, #2 (both merged)
 
 ### What was built
 
-`appwrite/documents/` — the single write path. Every row this product writes
-goes through it, and it stamps permissions and denormalised fields in the same
-place so the two cannot drift apart. A lint rule and a guard test both fail the
-build if anything calls `createRow`/`updateRow`/`deleteRow` elsewhere.
+The sign-in screen from `01 — Sign In`, built to the design frame: provider
+buttons above the fold, email and password below the divider, create-account
+toggled on the same screen, and every state the blueprint names — wrong
+password, offline, already-signed-in, and the account-created-with-Google trap.
 
-- `policy.ts` — who may do what, per table. Pure, no I/O, so every rule is
-  exhaustively testable and the tests are the real specification.
-- `write.ts` — the typed operations. Callers never supply `athlete_id`; it
-  comes from the actor.
-- `circle.ts` / `circle-admin.ts` — the team that carries coach access.
-- `row-writer.ts` — the narrow SDK surface, so the helper is testable and the
-  row methods are imported in exactly one file.
+Email and password work end to end against the live instance. Google is wired
+and configured. Apple is built and hidden behind a flag.
 
-### The design decision worth reviewing
+### Two [Unverified] items from the blueprint, now resolved
 
-CLAUDE.md says the helper reads `coach_athlete_links` to decide who sees what.
-Read literally that means stamping each coach's **user id** onto each row — but
-Appwrite freezes permissions at write time, so **a coach linked in November
-would see nothing logged in October.**
+**1. How Appwrite reconciles an OAuth identity and a password identity.**
+Probed against the running instance. A wrong password, an account created
+through Google, and an email nobody has registered **all return an identical
+`401 user_invalid_credentials`.** The client cannot tell them apart, so the
+blueprint's "You signed up with Google" state is not implementable client-side
+at all.
 
-That is not hypothetical. The build plan has Joey dogfooding phase 1 from
-mid-October and coach linking landing mid-November. Ruairi would have linked and
-found an empty account with two months of training invisible behind it. Fixing
-it after the fact means a backfill over every row the athlete ever wrote — a job
-that half-fails silently and leaves gaps nobody notices.
+That also surfaced a contradiction in the blueprint itself: it asks for *"do
+not reveal whether the email exists"* **and** *"say plainly: you signed up with
+Google"*. The second is the first. Joey chose to resolve it by hinting only
+after a password attempt has already failed — so `/api/auth/method-hint` exists,
+and is deliberately stingy:
 
-Instead, **every athlete has a circle**: an Appwrite Team holding them and their
-coaches. Rows stamp `read(team:circle_<athlete>)`. Linking a coach is one
-membership write, applies retroactively to every existing row, and revokes the
-same way. `coach_athlete_links` remains the source of truth for who coaches
-whom; the team is how that fact reaches Appwrite.
+- Answers **only** for accounts that have no password. Never confirms an
+  unknown address; never confirms one that has a password set.
+- Rate-limited twice: 10/min per caller, 5/10min per address.
+- Rejects malformed input before spending any rate-limit budget, so junk cannot
+  lock a real caller out.
+- The limiter is in-memory, which holds for one self-hosted instance. **A
+  multi-instance deploy needs shared state.**
 
-Joey chose this over the backfill after seeing both. **It is worth deciding
-whether CLAUDE.md's wording should be updated**, so the next reader does not
-take "reading coach_athlete_links" as a mandate to stamp user ids.
+**2. Whether Apple sign-in is mandatory.** It is not. App Store Review
+Guideline 4.8 applies to store-distributed apps; this is a PWA with no store
+submission. Apple also returns `412` on the instance — not configured, and
+enabling it needs an Apple Developer account (£99/yr) plus a Services ID. Built
+to the design, hidden behind `NEXT_PUBLIC_APPWRITE_APPLE_ENABLED`, default off,
+so the beta never shows a button that fails. One env var flips it on.
 
-The circle is managed server-side only. A user can create a team from their own
-session and would then own it, able to add and remove members behind the app's
-back — so links and real access would drift with nothing to reconcile them.
+### CLAUDE.md corrected
 
-### Policy, in one place
+Constraint 2 said **"No passwords. Magic link only. No password field exists in
+this product."** Three Notion sources contradict it — `00 — Conventions`,
+Order 3 with dated provenance, and Order 3.5 existing at all — and this PR
+implements the contradiction. The constraint is rewritten to match, and the
+"verify Appwrite passkey support" item is marked resolved.
 
-| Table | Read | Write |
-| --- | --- | --- |
-| `profiles`, `sessions`, `sets` | athlete + their circle | athlete only |
-| `stats_rollups` | athlete + their circle | nobody (Function, API key) |
-| `exercises` (global) | any signed-in user | nobody |
-| `exercises` (custom) | owner + their circle | owner only |
-| `coach_athlete_links` | the two parties | nobody (Function) |
+**This is the one change in this PR that is Joey's call to reject rather than
+mine to make.** It is a separate commit so it can be dropped on its own.
 
-Two things that look redundant and are not:
+### Decisions not specified anywhere
 
-- **The athlete always gets an explicit `read(user:…)` alongside their
-  circle's.** A bug in membership sync must never lock an athlete out of their
-  own history mid-session.
-- **Permissions are re-stamped on every update**, not just on create. A
-  permission set written once is one that drifts when the policy changes.
-
-The circle grants **read and only read**. A coach cannot rewrite logged work —
-constraint 5, enforced in the policy rather than trusted to callers.
+- **`.env.local` is now the only env file.** `APPWRITE_API_KEY` lived in
+  `.local.env`, which Next.js does not load — see the bugs below.
+- **`/sign-in/forgot` exists and says reset is not set up yet**, rather than
+  404ing behind a link the design puts on screen. That is the true state:
+  `createRecovery` currently fails because no Web platform is registered.
+  FTP1-3.5 replaces it.
+- **`/today` is a placeholder** showing who is signed in with a sign-out button.
+  Sign-in needed a destination; Order 7 builds the real screen.
 
 ### Tests
 
-63 new, 315 total.
-
-- **`policy.test.ts`** — exhaustive. Every table, both exercise cases, the
-  no-blanket-read rule, no duplicate permissions, well-formed permission
-  strings, and a throw rather than a silent stamp when an id is missing.
-- **`write.test.ts`** — `athlete_id` comes from the actor and never the caller;
-  the permission stamp and the denormalised id agree by construction; a queued
-  set keeps the time it was logged, not the time it synced; a null RPE is not
-  a number; updates send only what changed.
-- **`circle-admin.test.ts`** — idempotent creation, repair of a missing athlete
-  membership, multiple coaches (Ruairi and Louis both coach at Uxbridge),
-  and a refusal to remove an athlete from their own circle.
-- **`guard.test.ts`** — no write path bypasses the helper. Scans the **working
-  tree**, not just the index, because an uncommitted bypass is exactly the one
-  that matters. Verified non-vacuous: adding a bypassing file fails it with a
-  message explaining why.
-
-**Live probe** (`npm run appwrite:probe`), now driving the real policy module
-rather than a restatement of it. 19/19 against the running instance:
+53 new, 400 total. Plus `npm run e2e:auth` — 14 assertions driving a real
+browser against the live Appwrite, because the half that matters here is the
+half mocking cannot reach:
 
 ```
-Before any coach exists
-  PASS  Joey reads his own set
-  PASS  Ruairi, unlinked, cannot read it
-  PASS  Ruairi, unlinked, lists 0 sets
-After linking Ruairi to Joey
-  PASS  Ruairi reads the set logged BEFORE he was linked
-  PASS  Ruairi reads a set logged after linking
-  PASS  Ruairi CANNOT rewrite Joey's logged work
-Isolation between athletes
-  PASS  Ruairi cannot read Sam, whom he does not coach
-  PASS  Sam cannot read Joey
-  PASS  Louis, coaching only Sam, reads Sam
-  PASS  Louis cannot read Joey
-  PASS  Ruairi lists only Joey's sets
-Exercises
-  PASS  anyone signed in reads a library exercise
-  PASS  Ruairi reads Joey's custom exercise, so the queue can name it
-  PASS  Sam cannot read Joey's custom exercise
-Forgery
-  PASS  Joey cannot forge a rollup
-  PASS  Joey cannot grant himself a coach link
-Revocation
-  PASS  a revoked coach loses access to everything at once
-  PASS  and to rows logged after linking too
-  PASS  while Joey keeps his own data
+creating an account signs you straight in / Today shows who is signed in
+sign-in is skipped while a session exists / signing out returns to sign-in
+wrong password: says so inline / offers a reset link / reveals nothing
+right password signs in
+an account with no password gets no reset link
+hint: silent for unknown / silent when a password exists / answers for
+      passwordless / ignores junk / rate-limits a flood
 ```
 
-### Bugs found and fixed on the way
+Unit tests cover the error mapping, the rate limiter's sliding window, the hint
+policy's refusals, provider gating, and every form state. Appwrite is mocked at
+the session-module boundary, not re-implemented.
 
-1. **My first lint guard silently did nothing.** ESLint flat config *replaces*
-   a rule's options when a later block sets the same rule rather than merging
-   them, so splitting the row-mutator ban and the `TablesDB` ban across two
-   blocks disabled the first. Caught by testing that the guard fires, not by
-   reading it. Both bans now live in one selector list, restated per variant.
-2. **The guard test only scanned tracked files.** A newly written bypass would
-   have been invisible until after it was committed. Now scans the working
-   tree, untracked files included.
-3. **`perm.readUsers` existed in the schema and was never used** — a ready-made
-   constant for `read("users")`, the exact string the schema tests forbid at
-   table level. Deleted: the dangerous string should not be constructible.
+### Bugs found and fixed
 
-### Known limitation, stated rather than hidden
+1. **`APPWRITE_API_KEY` was invisible to Next.js.** It lived in `.local.env`;
+   Next loads `.env.local`. The hint route threw on every request — and my
+   catch-all turned that into `{"hint":"none"}`, which is **indistinguishable
+   from working correctly**. The swallow was the worse bug: it now logs
+   server-side while still staying silent to the caller.
+2. **The unknown-provider case offered a dead-end reset.** When the server knows
+   an account has no password but cannot name the provider, the UI fell back to
+   the generic message — which offers "Forgot your password?" for an account
+   with no password to reset. That is the exact dead end this feature exists to
+   prevent. Now its own state. Found by the e2e, invisible to the unit tests.
+3. **My own guard test was wrong.** It failed on any mention of
+   `APPWRITE_API_KEY` under `app/`, including a comment in a server-only route
+   handler. Route handlers never reach the browser; the real leak is a
+   `NEXT_PUBLIC_` prefix. Replaced with three accurate rules: no secret ever
+   gets a `NEXT_PUBLIC_` prefix, the key is read only in server-only paths, and
+   no client component imports the admin client.
+4. **`resolveMethodHint` accepted `"@"` as an email** and would have spent an
+   admin-key lookup on it.
+5. **`scripts/shot.mjs` failed every signed-out page.** The browser logs a
+   console error for any 401, and `account.get()` returning 401 when nobody is
+   signed in is the app working. Expected auth statuses no longer fail a shot.
 
-**Permission stamping is client-trusted.** Athlete writes happen in the browser
-with the athlete's session, so a modified client could stamp a wrong
-`athlete_id` or an over-permissive read on its own rows. It cannot read anyone
-else's data — the probe covers that — and it cannot forge rollups or links,
-which are Function-only. Closing it properly means routing writes through a
-Function, which costs the offline-first latency the logger is built around.
-Worth revisiting at Order 38 when the audit script lands; not worth paying for
-now. Flagging it so it is a decision rather than an oversight.
+### Blocked on you
 
-### Not in this PR
+- **Register a Web platform** (`localhost`, and the eventual host) in the
+  Appwrite console. Needed for password reset redirects at FTP1-3.5. My API key
+  lacks `platforms.read`/`projects.read`, so this is a console action.
+- **SMTP**, also for FTP1-3.5.
+- **Apple**, if you want it: Developer account + Services ID, then flip the env
+  var. No rework either way.
 
-`e1rm_kg` is accepted and stamped by `createSet` but nothing computes it yet.
-The formula is Order 11, and the build plan says to verify it against a
-published source before hardcoding. The column is nullable and the rebuild
-script backfills.
+### Screenshot
+
+`.shots/sign-in.png` — 390pt. Logo, Google button with the real four-colour
+mark, divider, labelled fields with the eye toggle, Forgot, Sign in, Create
+account. Matches the `01a` frame.
