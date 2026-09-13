@@ -43,6 +43,10 @@ table it reads to stamp permissions.
   idempotency key a retried set is logged twice and tonnage goes wrong.
 - **`sex` is nullable.** DOTS needs it, but an athlete may not have set it yet;
   the number simply does not render until they do.
+- **`stats_rollups` and `coach_athlete_links` have `permissions: []` on
+  purpose.** That is not an oversight: nothing may read them by virtue of being
+  signed in. Every read comes from a row permission stamped by the Function
+  that writes the row.
 
 ### Tests
 
@@ -63,6 +67,25 @@ table it reads to stamp permissions.
   changed index is deleted before being recreated; orphans survive.
 - **Config.** Endpoint from an env var, API key absent from the client config,
   actionable errors naming what is missing.
+
+**Live permission probe** (`npm run appwrite:probe`). The whole design rests on
+Appwrite granting access on table-level *OR* row-level permission. That is
+invisible when wrong, so it is now checked against the real instance rather
+than asserted in a comment. Eight assertions, all passing:
+
+```
+PASS  owner A reads their own set
+PASS  stranger B CANNOT read A's set
+PASS  stranger B lists 0 sets (saw 0)
+PASS  B reads a global exercise
+PASS  B CANNOT read A's custom exercise
+PASS  B reads A's set when stamped as their coach
+PASS  A CANNOT forge a rollup
+PASS  A CANNOT grant themselves a coach link
+```
+
+It creates two throwaway users, exercises each case, and removes them. This is
+the seed of the permission audit script at Order 38.
 
 Not unit-tested, verified by hand and stated here: the live apply itself, and
 the reset. Appwrite is not our code, so the SDK is mocked at the driver
@@ -99,3 +122,14 @@ deleted, including rows: `profiles` had 10, `workout_sets` 7,
 `workout_sessions` 6, `lifts` 4. All dumped to `.appwrite-backup/` first.
 **Auth users were not touched** — they are identities rather than product data,
 and deleting them would have taken Joey's own login with them.
+
+### Two things for Joey
+
+- **`--reviewer kar-kit` cannot work.** `gh` here is authenticated as kar-kit,
+  so every PR is authored by Joey and GitHub refuses to let an author review
+  their own PR (422). The assignee is set, which is the part that matters. The
+  brief's step 7 command needs that flag dropped.
+- **The pre-reset dump is single-copy on this dev box**, under
+  `.appwrite-backup/`, gitignored. It holds the old `profiles`, `workout_sets`
+  and `workout_sessions` rows. Off-machine backups are FTP1-5, but if that data
+  is worth keeping, pull it somewhere before then.

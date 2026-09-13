@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "appwrite:setup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-setup.mts",
-    "appwrite:reset": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-reset.mts"
+    "appwrite:reset": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-reset.mts",
+    "appwrite:probe": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-permission-probe.mts"
   },
   "dependencies": {
     "appwrite": "^26.2.0",
