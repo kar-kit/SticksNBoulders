@@ -50,8 +50,14 @@ export interface DatabaseSpec {
   tables: readonly TableSpec[];
 }
 
-/** Permission string builders, matching Appwrite's wire format. */
+/**
+ * Table-level permissions. Creation rights only.
+ *
+ * There is deliberately no read constant here. Appwrite grants access on
+ * table-level OR row-level permission, so a table-level read would make every
+ * row readable by every signed-in user -- and a constant for it is an
+ * invitation. Row reads are stamped per row by appwrite/documents.
+ */
 export const perm = {
   createUsers: 'create("users")',
-  readUsers: 'read("users")',
 } as const;

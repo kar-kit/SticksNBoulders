@@ -1,110 +1,191 @@
 /**
- * Proves, against the live instance, the row-security semantics the whole
- * permission design rests on.
+ * Proves the permission model against the live instance.
  *
  *   npm run appwrite:probe
  *
- * The schema assumes Appwrite grants access on table-level OR row-level
- * permission, which is why no table carries a blanket read. That assumption is
- * invisible when wrong -- data is simply readable by people who should not see
- * it -- so it is checked rather than asserted in a comment.
+ * Every permission below comes from appwrite/documents/policy.ts -- the real
+ * policy the app uses, not a restatement of it. Unit tests prove the policy
+ * emits the strings we intend; this proves Appwrite then honours them, which
+ * is the half no amount of mocking can establish.
  *
- * Creates two throwaway users and a handful of rows, then removes them. Safe to
- * run against the dev instance; do not point it at anything with real athletes
- * on it. Grows into the permission audit script at Order 38.
+ * Creates throwaway users, a circle team and a handful of rows, then removes
+ * them all. Point it at dev, never at anything with real athletes on it.
+ * This is the permission audit script at Order 38 in embryo.
  */
-import { Client, ID, Permission, Role, TablesDB, Users } from "node-appwrite";
+import { Client, ID, TablesDB, Teams, Users, type Models } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { circleTeamId, CIRCLE_ROLES } from "../appwrite/documents/circle";
+import {
+  exercisePermissions,
+  linkPermissions,
+  rollupPermissions,
+  setPermissions,
+} from "../appwrite/documents/policy";
 
 dedupeSdkWarnings();
+
 const config = serverAppwriteConfig();
 const admin = createServerClient(config);
 const adminDb = new TablesDB(admin);
 const users = new Users(admin);
-
-const asUser = async (userId: string) => {
-  const session = await users.createSession({ userId });
-  const c = new Client().setEndpoint(config.endpoint).setProject(config.projectId).setSession(session.secret);
-  return { db: new TablesDB(c), sessionId: session.$id };
-};
-
+const teams = new Teams(admin);
+const db = config.databaseId;
 const stamp = Date.now();
-const A = await users.create({ userId: ID.unique(), email: `probe-a-${stamp}@example.com`, password: "Probe-pass-123!", name: "Probe A" });
-const B = await users.create({ userId: ID.unique(), email: `probe-b-${stamp}@example.com`, password: "Probe-pass-123!", name: "Probe B" });
-const a = await asUser(A.$id);
-const b = await asUser(B.$id);
 
-const results: string[] = [];
-const check = (label: string, pass: boolean) => {
-  results.push(`${pass ? "PASS" : "FAIL"}  ${label}`);
+const results: { ok: boolean; label: string }[] = [];
+const check = (label: string, ok: boolean) => {
+  results.push({ ok, label });
+  console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
 };
 
-// 1. A private set row, readable only by A.
-const privateSet = await adminDb.createRow({
-  databaseId: config.databaseId, tableId: "sets", rowId: ID.unique(),
-  data: { session_id: ID.unique(), athlete_id: A.$id, exercise_id: ID.unique(), set_index: 1,
-          load_kg: 142.5, reps: 5, logged_at: new Date().toISOString(), client_set_id: `probe-${stamp}` },
-  permissions: [Permission.read(Role.user(A.$id))],
+const canRead = async (client: TablesDB, tableId: string, rowId: string) => {
+  try {
+    await client.getRow({ databaseId: db, tableId, rowId });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const sessionFor = async (userId: string) => {
+  const session = await users.createSession({ userId });
+  return new TablesDB(
+    new Client().setEndpoint(config.endpoint).setProject(config.projectId).setSession(session.secret),
+  );
+};
+
+const mkUser = (tag: string, name: string) =>
+  users.create({ userId: ID.unique(), email: `probe-${tag}-${stamp}@example.com`, password: "Probe-pass-123!", name });
+
+// --- cast -------------------------------------------------------------
+const joey = await mkUser("joey", "Joey Pang");
+const ruairi = await mkUser("ruairi", "Ruairi Deane");
+const sam = await mkUser("sam", "Sam Tierney");
+const louis = await mkUser("louis", "Louis Byrne");
+
+const joeyDb = await sessionFor(joey.$id);
+const ruairiDb = await sessionFor(ruairi.$id);
+const samDb = await sessionFor(sam.$id);
+const louisDb = await sessionFor(louis.$id);
+
+const joeyCircle = await teams.create({ teamId: circleTeamId(joey.$id), name: "Joey Pang — circle" });
+const samCircle = await teams.create({ teamId: circleTeamId(sam.$id), name: "Sam Tierney — circle" });
+await teams.createMembership({ teamId: joeyCircle.$id, userId: joey.$id, roles: [CIRCLE_ROLES.athlete] });
+await teams.createMembership({ teamId: samCircle.$id, userId: sam.$id, roles: [CIRCLE_ROLES.athlete] });
+
+const newSet = (athleteId: string, tag: string, loadKg: number) =>
+  adminDb.createRow({
+    databaseId: db, tableId: "sets", rowId: ID.unique(),
+    data: {
+      session_id: ID.unique(), athlete_id: athleteId, exercise_id: ID.unique(),
+      set_index: 1, load_kg: loadKg, reps: 5,
+      logged_at: new Date().toISOString(), client_set_id: `probe-${tag}-${stamp}`,
+    },
+    permissions: setPermissions({ athleteId }),
+  });
+
+console.log("\nBefore any coach exists");
+// Logged during dogfooding, months before Ruairi is linked. The whole reason
+// for the circle team: this row must become visible retroactively.
+const oldSet = await newSet(joey.$id, "old", 142.5);
+check("Joey reads his own set", await canRead(joeyDb, "sets", oldSet.$id));
+check("Ruairi, unlinked, cannot read it", !(await canRead(ruairiDb, "sets", oldSet.$id)));
+check("Ruairi, unlinked, lists 0 sets", (await ruairiDb.listRows({ databaseId: db, tableId: "sets" })).total === 0);
+
+console.log("\nAfter linking Ruairi to Joey");
+await adminDb.createRow({
+  databaseId: db, tableId: "coach_athlete_links", rowId: ID.unique(),
+  data: { coach_id: ruairi.$id, athlete_id: joey.$id, status: "active", linked_at: new Date().toISOString() },
+  permissions: linkPermissions({ coachId: ruairi.$id, athleteId: joey.$id }),
 });
+const ruairiMembership = await teams.createMembership({
+  teamId: joeyCircle.$id, userId: ruairi.$id, roles: [CIRCLE_ROLES.coach],
+});
+check("Ruairi reads the set logged BEFORE he was linked", await canRead(ruairiDb, "sets", oldSet.$id));
 
-try { await a.db.getRow({ databaseId: config.databaseId, tableId: "sets", rowId: privateSet.$id }); check("owner A reads their own set", true); }
-catch { check("owner A reads their own set", false); }
+const newerSet = await newSet(joey.$id, "new", 150);
+check("Ruairi reads a set logged after linking", await canRead(ruairiDb, "sets", newerSet.$id));
 
-try { await b.db.getRow({ databaseId: config.databaseId, tableId: "sets", rowId: privateSet.$id }); check("stranger B CANNOT read A's set", false); }
-catch { check("stranger B CANNOT read A's set", true); }
+let coachCouldWrite = false;
+try {
+  await ruairiDb.updateRow({ databaseId: db, tableId: "sets", rowId: oldSet.$id, data: { load_kg: 999 } });
+  coachCouldWrite = true;
+} catch { /* expected */ }
+check("Ruairi CANNOT rewrite Joey's logged work", !coachCouldWrite);
 
-const bList = await b.db.listRows({ databaseId: config.databaseId, tableId: "sets" });
-check(`stranger B lists 0 sets (saw ${bList.total})`, bList.total === 0);
+console.log("\nIsolation between athletes");
+const samSet = await newSet(sam.$id, "sam", 120);
+check("Ruairi cannot read Sam, whom he does not coach", !(await canRead(ruairiDb, "sets", samSet.$id)));
+check("Sam cannot read Joey", !(await canRead(samDb, "sets", oldSet.$id)));
+await teams.createMembership({ teamId: samCircle.$id, userId: louis.$id, roles: [CIRCLE_ROLES.coach] });
+check("Louis, coaching only Sam, reads Sam", await canRead(louisDb, "sets", samSet.$id));
+check("Louis cannot read Joey", !(await canRead(louisDb, "sets", oldSet.$id)));
+check(
+  "Ruairi lists only Joey's sets",
+  (await ruairiDb.listRows({ databaseId: db, tableId: "sets" })).total === 2,
+);
 
-// 2. A global exercise, readable by every signed-in user; and a private one.
+console.log("\nExercises");
 const globalEx = await adminDb.createRow({
-  databaseId: config.databaseId, tableId: "exercises", rowId: ID.unique(),
+  databaseId: db, tableId: "exercises", rowId: ID.unique(),
   data: { name: `Probe Global ${stamp}`, normalised_name: `probe global ${stamp}`, is_global: true, created_at: new Date().toISOString() },
-  permissions: [Permission.read(Role.users())],
+  permissions: exercisePermissions({ athleteId: joey.$id, isGlobal: true }),
 });
-const privateEx = await adminDb.createRow({
-  databaseId: config.databaseId, tableId: "exercises", rowId: ID.unique(),
-  data: { name: `Probe Private ${stamp}`, normalised_name: `probe private ${stamp}`, is_global: false, owner_id: A.$id, created_at: new Date().toISOString() },
-  permissions: [Permission.read(Role.user(A.$id))],
+const customEx = await adminDb.createRow({
+  databaseId: db, tableId: "exercises", rowId: ID.unique(),
+  data: { name: `Probe Custom ${stamp}`, normalised_name: `probe custom ${stamp}`, is_global: false, owner_id: joey.$id, created_at: new Date().toISOString() },
+  permissions: exercisePermissions({ athleteId: joey.$id, isGlobal: false }),
 });
+check("anyone signed in reads a library exercise", await canRead(samDb, "exercises", globalEx.$id));
+check("Ruairi reads Joey's custom exercise, so the queue can name it", await canRead(ruairiDb, "exercises", customEx.$id));
+check("Sam cannot read Joey's custom exercise", !(await canRead(samDb, "exercises", customEx.$id)));
 
-try { await b.db.getRow({ databaseId: config.databaseId, tableId: "exercises", rowId: globalEx.$id }); check("B reads a global exercise", true); }
-catch { check("B reads a global exercise", false); }
-try { await b.db.getRow({ databaseId: config.databaseId, tableId: "exercises", rowId: privateEx.$id }); check("B CANNOT read A's custom exercise", false); }
-catch { check("B CANNOT read A's custom exercise", true); }
+console.log("\nForgery");
+const cannot = async (label: string, fn: () => Promise<unknown>) => {
+  try { await fn(); check(label, false); } catch { check(label, true); }
+};
+await cannot("Joey cannot forge a rollup", () =>
+  joeyDb.createRow<Models.DefaultRow>({
+    databaseId: db, tableId: "stats_rollups", rowId: ID.unique(),
+    data: { athlete_id: joey.$id, exercise_id: ID.unique(), week_start: new Date().toISOString(), set_count: 1, volume_reps: 5, tonnage_kg: 700, rebuilt_at: new Date().toISOString() },
+    permissions: rollupPermissions({ athleteId: joey.$id }),
+  }),
+);
+await cannot("Joey cannot grant himself a coach link", () =>
+  joeyDb.createRow<Models.DefaultRow>({
+    databaseId: db, tableId: "coach_athlete_links", rowId: ID.unique(),
+    data: { coach_id: joey.$id, athlete_id: sam.$id, status: "active", linked_at: new Date().toISOString() },
+    permissions: linkPermissions({ coachId: joey.$id, athleteId: sam.$id }),
+  }),
+);
 
-// 3. A coach with an explicit read grant sees the athlete's set.
-const coachSet = await adminDb.createRow({
-  databaseId: config.databaseId, tableId: "sets", rowId: ID.unique(),
-  data: { session_id: ID.unique(), athlete_id: A.$id, exercise_id: ID.unique(), set_index: 2,
-          load_kg: 150, reps: 3, logged_at: new Date().toISOString(), client_set_id: `probe-coach-${stamp}` },
-  permissions: [Permission.read(Role.user(A.$id)), Permission.read(Role.user(B.$id))],
-});
-try { await b.db.getRow({ databaseId: config.databaseId, tableId: "sets", rowId: coachSet.$id }); check("B reads A's set when stamped as their coach", true); }
-catch { check("B reads A's set when stamped as their coach", false); }
+console.log("\nRevocation");
+await teams.deleteMembership({ teamId: joeyCircle.$id, membershipId: ruairiMembership.$id });
+check("a revoked coach loses access to everything at once", !(await canRead(ruairiDb, "sets", oldSet.$id)));
+check("and to rows logged after linking too", !(await canRead(ruairiDb, "sets", newerSet.$id)));
+check("while Joey keeps his own data", await canRead(joeyDb, "sets", oldSet.$id));
 
-// 4. A user may not create a rollup — the table grants no create.
-try {
-  await a.db.createRow({ databaseId: config.databaseId, tableId: "stats_rollups", rowId: ID.unique(),
-    data: { athlete_id: A.$id, exercise_id: ID.unique(), week_start: new Date().toISOString(),
-            set_count: 1, volume_reps: 5, tonnage_kg: 700, rebuilt_at: new Date().toISOString() } });
-  check("A CANNOT forge a rollup", false);
-} catch { check("A CANNOT forge a rollup", true); }
+// --- teardown ---------------------------------------------------------
+for (const row of [oldSet, newerSet, samSet]) {
+  await adminDb.deleteRow({ databaseId: db, tableId: "sets", rowId: row.$id });
+}
+for (const row of [globalEx, customEx]) {
+  await adminDb.deleteRow({ databaseId: db, tableId: "exercises", rowId: row.$id });
+}
+for (const links of [await adminDb.listRows({ databaseId: db, tableId: "coach_athlete_links" })]) {
+  for (const row of links.rows) {
+    await adminDb.deleteRow({ databaseId: db, tableId: "coach_athlete_links", rowId: row.$id });
+  }
+}
+for (const team of [joeyCircle, samCircle]) await teams.delete({ teamId: team.$id });
+for (const u of [joey, ruairi, sam, louis]) await users.delete({ userId: u.$id });
 
-try {
-  await a.db.createRow({ databaseId: config.databaseId, tableId: "coach_athlete_links", rowId: ID.unique(),
-    data: { coach_id: A.$id, athlete_id: B.$id, status: "active", linked_at: new Date().toISOString() } });
-  check("A CANNOT grant themselves a coach link", false);
-} catch { check("A CANNOT grant themselves a coach link", true); }
-
-console.log("\n" + results.join("\n"));
-console.log(results.every((r) => r.startsWith("PASS")) ? "\nAll permission semantics confirmed." : "\nSOMETHING IS WRONG.");
-
-// Cleanup.
-for (const row of [privateSet, coachSet]) await adminDb.deleteRow({ databaseId: config.databaseId, tableId: "sets", rowId: row.$id });
-for (const row of [globalEx, privateEx]) await adminDb.deleteRow({ databaseId: config.databaseId, tableId: "exercises", rowId: row.$id });
-await users.delete({ userId: A.$id });
-await users.delete({ userId: B.$id });
-console.log("Probe users and rows removed.");
+const failed = results.filter((r) => !r.ok);
+console.log(
+  failed.length === 0
+    ? `\n${results.length}/${results.length} passed. Probe users, teams and rows removed.`
+    : `\n${failed.length} FAILED: ${failed.map((f) => f.label).join("; ")}`,
+);
+process.exitCode = failed.length === 0 ? 0 : 1;
