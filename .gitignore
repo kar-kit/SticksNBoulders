@@ -45,3 +45,6 @@ next-env.d.ts
 
 # screenshots for PR bodies
 .shots/
+
+# local dumps taken before a reset
+.appwrite-backup/
