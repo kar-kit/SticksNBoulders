@@ -1,0 +1,22 @@
+{
+	"inputs": [
+		{
+			"type": "promptString",
+			"id": "appwrite-api-key",
+			"description": "Appwrite project API key (Console → Overview → Integrations → API keys)",
+			"password": true
+		}
+	],
+	"servers": {
+		"appwrite": {
+			"type": "stdio",
+			"command": "uvx",
+			"args": ["mcp-server-appwrite"],
+			"env": {
+				"APPWRITE_PROJECT_ID": "6a9863c5001f32855e65",
+				"APPWRITE_API_KEY": "${input:appwrite-api-key}",
+				"APPWRITE_ENDPOINT": "https://appwrite.jp-homelab.work/v1"
+			}
+		}
+	}
+}
