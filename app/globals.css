@@ -1,30 +1,75 @@
 @import "tailwindcss";
 
 /*
- * Palette sampled directly from the SNB mark (assets/mark-transparent.png):
- * charcoal background, grey boulder facets, brown stick facets.
- * Dark theme only -- this app has no light mode.
+ * Design tokens, extracted from the Claude Design canvas "SticksNBoulders V1"
+ * (project 1ce8d8ee-5f0c-4631-8594-1a56463bc29b), component sheet section.
+ *
+ * Dark only. There is no light variant and there will not be one: gyms are
+ * badly lit and the coach side is read at a desk in the evening. `color-scheme`
+ * is hardcoded below rather than exposed as a preference.
+ *
+ * Three values deliberately differ from the canvas. Each is a contrast fix and
+ * each is noted at the token.
  */
 :root {
+  color-scheme: dark;
+
+  /* --- Surfaces ------------------------------------------------------- */
   --background: #1d1c22;
   --surface: #26252c;
   --surface-2: #302e37;
   --border: #3a3840;
 
+  /* --- Text ----------------------------------------------------------- */
   --foreground: #f2f1ef;
   --muted: #a5a4a9;
-  --muted-2: #8a898f;
+  /*
+   * Canvas value was #8a898f. It carries the 9-13px mono labels (column
+   * headers, "RECENT SETS", tab-bar labels) and failed AA on both raised
+   * surfaces: 4.38:1 on --surface, 3.85:1 on --surface-2. #96969b is the same
+   * hue and saturation, lifted until it clears 4.5:1 everywhere it is used
+   * (5.75 / 5.16 / 4.54). Visually near-identical; the canvas is wrong here.
+   */
+  --muted-2: #96969b;
 
-  --accent: #a77449;
-  --accent-hover: #bc8c5e;
-  --accent-active: #92603f;
-  --accent-foreground: #1d1c22;
+  /* --- Accent --------------------------------------------------------- */
+  /*
+   * Split deliberately so the failing combination cannot be named. The line
+   * token is 4.22:1 and must never sit behind small text; the fill token is
+   * 5.68:1 with a --on-accent label. This is the canvas's own stated rule.
+   */
+  --accent-line: #a77449; /* borders, icon strokes, chart lines, 24px+ figures */
+  --accent-fill: #bc8c5e; /* button and chip fills, active tab underline */
+  --accent-pressed: #92603f; /* 4.69:1 against --foreground */
+  --on-accent: #1d1c22; /* label on --accent-fill */
+  --on-accent-pressed: #f2f1ef; /* label on --accent-pressed */
 
+  /* --- Status --------------------------------------------------------- */
   --success: #6fa787;
-  --danger: #c2645a;
+  /*
+   * Same split as the accent, same reason. The canvas used #c2645a as a fill
+   * behind #f2f1ef on the swipe-to-delete action at 3.53:1. A destructive
+   * label is the last place to accept failing contrast, so the fill is
+   * darkened to 4.65:1 -- with headroom, not sat on the 4.5 boundary -- while
+   * the line token keeps the canvas value for rings, dots and outlines.
+   */
+  --danger-line: #c2645a; /* rings, dots, outline-button borders */
+  --danger-fill: #b24c42; /* destructive fills, with --on-danger-fill */
+  --on-danger-fill: #f2f1ef;
 
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* --- Type ----------------------------------------------------------- */
+  --font-sans: var(--font-archivo), "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* --- Control heights ------------------------------------------------ */
+  /* 44px is the floor for anything a thumb hits mid-set. */
+  --control-chip: 36px;
+  --control-tab: 34px;
+  --control-sm: 44px;
+  --control-md: 48px;
+  --control-lg: 56px;
+  --control-set-row: 56px;
+  --control-set-row-active: 64px;
 }
 
 @theme inline {
@@ -37,49 +82,100 @@
   --color-muted: var(--muted);
   --color-muted-2: var(--muted-2);
 
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-active: var(--accent-active);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-line: var(--accent-line);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-on-accent: var(--on-accent);
+  --color-on-accent-pressed: var(--on-accent-pressed);
 
   --color-success: var(--success);
-  --color-danger: var(--danger);
+  --color-danger-line: var(--danger-line);
+  --color-danger-fill: var(--danger-fill);
+  --color-on-danger-fill: var(--on-danger-fill);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
+
+  /*
+   * Type scale, taken from the canvas. Sans sizes carry content; mono sizes
+   * carry labels only and never drop below 9px.
+   */
+  --text-label-xs: 9px;
+  --text-label-xs--line-height: 1;
+  --text-label-xs--letter-spacing: 0.1em;
+  --text-label: 10px;
+  --text-label--line-height: 1;
+  --text-label--letter-spacing: 0.12em;
+  --text-meta: 11px;
+  --text-meta--line-height: 1.4;
+  --text-caption: 12px;
+  --text-caption--line-height: 1.6;
+  --text-sm: 13px;
+  --text-sm--line-height: 1.5;
+  --text-base: 14px;
+  --text-base--line-height: 1.5;
+  --text-body: 15px;
+  --text-body--line-height: 1.6;
+  --text-action: 16px;
+  --text-action--line-height: 1;
+  --text-title: 17px;
+  --text-title--line-height: 1.4;
+  --text-value-sm: 19px;
+  --text-value-sm--line-height: 1;
+  --text-value: 22px;
+  --text-value--line-height: 1;
+  --text-value-lg: 24px;
+  --text-value-lg--line-height: 1;
+  --text-display: 26px;
+  --text-display--line-height: 1.2;
+  --text-display--letter-spacing: -0.01em;
+  --text-hero: 46px;
+  --text-hero--line-height: 1;
+  --text-hero--letter-spacing: -0.02em;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
 }
 
-html {
-  color-scheme: dark;
+/*
+ * Tabular lining figures everywhere, not just on numeric components. A digit
+ * that changes width as a value ticks over makes a set row jitter mid-session
+ * and a coach's table columns crawl. Set once, globally, so no component can
+ * forget it.
+ */
+*,
+*::before,
+*::after {
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-}
-
-/* Thumb-reachable bottom nav must clear the home-indicator / gesture bar. */
-.pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-.pt-safe {
-  padding-top: env(safe-area-inset-top, 0px);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
 
 /*
- * Page headers need safe-area clearance *plus* their own breathing room, not
- * whichever wins the cascade. Stacking `pt-safe pt-8` looks additive but both
- * set `padding-top`, land in the same Tailwind utilities layer, and `pt-safe`
- * is generated later -- so it silently wins and collapses to 0px on every
- * device without a notch (i.e. almost everything), squashing content against
- * the top edge. These combine both into one declaration so there's no
- * same-property class to lose.
+ * Safe-area helpers. `pt-safe` and `pt-8` both set padding-top and land in the
+ * same utilities layer, so stacking them silently collapses to whichever is
+ * generated later. These combine both into one declaration instead.
  */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
 @utility pt-safe-8 {
   padding-top: calc(env(safe-area-inset-top, 0px) + 2rem);
 }
 
-@utility pt-safe-10 {
-  padding-top: calc(env(safe-area-inset-top, 0px) + 2.5rem);
+@utility pb-safe-nav {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
 }
