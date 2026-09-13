@@ -1,0 +1,136 @@
+import { circleTeamId } from "./circle";
+
+/**
+ * Who may do what to a row, per table.
+ *
+ * Appwrite has no row-level security policy to audit -- only the permissions
+ * each row was stamped with at write time. So this file is the policy, and it
+ * is the only place permission strings are constructed. A bug here is sev-1:
+ * either the coach cannot see an athlete's work, or someone else can.
+ *
+ * Pure by design. No client, no network, no I/O -- so every rule below is
+ * exhaustively testable, and the tests are the real specification.
+ */
+
+export type WritableTable = "profiles" | "exercises" | "sessions" | "sets";
+export type ServerTable = "stats_rollups" | "coach_athlete_links";
+export type PolicyTable = WritableTable | ServerTable;
+
+/** Appwrite's wire format for permissions. Built here and nowhere else. */
+const read = (role: string) => `read("${role}")`;
+const update = (role: string) => `update("${role}")`;
+const del = (role: string) => `delete("${role}")`;
+const user = (id: string) => `user:${id}`;
+const team = (id: string) => `team:${id}`;
+const USERS = "users";
+
+export interface RowOwner {
+  /** The athlete the row belongs to. Never the coach, even on a coach action. */
+  athleteId: string;
+}
+
+export interface ExerciseOwner extends RowOwner {
+  /** A library exercise everyone shares, rather than one typed mid-session. */
+  isGlobal: boolean;
+}
+
+export interface LinkParties {
+  coachId: string;
+  athleteId: string;
+}
+
+function requireId(value: string, label: string): string {
+  if (!value || typeof value !== "string") {
+    throw new Error(`Permission policy: ${label} is required and was ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+/**
+ * The athlete always gets an explicit read alongside their circle's.
+ *
+ * Redundant while team membership is correct, and deliberately so: a bug in
+ * membership sync must never be able to lock an athlete out of their own
+ * training history mid-session.
+ */
+function athleteAndCircle(athleteId: string): string[] {
+  return [read(user(athleteId)), read(team(circleTeamId(athleteId)))];
+}
+
+/**
+ * Rows an athlete owns: their sessions, their sets, their rollups, their
+ * profile. Readable by them and their coaches; writable by them alone.
+ *
+ * Coaches get no update anywhere. A coach editing a block mid-way never
+ * rewrites what an athlete already did.
+ */
+function ownedByAthlete(athleteId: string, athleteMayWrite: boolean): string[] {
+  const permissions = athleteAndCircle(athleteId);
+  if (athleteMayWrite) {
+    permissions.push(update(user(athleteId)), del(user(athleteId)));
+  }
+  return permissions;
+}
+
+export function profilePermissions({ athleteId }: RowOwner): string[] {
+  return ownedByAthlete(requireId(athleteId, "athleteId"), true);
+}
+
+export function sessionPermissions({ athleteId }: RowOwner): string[] {
+  return ownedByAthlete(requireId(athleteId, "athleteId"), true);
+}
+
+/**
+ * A set stays editable by the athlete -- the blueprint allows correcting one
+ * from History, which then recomputes e1RM and the rollup.
+ */
+export function setPermissions({ athleteId }: RowOwner): string[] {
+  return ownedByAthlete(requireId(athleteId, "athleteId"), true);
+}
+
+/**
+ * Written only by the rollup Function, which uses an API key and bypasses
+ * permissions entirely. Nobody may write one: a forged rollup is a forged PR.
+ */
+export function rollupPermissions({ athleteId }: RowOwner): string[] {
+  return ownedByAthlete(requireId(athleteId, "athleteId"), false);
+}
+
+export function exercisePermissions({ athleteId, isGlobal }: ExerciseOwner): string[] {
+  // The shared library: readable by anyone signed in, editable by nobody.
+  // Curating it is an admin job, not something an athlete does mid-set.
+  if (isGlobal) return [read(USERS)];
+  return ownedByAthlete(requireId(athleteId, "athleteId"), true);
+}
+
+/**
+ * Both parties see the link; neither may write it. Redemption runs in a
+ * Function, or an athlete could grant themselves a coach -- or worse, grant
+ * themselves as coach to someone else.
+ */
+export function linkPermissions({ coachId, athleteId }: LinkParties): string[] {
+  return [
+    read(user(requireId(athleteId, "athleteId"))),
+    read(user(requireId(coachId, "coachId"))),
+  ];
+}
+
+/** Every policy in one place, so a table can never be added without one. */
+export const POLICIES = {
+  profiles: profilePermissions,
+  exercises: exercisePermissions,
+  sessions: sessionPermissions,
+  sets: setPermissions,
+  stats_rollups: rollupPermissions,
+  coach_athlete_links: linkPermissions,
+} as const satisfies Record<PolicyTable, (owner: never) => string[]>;
+
+/** Tables a signed-in user may write to at all. */
+export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
+  "profiles",
+  "exercises",
+  "sessions",
+  "sets",
+];
+
+export const SERVER_ONLY_TABLES: readonly ServerTable[] = ["stats_rollups", "coach_athlete_links"];

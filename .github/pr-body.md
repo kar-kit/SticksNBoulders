@@ -1,135 +1,149 @@
-## FTP1-1 — Appwrite project and schema as code
+## FTP1-2 — Document write helper and permission model
 
-**Notion:** https://app.notion.com/3da64699b43c8144ad04dd99a5cd5814
+**Notion:** https://app.notion.com/3da64699b43c81e7aaccd2091df64fd4
+**Depends on:** #1 (merged)
 
 ### What was built
 
-Collections, columns, indexes and permissions for phase 0 and phase 1, defined
-in a versioned TypeScript schema and applied with `npm run appwrite:setup`.
-The applier is split into a pure planner and an executor, so idempotency is a
-unit-tested property rather than something we hope holds against a live server.
-Alongside it, `npm run appwrite:reset` clears the previous product's resources,
-dumping every table to `.appwrite-backup/` before it deletes anything.
+`appwrite/documents/` — the single write path. Every row this product writes
+goes through it, and it stamps permissions and denormalised fields in the same
+place so the two cannot drift apart. A lint rule and a guard test both fail the
+build if anything calls `createRow`/`updateRow`/`deleteRow` elsewhere.
 
-Six tables: `profiles`, `exercises`, `sessions`, `sets`, `stats_rollups`,
-`coach_athlete_links`. Applied to the live instance and verified — all columns
-available, all indexes built, second and third runs are no-ops.
+- `policy.ts` — who may do what, per table. Pure, no I/O, so every rule is
+  exhaustively testable and the tests are the real specification.
+- `write.ts` — the typed operations. Callers never supply `athlete_id`; it
+  comes from the actor.
+- `circle.ts` / `circle-admin.ts` — the team that carries coach access.
+- `row-writer.ts` — the narrow SDK surface, so the helper is testable and the
+  row methods are imported in exactly one file.
 
-### Scope, and what is deliberately absent
+### The design decision worth reviewing
 
-`programs`, `prescriptions` and `reference_maxes` are **not** here. The Program
-Editor's shape is still open question 1 with Ruairi, and the build plan calls
-guessing the prescription model the expensive retrofit. They arrive as later
-migrations once that answer does. `coach_athlete_links` is included despite
-being Order 16, because the write helper at Order 2 cannot be built without the
-table it reads to stamp permissions.
+CLAUDE.md says the helper reads `coach_athlete_links` to decide who sees what.
+Read literally that means stamping each coach's **user id** onto each row — but
+Appwrite freezes permissions at write time, so **a coach linked in November
+would see nothing logged in October.**
 
-### Decisions that were not specified
+That is not hypothetical. The build plan has Joey dogfooding phase 1 from
+mid-October and coach linking landing mid-November. Ruairi would have linked and
+found an empty account with two months of training invisible behind it. Fixing
+it after the fact means a backfill over every row the athlete ever wrote — a job
+that half-fails silently and leaves gaps nobody notices.
 
-- **Appwrite 1.9 uses the TablesDB API**, not the older Databases API — tables,
-  rows and columns rather than collections, documents and attributes. The
-  legacy `/databases` endpoint reports zero databases on this instance, which
-  is why it looked empty at first glance.
-- **`node-appwrite` pinned to 28.0.0.** It targets Appwrite 1.9.6; the server
-  runs 1.9.0, so every response carries a version-mismatch warning. No
-  published SDK targets 1.9.0 exactly. The warning is now printed once per run
-  instead of once per request. **Upgrading the server to 1.9.6 clears it.**
-- **Column changes are never applied automatically.** A narrowed width or a
-  changed type truncates data, and that data is an athlete's logged work, so
-  the planner reports and a human decides.
-- **Orphans are reported, never deleted**, for the same reason.
-- **`client_set_id` and `client_session_id`** are required and unique-indexed.
-  The offline queue at Order 9 retries on reconnect, and without an
-  idempotency key a retried set is logged twice and tonnage goes wrong.
-- **`sex` is nullable.** DOTS needs it, but an athlete may not have set it yet;
-  the number simply does not render until they do.
-- **`stats_rollups` and `coach_athlete_links` have `permissions: []` on
-  purpose.** That is not an oversight: nothing may read them by virtue of being
-  signed in. Every read comes from a row permission stamped by the Function
-  that writes the row.
+Instead, **every athlete has a circle**: an Appwrite Team holding them and their
+coaches. Rows stamp `read(team:circle_<athlete>)`. Linking a coach is one
+membership write, applies retroactively to every existing row, and revokes the
+same way. `coach_athlete_links` remains the source of truth for who coaches
+whom; the team is how that fact reaches Appwrite.
+
+Joey chose this over the backfill after seeing both. **It is worth deciding
+whether CLAUDE.md's wording should be updated**, so the next reader does not
+take "reading coach_athlete_links" as a mandate to stamp user ids.
+
+The circle is managed server-side only. A user can create a team from their own
+session and would then own it, able to add and remove members behind the app's
+back — so links and real access would drift with nothing to reconcile them.
+
+### Policy, in one place
+
+| Table | Read | Write |
+| --- | --- | --- |
+| `profiles`, `sessions`, `sets` | athlete + their circle | athlete only |
+| `stats_rollups` | athlete + their circle | nobody (Function, API key) |
+| `exercises` (global) | any signed-in user | nobody |
+| `exercises` (custom) | owner + their circle | owner only |
+| `coach_athlete_links` | the two parties | nobody (Function) |
+
+Two things that look redundant and are not:
+
+- **The athlete always gets an explicit `read(user:…)` alongside their
+  circle's.** A bug in membership sync must never lock an athlete out of their
+  own history mid-session.
+- **Permissions are re-stamped on every update**, not just on create. A
+  permission set written once is one that drifts when the policy changes.
+
+The circle grants **read and only read**. A coach cannot rewrite logged work —
+constraint 5, enforced in the policy rather than trusted to callers.
 
 ### Tests
 
-66 new, 213 total.
+63 new, 315 total.
 
-- **Schema invariants.** Row security on every table; no table-level read
-  anywhere, because Appwrite grants on table-level *OR* row-level permission
-  and the combination silently exposes every row to every signed-in user. No
-  user may create a rollup or a coach link. `athlete_id` denormalised onto
-  `sets`, `e1rm_kg` stored not derived, rollups uniquely keyed per athlete per
-  exercise per week.
-- **Idempotency**, as the feature list requires: apply against an in-memory
-  Appwrite, assert the second and third runs write nothing. The fake reports
-  state the way the real server does — `float` comes back as `double`, a
-  single-column index reports empty orders — so the test is not just the
-  planner agreeing with itself. Also covers resuming a half-finished run.
-- **Drift repair.** Row security switched off in the console is restored; a
-  changed index is deleted before being recreated; orphans survive.
-- **Config.** Endpoint from an env var, API key absent from the client config,
-  actionable errors naming what is missing.
+- **`policy.test.ts`** — exhaustive. Every table, both exercise cases, the
+  no-blanket-read rule, no duplicate permissions, well-formed permission
+  strings, and a throw rather than a silent stamp when an id is missing.
+- **`write.test.ts`** — `athlete_id` comes from the actor and never the caller;
+  the permission stamp and the denormalised id agree by construction; a queued
+  set keeps the time it was logged, not the time it synced; a null RPE is not
+  a number; updates send only what changed.
+- **`circle-admin.test.ts`** — idempotent creation, repair of a missing athlete
+  membership, multiple coaches (Ruairi and Louis both coach at Uxbridge),
+  and a refusal to remove an athlete from their own circle.
+- **`guard.test.ts`** — no write path bypasses the helper. Scans the **working
+  tree**, not just the index, because an uncommitted bypass is exactly the one
+  that matters. Verified non-vacuous: adding a bypassing file fails it with a
+  message explaining why.
 
-**Live permission probe** (`npm run appwrite:probe`). The whole design rests on
-Appwrite granting access on table-level *OR* row-level permission. That is
-invisible when wrong, so it is now checked against the real instance rather
-than asserted in a comment. Eight assertions, all passing:
+**Live probe** (`npm run appwrite:probe`), now driving the real policy module
+rather than a restatement of it. 19/19 against the running instance:
 
 ```
-PASS  owner A reads their own set
-PASS  stranger B CANNOT read A's set
-PASS  stranger B lists 0 sets (saw 0)
-PASS  B reads a global exercise
-PASS  B CANNOT read A's custom exercise
-PASS  B reads A's set when stamped as their coach
-PASS  A CANNOT forge a rollup
-PASS  A CANNOT grant themselves a coach link
+Before any coach exists
+  PASS  Joey reads his own set
+  PASS  Ruairi, unlinked, cannot read it
+  PASS  Ruairi, unlinked, lists 0 sets
+After linking Ruairi to Joey
+  PASS  Ruairi reads the set logged BEFORE he was linked
+  PASS  Ruairi reads a set logged after linking
+  PASS  Ruairi CANNOT rewrite Joey's logged work
+Isolation between athletes
+  PASS  Ruairi cannot read Sam, whom he does not coach
+  PASS  Sam cannot read Joey
+  PASS  Louis, coaching only Sam, reads Sam
+  PASS  Louis cannot read Joey
+  PASS  Ruairi lists only Joey's sets
+Exercises
+  PASS  anyone signed in reads a library exercise
+  PASS  Ruairi reads Joey's custom exercise, so the queue can name it
+  PASS  Sam cannot read Joey's custom exercise
+Forgery
+  PASS  Joey cannot forge a rollup
+  PASS  Joey cannot grant himself a coach link
+Revocation
+  PASS  a revoked coach loses access to everything at once
+  PASS  and to rows logged after linking too
+  PASS  while Joey keeps his own data
 ```
-
-It creates two throwaway users, exercises each case, and removes them. This is
-the seed of the permission audit script at Order 38.
-
-Not unit-tested, verified by hand and stated here: the live apply itself, and
-the reset. Appwrite is not our code, so the SDK is mocked at the driver
-boundary.
 
 ### Bugs found and fixed on the way
 
-1. **Idempotency was broken on first implementation.** Appwrite reports
-   `orders: []` for single-column and unique indexes; the planner filled in a
-   default of `asc` and compared, so seven indexes were rebuilt on every run.
-   Now only orders the schema explicitly asked for are compared.
-2. **`coach_athlete_links.status` was required *and* had a default.** Appwrite
-   rejects that outright (`column_default_unsupported`) and the first live
-   apply died halfway through. There is now a schema test for it, and the
-   resumability of a half-finished run is tested because of it.
-3. **Vitest was not collecting `appwrite/**`.** The `include` pattern only
-   covered `app`, `lib` and `components`, so the first 26 tests in this PR
-   passed by never running. Widened.
-4. **`z.url()` accepts `localhost:80`** — it parses as a URL with protocol
-   `localhost:`. A typo'd endpoint would have failed at the first request
-   rather than at startup. The scheme is now checked.
+1. **My first lint guard silently did nothing.** ESLint flat config *replaces*
+   a rule's options when a later block sets the same rule rather than merging
+   them, so splitting the row-mutator ban and the `TablesDB` ban across two
+   blocks disabled the first. Caught by testing that the guard fires, not by
+   reading it. Both bans now live in one selector list, restated per variant.
+2. **The guard test only scanned tracked files.** A newly written bypass would
+   have been invisible until after it was committed. Now scans the working
+   tree, untracked files included.
+3. **`perm.readUsers` existed in the schema and was never used** — a ready-made
+   constant for `read("users")`, the exact string the schema tests forbid at
+   table level. Deleted: the dangerous string should not be constructible.
 
-### Pre-existing problems found, not fixed here
+### Known limitation, stated rather than hidden
 
-- **A live Appwrite API key is committed in `ff289fa` on `main`, in a public
-  repo.** Untracked on `dev` in an earlier commit, but it remains in history
-  and needs rotating in the console. Flagged separately; Joey is on it.
-- The self-hosted instance runs Appwrite 1.9.0 against a 1.9.6 SDK.
+**Permission stamping is client-trusted.** Athlete writes happen in the browser
+with the athlete's session, so a modified client could stamp a wrong
+`athlete_id` or an over-permissive read on its own rows. It cannot read anyone
+else's data — the probe covers that — and it cannot forge rollups or links,
+which are Function-only. Closing it properly means routing writes through a
+Function, which costs the offline-first latency the logger is built around.
+Worth revisiting at Order 38 when the audit script lands; not worth paying for
+now. Flagging it so it is a decision rather than an oversight.
 
-### Reset
+### Not in this PR
 
-Ten tables, two buckets and six functions from the previous product were
-deleted, including rows: `profiles` had 10, `workout_sets` 7,
-`workout_sessions` 6, `lifts` 4. All dumped to `.appwrite-backup/` first.
-**Auth users were not touched** — they are identities rather than product data,
-and deleting them would have taken Joey's own login with them.
-
-### Two things for Joey
-
-- **`--reviewer kar-kit` cannot work.** `gh` here is authenticated as kar-kit,
-  so every PR is authored by Joey and GitHub refuses to let an author review
-  their own PR (422). The assignee is set, which is the part that matters. The
-  brief's step 7 command needs that flag dropped.
-- **The pre-reset dump is single-copy on this dev box**, under
-  `.appwrite-backup/`, gitignored. It holds the old `profiles`, `workout_sets`
-  and `workout_sessions` rows. Off-machine backups are FTP1-5, but if that data
-  is worth keeping, pull it somewhere before then.
+`e1rm_kg` is accepted and stamped by `createSet` but nothing computes it yet.
+The formula is Order 11, and the build plan says to verify it against a
+published source before hardcoding. The column is nullable and the rebuild
+script backfills.
