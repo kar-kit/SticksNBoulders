@@ -94,6 +94,14 @@ describe("creating one that does not exist", () => {
     expect(options()[0]).toContain("Romanian Deadlift");
   });
 
+  it("suppresses creation even when the acronym match falls outside the shown list", async () => {
+    // The suppression rule must not depend on the display cap, or it quietly
+    // stops working as the library grows.
+    const { user, input } = setup({ limit: 1 });
+    await user.type(input, "rdl");
+    expect(options().some((text) => text?.includes("new"))).toBe(false);
+  });
+
   it("still offers to create something that merely resembles an existing lift", async () => {
     // Being unable to add a lift is the failure that sends a coach back to a
     // spreadsheet, so a loose resemblance does not block creation.

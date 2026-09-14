@@ -58,9 +58,23 @@ A typo still does. `bech press` might genuinely be this athlete's lift, the
 right match sits directly above it, and being unable to add something is the
 failure that sends a coach back to a spreadsheet.
 
-| matched | creating |
-| --- | --- |
-| ![rdl matches Romanian Deadlift](../.shots/typeahead-match.png) | ![Zercher Squat offers to be added](../.shots/typeahead-create.png) |
+Both states, captured at 390pt (`.shots/typeahead-match.png`,
+`.shots/typeahead-create.png` — gitignored, so rendered here):
+
+```
+  EXERCISE TYPEAHEAD                EXERCISE TYPEAHEAD
+
+  +----------------------------+    +----------------------------+
+  | rdl                        |    | Zercher Squat              |
+  +----------------------------+    +----------------------------+
+  +----------------------------+    +----------------------------+
+  | Romanian Deadlift          |    | | Add Zercher Squat   NEW  |
+  +----------------------------+    +----------------------------+
+                                     ^ accent rule marks a create
+
+  an abbreviation offers no          a name the library does not
+  "Add rdl"                          hold is offered, always last
+```
 
 ### Create-on-the-fly resolves before it writes
 
@@ -111,6 +125,14 @@ rewriting it.
   powerlifting staples and the variations a coach actually programmes,
   deliberately not a bodybuilding database. **[SME to confirm]** Ruairi should
   cut and add before the beta.
+
+### Handoff to Order 7
+
+`resolveOrCreateExercise` returns `{ exercise, created }` and the provider has
+`remember`, but nothing joins them yet — a freshly created exercise will not
+appear in the library until a reload. Nothing calls the resolver in this PR, so
+there is no bug here today; it is the one seam Order 7 has to close when it
+mounts the provider and wires the logger to it.
 
 ### Verification
 

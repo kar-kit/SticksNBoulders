@@ -7,6 +7,7 @@ import {
   defaultExercises,
   isNewExercise,
   rankExercises,
+  tierFor,
   MAX_RESULTS,
   type Exercise,
 } from "@/lib/exercises/match";
@@ -83,7 +84,10 @@ export function ExerciseTypeahead({
     // A typo does, though. "bech press" might be a real lift this athlete
     // does, the right match sits directly above it, and being unable to add
     // something is the failure that sends a coach back to a spreadsheet.
-    const abbreviation = ranked.some((m) => m.tier === "acronym");
+    // Checked against the whole library, not against `ranked` -- that list is
+    // capped for display, and a suppression rule that depended on the cap
+    // would quietly stop working as the library grew.
+    const abbreviation = Boolean(trimmed) && exercises.some((e) => tierFor(trimmed, e) === "acronym");
 
     if (onCreate && trimmed && !abbreviation && isNewExercise(trimmed, exercises)) {
       // Last, never first. Selecting an existing lift is the common case, and
