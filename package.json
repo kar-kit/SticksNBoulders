@@ -14,6 +14,7 @@
     "appwrite:reset": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-reset.mts",
     "appwrite:backup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-backup.mts",
     "appwrite:restore": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-restore.mts",
+    "exercises:seed": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/seed-exercises.mts",
     "appwrite:probe": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-permission-probe.mts",
     "e2e:auth": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-auth.mts",
     "smtp:check": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/smtp-check.mts",
