@@ -31,6 +31,16 @@
  * Brzycki returns exactly the load at one rep. Getting the most scrutinised
  * number in the app visibly wrong would cost trust in every other number.
  *
+ * ## Half points
+ *
+ * RPE is logged in half points, so most real sets produce a fractional
+ * reps-to-failure -- 3 reps at RPE 8.5 is 4.5 -- and land on a denominator the
+ * 1993 paper never contemplated. Brzycki is linear in that term, so it
+ * interpolates smoothly and a half point moves the estimate by about half of
+ * what a whole one does, which is the behaviour an athlete expects. Rounding
+ * the total instead would throw away the distinction the RPE sheet exists to
+ * capture.
+ *
  * [Unverified] Neither formula has a documented empirical derivation, and both
  * predate RPE-based training. Order 26 revisits this against the RTS chart, and
  * `npm run e1rm:backfill` exists so that revision is a script run rather than a

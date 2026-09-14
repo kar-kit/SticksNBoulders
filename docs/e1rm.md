@@ -46,6 +46,14 @@ other number.
 They cross at ten reps-to-failure, which powerlifting rarely reaches, so the
 choice barely matters above it.
 
+## Half points
+
+RPE is logged in half points, so most real sets produce a fractional
+reps-to-failure — 3 reps at RPE 8.5 is 4.5. Brzycki is linear in that term, so
+it interpolates smoothly: a half point moves the estimate by about half of what
+a whole one does. Rounding the total to an integer would throw away exactly the
+distinction the RPE sheet exists to capture.
+
 ## When there is no estimate
 
 `e1rm_kg` is left unset, and this is normal rather than a failure:
@@ -66,7 +74,8 @@ same helper that stamps permissions so they cannot drift. `CreateSetInput` has
 no `e1rmKg` — a caller able to supply its own is a way for one to be wrong.
 
 The offline queue carries no estimate either; `runOp` calls the same helper, so
-a set logged in a basement gets the same number as one logged on wifi.
+a set logged in a basement gets the same number as one logged on wifi —
+asserted in `e2e:offline`, not just claimed here.
 
 **Open:** `updateSet` does not recompute. Nothing calls it yet; History editing
 at Order 13 must, or an edit that changes reps leaves a stale estimate behind.
