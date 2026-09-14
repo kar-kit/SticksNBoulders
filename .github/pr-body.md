@@ -1,92 +1,66 @@
-## FTP1-16.5 — Unlink a coach (Order 16.5)
+## Appwrite events work on 1.9.6 — correcting the record
 
-The ticket added after FTP1-16 shipped a trap: an athlete who typed the wrong
-code was linked forever, and the UI said so outright because there was nothing
-else honest to say. This is the way out.
+Not a feature. Tonight's upgrade fixed something four places in the tree
+described as broken, and a comment explaining why a workaround exists is worse
+than no comment once the thing it works around is gone: the next person reads it
+as a live constraint.
 
-An athlete taps Unlink, is told in one sentence what stops, and confirms. The
-coach immediately loses the ability to read anything — not at their next login,
-not after a backfill.
+### The measurement
 
-### The ordering is the whole ticket
+`probe-events` subscribes to a set being created and does nothing but log that
+it ran. Appwrite records a `trigger` on every execution, so the evidence is its
+own bookkeeping rather than anything the function decided.
 
-Linking writes the **record** first and grants **access** second. Unlinking
-removes access first and writes the record second.
+| trigger | count | first | last |
+|---|---|---|---|
+| `event` | 332 | 22:31Z | 23:51Z |
+| `http` | 1 | 23:51Z | 23:51Z |
 
-Both orders serve one invariant: **there is never access without a record of
-why.** A failure in either direction leaves a link recorded while the coach may
-not be able to see anything — visible, recoverable, fixed by trying again. The
-reverse is the sev-1, and neither ordering can produce it.
+The upgrade completed around **22:05Z**. Every event-triggered execution in the
+instance's history falls after it and none before — the same function, the same
+subscriptions, nothing on 1.9.0.
 
-### A silent return that needed catching
+Cause is **[Inference]**, not fact: 1.9.0's installer-generated compose had no
+`appwrite-worker-executions` service, 1.9.5's notes fix exactly that omission,
+and the service exists post-upgrade. The timing and the missing service agree;
+nothing inside Appwrite was instrumented to prove the mechanism.
 
-`removeCoachFromCircle` returns silently when it finds no membership. That is
-correct for idempotency, but it means "removed it" and "it was never there" are
-indistinguishable from the caller — and on this path, being wrong leaves a coach
-reading a training history the record says they cannot see.
+### The finding worth more than the headline
 
-So `revokeCoachAccess` **re-reads the circle** after removing, and refuses to
-write the row unless the coach is genuinely gone. One extra request, guarding
-the only direction that matters. When it fails the answer is `still-visible`,
-nothing is written, and the screen says *"Nothing changed — try again."*
-
-### Revoked, never deleted
-
-The row is the record of who could once see what. It also has to survive,
-because the unique index on `(coach_id, athlete_id)` means re-linking later
-reuses it — `reactivateCoachLink` from FTP1-16 already handled that, and this is
-the first path that exercises it for real.
-
-### The assertion that earns the ticket
-
-`e2e:link` now drives the full round trip against the live instance:
+The event that actually fired was the **documents** form, not the tables form,
+for a TablesDB row write:
 
 ```
-seed a set  →  link  →  coach reads it  →  unlink  →  coach CANNOT read it
-                                              ↓
-                             athlete still can · row revoked, not deleted
-                                              ↓
-                    redeem the same code  →  same row reused  →  access back
+databases.sticksnboulders.collections.sets.documents.<rowId>.create
 ```
 
-A test that only checked the row flipped to `revoked` would pass with the
-membership still in place. That is precisely the bug worth catching, so the
-negative read is asserted directly.
+The probe carried both subscriptions and this is the one that matched. A
+Function subscribed only to `databases.<db>.tables.<table>.rows.*.create` may
+never fire while looking entirely correct. That is a expensive afternoon for
+whoever hits it, so it is in `docs/appwrite-events.md` in bold.
 
-### Copy
+### What I did not change
 
-The confirm mirrors the linking one — named, specific — and adds a line the
-linking sentence does not need:
+**Rollups keep their route.** It was a workaround; it stays by choice. A
+Function would need its own copy of `lib/strength/rollup.ts`, and two
+implementations of an aggregate is precisely how a repair script stops
+repairing — the reason `rollupFrom` is shared with the rebuild script at all.
+What a Function buys is firing on writes that did not come through this app, and
+by policy there are none. Happy to move it if you disagree, but I would not.
 
-> Ruairi Deane will no longer see your sessions, your videos or your bodyweight,
-> and won't be able to set your training program. **Your own training stays
-> exactly as it is.**
+**Invite redemption keeps its route** too — it never needed events.
 
-The fear at that moment is losing your own log, not the coach's view of it.
+### Housekeeping
 
-### Two assumptions, stated rather than decided
-
-- **Athlete-initiated only.** Whether a coach can drop an athlete from their own
-  roster is `[SME to confirm]` on the ticket. Not guessed here.
-- **A hard cut.** Access ends the instant the membership goes. Whether a coach
-  should keep seeing anything for a window — a session they are mid-review on —
-  is a product decision Ruairi hasn't made. Worth putting to him.
-
-One deliberate asymmetry: **revoking is not rate limited**, unlike redeeming.
-Guessing codes is the attack redemption defends against; revoking only ever
-touches the caller's own link, and a limit would mean an athlete who taps twice
-cannot withdraw consent. Under UK GDPR that has to be as easy as giving it.
-
-### Verification
+The probe is left **disabled**. It fires on every set created: 332 executions in
+ninety minutes of e2e runs, every one failing until it had a deployment. Left
+enabled it would spawn an execution per athlete set forever. Its subscriptions
+are kept as the record of what was tested.
 
 ```
-npm test              923 ✓ (62 files)    npm run appwrite:probe   26/26
-npm run e2e:link       34/34              npm run e2e:invite       17/17
-npm run e2e:session    44/44              npm run e2e:history      19/19
-npm run e2e:lift       17/17              npm run e2e:offline      33/33
-npm run e2e:rollups    17/17              npm run e2e:e1rm         11/11
-npm run e2e:auth       24/24              npm run e2e:backup       17/17
-npm run e2e:shell      15/15
+npm test 923 ✓   npm run typecheck ✓   npm run lint ✓
 ```
+
+Docs only — no behaviour changed.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
