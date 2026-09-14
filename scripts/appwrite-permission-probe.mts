@@ -19,6 +19,7 @@ import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
 import { circleTeamId, CIRCLE_ROLES } from "../appwrite/documents/circle";
 import {
   exercisePermissions,
+  invitePermissions,
   linkPermissions,
   rollupPermissions,
   setPermissions,
@@ -142,6 +143,23 @@ check("anyone signed in reads a library exercise", await canRead(samDb, "exercis
 check("Ruairi reads Joey's custom exercise, so the queue can name it", await canRead(ruairiDb, "exercises", customEx.$id));
 check("Sam cannot read Joey's custom exercise", !(await canRead(samDb, "exercises", customEx.$id)));
 
+console.log("\nInvite codes");
+// The code IS the row id, so this is also the proof that Appwrite accepts one.
+const inviteCode = `SNB-P${String(stamp).slice(-4)}`;
+const invite = await adminDb.createRow({
+  databaseId: db, tableId: "invite_codes", rowId: inviteCode,
+  data: { coach_id: ruairi.$id, created_at: new Date().toISOString() },
+  permissions: invitePermissions({ coachId: ruairi.$id }),
+});
+check("the code is the row id", invite.$id === inviteCode);
+check("Ruairi reads his own code", await canRead(ruairiDb, "invite_codes", inviteCode));
+check("Joey cannot read it, even though Ruairi coaches him", !(await canRead(joeyDb, "invite_codes", inviteCode)));
+check("Sam cannot read it", !(await canRead(samDb, "invite_codes", inviteCode)));
+check(
+  "nobody can list the table and link themselves to every coach",
+  (await samDb.listRows({ databaseId: db, tableId: "invite_codes" })).total === 0,
+);
+
 console.log("\nForgery");
 const cannot = async (label: string, fn: () => Promise<unknown>) => {
   try { await fn(); check(label, false); } catch { check(label, true); }
@@ -151,6 +169,18 @@ await cannot("Joey cannot forge a rollup", () =>
     databaseId: db, tableId: "stats_rollups", rowId: ID.unique(),
     data: { athlete_id: joey.$id, exercise_id: ID.unique(), week_start: new Date().toISOString(), set_count: 1, volume_reps: 5, tonnage_kg: 700, rebuilt_at: new Date().toISOString() },
     permissions: rollupPermissions({ athleteId: joey.$id }),
+  }),
+);
+await cannot("Joey cannot mint a code naming himself the coach", () =>
+  joeyDb.createRow<Models.DefaultRow>({
+    databaseId: db, tableId: "invite_codes", rowId: `SNB-F${String(stamp).slice(-4)}`,
+    data: { coach_id: joey.$id, created_at: new Date().toISOString() },
+    permissions: invitePermissions({ coachId: joey.$id }),
+  }),
+);
+await cannot("Ruairi cannot rewrite his own code to point at somebody else", () =>
+  ruairiDb.updateRow<Models.DefaultRow>({
+    databaseId: db, tableId: "invite_codes", rowId: inviteCode, data: { coach_id: sam.$id },
   }),
 );
 await cannot("Joey cannot grant himself a coach link", () =>
@@ -174,6 +204,7 @@ for (const row of [oldSet, newerSet, samSet]) {
 for (const row of [globalEx, customEx]) {
   await adminDb.deleteRow({ databaseId: db, tableId: "exercises", rowId: row.$id });
 }
+await adminDb.deleteRow({ databaseId: db, tableId: "invite_codes", rowId: inviteCode });
 for (const links of [await adminDb.listRows({ databaseId: db, tableId: "coach_athlete_links" })]) {
   for (const row of links.rows) {
     await adminDb.deleteRow({ databaseId: db, tableId: "coach_athlete_links", rowId: row.$id });

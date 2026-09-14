@@ -14,16 +14,18 @@ export const DATABASE_ID = "sticksnboulders";
  * 2. There is no GROUP BY. Aggregates cannot be computed on read, so e1rm_kg
  *    is stored on the set and stats_rollups exists at all.
  *
- * Scope is phase 0 and phase 1: the write helper needs coach_athlete_links,
- * and the athlete logger needs the rest. Programs, prescriptions and reference
- * maxes are deliberately absent -- the Program Editor's shape is still an open
- * question with Ruairi, and guessing it here is the one retrofit the build
- * plan calls expensive. They arrive as later migrations.
+ * Scope is phase 0, phase 1, and the first half of the coach link: the write
+ * helper needs coach_athlete_links, the athlete logger needs the rest, and
+ * invite_codes is how a coach reaches an athlete in the first place. Programs,
+ * prescriptions and reference maxes are deliberately absent -- the Program
+ * Editor's shape is still an open question with Ruairi, and guessing it here
+ * is the one retrofit the build plan calls expensive. They arrive as later
+ * migrations.
  */
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 2,
+  version: 3,
   tables: [
     {
       id: "profiles",
@@ -170,6 +172,23 @@ export const schema: DatabaseSpec = {
         },
         { key: "idx_athlete_week", type: "key", columns: ["athlete_id", "week_start"], orders: ["asc", "desc"] },
       ],
+    },
+
+    {
+      id: "invite_codes",
+      name: "Invite codes",
+      purpose:
+        "A coach's code, shared with an athlete out of band. The code IS the row id, so uniqueness comes from the primary key and redeeming one is a point read rather than a query. Written only server side: a code an athlete could mint is a coach they could invent.",
+      rowSecurity: true,
+      permissions: [],
+      columns: [
+        { key: "coach_id", type: "string", size: 36, required: true },
+        { key: "created_at", type: "datetime", required: true },
+      ],
+      // One code per coach. The blueprint shows a single code on Profile, and
+      // a unique index is what stops a retried mint from leaving a coach with
+      // two live codes and no way to tell which one they gave out.
+      indexes: [{ key: "idx_coach", type: "unique", columns: ["coach_id"] }],
     },
 
     {

@@ -15,10 +15,11 @@ describe("schema shape", () => {
     expect(schema.version).toBeGreaterThanOrEqual(1);
   });
 
-  it("covers phase 0 and phase 1, and nothing that is still an open question", () => {
+  it("covers phases 0, 1 and the coach link, and nothing still an open question", () => {
     expect(schema.tables.map((t) => t.id).sort()).toEqual([
       "coach_athlete_links",
       "exercises",
+      "invite_codes",
       "profiles",
       "sessions",
       "sets",
@@ -111,17 +112,32 @@ describe("permission invariants", () => {
     }
   });
 
-  it("lets no user create a rollup or a coach link", () => {
+  it("lets no user create a rollup, a coach link or an invite code", () => {
     // Rollups are written by a Function. Link redemption runs server side,
-    // never client side, or an athlete could grant themselves a coach.
+    // never client side, or an athlete could grant themselves a coach -- and a
+    // code someone can mint is a code they can mint naming another coach.
     expect(table("stats_rollups").permissions).toEqual([]);
     expect(table("coach_athlete_links").permissions).toEqual([]);
+    expect(table("invite_codes").permissions).toEqual([]);
   });
 
   it("lets a signed-in user create their own logging rows", () => {
     for (const id of ["profiles", "exercises", "sessions", "sets"]) {
       expect(table(id).permissions, id).toContain('create("users")');
     }
+  });
+});
+
+describe("invite codes", () => {
+  it("holds no code column, because the code is the row id", () => {
+    // Uniqueness then comes from the primary key rather than from an index
+    // anyone has to trust, and redeeming one is a point read, not a query.
+    expect(columnKeys("invite_codes")).toEqual(["coach_id", "created_at"]);
+  });
+
+  it("allows a coach only one code, so the one they gave out stays the one", () => {
+    const index = table("invite_codes").indexes.find((i) => i.columns.includes("coach_id"));
+    expect(index?.type).toBe("unique");
   });
 });
 

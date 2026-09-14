@@ -1,91 +1,126 @@
-## FTP1-14 — Lift detail: progression chart and PRs (Order 14)
+## FTP1-15 — Coach invite code generation (Order 15)
 
-One lift, all of it: is this going up, what is my best, what have I actually been doing. Reached from History rather than the tab bar — it answers a question you arrive holding about one lift.
+Ruairi's first session is an account with nothing on it. His invite code is the
+only route from there to a first athlete, so this generates one, shows it on
+Profile and on the Roster, and puts it on the clipboard. Redemption is Order 16.
 
-```
-+--------------------------------+
-|  ← Back                        |
-|  Deadlift                      |
-|  ESTIMATED 1RM                 |
-|  204.9 kg     +24.9 (12w)      |
-|                       .--*     |
-|              .---''''          |
-|      ..--''''                  |
-|   --'                          |
-|  [ 8w ][ 12W ][ 6m ][ all ]    |
-|                                |
-|  PERSONAL RECORDS              |
-|  Heaviest single      200 × 1  |
-|  Best estimated      205.3 kg  |
-|  Most reps           140 × 12  |
-|                                |
-|  RECENT SETS                   |
-|  16 Sep   185 × 3     RPE 8.5  |
-|  09 Sep   182.5 × 3     RPE 8  |
-+--------------------------------+
-```
+### The code is the row id
 
-### The chart is hand-rolled SVG
+`SNB-4F7K2` is a legal Appwrite row id, so that is exactly what it is. Third
+time this codebase has made an id out of the thing it identifies — the profile
+id is the user id, a set's client id is its row id — and it pays the same way:
+uniqueness comes from the primary key rather than from an index anyone has to
+trust, and Order 16 redeems with a point read instead of a query against a table
+it must never let the caller list.
 
-One line, no axes, no legend, no tooltip, no interaction. Every charting library that could draw that brings a hundred times more than that, and six dependencies is a deliberate property of this repo rather than an accident.
+**One inversion worth reading twice.** Everywhere else in this codebase a 409
+means a queued write already landed and is success. On `invite_codes` it means
+the code is taken. `ensureInviteCode` generates another and retries — five
+times, then fails loudly, because five consecutive collisions means the keyspace
+has run out rather than the luck.
 
-Two details that matter:
+### The alphabet
 
-- **Points are spaced by time, not by index.** Three weeks of training either side of a three-month layoff would otherwise read as steady progress.
-- **Fewer than three points and the chart is hidden, not emptied.** A two-point line turns a coincidence into a direction — on the one screen that exists to answer whether the line is going up.
+`23456789ABCDEFGHJKMNPQRSTVWXYZ` — 30 characters, five of them, 24.3M codes.
 
-### Personal records are all-time, not per range
+`I`, `L`, `O`, `0` and `1` are gone because this gets read aloud across a gym
+floor and typed one-handed by somebody who has not signed in yet. Removing one
+side of every confusable pair means a mis-transcribed code fails to exist rather
+than quietly resolving to a *different coach*. `U` is gone for a different
+reason: it is the letter that turns a random five-character string into a word
+somebody has to read out in public.
 
-A record that changed when you tapped "8w" would not be a record.
+Input is then normalised rather than validated strictly — `snb 4f7k2`, `4F7K2`
+and `SNB-4f7k2` are one code. Length, not the prefix, decides whether a leading
+`SNB` is the prefix or part of the body: `S`, `N` and `B` are all in the
+alphabet, so `SNB-SNB23` is a code this generator can produce, and stripping on
+sight would refuse the bare body somebody typed.
 
-### "Most reps" needed two new rollup columns
+**Order 16 needs a rate limit.** A blind guess lands roughly once in ten
+thousand attempts — a nuisance rather than a breach, given the athlete is shown
+the coach's name and asked to confirm. Unlimited attempts change that.
 
-`best_reps` and `best_reps_load_kg`. It's an aggregate over all time, so scanning raw sets for it would have made this the one number on the screen derived a second way — which is exactly how a stored answer and a computed one start disagreeing. **Schema v2, already applied to the instance**; `rollups:rebuild` fills them.
+### Permissions — schema v3, applied
 
-On a tie the heavier set wins: a rep record that ignored the weight would crown the lightest set of the week.
+`invite_codes` joins `stats_rollups` and `coach_athlete_links` as a server-only
+table. The coach reads their own row; nobody else reads it at all. Not because
+the code is a secret from the athlete — the coach is about to text it to them —
+but because a signed-in user who could list the table could link themselves to
+every coach on the instance.
 
-### One thing a screenshot caught that no test would have
+Nobody writes one, **including the coach whose code it is**. A code you can mint
+for yourself is a code you can mint naming somebody else as the coach, which
+hands their next athlete to you. So minting is `app/api/invite/route.ts`, the
+coach id comes from the caller's JWT, and never from the request body.
 
-The recent-sets list **excludes warm-ups**. Including them looked defensible when I wrote it — "how you warm up is part of what you've been doing" — until the screen was full of `60 × 5`. An athlete who warms up every session gets a list that's half warm-up, and warm-ups already count toward no total, no record and no rollup anywhere else in the product.
+`appwrite:probe` now asserts that against the live instance: 26/26, including
+that Joey cannot mint a code naming himself the coach, and that Ruairi cannot
+rewrite his own code to point at somebody else.
 
-### Deferred, with reasons
+Unlike rollups, nothing here wants an Appwrite Function — generation is
+user-initiated, so it never touches the events pipeline that is broken on this
+homelab. **Redemption at Order 16 is the half that does, and still has no plan.**
 
-- **Personal RPE curve panel** — needs `personal_rpe_curves` and the RPE engine at phase 2b. Its own blueprint carries an open question on the sample threshold, and a curve fitted to six sets is noise presented as insight.
-- **Volume/tonnage charts** — out per the blueprint's own note.
-- **Log Session as an entry point** — listed in the blueprint, but the exercise name there is already a tap target for reactivating the row. A second behaviour on one control needs a design decision, not a quiet addition. **Joey: worth a view when you're next in the logger.**
+### Every athlete's Me screen now has a COACHING section
+
+This is the load-bearing consequence and the thing you will notice first.
+
+`isCoach` is true because athletes are linked to you, so gating the code on it
+would mean a coach with none could never get their first one. That resolves a
+contradiction between two blueprints: 09 — Profile & Settings files the code
+under "Layout, coach additions", which cannot bootstrap, while Onboarding
+generates it at sign-up, which would mean asking a new user which kind of user
+they are — inventing the account type CLAUDE.md says never to invent.
+
+So the section appears for everyone, offering a button. An athlete who never
+taps it never has a code, and nothing about their account changes. Shout if you
+would rather it hid behind something.
+
+On the Roster it is the empty state's action rather than a section beneath it —
+that body already says "share your invite code", and sending a coach to a
+settings tab to find the thing the screen just asked for is the errand that
+makes a product feel slow.
 
 ### Verification
 
 ```
-npm test                 810 passed (56 files)
-npm run e2e:lift          17/17
-npm run e2e:history       19/19
-npm run e2e:session       44/44
-npm run e2e:offline       33/33
-npm run e2e:rollups       17/17
-npm run e2e:e1rm          11/11
-npm run e2e:shell         15/15
-npm run appwrite:probe    19/19
+npm test               858 ✓ (59 files)     npm run appwrite:probe   26/26
+npm run e2e:invite      17/17               npm run e2e:shell        15/15
+npm run e2e:session     44/44               npm run e2e:history      19/19
+npm run e2e:lift        17/17               npm run e2e:offline      33/33
+npm run e2e:rollups     17/17               npm run e2e:e1rm         11/11
+npm run e2e:auth        24/24               npm run perf:check       within budget
 ```
 
-`e2e:lift` seeds five weeks arranged so **no record can be read off the newest row**, then walks in from History:
+`e2e:invite` drives the round trip a browser is the only place to see: an empty
+account taps a button, a table no browser may write gains a row, the clipboard
+holds the code, and it is still there after a reload and on the Roster. A second
+request to the route returns the *same* code and says it created nothing — a
+coach who taps twice, or whose first request died on gym wifi, must not end up
+with the one they already texted somebody looking wrong.
 
-```
-  16w  140 × 12 @ 8   rep record — 14 reps to failure, past the cutoff,
-                      so it earns NO estimate (the cutoff working)
-   8w  200 × 1  @ 10  heaviest single, e1RM exactly 200 by definition
-   4w  180 × 3  @ 8   best estimated: 202.5
-   0w  175 × 3  @ 8   current: 196.9 — deliberately BELOW the best
+### `e2e:backup` fails, and it is not this branch
 
-  PASS  shows the current estimate                        (196.9)
-  PASS  and how far it has moved, including downward      (−3.1)
-  PASS  best estimated, all-time                          (202.5)
-  PASS  most reps, with the weight it was done at         (140 × 12)
-  PASS  records stay all-time after narrowing the range
-```
+It fails identically on `dev` with these changes stashed. The cause is instance
+state: 16 rows (5 sessions, 6 sets, 5 rollups) belonging to
+`lift-1789401513863@example.com` still reference a circle team that was deleted,
+so the dump refuses itself. An `e2e:lift` run died between its teardown steps.
 
-A screen that only ever showed a rising line and a plus sign would pass a test built on climbing data. This one doesn't.
+There is also `invite-coach-1789421350648@example.com`, left by my own first
+`e2e:invite` run before I fixed it — mine to have cleaned up.
 
-Also fixed a fragility in `e2e:e1rm` that went red for the right reason: it asserted exact instance-wide counts from the backfill's plan, which fails as soon as the instance holds any other data.
+Deleting rows from the live instance was blocked, correctly, so both are yours
+to clear: removing those two accounts and their rows unblocks the backup. I took
+a dump first — `.appwrite-backup/2026-09-14T21-39-55-950Z/` — so the rows are
+recoverable either way. Worth knowing that an interrupted e2e run can leave the
+backup invariant broken; a teardown that ran in `finally` would not.
+
+### Still open
+
+- **No rotation.** A leaked code cannot be replaced. Not in the blueprint, so
+  not invented — but it is the obvious next ask, and the shape (delete the row,
+  mint another) is already there.
+- The suggestion-approval toggle and Billing from the same blueprint section are
+  Order 28 and later; only the code landed here.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
