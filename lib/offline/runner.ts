@@ -10,6 +10,7 @@ import {
   type Actor,
 } from "@/appwrite/documents";
 import { ensureMyCircle } from "@/lib/auth/circle";
+import { refreshRollup } from "@/lib/strength/rollup-client";
 import type { QueuedOp } from "./queue";
 
 /**
@@ -76,6 +77,15 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
     case "exercise.create": {
       const exerciseId = asString(p.exerciseId);
       await createExercise(browserWriteDeps(() => exerciseId), actor, { name: asString(p.name) });
+      return;
+    }
+    case "rollup.refresh": {
+      // Not a row write, so it does not go through the document helper: the
+      // server route does, on the other side. It is an op rather than a
+      // fire-and-forget call because a rollup that silently fails to update
+      // looks exactly like a correct one, and the queue is what makes a failure
+      // retry and, eventually, show up.
+      await refreshRollup(asString(p.exerciseId), asString(p.loggedAt));
       return;
     }
     case "set.delete": {

@@ -325,7 +325,10 @@ export function LogScreen() {
     // The set that started the rest is gone, so the rest is gone.
     changeRest(null);
     setDraft((prev) => (prev?.exerciseId === exerciseId ? draftFor(exerciseId) : prev));
-    await removeSet(last.clientSetId).catch(() => {});
+    await removeSet(last.clientSetId, {
+      exerciseId: last.exerciseId,
+      loggedAt: last.loggedAt,
+    }).catch(() => {});
   };
 
   const startHere = async () => {

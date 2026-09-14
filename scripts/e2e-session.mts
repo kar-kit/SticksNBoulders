@@ -35,6 +35,16 @@ const check = (label: string, ok: boolean) => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
 };
 
+const rollupsOf = async (athleteId: string) =>
+  (
+    await adminDb.listRows({
+      databaseId: db,
+      tableId: "stats_rollups",
+      queries: [Query.equal("athlete_id", athleteId), Query.limit(25)],
+      ttl: 0,
+    })
+  ).rows;
+
 const setsOf = async (athleteId: string) =>
   (
     await adminDb.listRows({
@@ -177,6 +187,23 @@ check("e1RM is computed and stored on the set, not derived on read", withRpe?.e1
 const noRpe = written.find((r) => r.is_warmup !== true && r.rpe == null);
 check("and left empty on a set logged without an RPE", noRpe != null && noRpe.e1rm_kg == null);
 check("warm-ups never get one", written.filter((r) => r.is_warmup === true).every((r) => r.e1rm_kg == null));
+
+console.log("\nThe weekly rollup");
+// Appwrite has no GROUP BY, so this row is the only thing the chart can read.
+// It is written by a server route behind the queue, so it lands a moment after
+// the set does rather than in the same tick.
+await until(async () => (await rollupsOf(athlete.$id)).length === 1);
+const rollups = await rollupsOf(athlete.$id);
+check("one rollup exists, for this athlete, lift and week", rollups.length === 1);
+const rollup = rollups[0];
+check("it counts working sets only", rollup?.set_count === 2);
+check("volume is reps of working sets", rollup?.volume_reps === 10);
+check("tonnage excludes the warm-up", rollup?.tonnage_kg === 1400);
+check("best e1RM is the best of the week", rollup?.best_e1rm_kg === 168);
+check("best single is the heaviest working set", rollup?.best_single_kg === 140);
+check("and how many reps it was done for", rollup?.best_single_reps === 5);
+check("the week starts on a Monday", new Date(String(rollup?.week_start)).getUTCDay() === 1);
+check("and it records when it last agreed with the sets", rollup?.rebuilt_at != null);
 
 console.log("\nAfter throwing the page away");
 await page.reload();

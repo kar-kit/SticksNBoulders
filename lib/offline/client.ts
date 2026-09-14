@@ -9,6 +9,7 @@ import {
   collapsibleCreate,
   newOp,
   readyPrefix,
+  supersededRefresh,
   type OpKind,
   type QueueStore,
   type QueuedOp,
@@ -152,6 +153,13 @@ async function drain(force: boolean): Promise<void> {
 
     for (const op of batch) {
       try {
+        // A rollup refresh with a later one behind it would recompute a week
+        // that is about to be recomputed again. Dropped rather than run, and
+        // only ever the earlier one, so the survivor still runs after the sets.
+        if (supersededRefresh(cache, op)) {
+          await settle(open, op);
+          continue;
+        }
         await runOp(actor, op);
         await settle(open, op);
       } catch (error) {
