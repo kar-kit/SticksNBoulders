@@ -85,6 +85,20 @@ instance-level variables first; treat project-level as branding on top.
 
 ## 4. Verify it works
 
+```bash
+npm run smtp:check -- you@yourdomain.com
+```
+
+It sends one real reset email and watches Appwrite's failed-jobs queue, which
+is what separates *queued* from *actually sent*. A 200 from `createRecovery`
+only means Appwrite accepted it; the worker can still fail afterwards, and an
+athlete experiences that as silence.
+
+Then check the inbox. Nothing arriving after a clean hand-off means the sender
+domain is not verified (§1).
+
+### Doing it by hand
+
 From the repo, with the dev server running:
 
 ```bash
@@ -114,7 +128,18 @@ What the outcomes mean:
 `createRecovery` returning success only means Appwrite queued it. Always
 confirm with a real inbox.
 
-## 5. Before the Cloud migration
+## 5. What the failed-jobs queue tells you
+
+```bash
+curl -s "$ENDPOINT/health/queue/failed/v1-mails" \
+  -H "X-Appwrite-Project: $PROJECT" -H "X-Appwrite-Key: $KEY"
+```
+
+A non-zero size is not necessarily current — failures accumulate and are not
+cleared when the config is fixed. What matters is whether the number **goes up
+after a fresh send**, which is what `npm run smtp:check` measures.
+
+## 6. Before the Cloud migration
 
 Appwrite Cloud has its own SMTP configuration, so these instance-level
 variables do not travel. The Resend domain and API key do. Re-enter them in the

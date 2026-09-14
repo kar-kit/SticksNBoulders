@@ -23,7 +23,8 @@ const stamp = Date.now();
 const BASE = process.env.E2E_BASE_URL ?? "http://localhost:3001";
 const results: string[] = [];
 const check = (label: string, ok: boolean) => { results.push(ok ? "PASS" : "FAIL"); console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`); };
-const pwField = (p: Page) => p.getByLabel("Password", { exact: true });
+const pwField = (p: Page) =>
+  p.getByLabel("Password", { exact: true }).or(p.getByLabel("New password", { exact: true })).first();
 
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 390, height: 852 }, colorScheme: "dark" })).newPage();
@@ -96,6 +97,70 @@ for (let i = 0; i < 14; i++) {
   if ((await ask({ email: `flood-${i}-${stamp}@example.com` })).status === 429) { limited = true; break; }
 }
 check("rate-limits a flood of lookups", limited);
+
+console.log("\nPassword reset");
+await page.goto(`${BASE}/sign-in`);
+await page.getByRole("link", { name: "Forgot?" }).click();
+await page.waitForURL("**/sign-in/forgot", { timeout: 10000 }).catch(() => {});
+check("the Forgot link reaches the reset screen", page.url().includes("/sign-in/forgot"));
+check(
+  "it says up front that the link expires",
+  await page.getByText(/expires in an hour/).isVisible().catch(() => false),
+);
+
+const sendButton = page.getByRole("button", { name: "Send reset link" });
+check("the send button is inert until the address looks like one", await sendButton.isDisabled());
+await page.getByLabel("Email").fill(email);
+check("and active once it does", await sendButton.isEnabled());
+await sendButton.click();
+
+// Appwrite currently answers 503 because SMTP is not enabled on the instance.
+// The confirmation must look identical regardless -- it never reads the result.
+const sent = await page
+  .getByText(/has an account, a reset link is on its way/)
+  .waitFor({ timeout: 15000 })
+  .then(() => true)
+  .catch(() => false);
+check("the confirmation appears whatever the server answered", sent);
+check(
+  "it stays conditional about whether the account exists",
+  ((await page.locator("main").textContent()) ?? "").includes("If "),
+);
+check(
+  "resending is on a cooldown",
+  await page.getByRole("button", { name: "Resend link" }).isDisabled().catch(() => false),
+);
+
+// Appwrite genuinely 404s an unknown address -- confirmed against the live
+// instance -- so this is a real test that the screen does not read the result,
+// not a restatement of a mock.
+await page.goto(`${BASE}/sign-in/forgot`);
+await page.getByLabel("Email").fill(`definitely-nobody-${stamp}@example.com`);
+await page.getByRole("button", { name: "Send reset link" }).click();
+const unknownSame = await page
+  .getByText(/has an account, a reset link is on its way/)
+  .waitFor({ timeout: 15000 })
+  .then(() => true)
+  .catch(() => false);
+check("an address with NO account gets the identical confirmation", unknownSame);
+
+console.log("\nReset link states");
+await page.goto(`${BASE}/sign-in/reset`);
+check(
+  "a link with no token says it is incomplete",
+  await page.getByText("This link is incomplete").isVisible().catch(() => false),
+);
+
+await page.goto(`${BASE}/sign-in/reset?userId=nope&secret=invalid`);
+await pwField(page).fill("hunter2222");
+await page.getByLabel("Confirm", { exact: true }).fill("hunter2222");
+await page.getByRole("button", { name: "Save and sign in" }).click();
+const expired = await page
+  .getByText("That link has expired")
+  .waitFor({ timeout: 15000 })
+  .then(() => true)
+  .catch(() => false);
+check("a token Appwrite rejects is reported as expired, with a way to get another", expired);
 
 await users.delete({ userId: oauthUser.$id });
 const made = await users.list({ queries: [`equal("email","${email}")`] }).catch(() => null);
