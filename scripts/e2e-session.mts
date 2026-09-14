@@ -168,6 +168,16 @@ check("three sets reached Appwrite", written.length === 3);
 check("one of them is flagged as a warm-up", written.filter((r) => r.is_warmup === true).length === 1);
 check("the RPE was stored", written.some((r) => r.rpe === 8));
 
+// 140 x 5 @ RPE 8 is seven reps to failure: 140 x 36 / 30. This one number is
+// what proves which formula shipped -- Epley would have written 172.7.
+const withRpe = written.find((r) => r.rpe === 8);
+check("e1RM is computed and stored on the set, not derived on read", withRpe?.e1rm_kg === 168);
+// Set 2 was logged without tapping RPE: same load, same reps, no estimate.
+// A rep-count-only formula would have given it the same number as Set 1.
+const noRpe = written.find((r) => r.is_warmup !== true && r.rpe == null);
+check("and left empty on a set logged without an RPE", noRpe != null && noRpe.e1rm_kg == null);
+check("warm-ups never get one", written.filter((r) => r.is_warmup === true).every((r) => r.e1rm_kg == null));
+
 console.log("\nAfter throwing the page away");
 await page.reload();
 await page.getByRole("button", { name: "Finish session" }).waitFor({ timeout: 15000 }).catch(() => {});

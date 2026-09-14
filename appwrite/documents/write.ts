@@ -1,3 +1,4 @@
+import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import { circleTeamId } from "./circle";
 import {
   exercisePermissions,
@@ -254,11 +255,6 @@ export interface CreateSetInput {
   loggedAt?: Date;
   videoFileId?: string;
   notes?: string;
-  /**
-   * Computed and stored at write time, never derived on read. Optional until
-   * Order 11 lands the formula; the rebuild script backfills it.
-   */
-  e1rmKg?: number | null;
 }
 
 export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetInput) {
@@ -281,7 +277,19 @@ export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetI
       reps: input.reps,
       rpe: input.rpe ?? undefined,
       is_warmup: input.isWarmup ?? false,
-      e1rm_kg: input.e1rmKg ?? undefined,
+      // Computed here rather than by the caller, and deliberately not passable
+      // as an argument. It is a derived field, and CLAUDE.md's rule is that
+      // derived and denormalised fields are written in the same helper that
+      // stamps permissions so they cannot drift -- a caller able to supply its
+      // own e1RM is a way for one of them to be wrong. Undefined rather than
+      // null where there is no honest estimate, so the column stays unset.
+      e1rm_kg:
+        estimateOneRepMax({
+          loadKg: input.loadKg,
+          reps: input.reps,
+          rpe: input.rpe ?? null,
+          isWarmup: input.isWarmup,
+        }) ?? undefined,
       logged_at: iso(input.loggedAt ?? deps.now()),
       client_set_id: input.clientSetId,
       video_file_id: input.videoFileId,
@@ -302,7 +310,15 @@ export interface UpdateSetInput {
   e1rmKg?: number | null;
 }
 
-/** Correcting a set from History. The rollup is recomputed by the Function. */
+/**
+ * Correcting a set from History. The rollup is recomputed by the Function.
+ *
+ * [SME to confirm] nothing calls this yet. When History editing lands at Order
+ * 13 it must recompute e1rm_kg from the corrected values -- a partial update
+ * that changes reps or RPE and leaves the old estimate in place is exactly the
+ * drift createSet computing it is meant to prevent. Until then `e1rm:backfill`
+ * is the safety net.
+ */
 export async function updateSet(deps: WriteDeps, actor: Actor, input: UpdateSetInput) {
   return deps.writer.updateRow({
     databaseId: deps.databaseId,
