@@ -1,17 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
+import { ExerciseBlock, type LoggedSet } from "@/components/logging/exercise-block";
+import { NumberPad } from "@/components/logging/number-pad";
+import { RpeSheet } from "@/components/logging/rpe-sheet";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { resolveOrCreateExercise } from "@/lib/exercises/library";
 import type { Exercise } from "@/lib/exercises/match";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSessionSets, type UnnamedSet } from "@/lib/logging/session-store";
+import { logSet, newClientSetId, removeSet } from "@/lib/logging/set-store";
+import { beginEdit, padValue, rpeAfterWarmupChange, type PadState } from "@/lib/logging/number-pad";
+import { resolvePrefill } from "@/lib/logging/prefill";
+import { canComplete, type RpeValue } from "@/lib/logging/set";
 import {
   elapsedMs,
   formatElapsed,
@@ -22,19 +28,24 @@ import {
 import { formatNumber } from "@/lib/logging/prefill";
 
 /**
- * Log Session: starting, running and finishing a session.
+ * Log Session. The screen this product lives or dies on.
  *
- * The set row itself is Order 8, so the rows below each exercise are not here
- * yet. What is here is the frame they land in -- which session is live, how
- * long it has been running, which exercises are in it, and how it ends.
- *
- * An exercise added but not yet logged into lives only in this screen's state.
- * There is no session_exercises table, deliberately: an exercise belongs to a
- * session because work was logged against it, so the durable record is the sets
- * themselves. The cost is that an exercise added and then abandoned does not
- * survive a reload, which is the right thing to lose.
+ * An athlete touches the set row twenty to forty times a session, one-handed,
+ * breathing hard. Everything here bends to that: no keyboard ever appears, the
+ * common case of repeating the previous set is one tap on the confirm square,
+ * and the row that is being entered is the only one that can be.
  */
 type Phase = "logging" | "confirming" | "finished";
+
+/** The row being entered, plus the id that makes writing it idempotent. */
+interface Draft {
+  exerciseId: string;
+  clientSetId: string;
+  loadKg: number | null;
+  reps: number | null;
+  rpe: RpeValue | null;
+  isWarmup: boolean;
+}
 
 export function LogScreen() {
   const router = useRouter();
@@ -46,12 +57,14 @@ export function LogScreen() {
   const [phase, setPhase] = useState<Phase>("logging");
   const [stored, setStored] = useState<UnnamedSet[]>([]);
   const [added, setAdded] = useState<Exercise[]>([]);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [pad, setPad] = useState<PadState | null>(null);
+  const [rpeOpen, setRpeOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
 
   // Ticks the clock. The value shown is always derived from started_at, so a
-  // phone that slept through twenty minutes shows twenty minutes, not a frozen
-  // counter -- the interval only decides how often we look.
+  // phone that slept through twenty minutes shows twenty minutes.
   useEffect(() => {
     if (!active || phase === "finished") return;
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -67,8 +80,6 @@ export function LogScreen() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      // A session resumed on another device, or after a reload, gets its
-      // exercises back from the work logged against them.
       const loaded = sessionId
         ? await fetchSessionSets(sessionId).catch(() => [] as UnnamedSet[])
         : [];
@@ -79,40 +90,150 @@ export function LogScreen() {
     };
   }, [sessionId]);
 
-  /**
-   * An exercise the library does not know is shown by its id rather than
-   * dropped: a set with a load and reps is real work, and hiding it because a
-   * name is missing would be the worse failure.
-   */
+  /** An exercise the library does not know is shown by its id, never hidden. */
   const sets = useMemo<SessionSet[]>(
     () => stored.map((set) => ({ ...set, exerciseName: nameFor(set.exerciseId) ?? set.exerciseId })),
     [stored, nameFor],
   );
-
   const groups = useMemo(() => groupByExercise(sets), [sets]);
   const summary = useMemo(() => summariseSession(sets), [sets]);
 
-  /** Exercises with sets, then ones added this session that have none yet. */
-  const shown = useMemo(() => {
-    const withSets = new Set(groups.map((g) => g.exerciseId));
-    return [
-      ...groups.map((g) => ({ id: g.exerciseId, name: g.exerciseName, setCount: g.sets.length })),
-      ...added.filter((e) => !withSets.has(e.id)).map((e) => ({ id: e.id, name: e.name, setCount: 0 })),
-    ];
-  }, [groups, added]);
+  const setsOf = useCallback(
+    (exerciseId: string) => stored.filter((s) => s.exerciseId === exerciseId),
+    [stored],
+  );
 
-  const addExercise = (exercise: Exercise) =>
-    setAdded((prev) => (prev.some((e) => e.id === exercise.id) ? prev : [...prev, exercise]));
+  /**
+   * A new row for an exercise, prefilled from the previous set of it.
+   *
+   * Rule 3 of the blueprint's prefill order, and the one it calls the most
+   * important: straight sets are the norm, so repeating the previous set has to
+   * cost one tap. Rules 1, 2 and 4 need a prescription, the RPE engine and a
+   * query into the last session -- Orders 22, 27 and 13.
+   */
+  const draftFor = useCallback(
+    (exerciseId: string, after?: { loadKg: number; reps: number }): Draft => {
+      // `after` is passed by the confirm path with the set that was just
+      // logged. Reading it from state there would read a stale array -- the
+      // optimistic append has not landed yet -- and the new row would come up
+      // empty, which is exactly the one tap this rule exists to save.
+      const previous = after ?? setsOf(exerciseId).at(-1) ?? null;
+      const prefill = resolvePrefill({
+        previousSetThisSession: previous ? { loadKg: previous.loadKg, reps: previous.reps } : null,
+      });
+      return {
+        exerciseId,
+        clientSetId: newClientSetId(),
+        loadKg: prefill.loadKg,
+        reps: prefill.reps,
+        // RPE is about how the next set felt, so it is never carried forward.
+        rpe: null,
+        // Nor is the warm-up flag. A missed flag counts a warm-up toward
+        // tonnage; a stuck one hides real work from PRs and the rollups, and
+        // that is the failure nobody notices.
+        isWarmup: false,
+      };
+    },
+    [setsOf],
+  );
+
+  const activate = useCallback(
+    (exerciseId: string) => {
+      setDraft(draftFor(exerciseId));
+      setPad(null);
+      setRpeOpen(false);
+    },
+    [draftFor],
+  );
+
+  const addExercise = useCallback(
+    (exercise: Exercise) => {
+      setAdded((prev) => (prev.some((e) => e.id === exercise.id) ? prev : [...prev, exercise]));
+      activate(exercise.id);
+    },
+    [activate],
+  );
 
   const createExercise = async (name: string) => {
     if (!athleteId) return;
     const { exercise, created } = await resolveOrCreateExercise(name, library.exercises, {
       userId: athleteId,
     });
-    // Into the library as well as into the session, or the next screen that
-    // reads the library would not know about a lift the athlete just made.
     if (created) remember(exercise);
     addExercise(exercise);
+  };
+
+  const focusField = (field: "load" | "reps" | "rpe") => {
+    if (!draft) return;
+    if (field === "rpe") {
+      if (draft.isWarmup) return; // Warm-ups never ask.
+      setPad(null);
+      setRpeOpen(true);
+      return;
+    }
+    setRpeOpen(false);
+    setPad(beginEdit(field, field === "load" ? draft.loadKg : draft.reps));
+  };
+
+  const applyPad = (next: PadState) => {
+    setPad(next);
+    const value = padValue(next);
+    setDraft((prev) =>
+      prev ? { ...prev, [next.field === "load" ? "loadKg" : "reps"]: value } : prev,
+    );
+  };
+
+  const toggleWarmup = (isWarmup: boolean) => {
+    setDraft((prev) => (prev ? { ...prev, isWarmup, rpe: rpeAfterWarmupChange(isWarmup, prev.rpe) } : prev));
+    if (isWarmup) setRpeOpen(false);
+  };
+
+  const confirmSet = async () => {
+    if (!draft || !active || !athleteId || !canComplete(draft)) return;
+    const row = draft;
+    setBusy(true);
+    // Optimistic: the row appears logged immediately, because instant is the
+    // feature. Durable queueing and retries are Order 9.
+    const optimistic: UnnamedSet = {
+      exerciseId: row.exerciseId,
+      clientSetId: row.clientSetId,
+      loadKg: row.loadKg as number,
+      reps: row.reps as number,
+      rpe: row.rpe,
+      isWarmup: row.isWarmup,
+      loggedAt: new Date(),
+    };
+    setStored((prev) => [...prev, optimistic]);
+    setDraft(draftFor(row.exerciseId, { loadKg: optimistic.loadKg, reps: optimistic.reps }));
+    setPad(null);
+    setRpeOpen(false);
+
+    try {
+      await logSet({ userId: athleteId }, {
+        sessionId: active.id,
+        exerciseId: row.exerciseId,
+        setIndex: setsOf(row.exerciseId).length + 1,
+        loadKg: row.loadKg as number,
+        reps: row.reps as number,
+        rpe: row.rpe,
+        isWarmup: row.isWarmup,
+        clientSetId: row.clientSetId,
+      });
+    } catch {
+      // Taken back off rather than left looking logged. Order 9 is what turns
+      // this into a queue that survives; until then, honesty beats a lie.
+      setStored((prev) => prev.filter((s) => s.clientSetId !== row.clientSetId));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const undoLast = async (exerciseId: string) => {
+    const last = setsOf(exerciseId).at(-1);
+    if (!last || !athleteId) return;
+    setStored((prev) => prev.filter((s) => s.clientSetId !== last.clientSetId));
+    setDraft((prev) => (prev?.exerciseId === exerciseId ? draftFor(exerciseId) : prev));
+    await removeSet({ userId: athleteId }, last.clientSetId).catch(() => {});
   };
 
   const startHere = async () => {
@@ -157,6 +278,16 @@ export function LogScreen() {
     );
   }
 
+  const withSets = new Set(groups.map((g) => g.exerciseId));
+  const blocks = [
+    ...groups.map((g) => ({ id: g.exerciseId, name: g.exerciseName })),
+    ...added
+      .filter((e) => !withSets.has(e.id))
+      .map((e) => ({ id: e.id, name: e.name })),
+  ];
+
+  const sheetOpen = pad !== null || rpeOpen;
+
   return (
     <div className="pt-safe-8 flex flex-1 flex-col gap-5 pb-6">
       <header className="flex items-baseline justify-between gap-3">
@@ -174,56 +305,84 @@ export function LogScreen() {
         </Button>
       </header>
 
-      {shown.length === 0 ? (
+      {blocks.length === 0 ? (
         <EmptyState title="Nothing logged yet" body="Add the first exercise and start working." />
       ) : (
-        <ul className="m-0 flex list-none flex-col gap-3 p-0">
-          {shown.map((exercise) => (
-            <li key={exercise.id}>
-              <Card>
-                <CardBody>
-                  <CardTitle>{exercise.name}</CardTitle>
-                  <p className="m-0 text-ui text-muted">
-                    {exercise.setCount === 0
-                      ? "No sets yet"
-                      : `${exercise.setCount} set${exercise.setCount === 1 ? "" : "s"}`}
-                  </p>
-                </CardBody>
-              </Card>
-            </li>
+        <div className="flex flex-col gap-6">
+          {blocks.map((block) => (
+            <ExerciseBlock
+              key={block.id}
+              name={block.name}
+              sets={setsOf(block.id).map<LoggedSet>((s) => ({
+                clientSetId: s.clientSetId,
+                loadKg: s.loadKg,
+                reps: s.reps,
+                rpe: (s.rpe as RpeValue | null) ?? null,
+                isWarmup: s.isWarmup,
+              }))}
+              draft={draft?.exerciseId === block.id ? draft : null}
+              onFocus={focusField}
+              onConfirm={confirmSet}
+              onActivate={() => activate(block.id)}
+              onUndo={() => void undoLast(block.id)}
+            />
           ))}
-        </ul>
+        </div>
       )}
 
-      {/* In the thumb zone, and it empties after each choice: the next thing
-          an athlete does here is add another exercise, not edit this one. */}
-      <div className="mt-auto">
-        <ExerciseTypeahead
-          exercises={library.exercises}
-          label="Add exercise"
-          placeholder="Add an exercise"
-          clearOnSelect
-          onSelect={addExercise}
-          onCreate={createExercise}
-          hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
-        />
-      </div>
-
-      {phase === "confirming" ? (
-        <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
-          <p className="m-0 text-body">
-            Finish this session? {summary.setCount} set{summary.setCount === 1 ? "" : "s"} logged.
-          </p>
-          <div className="flex gap-3">
-            <Button block onClick={finishHere} disabled={busy}>
-              Finish
-            </Button>
-            <Button block variant="secondary" onClick={() => setPhase("logging")} disabled={busy}>
-              Keep going
-            </Button>
+      <div className="mt-auto flex flex-col gap-3">
+        {phase === "confirming" ? (
+          <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
+            <p className="m-0 text-body">
+              Finish this session? {summary.setCount} set{summary.setCount === 1 ? "" : "s"} logged.
+            </p>
+            <div className="flex gap-3">
+              <Button block onClick={finishHere} disabled={busy}>
+                Finish
+              </Button>
+              <Button block variant="secondary" onClick={() => setPhase("logging")} disabled={busy}>
+                Keep going
+              </Button>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+
+        {/* One sheet at a time, and only where a thumb already is. */}
+        {pad !== null && draft ? (
+          <NumberPad
+            state={pad}
+            onChange={applyPad}
+            onNext={() => (pad.field === "load" ? focusField("reps") : focusField("rpe"))}
+            nextLabel={pad.field === "load" ? "Reps" : draft.isWarmup ? "Done" : "RPE"}
+            isWarmup={draft.isWarmup}
+            onToggleWarmup={toggleWarmup}
+            onDismiss={() => setPad(null)}
+          />
+        ) : null}
+
+        {rpeOpen && draft ? (
+          <RpeSheet
+            setIndex={setsOf(draft.exerciseId).filter((s) => !s.isWarmup).length + 1}
+            value={draft.rpe}
+            onSelect={(value) => {
+              setDraft((prev) => (prev ? { ...prev, rpe: value } : prev));
+              setRpeOpen(false);
+            }}
+          />
+        ) : null}
+
+        {!sheetOpen ? (
+          <ExerciseTypeahead
+            exercises={library.exercises}
+            label="Add exercise"
+            placeholder="Add an exercise"
+            clearOnSelect
+            onSelect={addExercise}
+            onCreate={createExercise}
+            hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
+          />
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -232,9 +391,7 @@ export function LogScreen() {
  * What the athlete sees on finishing.
  *
  * PRs and queued videos belong here too, per the blueprint. They arrive with
- * the rollups at Order 12 and video at Order 3; the numbers below are read from
- * the session's own sets, so they are real rather than placeholder -- they are
- * simply zero until Order 8 lands set logging.
+ * the rollups at Order 12 and video at Order 3.
  */
 function FinishedSummary({
   summary,

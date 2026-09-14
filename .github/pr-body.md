@@ -1,141 +1,104 @@
-## FTP1-7 — Start, run and finish a training session
+## FTP1-8 — Log a set: weight, reps, RPE, warm-up flag
 
-**Notion:** [MVP Feature List — Order 7](https://app.notion.com/p/c1595d12346b47fd9939ea81cd33ab4d)
-**Depends on:** #1–#7 (all merged)
+**Notion:** [MVP Feature List — Order 8](https://app.notion.com/p/c1595d12346b47fd9939ea81cd33ab4d)
+**Depends on:** #1–#8 (all merged)
 
-Today answers one question — what am I doing, and how do I start it. The logger
-is the frame the set rows land in at Order 8: which session is live, how long it
-has been running, which exercises are in it, and how it ends.
-
-### ⚠️ This found a bug that blocked every athlete write in the product
-
-**No athlete could write anything.** Appwrite refuses a `team:` permission from
-a *user session* unless that user is a member of the team. Every row an athlete
-writes carries a read for their circle team — and nothing in the app had ever
-created that team. The first session, the first set and the first custom
-exercise would all have come back:
+The screen this product lives or dies on. An athlete touches the set row twenty
+to forty times a session, one-handed, breathing hard. **No keyboard ever
+appears** — the number pad is the only way a number gets into this product.
 
 ```
-401  Permissions must be one of: (any, users, user:<id>, user:<id>/unverified, users/unverified)
+  Squat                    Undo last set          ┌─────────────────────┐
+  #   KG      REPS   RPE                          │ REPS            5   │
+  W   60      5      —      ✓                     │  1    2    3        │
+  1   142.5   5      8      ✓                     │  4    5    6        │
+ ┌────────────────────────────────┐               │  7    8    9        │
+ │2   142.5   5     RPE    [ ✓ ]  │  ← prefilled  │  .    0    ⌫        │
+ └────────────────────────────────┘    one tap    │ Warm-up  Done  RPE  │
+                                                  └─────────────────────┘
 ```
 
-**`npm run appwrite:probe` passed throughout**, because it writes its rows with
-the admin key and only uses user sessions for *reads*. The permission policy had
-been proven for reads and never once for a user-side write. It surfaced only
-when a real browser went through a real sign-in and pressed the button.
+### The number pad is a state machine, not an input
 
-The fix cannot live in the browser. A user who creates a team owns it, and could
-then add or remove members behind the app's back — `coach_athlete_links` and
-actual access would drift apart with nothing to reconcile them, which is the
-reasoning already written into `appwrite/documents/circle-admin.ts`. So:
+The behaviour people expect from a calculator — the existing value is selected,
+so the first digit **replaces** it — is not what a text field does. `142.5`
+quietly becoming `142.57` is a wrong number in someone's training log. Loads
+take two decimals (finer than any plate), reps refuse a decimal point entirely,
+a leading zero is never kept, and backspace edits rather than clears.
 
-- **`POST /api/circle`** ensures the circle with the admin key.
-- The caller proves identity with a **short-lived Appwrite JWT**. The user id
-  comes from that token and **never from the request body** — accepting an id
-  from the caller would let anyone create, or join, somebody else's circle.
-- `ensureMyCircle()` is memoised per page load and awaited by the writes that
-  need it, rather than fired from a component that might not be mounted. A
-  failure is not cached, so one bad moment on a train does not block every write
-  for the life of the page.
+### The bug the tests caught, in the rule that matters most
 
-### Decisions worth keeping
+**Prefill rule 3 — repeat the previous set — silently did nothing.** `draftFor`
+read the set list through a closure that hadn't seen the optimistic append yet,
+so the row after a logged set came up empty. Straight sets are the norm and the
+blueprint calls this *the* rule that must cost one tap. It cost four. The
+confirm path now builds the next row from the set it just logged rather than
+from state it cannot see yet.
 
-**No `session_exercises` table, and this does not add one.** An exercise is in a
-session because work was logged against it, so the durable record is the sets.
-An exercise added and then abandoned does not survive a reload — the right thing
-to lose.
+### Decisions
 
-**The elapsed clock is derived from `started_at`, never from a counter in an
-interval.** A backgrounded phone stops the interval and the world keeps going.
-"Never lose a session to a backgrounded app or a phone call" is in the
-blueprint; this is what it means in code.
+**The warm-up toggle is in the pad sheet, not behind a long press.** The
+component spec's own objection — hidden gestures on the most-used screen are a
+support burden — applies to the flag as much as anything. Toggling to warm-up
+clears any RPE already entered: warm-ups never ask, and are excluded from PRs
+and rollups, so one carrying an RPE is a value nothing will ever read.
 
-**Resume picks the most recently started live session and leaves others alone.**
-More than one can exist — a crashed tab, a second device, a finish write that
-failed after the sets landed — and Order 9's queue makes that more likely, not
-less. Silently finishing somebody's session is worse than a stray row History
-can show.
+**Neither the warm-up flag nor the RPE carries into the next row.** A missed
+flag counts a warm-up toward tonnage, which is minor. A stuck one hides real
+work from PRs and the rollups, which is the failure nobody notices.
 
-**`client_session_id` is reused across a retry, not regenerated.** It is
-unique-indexed precisely so a second attempt recovers the first attempt's
-session rather than creating a twin; minting a new id would defeat the index.
+**Set writes ensure the circle, not just session start.** A session resumed on a
+fresh page load never runs the start path, so the memoised promise is cold and
+the first set of the day would 401 — Order 7's bug in a window narrow enough to
+be much harder to spot. There's a regression test for resume-then-log.
 
-**Warm-ups are excluded from the set count and tonnage** `[Inference]`, so a
-session total agrees with the weekly rollup at Order 12 instead of quietly
-disagreeing with it. **[SME to confirm]** — Ruairi may count everything that
-moved.
+**`client_set_id` is generated once per row and reused on retry.** A 409 from
+its unique index is success, not failure: the first attempt landed and the
+response was lost on the way back. Mid-set on gym wifi is exactly where that
+fires.
 
-### What the screenshots caught
+**Undo last set is here; swipe-to-delete and long-press are not.** Both are in
+the component spec and both are deferred — but a mis-logged set with *no* way to
+remove it until History exists is a worse first session than a visible Undo, and
+`deleteSet` was already in the helper.
 
-Two things no test was going to fail on:
-
-1. **The typeahead kept the chosen name in the field**, so adding a second
-   exercise meant clearing the first by hand, one-handed, mid-session. It
-   empties now when the caller asks — right for the logger, wrong for a picker
-   that holds a value, so it is a prop rather than a change in behaviour.
-2. **The primary action was not in the thumb zone on either screen.**
-   `min-h-full` cannot resolve inside the shell's `main`, whose height comes
-   from flex rather than being a definite value, so `mt-auto` did nothing and
-   the button rode up under the text. The shell is a flex column now, which
-   fixes it for every athlete screen rather than these two.
-
-```
-  Today                        Session running
-  ┌────────────────────────┐   ┌────────────────────────┐
-  │ Monday 14 Sep          │   │ Session       0:00:01  │
-  │ Nothing prescribed     │   │ ┌────────────────────┐ │
-  │ today.                 │   │ │ Squat              │ │
-  │                        │   │ │ No sets yet        │ │
-  │ No sessions logged yet.│   │ └────────────────────┘ │
-  │                        │   │ ┌────────────────────┐ │
-  │                        │   │ │ Bench Press        │ │
-  │                        │   │ │ No sets yet        │ │
-  │                        │   │ └────────────────────┘ │
-  │ ┌────────────────────┐ │   │ ┌────────────────────┐ │
-  │ │  Start a session   │ │   │ │ Add an exercise    │ │
-  │ └────────────────────┘ │   │ └────────────────────┘ │
-  └────────────────────────┘   └────────────────────────┘
-       thumb zone                    thumb zone
-```
+**Optimistic, and nothing more.** The row appears logged immediately because
+instant is the feature, and comes back off if the write fails rather than
+sitting there looking logged. No retry loop, no queue, no persistence — Order 9
+is the write-ahead queue, and half of one built here would only have to be
+unpicked.
 
 ### Scope
 
-Not here, and deliberately: the set row and number pad (Order 8), offline queue
-(Order 9), rest timer (Order 10), and Today's prescribed-session card, coach
-note and rest-day state (Order 22 — the "with a program" layout in the blueprint
-is not this ticket).
+Prefill rules 1, 2 and 4 are not wired: they need a prescription, the RPE engine
+and a query into the last session — Orders 22, 27 and 13. `resolvePrefill`
+already resolves each field independently, so passing only rule 3 is a partial
+call rather than a stub.
 
-The finish summary shows **sets, tonnage, exercises and warm-ups read from the
-session's own sets** — real numbers that happen to be zero until Order 8 lands
-set logging. PRs and queued videos join it at Orders 12 and 3.
-
-Today's last-session line reads "Last session: Thu" rather than "Thu, Deadlift".
-Naming the exercise needs the session's sets, which costs a second request on
-the most-opened screen to render a word that is always absent until Order 8.
-Order 8 fills it in.
-
-Also closes the seam Order 6 left open: an exercise created mid-session now
-reaches the library as well as the session.
+Also not here: `e1rm_kg` on the set (Order 11 — the RPE→%1RM chart is still
+`[Unverified]` and writing a number from an unverified table into someone's
+training log is the one thing worth waiting for), the rest timer (Order 10),
+video (Order 29), and the rounding/pounds question the component spec leaves
+open — **[SME to confirm]** with Ruairi, default kg, no toggle built.
 
 ### Verification
 
-52 new tests, 623 total, plus **`npm run e2e:session`** — 17 assertions driving a
-real browser against the live instance:
+34 new tests, 651 total. `npm run e2e:session` extended to **27 assertions**,
+driving the real pad in a real browser:
 
 ```
-An empty account        lands on Today / says no sessions logged / offers to start
-Starting a session      goes to the logger / a clock is running
-                        exactly one session row exists, live, no finished_at
-Adding an exercise      the exercise appears in the session
-After a reload          still running / no second session was created
-                        Today offers Resume / Resume reopens the logger
-Finishing               summary shown / finished_at written / still one session
-                        Today offers Start again and names the session
+Logging sets        a warm-up logs and shows as W
+                    the next row prefills from the set just logged
+                    three sets reached Appwrite / one flagged warm-up / RPE stored
+After a reload      the warm-up came back, and both working sets, numbered
+                    no fourth set was written by the reload
+Finishing           set_count counts working sets only        → 2
+                    tonnage excludes the warm-up              → 1400
 
-17/17 passed. Athlete and sessions removed.
+27/27 passed. Athlete and sessions removed.
 ```
 
-`npm run perf:check` — interactive at **359ms** on Fast 4G against a 2500ms
-budget, 629ms on Slow 4G.
+Those last two are the assertions FTP1-7 couldn't make, because no sets existed
+to disagree about.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
