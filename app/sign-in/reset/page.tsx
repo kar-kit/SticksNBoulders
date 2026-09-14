@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AFTER_SIGN_IN } from "@/lib/auth/destinations";
 import { EmptyState } from "@/components/ui/empty-state";
 import { parseResetParams } from "@/lib/auth/recovery";
 import { ResetForm } from "./reset-form";
@@ -31,5 +32,5 @@ export default async function ResetPasswordPage({ searchParams }: PageProps<"/si
   }
 
   const email = typeof params.email === "string" ? params.email : undefined;
-  return <ResetForm token={token} email={email} destination="/today" />;
+  return <ResetForm token={token} email={email} destination={AFTER_SIGN_IN} />;
 }

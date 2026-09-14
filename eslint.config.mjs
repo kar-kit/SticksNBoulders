@@ -37,7 +37,7 @@ const rowMutatorSelectors = ROW_MUTATORS.map((method) => ({
 const tablesDbConstruction = {
   selector: 'NewExpression[callee.name="TablesDB"]',
   message:
-    "Construct TablesDB inside appwrite/documents (row writes) or appwrite/schema (DDL) only. Elsewhere, take the helper's RowWriter so the write path stays auditable.",
+    "Construct TablesDB inside appwrite/documents (row writes), appwrite/schema (DDL), or appwrite/browser-client (reads) only. Elsewhere, take the helper's RowWriter so the write path stays auditable.",
 };
 
 const writeHelperGuard = {
@@ -46,6 +46,10 @@ const writeHelperGuard = {
   ignores: [
     // The helper itself, and the interface it writes through.
     "appwrite/documents/**",
+    // The shared browser client. It constructs TablesDB for READS, which are
+    // not what this guard protects -- the row-mutator ban below still applies
+    // to it, and that is the rule that matters.
+    "appwrite/browser-client.ts",
     // Setup, reset and the permission probe run with an API key. They are
     // reviewed as scripts, not as application write paths.
     "scripts/**",
@@ -61,7 +65,7 @@ const writeHelperGuard = {
  */
 const schemaDdlException = {
   name: "snb/write-helper-guard-ddl",
-  files: ["appwrite/schema/**/*.ts"],
+  files: ["appwrite/schema/**/*.ts", "appwrite/browser-client.ts"],
   rules: {
     "no-restricted-syntax": ["error", ...rowMutatorSelectors],
   },

@@ -9,17 +9,24 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
 const session = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   signUpWithPassword: vi.fn(),
-  currentUser: vi.fn(),
   fetchMethodHint: vi.fn(),
   startOAuth: vi.fn(),
 }));
 vi.mock("@/lib/auth/session", () => session);
 
+const context = vi.hoisted(() => ({
+  state: { status: "signed-out" } as { status: string },
+  refresh: vi.fn(),
+}));
+vi.mock("@/lib/auth/session-context", () => ({
+  useSession: () => ({ state: context.state, refresh: context.refresh }),
+}));
+
 const GOOGLE_ONLY = enabledProviders();
 const BOTH = enabledProviders({ appleEnabled: true });
 
 function setup(providers = GOOGLE_ONLY) {
-  return render(<SignInForm providers={providers} destination="/today" />);
+  return render(<SignInForm providers={providers} destination="/" />);
 }
 
 async function submitCredentials(email = "joey@example.com", password = "hunter2222") {
@@ -30,7 +37,8 @@ async function submitCredentials(email = "joey@example.com", password = "hunter2
 
 beforeEach(() => {
   vi.clearAllMocks();
-  session.currentUser.mockResolvedValue({ ok: false, failure: { kind: "invalid-credentials" } });
+  context.state = { status: "signed-out" };
+  context.refresh.mockResolvedValue(undefined);
   session.fetchMethodHint.mockResolvedValue(null);
 });
 
@@ -72,7 +80,7 @@ describe("signing in", () => {
     session.signInWithPassword.mockResolvedValue({ ok: true, value: {} });
     setup();
     await submitCredentials();
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/today"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
   });
 
   it("shows a wrong password inline, never as a toast", async () => {
@@ -191,15 +199,33 @@ describe("creating an account", () => {
 
 describe("already signed in", () => {
   it("skips the screen entirely", async () => {
-    session.currentUser.mockResolvedValue({ ok: true, value: { name: "Joey", email: "j@e.com" } });
+    context.state = { status: "signed-in" };
     setup();
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/today"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
   });
 
-  it("stays put when there is no session", async () => {
+  it("stays put while the session is still resolving", () => {
+    context.state = { status: "loading" };
     setup();
-    await waitFor(() => expect(session.currentUser).toHaveBeenCalled());
     expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("stays put when there is no session", () => {
+    setup();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("tells the provider before navigating, so the shell does not bounce back", async () => {
+    // Two sources of session truth once had this screen and the athlete shell
+    // redirecting at each other about thirty times a second.
+    session.signInWithPassword.mockResolvedValue({ ok: true, value: {} });
+    setup();
+    await submitCredentials();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
+    expect(context.refresh).toHaveBeenCalled();
+    expect(context.refresh.mock.invocationCallOrder[0]).toBeLessThan(
+      replace.mock.invocationCallOrder[0],
+    );
   });
 });
 

@@ -23,7 +23,7 @@ beforeEach(() => {
 // `undefined` to a defaulted parameter uses the default, which quietly made
 // the no-email case test the with-email path instead.
 function setup(props: { email?: string } = { email: "joey@example.com" }) {
-  return render(<ResetForm token={TOKEN} email={props.email} destination="/today" />);
+  return render(<ResetForm token={TOKEN} email={props.email} destination="/" />);
 }
 
 async function fill(password: string, confirmation = password) {
@@ -54,7 +54,7 @@ describe("choosing a new password", () => {
     await fill("hunter2222");
     expect(session.completePasswordReset).toHaveBeenCalledWith("u1", "s3cr3t", "hunter2222");
     expect(session.signInWithPassword).toHaveBeenCalledWith("joey@example.com", "hunter2222");
-    expect(replace).toHaveBeenCalledWith("/today");
+    expect(replace).toHaveBeenCalledWith("/");
   });
 
   it("sends to sign-in when the address is unknown, rather than guessing", async () => {

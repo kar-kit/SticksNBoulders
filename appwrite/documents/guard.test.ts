@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 /**
  * "No write path bypasses the helper" is the claim the whole permission model
@@ -32,7 +32,10 @@ function sourceFiles(): string[] {
     ["ls-files", "--cached", "--others", "--exclude-standard", "*.ts", "*.tsx", "*.mts"],
     { encoding: "utf8" },
   );
-  return [...new Set(out.split("\n").filter(Boolean))];
+  // A path can be in the index but not on disk -- a staged deletion, a
+  // half-finished rebase. Reading it throws and takes the whole guard with it,
+  // which turns a security check into a confusing crash at the worst moment.
+  return [...new Set(out.split("\n").filter(Boolean))].filter((file) => existsSync(file));
 }
 
 const ALLOWED_TO_WRITE_ROWS = [
@@ -66,8 +69,15 @@ describe("the write helper is the only write path", () => {
     ).toEqual([]);
   });
 
-  it("constructs TablesDB only where row writes or DDL happen", () => {
-    const allowed = [/^appwrite\/documents\//, /^appwrite\/schema\//, /^scripts\//];
+  it("constructs TablesDB only where row writes, reads or DDL happen", () => {
+    // browser-client constructs one for READS. Reads are not what this guard
+    // protects -- the row-mutator ban above is, and it still covers that file.
+    const allowed = [
+      /^appwrite\/documents\//,
+      /^appwrite\/schema\//,
+      /^appwrite\/browser-client\.ts$/,
+      /^scripts\//,
+    ];
     const offenders = files
       .filter((file) => !allowed.some((p) => p.test(file)))
       .filter((file) => /new\s+TablesDB\s*\(/.test(readFileSync(file, "utf8")));
