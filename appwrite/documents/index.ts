@@ -53,6 +53,7 @@ export {
   deleteSet,
   finishSession,
   normaliseExerciseName,
+  reactivateCoachLink,
   renameGlobalExercise,
   revokeCoachLink,
   updateProfile,

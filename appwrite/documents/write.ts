@@ -479,6 +479,35 @@ export async function createCoachLink(deps: WriteDeps, input: CreateLinkInput) {
   });
 }
 
+/**
+ * Brings a revoked link back, reusing its row.
+ *
+ * The unique index on (coach_id, athlete_id) means a pair that was linked once
+ * cannot be created again, so this is the only shape Appwrite accepts for a
+ * coach returning to an athlete they used to coach.
+ *
+ * `revoked_at` is cleared rather than left beside an active status: a row that
+ * says active and carries a revocation date is a row nobody can read with
+ * confidence, and this table is the one the whole permission model trusts.
+ */
+export async function reactivateCoachLink(
+  deps: WriteDeps,
+  input: CreateLinkInput & { rowId: string },
+) {
+  if (input.coachId === input.athleteId) {
+    throw new Error("reactivateCoachLink: a coach cannot be linked to themselves");
+  }
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "coach_athlete_links",
+    rowId: input.rowId,
+    data: { status: "active", linked_at: iso(deps.now()), revoked_at: null },
+    // Re-stamped rather than trusting what the row carried: a permission set
+    // written once is a permission set that drifts when the policy changes.
+    permissions: linkPermissions(input),
+  });
+}
+
 export async function revokeCoachLink(
   deps: WriteDeps,
   input: CreateLinkInput & { rowId: string },
