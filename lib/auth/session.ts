@@ -67,6 +67,30 @@ export function startOAuth(provider: OAuthProviderName, origin: string) {
   });
 }
 
+/**
+ * Asks Appwrite to email a reset link.
+ *
+ * The caller deliberately ignores whether this succeeded. Appwrite may answer
+ * differently for an address with no account, and the screen that follows says
+ * the same thing either way -- "if that address has an account, a link is on
+ * its way" -- so the outcome is never read and therefore never leaked.
+ */
+export async function requestPasswordReset(email: string, origin: string) {
+  const { account } = browserAppwrite();
+  return attempt(() =>
+    account.createRecovery({
+      email: normaliseEmail(email),
+      url: `${origin}/sign-in/reset`,
+    }),
+  );
+}
+
+/** Completes the reset with the userId and secret from the emailed link. */
+export async function completePasswordReset(userId: string, secret: string, password: string) {
+  const { account } = browserAppwrite();
+  return attempt(() => account.updateRecovery({ userId, secret, password }));
+}
+
 /** Asks the server whether this address belongs to a provider account. */
 export async function fetchMethodHint(email: string): Promise<OAuthProviderName | "other" | null> {
   try {

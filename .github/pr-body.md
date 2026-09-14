@@ -1,125 +1,122 @@
-## FTP1-3 — Sign in: email + password, Google, Apple
+## FTP1-3.5 — Password reset and account recovery
 
-**Notion:** https://app.notion.com/3da64699b43c8128b527d64ec55746aa
-**Depends on:** #1, #2 (both merged)
+**Notion:** https://app.notion.com/3da64699b43c81968d3ce635b01ff18b
+**Depends on:** #1, #2, #3 (all merged)
 
 ### What was built
 
-The sign-in screen from `01 — Sign In`, built to the design frame: provider
-buttons above the fold, email and password below the divider, create-account
-toggled on the same screen, and every state the blueprint names — wrong
-password, offline, already-signed-in, and the account-created-with-Google trap.
+All three frames from `01c` — request a link, the confirmation, and choosing a
+new password from the emailed link — plus two states the design does not draw
+but the flow needs: a link with no token, and a link that has been used or has
+expired.
 
-Email and password work end to end against the live instance. Google is wired
-and configured. Apple is built and hidden behind a flag.
+- `/sign-in/forgot` — request, then a confirmation with a 60-second resend
+  cooldown that counts down.
+- `/sign-in/reset` — new password and confirm, then signed in.
+- The stub that shipped in #3 saying reset was not set up yet is gone.
 
-### Two [Unverified] items from the blueprint, now resolved
+### The rule that shapes the whole flow
 
-**1. How Appwrite reconciles an OAuth identity and a password identity.**
-Probed against the running instance. A wrong password, an account created
-through Google, and an email nobody has registered **all return an identical
-`401 user_invalid_credentials`.** The client cannot tell them apart, so the
-blueprint's "You signed up with Google" state is not implementable client-side
-at all.
+The confirmation says *"If joey@example.com has an account, a reset link is on
+its way."* It means it. **The result of `createRecovery` is never read.**
 
-That also surfaced a contradiction in the blueprint itself: it asks for *"do
-not reveal whether the email exists"* **and** *"say plainly: you signed up with
-Google"*. The second is the first. Joey chose to resolve it by hinting only
-after a password attempt has already failed — so `/api/auth/method-hint` exists,
-and is deliberately stingy:
+That is not caution for its own sake — Appwrite may well answer differently for
+an address with no account, and a screen that branches on the outcome leaks
+exactly what the sign-in screen goes to some trouble to hide. Not reading it is
+the only version that cannot leak by accident, and it is tested: the
+confirmation renders identically whether the call succeeds, fails, or returns
+`user_not_found`.
 
-- Answers **only** for accounts that have no password. Never confirms an
-  unknown address; never confirms one that has a password set.
-- Rate-limited twice: 10/min per caller, 5/10min per address.
-- Rejects malformed input before spending any rate-limit budget, so junk cannot
-  lock a real caller out.
-- The limiter is in-memory, which holds for one self-hosted instance. **A
-  multi-instance deploy needs shared state.**
+There is a live proof of this in the PR right now. SMTP is not enabled on the
+instance yet, so `createRecovery` currently returns `503`. **The confirmation
+still appears, unchanged** — that assertion is in the e2e run below.
 
-**2. Whether Apple sign-in is mandatory.** It is not. App Store Review
-Guideline 4.8 applies to store-distributed apps; this is a PWA with no store
-submission. Apple also returns `412` on the instance — not configured, and
-enabling it needs an Apple Developer account (£99/yr) plus a Services ID. Built
-to the design, hidden behind `NEXT_PUBLIC_APPWRITE_APPLE_ENABLED`, default off,
-so the beta never shows a button that fails. One env var flips it on.
+### Decisions not specified
 
-### CLAUDE.md corrected
-
-Constraint 2 said **"No passwords. Magic link only. No password field exists in
-this product."** Three Notion sources contradict it — `00 — Conventions`,
-Order 3 with dated provenance, and Order 3.5 existing at all — and this PR
-implements the contradiction. The constraint is rewritten to match, and the
-"verify Appwrite passkey support" item is marked resolved.
-
-**This is the one change in this PR that is Joey's call to reject rather than
-mine to make.** It is a separate commit so it can be dropped on its own.
-
-### Decisions not specified anywhere
-
-- **`.env.local` is now the only env file.** `APPWRITE_API_KEY` lived in
-  `.local.env`, which Next.js does not load — see the bugs below.
-- **`/sign-in/forgot` exists and says reset is not set up yet**, rather than
-  404ing behind a link the design puts on screen. That is the true state:
-  `createRecovery` currently fails because no Web platform is registered.
-  FTP1-3.5 replaces it.
-- **`/today` is a placeholder** showing who is signed in with a sign-out button.
-  Sign-in needed a destination; Order 7 builds the real screen.
+- **The email is carried from one screen to the other.** Appwrite's docs say
+  the recovery link carries the address in the query string; the SDK documents
+  only `userId` and `secret`, and I cannot confirm which is true without a
+  delivered email. So the reset screen takes the query param if present, falls
+  back to `sessionStorage` stashed when the link was requested, and falls back
+  again to sending the athlete to sign-in. All three paths work; only the copy
+  and the auto-sign-in differ. Marked `[Unverified]` in the code and worth
+  deleting the fallback once a real email is seen.
+- **A used or expired link changes the screen** rather than showing a message.
+  Appwrite reports both the same way, and neither is something a sentence under
+  a field can fix — the answer is a fresh link, so that is what the screen
+  offers.
+- **Being offline is not treated as a spent link.** The link is still good;
+  telling someone to request a new one would waste the one they have.
+- **No password composition rules.** "At least 8 characters. Nothing else
+  required", straight from the design. Rules demanding a symbol push people to
+  weaker passwords they write down.
+- **Validation runs before the request**, so nobody is told a rule after the
+  fact — and a too-short password is reported before a mismatch, rather than
+  two errors in sequence.
 
 ### Tests
 
-53 new, 400 total. Plus `npm run e2e:auth` — 14 assertions driving a real
-browser against the live Appwrite, because the half that matters here is the
-half mocking cannot reach:
+24 new, 457 total, plus the e2e extended to 23 assertions against the live
+instance:
 
 ```
-creating an account signs you straight in / Today shows who is signed in
-sign-in is skipped while a session exists / signing out returns to sign-in
-wrong password: says so inline / offers a reset link / reveals nothing
-right password signs in
-an account with no password gets no reset link
-hint: silent for unknown / silent when a password exists / answers for
-      passwordless / ignores junk / rate-limits a flood
+Password reset
+  PASS  the Forgot link reaches the reset screen
+  PASS  it says up front that the link expires
+  PASS  the send button is inert until the address looks like one
+  PASS  and active once it does
+  PASS  the confirmation appears whatever the server answered
+  PASS  it stays conditional about whether the account exists
+  PASS  resending is on a cooldown
+Reset link states
+  PASS  a link with no token says it is incomplete
+  PASS  a token Appwrite rejects is reported as expired, with a way to get another
 ```
 
-Unit tests cover the error mapping, the rate limiter's sliding window, the hint
-policy's refusals, provider gating, and every form state. Appwrite is mocked at
-the session-module boundary, not re-implemented.
+That last one is a genuine round trip: a bogus secret is sent to Appwrite,
+rejected, and the screen reports it correctly. Unit tests cover token parsing
+(including a link a mail client broke across a line), the cooldown arithmetic,
+the password rules, and storage being unavailable in private browsing.
 
-### Bugs found and fixed
+`RECOVERY_LINK_TTL_MINUTES` is asserted to be 60 because the screen promises
+"expires in an hour" and Appwrite enforces exactly that — the copy and the
+constant must not drift apart.
 
-1. **`APPWRITE_API_KEY` was invisible to Next.js.** It lived in `.local.env`;
-   Next loads `.env.local`. The hint route threw on every request — and my
-   catch-all turned that into `{"hint":"none"}`, which is **indistinguishable
-   from working correctly**. The swallow was the worse bug: it now logs
-   server-side while still staying silent to the caller.
-2. **The unknown-provider case offered a dead-end reset.** When the server knows
-   an account has no password but cannot name the provider, the UI fell back to
-   the generic message — which offers "Forgot your password?" for an account
-   with no password to reset. That is the exact dead end this feature exists to
-   prevent. Now its own state. Found by the e2e, invisible to the unit tests.
-3. **My own guard test was wrong.** It failed on any mention of
-   `APPWRITE_API_KEY` under `app/`, including a comment in a server-only route
-   handler. Route handlers never reach the browser; the real leak is a
-   `NEXT_PUBLIC_` prefix. Replaced with three accurate rules: no secret ever
-   gets a `NEXT_PUBLIC_` prefix, the key is read only in server-only paths, and
-   no client component imports the admin client.
-4. **`resolveMethodHint` accepted `"@"` as an email** and would have spent an
-   admin-key lookup on it.
-5. **`scripts/shot.mjs` failed every signed-out page.** The browser logs a
-   console error for any 401, and `account.get()` returning 401 when nobody is
-   signed in is the app working. Expected auth statuses no longer fail a shot.
+### Bugs found
 
-### Blocked on you
+1. **A default parameter swallowed an explicit `undefined`**, so the
+   "no email known" test was silently exercising the with-email path and
+   passing. Caught because the assertion contradicted itself.
+2. **Reading `sessionStorage` in an effect** tripped
+   `react-hooks/set-state-in-effect` — a cascading render, and a frame of wrong
+   copy before it corrected. Replaced with `useSyncExternalStore`, whose server
+   snapshot is null, so server and first client render agree.
 
-- **Register a Web platform** (`localhost`, and the eventual host) in the
-  Appwrite console. Needed for password reset redirects at FTP1-3.5. My API key
-  lacks `platforms.read`/`projects.read`, so this is a console action.
-- **SMTP**, also for FTP1-3.5.
-- **Apple**, if you want it: Developer account + Services ID, then flip the env
-  var. No rework either way.
+### 🔴 SMTP is not actually live
 
-### Screenshot
+I checked rather than assumed, and **`createRecovery` still returns
+`503 general_smtp_disabled`.** The mail queue worker is up (`/health/queue/mails`
+responds), so the container is running — Appwrite simply has no SMTP host.
 
-`.shots/sign-in.png` — 390pt. Logo, Google button with the real four-colour
-mark, divider, labelled fields with the eye toggle, Forgot, Sign in, Create
-account. Matches the `01a` frame.
+My API key lacks `projects.read`/`platforms.read`, so I cannot read the
+instance config to say which of these it is. In likelihood order:
+
+1. **Configured at project level only** (Console → Settings → SMTP). This is
+   the `[Unverified]` case flagged in `docs/appwrite-smtp.md` — the docs
+   describe an empty instance-level `_APP_SMTP_HOST` as disabling mail *"from
+   the server"*, which reads instance-wide. **Set the `_APP_*` env vars too.**
+2. **Containers restarted rather than recreated.** `docker compose restart`
+   does not re-read `.env`. It needs `docker compose up -d`.
+3. Variables set but not applied — check with
+   `docker compose exec appwrite vars | grep _APP_SMTP`.
+
+**Nothing in this PR is blocked by it.** Every screen and state is built and
+tested, and the one unverifiable step is that a real email arrives. When SMTP
+is live, run `npm run e2e:auth` and then do one manual reset against a real
+inbox — and remember the unverified-domain trap from §1 of the SMTP doc: with
+`onboarding@resend.dev`, mail reaches your own address and nobody else's.
+
+### Screenshots
+
+`.shots/forgot.png` and `.shots/reset.png`, both 390pt, matching frames `01c`
+and `01e`.
