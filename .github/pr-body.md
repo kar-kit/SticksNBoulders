@@ -1,114 +1,92 @@
-## FTP1-16 — Redeem code and link coach to athlete (Order 16)
+## FTP1-16.5 — Unlink a coach (Order 16.5)
 
-An athlete types the code their coach gave them, is told in one sentence what
-that shares, and confirms. The coach can then see every set they have ever
-logged — including the ones from before the link existed.
+The ticket added after FTP1-16 shipped a trap: an athlete who typed the wrong
+code was linked forever, and the UI said so outright because there was nothing
+else honest to say. This is the way out.
 
-That last part is the whole point of the circle design from phase 0. Appwrite
-freezes a row's permissions at write time, so stamping coach ids would mean a
-coach linked in November cannot see October, and fixing it later needs a
-backfill over every row the athlete ever wrote. `e2e:link` asserts it head-on: a
-set is written *before* any coach exists, and the coach reads it after linking.
+An athlete taps Unlink, is told in one sentence what stops, and confirms. The
+coach immediately loses the ability to read anything — not at their next login,
+not after a backfill.
 
-### Consent is two steps, and the first writes nothing
+### The ordering is the whole ticket
 
-`POST /api/link/resolve` names the coach. The screen shows **"Link with Ruairi
-Deane?"** and the sentence. Only when they tap Link does `POST /api/link` write.
+Linking writes the **record** first and grants **access** second. Unlinking
+removes access first and writes the record second.
 
-The blueprint is explicit that the consequence belongs at this moment rather
-than in a policy document, and under UK GDPR this is the moment that has to be
-defensible. A code that linked on submit would be one round trip faster and
-would not be consent. The e2e checks that no link row exists at the point of
-asking.
+Both orders serve one invariant: **there is never access without a record of
+why.** A failure in either direction leaves a link recorded while the coach may
+not be able to see anything — visible, recoverable, fixed by trying again. The
+reverse is the sev-1, and neither ordering can produce it.
 
-### The decision is pure
+### A silent return that needed catching
 
-`lib/coach/link.ts` answers one question — given the athlete, the coach a code
-resolved to, and the existing links, what should happen — and returns `self`,
-`already-linked`, `other-coach`, `reactivate` or `create`. `link-admin.ts`
-carries it out and nothing else. Sixteen tests cover the branches, including
-the ones that are hard to reach against a live instance.
+`removeCoachFromCircle` returns silently when it finds no membership. That is
+correct for idempotency, but it means "removed it" and "it was never there" are
+indistinguishable from the caller — and on this path, being wrong leaves a coach
+reading a training history the record says they cannot see.
 
-### The row before the membership, always
+So `revokeCoachAccess` **re-reads the circle** after removing, and refuses to
+write the row unless the coach is genuinely gone. One extra request, guarding
+the only direction that matters. When it fails the answer is `still-visible`,
+nothing is written, and the screen says *"Nothing changed — try again."*
 
-Two writes make a link real: the row in `coach_athlete_links` (the **record**)
-and the circle membership (the **access**). Row first, every time.
+### Revoked, never deleted
 
-A failure between them leaves a coach recorded but unable to see anything —
-visible, recoverable, repaired by redeeming the same code again. The reverse,
-access with no record of why, is the one outcome that must never happen, and
-row-first cannot produce it. When the membership fails the answer is
-`linked-not-visible` and the screen says so, because an athlete told "linked"
-while their coach sees an empty roster is how a silent failure survives to
-December.
+The row is the record of who could once see what. It also has to survive,
+because the unique index on `(coach_id, athlete_id)` means re-linking later
+reuses it — `reactivateCoachLink` from FTP1-16 already handled that, and this is
+the first path that exercises it for real.
 
-### A real bug the unit tests all passed
+### The assertion that earns the ticket
 
-`e2e:link` caught it. The athlete's circle team is created **lazily**, by the
-first write the offline queue flushes. Onboarding asks for the coach code
-*before* any training exists — so on the most common path there was no circle at
-all, and adding a coach to a team that does not exist throws `team_not_found`.
-The link row would land, the access would not, and the athlete would see
-"linked".
+`e2e:link` now drives the full round trip against the live instance:
 
-`redeemInviteCode` now calls `ensureCircle` first. Worth noting that this is the
-second time this ticket a browser-driven test found something sixteen unit tests
-agreed was fine.
+```
+seed a set  →  link  →  coach reads it  →  unlink  →  coach CANNOT read it
+                                              ↓
+                             athlete still can · row revoked, not deleted
+                                              ↓
+                    redeem the same code  →  same row reused  →  access back
+```
 
-### Decisions worth your eye
+A test that only checked the row flipped to `revoked` would pass with the
+membership still in place. That is precisely the bug worth catching, so the
+negative read is asserted directly.
 
-**A second coach is refused, not added.** The schema permits many — the unique
-index is on the *pair* — but quietly granting another person access to a
-training history is exactly what this module exists to prevent, and the
-blueprint's COACH section shows one name.
+### Copy
 
-**There is no unlink yet**, so someone told "already linked to Ruairi" would go
-hunting for a button that does not exist. The message says so outright. That is
-the obvious next ticket and I did not invent it here.
+The confirm mirrors the linking one — named, specific — and adds a line the
+linking sentence does not need:
 
-**The answer carries a name and never an email.** A coach with no name set
-degrades to "Your coach". Showing an athlete their coach's address on the one
-screen whose job is to state exactly what linking shares is a leak the sentence
-never promised.
+> Ruairi Deane will no longer see your sessions, your videos or your bodyweight,
+> and won't be able to set your training program. **Your own training stays
+> exactly as it is.**
 
-### Not an Appwrite Function, and that was never a risk
+The fear at that moment is losing your own log, not the coach's view of it.
 
-FTP1-12 flagged this ticket as the one with no clean fallback if the broken
-events pipeline stayed broken. **That was wrong, and I'd rather correct it than
-leave you carrying a risk that doesn't exist.** Redemption is request/response —
-an athlete types a code and taps a button — so it never needed database events.
-The feature list's "runs in a Function" means *never client side*, which this
-route satisfies at the same privilege and the same boundary as `/api/circle`
-and `/api/rollup`.
+### Two assumptions, stated rather than decided
 
-Separately: the 1.9.6 upgrade restored `worker-executions`, so the events
-pipeline may well be fixed now. Still unproven — the probe function needs
-redeploying — but it no longer blocks anything here.
+- **Athlete-initiated only.** Whether a coach can drop an athlete from their own
+  roster is `[SME to confirm]` on the ticket. Not guessed here.
+- **A hard cut.** Access ends the instant the membership goes. Whether a coach
+  should keep seeing anything for a window — a session they are mid-review on —
+  is a product decision Ruairi hasn't made. Worth putting to him.
+
+One deliberate asymmetry: **revoking is not rate limited**, unlike redeeming.
+Guessing codes is the attack redemption defends against; revoking only ever
+touches the caller's own link, and a limit would mean an athlete who taps twice
+cannot withdraw consent. Under UK GDPR that has to be as easy as giving it.
 
 ### Verification
 
 ```
-npm test              901 ✓ (62 files)    npm run appwrite:probe   26/26
-npm run e2e:link       21/21              npm run e2e:invite       17/17
+npm test              923 ✓ (62 files)    npm run appwrite:probe   26/26
+npm run e2e:link       34/34              npm run e2e:invite       17/17
 npm run e2e:session    44/44              npm run e2e:history      19/19
 npm run e2e:lift       17/17              npm run e2e:offline      33/33
 npm run e2e:rollups    17/17              npm run e2e:e1rm         11/11
 npm run e2e:auth       24/24              npm run e2e:backup       17/17
 npm run e2e:shell      15/15
 ```
-
-`e2e:link` drives three accounts through a real instance and checks what the
-link actually granted, not what it claimed: the coach reads a pre-link set, a
-stranger still cannot, redeeming twice makes one row, an unauthenticated caller
-gets 401 from both endpoints, a coach cannot redeem their own code, and a second
-coach is refused with nothing written.
-
-### Also here
-
-`scripts/prune-e2e-fixtures.mts` is cherry-picked in — it was pushed to FTP1-15
-after you merged it, so it never reached `dev`. It clears stranded
-`@example.com` fixture accounts, which is what was breaking `appwrite:backup`.
-It earned itself again during this ticket: a crashed `e2e:link` run stranded
-seven accounts and broke the dump, and one command fixed it.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
