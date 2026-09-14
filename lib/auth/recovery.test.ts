@@ -1,3 +1,4 @@
+import * as recoveryModule from "./recovery";
 import {
   forgetResetEmail,
   formatCooldown,
@@ -195,5 +196,17 @@ describe("remembering the address across screens", () => {
     expect(() => rememberResetEmail("joey@example.com", broken)).not.toThrow();
     expect(recallResetEmail(broken)).toBeNull();
     expect(() => forgetResetEmail(broken)).not.toThrow();
+  });
+});
+
+describe("the confirmation is independent of the outcome", () => {
+  // Verified against the live instance: Appwrite answers 200 for a known
+  // address and 404 user_not_found for an unknown one. Because those are
+  // distinguishable, nothing downstream of the request may branch on it.
+  it("has no helper that maps a recovery request outcome to a message", () => {
+    // If someone adds one, this test is where they should have to argue for it.
+    const moduleExports = Object.keys(recoveryModule);
+    expect(moduleExports).not.toContain("recoveryFailureMessage");
+    expect(moduleExports).not.toContain("wasAddressKnown");
   });
 });

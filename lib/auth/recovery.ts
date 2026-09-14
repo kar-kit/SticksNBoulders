@@ -4,10 +4,15 @@ import type { AuthFailure } from "./errors";
  * Password recovery, as state rather than as screens.
  *
  * The rule that shapes all of it: the "we've sent it" screen must say the same
- * thing whether or not the address has an account. Appwrite's createRecovery
- * may well answer differently for an unknown email -- [Unverified, blocked on
- * SMTP being enabled] -- so the UI deliberately does not look at the outcome.
- * It cannot leak what it never reads.
+ * thing whether or not the address has an account.
+ *
+ * [Fact, verified against the live instance once SMTP was enabled] Appwrite's
+ * createRecovery returns 200 for a known address and **404 user_not_found for
+ * an unknown one**. The two are trivially distinguishable, so a screen that
+ * branched on the outcome would hand out an account-existence oracle -- the
+ * exact thing the sign-in screen goes to some trouble to avoid.
+ *
+ * So the UI never reads the outcome. It cannot leak what it does not look at.
  */
 
 /** Appwrite's recovery link is valid for one hour and works once. */

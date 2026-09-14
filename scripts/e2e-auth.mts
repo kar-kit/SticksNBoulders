@@ -131,6 +131,19 @@ check(
   await page.getByRole("button", { name: "Resend link" }).isDisabled().catch(() => false),
 );
 
+// Appwrite genuinely 404s an unknown address -- confirmed against the live
+// instance -- so this is a real test that the screen does not read the result,
+// not a restatement of a mock.
+await page.goto(`${BASE}/sign-in/forgot`);
+await page.getByLabel("Email").fill(`definitely-nobody-${stamp}@example.com`);
+await page.getByRole("button", { name: "Send reset link" }).click();
+const unknownSame = await page
+  .getByText(/has an account, a reset link is on its way/)
+  .waitFor({ timeout: 15000 })
+  .then(() => true)
+  .catch(() => false);
+check("an address with NO account gets the identical confirmation", unknownSame);
+
 console.log("\nReset link states");
 await page.goto(`${BASE}/sign-in/reset`);
 check(
