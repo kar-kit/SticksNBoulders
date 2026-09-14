@@ -12,10 +12,13 @@
     "test:watch": "vitest",
     "appwrite:setup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-setup.mts",
     "appwrite:reset": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-reset.mts",
+    "appwrite:backup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-backup.mts",
+    "appwrite:restore": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-restore.mts",
     "appwrite:probe": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-permission-probe.mts",
     "e2e:auth": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-auth.mts",
     "smtp:check": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/smtp-check.mts",
     "perf:check": "tsx scripts/perf-check.mts",
+    "e2e:backup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-backup.mts",
     "e2e:shell": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-shell.mts"
   },
   "dependencies": {

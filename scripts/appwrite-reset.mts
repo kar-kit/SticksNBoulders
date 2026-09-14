@@ -8,18 +8,22 @@
  * Auth users are never touched. They are identities, not product data, and
  * deleting them would take Joey's own login with them.
  *
- * Every table is dumped to .appwrite-backup/ before anything is deleted. The
- * data being dropped here belongs to a product that no longer exists, but
+ * Every table is dumped to .appwrite-backup/ before anything is deleted, by
+ * the same code as npm run appwrite:backup -- so the dump is paginated and
+ * carries users and circles, and there is one dump format rather than two.
+ * The data being dropped here belongs to a product that no longer exists, but
  * "irreversible" and "worthless" are different claims and only one of them is
  * ours to make.
  */
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Functions, Storage, TablesDB } from "node-appwrite";
+import { Functions, Storage, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
 import { schema } from "../appwrite/schema";
+import { dumpInstance } from "../appwrite/backup/dump";
+import { backupDirName, writeBackup } from "../appwrite/backup/files";
+import { appwriteSource } from "./backup-driver";
 
 dedupeSdkWarnings();
 
@@ -66,38 +70,34 @@ if (!confirmed) {
   process.exit(0);
 }
 
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const backupDir = join(".appwrite-backup", stamp);
-await mkdir(backupDir, { recursive: true });
-console.log(`\n  dumping to ${backupDir}/`);
-for (const table of tables) {
-  try {
-    const rows = await db.listRows({ databaseId: schema.id, tableId: table.$id });
-    await writeFile(
-      join(backupDir, `${table.$id}.json`),
-      JSON.stringify({ table: table.$id, total: rows.total, rows: rows.rows }, null, 2),
-    );
-  } catch (error) {
-    // A table we cannot read is a table we must not silently destroy.
-    throw new Error(`Refusing to delete ${table.$id}: could not dump it (${String(error)})`);
-  }
-}
-await writeFile(
-  join(backupDir, "_manifest.json"),
-  JSON.stringify(
+// Dumps whatever is actually on the instance, not what the schema expects:
+// a reset exists precisely for the case where the two have diverged.
+let backupDir: string;
+try {
+  const backup = await dumpInstance(
+    appwriteSource(db, new Users(client), new Teams(client), {
+      databaseId: schema.id,
+      tableIds: tables.map((t) => t.$id),
+    }),
     {
       endpoint: config.endpoint,
-      project: config.projectId,
-      database: schema.id,
-      takenAt: new Date().toISOString(),
-      tables: tables.map((t) => t.$id),
-      buckets: buckets.map((b) => b.$id),
-      functions: fns.map((f) => f.$id),
+      projectId: config.projectId,
+      databaseId: schema.id,
+      schemaVersion: schema.version,
     },
-    null,
-    2,
-  ),
-);
+  );
+  backupDir = join(".appwrite-backup", backupDirName(backup.manifest.takenAt));
+  console.log(`\n  dumping to ${backupDir}/`);
+  await writeBackup(backupDir, backup);
+  for (const table of backup.manifest.tables) {
+    console.log(`    ${table.id.padEnd(24)} ${table.rows} row(s)`);
+  }
+} catch (error) {
+  // A table we cannot dump in full is a table we must not destroy. This is the
+  // only thing standing between --yes and unrecoverable loss, so it fails the
+  // whole reset rather than skipping the table.
+  throw new Error(`Refusing to delete anything: the dump failed (${String(error)})`);
+}
 
 console.log("");
 for (const table of tables) {
