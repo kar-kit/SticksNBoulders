@@ -69,6 +69,25 @@ describe("typing an exercise", () => {
   });
 });
 
+describe("a field whose job is adding another", () => {
+  it("empties itself after a choice when asked to", async () => {
+    // Otherwise the athlete has to clear the last lift's name by hand before
+    // typing the next one, one-handed, mid-session.
+    const { user } = setup({ clearOnSelect: true });
+    const input = screen.getByRole("combobox");
+    await user.type(input, "bench");
+    await user.click(screen.getByRole("option", { name: "Bench Press" }));
+    expect(input).toHaveValue("");
+  });
+
+  it("keeps the name by default, for a picker that holds a value", async () => {
+    const { user, input } = setup();
+    await user.type(input, "bench");
+    await user.click(screen.getByRole("option", { name: "Bench Press" }));
+    expect(input).toHaveValue("Bench Press");
+  });
+});
+
 describe("creating one that does not exist", () => {
   it("offers to add a name the library does not hold", async () => {
     const { user, input } = setup();

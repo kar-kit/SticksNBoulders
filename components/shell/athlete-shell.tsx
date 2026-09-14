@@ -26,7 +26,16 @@ export function AthleteShell({ children }: { children: React.ReactNode }) {
       <div className="pt-safe flex-none" />
       {/* 16px side gutters, per 00 Conventions. min-h-0 lets the scroll
           container actually scroll instead of growing the page. */}
-      <main className="min-h-0 flex-1 overflow-y-auto px-4" aria-busy={state.status === "loading"}>
+      {/*
+        A flex column, so a screen can put its primary action in the thumb zone
+        with mt-auto. min-h-full on the child does not work here: main's height
+        comes from flex rather than being a definite value, so a percentage
+        min-height resolves to nothing and the button rides up under the text.
+      */}
+      <main
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4"
+        aria-busy={state.status === "loading"}
+      >
         {state.status === "signed-in" ? children : null}
       </main>
       <TabBar />

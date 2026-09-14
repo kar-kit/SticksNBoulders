@@ -43,6 +43,14 @@ export interface ExerciseTypeaheadProps {
   autoFocus?: boolean;
   /** Shown under the field while the library is still loading or failed. */
   hint?: string | null;
+  /**
+   * Empties the field after a choice instead of leaving the name in it.
+   *
+   * Right for a field whose job is "add another" -- the logger, where the next
+   * thing an athlete does is add a second exercise. Wrong for a picker that
+   * holds a value, which is what the Program Editor needs.
+   */
+  clearOnSelect?: boolean;
   limit?: number;
 }
 
@@ -60,6 +68,7 @@ export function ExerciseTypeahead({
   autoFocus = false,
   hint = null,
   limit = MAX_RESULTS,
+  clearOnSelect = false,
 }: ExerciseTypeaheadProps) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -102,10 +111,10 @@ export function ExerciseTypeahead({
   const choose = (option: Option | undefined) => {
     if (!option) return;
     if (option.kind === "exercise") {
-      setQuery(option.exercise.name);
+      setQuery(clearOnSelect ? "" : option.exercise.name);
       onSelect(option.exercise);
     } else {
-      setQuery(option.name);
+      setQuery(clearOnSelect ? "" : option.name);
       onCreate?.(option.name);
     }
     setOpen(false);
