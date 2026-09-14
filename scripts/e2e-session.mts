@@ -35,6 +35,16 @@ const check = (label: string, ok: boolean) => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
 };
 
+const setsOf = async (athleteId: string) =>
+  (
+    await adminDb.listRows({
+      databaseId: db,
+      tableId: "sets",
+      queries: [Query.equal("athlete_id", athleteId), Query.limit(50)],
+      ttl: 0,
+    })
+  ).rows;
+
 const sessionsOf = async (athleteId: string) =>
   (
     await adminDb.listRows({
@@ -85,13 +95,57 @@ check("and it is live, with no finished_at", afterStart[0]?.finished_at == null)
 console.log("\nAdding an exercise by typing");
 await page.getByRole("combobox").fill("squat");
 await page.getByRole("option", { name: "Squat", exact: true }).first().click();
-check("the exercise appears in the session", await page.getByText("No sets yet").isVisible());
+// Adding an exercise opens the row to enter: the next thing an athlete does
+// is log a set into it, so it is ready rather than waiting for another tap.
+await page.getByRole("group", { name: "Set 1" }).waitFor({ timeout: 10000 }).catch(() => {});
+check("the exercise appears with a row ready to enter", await page.getByRole("group", { name: "Set 1" }).isVisible());
+
+console.log("\nLogging sets");
+/** Taps a number on the pad. No keyboard ever appears on this screen. */
+const pad = async (digits: string) => {
+  for (const key of digits) {
+    await page.getByRole("button", { name: key === "." ? "Decimal point" : key, exact: true }).click();
+  }
+};
+const enter = async (kg: string, reps: string) => {
+  await page.getByRole("button", { name: /weight in kilograms/ }).click();
+  await pad(kg);
+  await page.getByRole("button", { name: "Reps", exact: true }).click();
+  await pad(reps);
+};
+
+// A warm-up first, so the totals have something to exclude.
+await enter("60", "5");
+await page.getByRole("switch", { name: "Warm-up" }).click();
+await page.getByRole("button", { name: "Log Warm-up set" }).click();
+await page.getByRole("group", { name: "Warm-up set" }).waitFor({ timeout: 10000 }).catch(() => {});
+check("a warm-up logs and shows as W", await page.getByRole("group", { name: "Warm-up set" }).isVisible());
+
+await enter("140", "5");
+await page.getByRole("button", { name: "Set 1 RPE" }).click();
+await page.getByRole("button", { name: "8", exact: true }).click();
+await page.getByRole("button", { name: "Log Set 1" }).click();
+await page.getByRole("group", { name: "Set 2" }).waitFor({ timeout: 10000 }).catch(() => {});
+
+// The second working set needs no typing at all: it repeats the first.
+const prefilled = await page.getByRole("group", { name: "Set 2" }).innerText();
+check("the next row prefills from the set just logged", prefilled.includes("140"));
+await page.getByRole("button", { name: "Log Set 2" }).click();
+await page.waitForTimeout(1500);
+
+const written = await setsOf(athlete.$id);
+check("three sets reached Appwrite", written.length === 3);
+check("one of them is flagged as a warm-up", written.filter((r) => r.is_warmup === true).length === 1);
+check("the RPE was stored", written.some((r) => r.rpe === 8));
 
 console.log("\nAfter throwing the page away");
 await page.reload();
 await page.getByRole("button", { name: "Finish session" }).waitFor({ timeout: 15000 }).catch(() => {});
 check("the session is still running", await page.getByRole("button", { name: "Finish session" }).isVisible());
 check("no second session was created", (await sessionsOf(athlete.$id)).length === 1);
+check("the warm-up came back", await page.getByRole("group", { name: "Warm-up set" }).isVisible());
+check("and both working sets, numbered", await page.getByRole("group", { name: "Set 2" }).isVisible());
+check("no fourth set was written by the reload", (await setsOf(athlete.$id)).length === 3);
 
 await page.goto(`${BASE}/today`);
 await page.getByRole("button", { name: "Resume session" }).waitFor({ timeout: 15000 }).catch(() => {});
@@ -109,6 +163,9 @@ check("shows a summary", await page.getByText("Session done").isVisible());
 const afterFinish = await sessionsOf(athlete.$id);
 check("finished_at is written", afterFinish[0]?.finished_at != null);
 check("still exactly one session", afterFinish.length === 1);
+// The assertion that catches a summary disagreeing with what was logged.
+check("set_count counts working sets only", afterFinish[0]?.set_count === 2);
+check("tonnage excludes the warm-up", afterFinish[0]?.tonnage_kg === 1400);
 
 await page.getByRole("button", { name: "Back to Today" }).click();
 await page.waitForURL("**/today", { timeout: 20000 }).catch(() => {});
@@ -118,6 +175,9 @@ check("and names the session just finished", await page.getByText(/Last session:
 
 // --- teardown ---------------------------------------------------------
 await browser.close();
+for (const row of await setsOf(athlete.$id)) {
+  await adminDb.deleteRow({ databaseId: db, tableId: "sets", rowId: row.$id });
+}
 for (const row of await sessionsOf(athlete.$id)) {
   await adminDb.deleteRow({ databaseId: db, tableId: "sessions", rowId: row.$id });
 }

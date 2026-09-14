@@ -27,6 +27,7 @@ const set = (overrides: Partial<SessionSet> = {}): SessionSet => ({
   exerciseName: "Squat",
   loadKg: 142.5,
   reps: 5,
+  rpe: 8,
   isWarmup: false,
   loggedAt: new Date("2026-09-14T09:10:00Z"),
   ...overrides,

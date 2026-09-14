@@ -22,6 +22,8 @@ export interface SessionSet {
   exerciseName: string;
   loadKg: number;
   reps: number;
+  /** Null is a real answer: the athlete tapped "Not sure". */
+  rpe: number | null;
   isWarmup: boolean;
   loggedAt: Date;
 }

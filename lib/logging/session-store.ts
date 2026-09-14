@@ -5,8 +5,13 @@ import { createSession, finishSession, type Actor } from "@/appwrite/documents";
 import { ensureMyCircle } from "@/lib/auth/circle";
 import type { SessionRecord, SessionSet } from "./session";
 
-/** A set as stored. The exercise name is resolved by the caller. */
-export type UnnamedSet = Omit<SessionSet, "exerciseName">;
+/**
+ * A set as stored. The exercise name is resolved by the caller.
+ *
+ * clientSetId travels with it so Undo can find the row again after a reload,
+ * without the screen having to hold Appwrite ids it otherwise never needs.
+ */
+export type UnnamedSet = Omit<SessionSet, "exerciseName"> & { clientSetId: string };
 
 /**
  * Reading and writing training sessions from the browser.
@@ -73,6 +78,8 @@ export async function fetchRecentSessions(athleteId: string): Promise<SessionRec
 interface SetRow {
   $id: string;
   exercise_id?: unknown;
+  client_set_id?: unknown;
+  rpe?: unknown;
   load_kg?: unknown;
   reps?: unknown;
   is_warmup?: unknown;
@@ -102,8 +109,10 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
       if (!loggedAt || !exerciseId) return null;
       return {
         exerciseId,
+        clientSetId: typeof row.client_set_id === "string" ? row.client_set_id : "",
         loadKg: asNumber(row.load_kg),
         reps: asNumber(row.reps),
+        rpe: typeof row.rpe === "number" ? row.rpe : null,
         isWarmup: row.is_warmup === true,
         loggedAt,
       } satisfies UnnamedSet;
