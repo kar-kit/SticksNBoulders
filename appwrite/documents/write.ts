@@ -301,23 +301,35 @@ export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetI
 
 export interface UpdateSetInput {
   rowId: string;
-  loadKg?: number;
-  reps?: number;
-  rpe?: number | null;
-  isWarmup?: boolean;
+  /**
+   * All four together, always, even the ones the athlete did not touch.
+   *
+   * e1RM is a function of load, reps, RPE and the warm-up flag, so a partial
+   * update cannot recompute it -- and an edit that changes reps while leaving
+   * last week's estimate sitting on the row is exactly the drift that computing
+   * it inside createSet exists to prevent. Requiring the full set makes the
+   * stale case unrepresentable rather than merely discouraged.
+   */
+  loadKg: number;
+  reps: number;
+  rpe: number | null;
+  isWarmup: boolean;
   videoFileId?: string;
   notes?: string;
-  e1rmKg?: number | null;
 }
 
 /**
- * Correcting a set from History. The rollup is recomputed by the Function.
+ * Correcting a set from History: a mistyped weight, a set that was really a
+ * warm-up, an RPE remembered differently afterwards.
  *
- * [SME to confirm] nothing calls this yet. When History editing lands at Order
- * 13 it must recompute e1rm_kg from the corrected values -- a partial update
- * that changes reps or RPE and leaves the old estimate in place is exactly the
- * drift createSet computing it is meant to prevent. Until then `e1rm:backfill`
- * is the safety net.
+ * Logged work is immutable to the coach's edits, not to the athlete's own
+ * corrections -- the constraint is that a coach editing a block never rewrites
+ * what an athlete already did, and this is the athlete fixing their own log.
+ *
+ * The caller is responsible for refreshing the affected rollup afterwards. It
+ * is not done here because this helper has no idea which week the set is in
+ * without reading the row back, and the queue can order the refresh behind the
+ * write far more cheaply.
  */
 export async function updateSet(deps: WriteDeps, actor: Actor, input: UpdateSetInput) {
   return deps.writer.updateRow({
@@ -325,13 +337,22 @@ export async function updateSet(deps: WriteDeps, actor: Actor, input: UpdateSetI
     tableId: "sets",
     rowId: input.rowId,
     data: {
-      ...(input.loadKg !== undefined && { load_kg: input.loadKg }),
-      ...(input.reps !== undefined && { reps: input.reps }),
-      ...(input.rpe !== undefined && { rpe: input.rpe ?? null }),
-      ...(input.isWarmup !== undefined && { is_warmup: input.isWarmup }),
+      load_kg: input.loadKg,
+      reps: input.reps,
+      rpe: input.rpe ?? null,
+      is_warmup: input.isWarmup,
+      // Recomputed from the corrected values by the same function createSet
+      // uses. Null rather than undefined: an edit that removes the grounds for
+      // an estimate -- an RPE cleared, a set flagged as a warm-up -- has to
+      // clear the stored one, and undefined would leave it in place.
+      e1rm_kg: estimateOneRepMax({
+        loadKg: input.loadKg,
+        reps: input.reps,
+        rpe: input.rpe,
+        isWarmup: input.isWarmup,
+      }),
       ...(input.videoFileId !== undefined && { video_file_id: input.videoFileId }),
       ...(input.notes !== undefined && { notes: input.notes }),
-      ...(input.e1rmKg !== undefined && { e1rm_kg: input.e1rmKg }),
     },
     permissions: setPermissions({ athleteId: actor.userId }),
   });

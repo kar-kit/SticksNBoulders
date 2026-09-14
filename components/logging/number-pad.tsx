@@ -64,7 +64,10 @@ export function NumberPad({
             type="button"
             disabled={disabled(key)}
             onClick={() => onChange(press(state, key))}
-            aria-label={key === "back" ? "Delete" : key === "." ? "Decimal point" : key}
+            // "Backspace", not "Delete": History puts this pad on screen
+            // beside a "Delete set" button, and a screen reader announcing two
+            // adjacent controls as Delete is a genuinely destructive confusion.
+            aria-label={key === "back" ? "Backspace" : key === "." ? "Decimal point" : key}
             className={cn(
               "flex h-14 items-center justify-center rounded-control text-value-sm font-semibold",
               "bg-surface-2 text-foreground active:bg-accent-pressed active:text-on-accent-pressed",

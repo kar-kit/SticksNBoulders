@@ -83,7 +83,7 @@ describe("every write stamps permissions", () => {
 
   it("re-stamps on update, so a row does not keep a stale policy", async () => {
     const h = harness();
-    await updateSet(h.deps, h.actor, { rowId: "row1", loadKg: 145 });
+    await updateSet(h.deps, h.actor, { rowId: "row1", loadKg: 145, reps: 5, rpe: 8, isWarmup: false });
     expect(h.last().permissions).toContain(`read("team:${circleTeamId(ATHLETE)}")`);
   });
 
@@ -195,14 +195,27 @@ describe("set data", () => {
 
   it("clears an RPE back to null on update when asked", async () => {
     const h = harness();
-    await updateSet(h.deps, h.actor, { rowId: "r1", rpe: null });
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: null, isWarmup: false });
     expect(h.last().data.rpe).toBeNull();
   });
 
-  it("only sends the fields an update actually changed", async () => {
+  it("recomputes e1RM from the corrected values", async () => {
+    // The gap Order 11 left open. An edit that changes reps and leaves the old
+    // estimate on the row is the drift computing it in the helper prevents.
     const h = harness();
-    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 145 });
-    expect(Object.keys(h.last().data)).toEqual(["load_kg"]);
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: false });
+    expect(h.last().data.e1rm_kg).toBe(168);
+  });
+
+  it("clears the estimate when an edit removes the grounds for one", async () => {
+    // Null, not undefined: undefined leaves the stale number in place, which is
+    // the whole failure being fixed.
+    const h = harness();
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: true });
+    expect(h.last().data.e1rm_kg).toBeNull();
+
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: null, isWarmup: false });
+    expect(h.last().data.e1rm_kg).toBeNull();
   });
 });
 

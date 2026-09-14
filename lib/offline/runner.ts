@@ -7,6 +7,7 @@ import {
   createSet,
   deleteSet,
   finishSession,
+  updateSet,
   type Actor,
 } from "@/appwrite/documents";
 import { ensureMyCircle } from "@/lib/auth/circle";
@@ -77,6 +78,17 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
     case "exercise.create": {
       const exerciseId = asString(p.exerciseId);
       await createExercise(browserWriteDeps(() => exerciseId), actor, { name: asString(p.name) });
+      return;
+    }
+    case "set.update": {
+      const setId = asString(p.setId);
+      await updateSet(browserWriteDeps(() => setId), actor, {
+        rowId: setId,
+        loadKg: asNumber(p.loadKg),
+        reps: asNumber(p.reps),
+        rpe: typeof p.rpe === "number" ? p.rpe : null,
+        isWarmup: p.isWarmup === true,
+      });
       return;
     }
     case "rollup.refresh": {

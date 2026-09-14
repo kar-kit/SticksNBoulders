@@ -60,6 +60,37 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
   };
 }
 
+/** A correction from History. All four values, because e1RM depends on all four. */
+export interface SetEdit {
+  loadKg: number;
+  reps: number;
+  rpe: RpeValue | null;
+  isWarmup: boolean;
+}
+
+/**
+ * Corrects a set that was logged wrong.
+ *
+ * Queued like every other write, so an edit made on the gym floor with no
+ * signal behaves the same as one made on the sofa. The rollup refresh goes
+ * behind it: changing a weight changes the week's tonnage, and flagging a set
+ * as a warm-up after the fact removes it from the week entirely.
+ */
+export async function editSet(
+  clientSetId: string,
+  edit: SetEdit,
+  set: { exerciseId: string; loggedAt: Date },
+): Promise<void> {
+  await enqueue("set.update", {
+    setId: clientSetId,
+    loadKg: edit.loadKg,
+    reps: edit.reps,
+    rpe: edit.rpe,
+    isWarmup: edit.isWarmup,
+  });
+  await queueRollupRefresh(set.exerciseId, set.loggedAt);
+}
+
 /**
  * Removes a set. Used by Undo, for the tap that logged the wrong thing.
  *

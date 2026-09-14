@@ -19,7 +19,6 @@ import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
 import { circleTeamId } from "../appwrite/documents/circle";
 import { rollupPermissions, setPermissions } from "../appwrite/documents/policy";
-import { weekStart } from "../lib/strength/rollup";
 
 dedupeSdkWarnings();
 
