@@ -29,6 +29,7 @@ export type OpKind =
   | "session.create"
   | "session.finish"
   | "set.create"
+  | "set.update"
   | "set.delete"
   | "exercise.create"
   | "rollup.refresh";
