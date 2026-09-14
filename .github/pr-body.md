@@ -133,6 +133,36 @@ rewriting it.
   deliberately not a bodybuilding database. **[SME to confirm]** Ruairi should
   cut and add before the beta.
 
+### Decided while reviewing this: a variation is its own exercise
+
+Joey, 14 Sep. `3-0-0 Tempo Bench Press` is its own library row, **not**
+`Bench Press` carrying a tempo field, and no modifier system gets built for
+tempo, pauses or grip.
+
+A tempo bench max is not a bench max, so folding variations into a base lift
+would make one reference max stand in for lifts that move different weights.
+`Bench Press` is itself ambiguous — competition paused to one coach,
+touch-and-go to another — and a program can legitimately contain both plus a
+tempo variant. And coaches use whatever seconds they like, so any fixed set of
+modifier fields would be wrong for somebody inside a week.
+
+The cost is accepted: the same lift can exist under more than one spelling. The
+typeahead is what keeps that rare — differently punctuated notation converges
+before anyone is offered a second row:
+
+```
+  "tempo"                  -> every tempo variant
+  "3-0-0", "3 0 0 tempo"   -> 3-0-0 Tempo Bench Press
+  "300 tempo bench press"  -> 3-0-0 Tempo Bench Press   (loose match)
+  "320", "023"             -> 3-2-0 Tempo Bench Press, 0-2-3 Tempo Squat
+  "3-1-0 tempo bench press"-> nothing, offers to add it
+```
+
+Recorded in `lib/exercises/seed.ts` and on Notion Orders 17 and 18, since that
+is where someone would otherwise build the modifier system. It settles shape
+for Order 12 (rollups per exercise), Order 17 (a max per variation) and Order
+18 (no tempo fields on a prescription).
+
 ### Handoff to Order 7
 
 `resolveOrCreateExercise` returns `{ exercise, created }` and the provider has
