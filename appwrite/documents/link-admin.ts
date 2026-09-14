@@ -1,7 +1,12 @@
 import { Query, TablesDB, Teams, type Client } from "node-appwrite";
-import { decideRedemption, type ExistingLink, type Redemption } from "@/lib/coach/link";
-import { addCoachToCircle, ensureCircle, listCircleCoaches } from "./circle-admin";
-import { createCoachLink, reactivateCoachLink } from "./write";
+import { decideRedemption, decideUnlink, type ExistingLink, type Redemption } from "@/lib/coach/link";
+import {
+  addCoachToCircle,
+  ensureCircle,
+  listCircleCoaches,
+  removeCoachFromCircle,
+} from "./circle-admin";
+import { createCoachLink, reactivateCoachLink, revokeCoachLink } from "./write";
 import type { RowWriter } from "./row-writer";
 
 /**
@@ -184,6 +189,64 @@ export async function redeemInviteCode(
     coachName: resolved.coachName,
     reactivated: decision.kind === "reactivate",
   };
+}
+
+export type UnlinkResult =
+  | { status: "unlinked"; coachId: string }
+  /** Nothing to withdraw. A success: two devices, two taps. */
+  | { status: "not-linked" }
+  /**
+   * The membership could not be removed, so nothing was written and the link
+   * still stands. Reported rather than dressed up: the alternative is a record
+   * saying revoked while the coach can still read everything.
+   */
+  | { status: "still-visible"; coachId: string };
+
+/**
+ * Withdraws a coach's access.
+ *
+ * The exact inverse of redeeming, and the ordering is the point. Linking
+ * writes the record first and grants access second; unlinking removes access
+ * first and writes the record second. Both orders serve one invariant: there is
+ * never access without a record of why.
+ *
+ * So a failure here leaves the link recorded and active while the coach may
+ * already have lost access -- the same safe direction as a half-finished link,
+ * and repaired by unlinking again.
+ */
+export async function revokeCoachAccess(
+  tables: LinkTables,
+  databaseId: string,
+  athleteId: string,
+  now: () => Date = () => new Date(),
+): Promise<UnlinkResult> {
+  if (!athleteId) throw new Error("revokeCoachAccess: athleteId is required");
+
+  const decision = decideUnlink(athleteId, await linksFor(tables, databaseId, athleteId));
+  if (decision.kind === "not-linked") return { status: "not-linked" };
+
+  try {
+    await removeCoachFromCircle(tables.teams, athleteId, decision.coachId);
+    // Re-read rather than trusting the call. removeCoachFromCircle returns
+    // silently when the membership was not there, so "removed" and "never
+    // present" look identical from here -- and on this path, being wrong means
+    // a coach reading somebody's training while the record says they cannot.
+    const remaining = await listCircleCoaches(tables.teams, athleteId);
+    if (remaining.includes(decision.coachId)) {
+      return { status: "still-visible", coachId: decision.coachId };
+    }
+  } catch {
+    return { status: "still-visible", coachId: decision.coachId };
+  }
+
+  // Only now, and revoked rather than deleted: the row is the record of who
+  // could once see what, and the unique index on the pair means re-linking
+  // later has to reuse it anyway.
+  await revokeCoachLink(
+    { writer: tables.writer, databaseId, newId: () => crypto.randomUUID(), now },
+    { rowId: decision.rowId, coachId: decision.coachId, athleteId },
+  );
+  return { status: "unlinked", coachId: decision.coachId };
 }
 
 /** Adds the membership only if it is genuinely missing. */

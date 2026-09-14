@@ -61,6 +61,23 @@ export function decideRedemption(
   return { kind: "create", coachId };
 }
 
+export type Unlink =
+  /** Nothing to withdraw. Two devices, two taps -- a success, not an error. */
+  | { kind: "not-linked" }
+  | { kind: "revoke"; rowId: string; coachId: string };
+
+/**
+ * What withdrawing access should do.
+ *
+ * The mirror of decideRedemption, and pure for the same reason: this decides
+ * whether somebody keeps being able to read a training history.
+ */
+export function decideUnlink(athleteId: string, existing: readonly ExistingLink[]): Unlink {
+  if (!athleteId) throw new Error("decideUnlink: athleteId is required");
+  const active = existing.find((link) => link.status === "active");
+  return active ? { kind: "revoke", rowId: active.rowId, coachId: active.coachId } : { kind: "not-linked" };
+}
+
 /**
  * The sentence an athlete agrees to, naming the coach.
  *
@@ -71,6 +88,18 @@ export function decideRedemption(
 export function linkConsentSentence(coachName: string): string {
   const who = coachName.trim() || "Your coach";
   return `${who} will be able to see your sessions, your videos and your bodyweight, and set your training program.`;
+}
+
+/**
+ * What stops, naming the coach. The mirror of the linking sentence.
+ *
+ * Under UK GDPR consent has to be as easy to withdraw as it was to give, which
+ * means withdrawing it gets the same treatment: named, specific, and on screen
+ * before anything happens -- not a bare "Are you sure?".
+ */
+export function unlinkConsequenceSentence(coachName: string): string {
+  const who = coachName.trim() || "Your coach";
+  return `${who} will no longer see your sessions, your videos or your bodyweight, and won't be able to set your training program. Your own training stays exactly as it is.`;
 }
 
 /** "linked 2 Sep", per the blueprint. */

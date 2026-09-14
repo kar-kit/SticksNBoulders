@@ -195,6 +195,46 @@ const again = await (await fetch(`${BASE}/api/link`, {
 check("is a no-op, not a second row", again.status === "already-linked");
 check("still exactly one link row", (await linkRows(athlete.$id)).length === 1);
 
+// --- withdrawing it ------------------------------------------------------
+console.log("\nWithdrawing access");
+await page.getByRole("button", { name: "Unlink" }).click();
+await page.getByText(/will no longer see your sessions/).waitFor({ timeout: 15000 });
+const warning = (await page.locator("section[aria-label='Coach']").innerText()).replace(/\s+/g, " ");
+check("names the coach and says what stops", warning.includes("Unlink Ruairi Deane?"));
+check("and reassures them their own training is untouched", warning.includes("Your own training stays exactly as it is"));
+check(
+  "with nothing revoked at the point of asking",
+  (await linkRows(athlete.$id))[0]?.status === "active",
+);
+
+await page.locator("section[aria-label='Coach']").getByRole("button", { name: "Unlink" }).click();
+check(
+  "returns to the code field once done",
+  await until("the unlink to land", async () => (await page.getByLabel("Enter a coach code").count()) === 1),
+);
+
+// The assertion the whole ticket exists for. A test that only checked the row
+// flipped to revoked would pass with the membership still in place -- which is
+// exactly the bug worth catching.
+check("the coach can no longer read the set", !(await canRead(coachDb, "sets", setId)));
+const athleteDb = await asUser(athlete.$id);
+check("while the athlete still can", await canRead(athleteDb, "sets", setId));
+
+const revoked = await linkRows(athlete.$id);
+check("the row is revoked, not deleted", revoked.length === 1 && revoked[0]?.status === "revoked");
+check("and carries when", typeof revoked[0]?.revoked_at === "string");
+
+console.log("\nLinking again afterwards");
+const relink = await (await fetch(`${BASE}/api/link`, {
+  method: "POST",
+  headers: { "content-type": "application/json", authorization: `Bearer ${(await users.createJWT({ userId: athlete.$id })).jwt}` },
+  body: JSON.stringify({ code }),
+})).json();
+// The unique index on the pair forbids a second row, so this has to reuse it.
+check("reuses the revoked row", relink.status === "linked" && relink.reactivated === true);
+check("still exactly one row", (await linkRows(athlete.$id)).length === 1);
+check("and the access comes back", await canRead(await asUser(coach.$id), "sets", setId));
+
 console.log("\nWhat the endpoints refuse");
 const post = async (path: string, token: string | null, body: unknown) =>
   fetch(`${BASE}${path}`, {
@@ -203,14 +243,22 @@ const post = async (path: string, token: string | null, body: unknown) =>
     body: JSON.stringify(body),
   });
 
+const strangerJwt = (await users.createJWT({ userId: stranger.$id })).jwt;
 check("resolve refuses an unauthenticated caller", (await post("/api/link/resolve", null, { code })).status === 401);
 check("redeem refuses an unauthenticated caller", (await post("/api/link", null, { code })).status === 401);
+check("revoke refuses an unauthenticated caller", (await post("/api/link/revoke", null, {})).status === 401);
+// Withdrawing only ever touches the caller's own link, so a stranger asking
+// gets "you have no coach" rather than anybody else's link being cut.
+check(
+  "revoke only ever touches the caller's own link",
+  (await (await post("/api/link/revoke", strangerJwt, {})).json()).status === "not-linked" &&
+    (await linkRows(athlete.$id)).length === 1,
+);
 
 const coachJwt = (await users.createJWT({ userId: coach.$id })).jwt;
 const own = await (await post("/api/link", coachJwt, { code })).json();
 check("a coach cannot redeem their own code", own.status === "self");
 
-const strangerJwt = (await users.createJWT({ userId: stranger.$id })).jwt;
 const unknown = await (await post("/api/link", strangerJwt, { code: "SNB-ZZZZZ" })).json();
 check("an unknown code links nobody", unknown.status === "unknown-code");
 

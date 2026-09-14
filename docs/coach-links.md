@@ -79,6 +79,45 @@ so the common path had no circle at all — and adding a coach to a team that
 does not exist throws `team_not_found`. `redeemInviteCode` calls `ensureCircle`
 first. Found by `e2e:link` on 14 Sep 2026; it passed every unit test.
 
+## Withdrawing it
+
+Order 16.5, and the exact inverse of redeeming.
+
+Linking writes the **record** first and grants **access** second. Unlinking
+removes access first and writes the record second. Both orders serve one
+invariant: **there is never access without a record of why.** A failure either
+way leaves a link recorded while the coach may not be able to see anything —
+visible, recoverable, repaired by trying again.
+
+`removeCoachFromCircle` returns silently when it finds no membership, so a
+call that appears to succeed proves nothing. `revokeCoachAccess` re-reads the
+circle afterwards and refuses to write the row unless the coach is genuinely
+gone. That re-read is the cheapest possible guard on the one direction that
+matters, and without it a stale or half-applied removal would leave a coach
+reading a training history the record says they cannot.
+
+When it fails, the answer is `still-visible`, nothing is written, and the screen
+says so. An athlete told "unlinked" while their coach can still read everything
+has been told the opposite of the truth on the one screen that exists to tell
+it.
+
+**Revoked, never deleted.** The row is the record of who could once see what,
+and the unique index on `(coach_id, athlete_id)` means re-linking later has to
+reuse it anyway — which `e2e:link` drives end to end: link, unlink, redeem the
+same code, one row throughout, access back.
+
+Two things shipped as assumptions rather than decisions:
+
+- **Athlete-initiated only.** Whether a coach can drop an athlete from their own
+  roster is `[SME to confirm]` on Order 16.5.
+- **A hard cut.** Access ends the moment the membership goes. Whether a coach
+  should keep seeing anything for a window afterwards — a session they are
+  mid-review on, say — is a product decision Ruairi has not made.
+
+Revoking is **not rate limited**, unlike redeeming. Guessing codes is the attack
+redemption defends against; revoking only ever affects the caller's own link,
+and a limit on it would mean an athlete who taps twice cannot withdraw consent.
+
 ## What the endpoints refuse
 
 Both require a JWT **before** the code is looked at. Without that, a
