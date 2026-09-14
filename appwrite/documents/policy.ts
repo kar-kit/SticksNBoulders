@@ -13,7 +13,7 @@ import { circleTeamId } from "./circle";
  */
 
 export type WritableTable = "profiles" | "exercises" | "sessions" | "sets";
-export type ServerTable = "stats_rollups" | "coach_athlete_links";
+export type ServerTable = "stats_rollups" | "coach_athlete_links" | "invite_codes";
 export type PolicyTable = WritableTable | ServerTable;
 
 /** Appwrite's wire format for permissions. Built here and nowhere else. */
@@ -37,6 +37,10 @@ export interface ExerciseOwner extends RowOwner {
 export interface LinkParties {
   coachId: string;
   athleteId: string;
+}
+
+export interface CodeOwner {
+  coachId: string;
 }
 
 function requireId(value: string, label: string): string {
@@ -115,6 +119,23 @@ export function linkPermissions({ coachId, athleteId }: LinkParties): string[] {
   ];
 }
 
+/**
+ * A coach reads their own code and nobody else reads it at all.
+ *
+ * Not because the code is a secret from the athlete -- the coach is about to
+ * text it to them -- but because a signed-in user who could list this table
+ * could link themselves to every coach on the instance. The athlete never
+ * reads a row here: redemption at Order 16 looks the code up with the API key,
+ * which bypasses permissions, and answers with the coach's name rather than
+ * with the row.
+ *
+ * No write for anyone, including the coach. A code someone can mint for
+ * themselves is a code they can mint naming somebody else as the coach.
+ */
+export function invitePermissions({ coachId }: CodeOwner): string[] {
+  return [read(user(requireId(coachId, "coachId")))];
+}
+
 /** Every policy in one place, so a table can never be added without one. */
 export const POLICIES = {
   profiles: profilePermissions,
@@ -123,6 +144,7 @@ export const POLICIES = {
   sets: setPermissions,
   stats_rollups: rollupPermissions,
   coach_athlete_links: linkPermissions,
+  invite_codes: invitePermissions,
 } as const satisfies Record<PolicyTable, (owner: never) => string[]>;
 
 /** Tables a signed-in user may write to at all. */
@@ -133,4 +155,8 @@ export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
   "sets",
 ];
 
-export const SERVER_ONLY_TABLES: readonly ServerTable[] = ["stats_rollups", "coach_athlete_links"];
+export const SERVER_ONLY_TABLES: readonly ServerTable[] = [
+  "stats_rollups",
+  "coach_athlete_links",
+  "invite_codes",
+];

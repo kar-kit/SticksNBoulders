@@ -1,14 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { InviteCodePanel } from "@/components/coach/invite-code";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth/session";
 import { useSession } from "@/lib/auth/session-context";
 
 /**
- * Profile & Settings is Order 35. What exists here now is what the shell needs:
- * who is signed in, the way out, and the switch into coach mode for someone who
- * has athletes.
+ * Profile & Settings is Order 35. What exists here now is what the shell needs
+ * plus Order 15: who is signed in, the way out, the switch into coach mode for
+ * someone who has athletes, and the invite code that gets them their first one.
  */
 export function MePanel() {
   const router = useRouter();
@@ -23,6 +24,8 @@ export function MePanel() {
         <span className="text-title font-semibold">{state.user.name}</span>
         <span className="text-body text-muted">{state.user.email}</span>
       </div>
+
+      <InviteCodePanel />
 
       {/* Shown only when athletes are linked. Role is a relationship, so this
           appears and disappears on its own as links are made and revoked. */}

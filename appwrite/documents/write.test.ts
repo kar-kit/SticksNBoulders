@@ -3,6 +3,7 @@ import type { RowWriter } from "./row-writer";
 import {
   createCoachLink,
   createExercise,
+  createInviteCode,
   createProfile,
   createSession,
   createSet,
@@ -316,6 +317,17 @@ describe("server-only writes", () => {
     await expect(createCoachLink(h.deps, { coachId: ATHLETE, athleteId: ATHLETE })).rejects.toThrow(
       /cannot be linked to themselves/,
     );
+  });
+
+  it("writes an invite code at the code's own id, readable by the coach alone", async () => {
+    // The row id IS the code, which is what makes Order 16's lookup a point
+    // read -- and what makes a 409 here mean "taken", not "already done".
+    const h = harness();
+    await createInviteCode(h.deps, { code: "SNB-4F7K2", coachId: COACH });
+    expect(h.last().tableId).toBe("invite_codes");
+    expect(h.last().rowId).toBe("SNB-4F7K2");
+    expect(h.last().data).toMatchObject({ coach_id: COACH, created_at: NOW.toISOString() });
+    expect(h.last().permissions).toEqual([`read("user:${COACH}")`]);
   });
 
   it("revokes rather than deletes, so losing access stays auditable", async () => {

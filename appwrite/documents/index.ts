@@ -25,6 +25,7 @@ export {
 
 export {
   exercisePermissions,
+  invitePermissions,
   linkPermissions,
   profilePermissions,
   rollupPermissions,
@@ -33,6 +34,7 @@ export {
   POLICIES,
   SERVER_ONLY_TABLES,
   USER_WRITABLE_TABLES,
+  type CodeOwner,
   type PolicyTable,
   type ServerTable,
   type WritableTable,
@@ -44,6 +46,7 @@ export {
   createCoachLink,
   createExercise,
   createGlobalExercise,
+  createInviteCode,
   createProfile,
   createSession,
   createSet,
@@ -57,6 +60,7 @@ export {
   writeRollup,
   type Actor,
   type CreateExerciseInput,
+  type CreateInviteCodeInput,
   type CreateLinkInput,
   type CreateProfileInput,
   type CreateSessionInput,

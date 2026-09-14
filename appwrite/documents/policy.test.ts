@@ -1,6 +1,7 @@
 import { circleTeamId } from "./circle";
 import {
   exercisePermissions,
+  invitePermissions,
   linkPermissions,
   POLICIES,
   profilePermissions,
@@ -124,11 +125,37 @@ describe("coach links", () => {
   });
 });
 
+describe("an invite code", () => {
+  it("is readable by the coach it belongs to", () => {
+    expect(invitePermissions({ coachId: COACH })).toEqual([`read("user:${COACH}")`]);
+  });
+
+  it("is readable by nobody else, not even the athlete about to redeem it", () => {
+    // A signed-in user who could list this table could link themselves to
+    // every coach on the instance. Redemption reads it with the API key.
+    const permissions = invitePermissions({ coachId: COACH }).join(" ");
+    expect(permissions).not.toContain(ATHLETE);
+    expect(permissions).not.toContain(STRANGER);
+    expect(permissions).not.toContain('"users"');
+  });
+
+  it("is writable by nobody, including the coach", () => {
+    const permissions = invitePermissions({ coachId: COACH }).join(" ");
+    expect(permissions).not.toContain("update(");
+    expect(permissions).not.toContain("delete(");
+  });
+
+  it("refuses to be stamped without a coach", () => {
+    expect(() => invitePermissions({ coachId: "" })).toThrow(/coachId/);
+  });
+});
+
 describe("policy hygiene", () => {
   it("covers every table, so one cannot be added without a policy", () => {
     expect(Object.keys(POLICIES).sort()).toEqual([
       "coach_athlete_links",
       "exercises",
+      "invite_codes",
       "profiles",
       "sessions",
       "sets",
@@ -143,6 +170,7 @@ describe("policy hygiene", () => {
       ...exercisePermissions({ athleteId: ATHLETE, isGlobal: false }),
       ...exercisePermissions({ athleteId: ATHLETE, isGlobal: true }),
       ...linkPermissions({ coachId: COACH, athleteId: ATHLETE }),
+      ...invitePermissions({ coachId: COACH }),
     ];
     for (const permission of every) {
       expect(permission).toMatch(/^(read|update|delete)\("(users|user:[\w.-]+|team:[\w.-]+)"\)$/);
