@@ -15,6 +15,8 @@ import type { LoggableSet, RpeValue } from "@/lib/logging/set";
 
 export interface LoggedSet extends LoggableSet {
   clientSetId: string;
+  /** Written down here, not yet at Appwrite. A quiet dot, never an error. */
+  pendingSync?: boolean;
 }
 
 export interface ExerciseBlockProps {
@@ -85,6 +87,7 @@ export function ExerciseBlock({
             index={displayIndex(sets, at)}
             set={set}
             state="logged"
+            pendingSync={set.pendingSync}
           />
         ))}
 

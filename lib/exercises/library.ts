@@ -1,8 +1,7 @@
 import { ID, Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
-import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { createExercise, type Actor } from "@/appwrite/documents";
-import { ensureMyCircle } from "@/lib/auth/circle";
+import { normaliseExerciseName, type Actor } from "@/appwrite/documents";
+import { enqueue } from "@/lib/offline/client";
 import { findByName, type Exercise } from "./match";
 
 /**
@@ -106,11 +105,21 @@ export async function resolveOrCreateExercise(
   const existing = findByName(name, library);
   if (existing) return { exercise: existing, created: false };
 
-  // A custom exercise is stamped with the athlete's circle too, so it needs the
-  // same precondition a session start does.
-  await ensureMyCircle();
-  const row = await createExercise(browserWriteDeps(() => ID.unique()), actor, { name });
-  const created = toExercise(row as unknown as ExerciseRow);
-  if (!created) throw new Error(`Appwrite returned an unusable exercise row for "${name}"`);
-  return { exercise: created, created: true };
+  // Created on the device and queued, like everything else an athlete writes
+  // mid-session. Typing a lift nobody has typed before is exactly the moment a
+  // gym's wifi is least likely to help, and the set that follows references
+  // this id immediately.
+  const trimmed = name.trim();
+  const exercise: Exercise = {
+    id: newExerciseId(),
+    name: trimmed,
+    normalisedName: normaliseExerciseName(trimmed),
+    isGlobal: false,
+    ownerId: actor.userId,
+  };
+  await enqueue("exercise.create", { exerciseId: exercise.id, name: trimmed });
+  return { exercise, created: true };
 }
+
+/** One per exercise, generated on the device -- and used as the Appwrite row id. */
+export const newExerciseId = (): string => `ex-${ID.unique()}`;

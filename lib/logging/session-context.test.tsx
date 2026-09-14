@@ -3,6 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { TrainingSessionProvider, useTrainingSessions } from "./session-context";
 import type { SessionRecord } from "./session";
 
+// The provider remembers the running session in localStorage, which jsdom keeps
+// between tests in a file. Without this, one test's session is the next one's.
+beforeEach(() => localStorage.clear());
+
 const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
   id: "s1",
   clientSessionId: "c1",
@@ -103,7 +107,7 @@ describe("starting a session", () => {
     // attempt's session rather than creating a twin. Minting a new id on retry
     // would defeat the index entirely.
     const ids: string[] = [];
-    const start = vi.fn(async (_actor: unknown, clientId: string) => {
+    const start = vi.fn(async (clientId: string) => {
       ids.push(clientId);
       if (ids.length === 1) throw new Error("timeout");
       return session({ id: "recovered", clientSessionId: clientId });
@@ -135,7 +139,6 @@ describe("finishing a session", () => {
     await user.click(screen.getByRole("button", { name: "finish" }));
 
     expect(finish).toHaveBeenCalledWith(
-      { userId: "joey" },
       "s1",
       { setCount: 3, tonnageKg: 900 },
       expect.any(Date),

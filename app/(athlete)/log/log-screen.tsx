@@ -15,6 +15,9 @@ import type { Exercise } from "@/lib/exercises/match";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSessionSets, type UnnamedSet } from "@/lib/logging/session-store";
 import { logSet, newClientSetId, removeSet } from "@/lib/logging/set-store";
+import { deletedIds, mergeById, queuedSets, unsyncedIds } from "@/lib/logging/offline-view";
+import { subscribeToQueue } from "@/lib/offline/client";
+import { failedOps, type QueuedOp } from "@/lib/offline/queue";
 import { beginEdit, padValue, rpeAfterWarmupChange, type PadState } from "@/lib/logging/number-pad";
 import { resolvePrefill } from "@/lib/logging/prefill";
 import { canComplete, type RpeValue } from "@/lib/logging/set";
@@ -55,13 +58,29 @@ export function LogScreen() {
 
   const athleteId = sessionState.status === "signed-in" ? sessionState.user.id : null;
   const [phase, setPhase] = useState<Phase>("logging");
+  /** What Appwrite returned for this session. Replaced whenever it is read. */
   const [stored, setStored] = useState<UnnamedSet[]>([]);
+  /**
+   * What this device logged into this session.
+   *
+   * Kept separately from the server's copy, and kept after it syncs. An op
+   * leaves the queue the moment Appwrite accepts it, so a list derived from the
+   * queue would drop each set at the exact moment it succeeded -- taking the
+   * session totals with it, which is how a finish screen ends up claiming
+   * nothing was logged.
+   */
+  const [local, setLocal] = useState<UnnamedSet[]>([]);
   const [added, setAdded] = useState<Exercise[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [pad, setPad] = useState<PadState | null>(null);
   const [rpeOpen, setRpeOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
+  const [ops, setOps] = useState<QueuedOp[]>([]);
+
+  // The queue is attached by the provider; this only watches it, so a set that
+  // is still on its way keeps its mark and a reload gets its sets back.
+  useEffect(() => subscribeToQueue(setOps), []);
 
   // Ticks the clock. The value shown is always derived from started_at, so a
   // phone that slept through twenty minutes shows twenty minutes.
@@ -80,6 +99,8 @@ export function LogScreen() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      // A failed read is the normal case in a basement, not an error worth
+      // showing: the queue below holds everything this session has logged.
       const loaded = sessionId
         ? await fetchSessionSets(sessionId).catch(() => [] as UnnamedSet[])
         : [];
@@ -90,17 +111,57 @@ export function LogScreen() {
     };
   }, [sessionId]);
 
+  const queued = useMemo(() => (sessionId ? queuedSets(ops, sessionId) : []), [ops, sessionId]);
+  const unsynced = useMemo(() => unsyncedIds(ops), [ops]);
+  const removed = useMemo(() => deletedIds(ops), [ops]);
+  const failed = useMemo(() => failedOps(ops), [ops]);
+
+  /**
+   * Picks up sets the queue is carrying that this page has not seen.
+   *
+   * After a reload with no signal, that is every set of the session: Appwrite
+   * could not be asked, and the queue is the only record.
+   */
+  useEffect(() => {
+    // Behind an await so the update is visibly asynchronous, the same shape the
+    // providers use.
+    void (async () => {
+      await Promise.resolve();
+      setLocal((prev) => {
+        const merged = mergeById(prev, queued, (s) => s.clientSetId);
+        return merged.length === prev.length ? prev : merged;
+      });
+    })();
+  }, [queued]);
+
+  // A different session is a different list. Nothing from the last one carries.
+  useEffect(() => {
+    void (async () => {
+      await Promise.resolve();
+      setLocal([]);
+    })();
+  }, [sessionId]);
+
+  /** Everything logged this session, whether Appwrite has heard of it or not. */
+  const all = useMemo(
+    () =>
+      mergeById(stored, local, (s) => s.clientSetId)
+        .filter((s) => !removed.has(s.clientSetId))
+        .sort((a, b) => a.loggedAt.getTime() - b.loggedAt.getTime()),
+    [stored, local, removed],
+  );
+
   /** An exercise the library does not know is shown by its id, never hidden. */
   const sets = useMemo<SessionSet[]>(
-    () => stored.map((set) => ({ ...set, exerciseName: nameFor(set.exerciseId) ?? set.exerciseId })),
-    [stored, nameFor],
+    () => all.map((set) => ({ ...set, exerciseName: nameFor(set.exerciseId) ?? set.exerciseId })),
+    [all, nameFor],
   );
   const groups = useMemo(() => groupByExercise(sets), [sets]);
   const summary = useMemo(() => summariseSession(sets), [sets]);
 
   const setsOf = useCallback(
-    (exerciseId: string) => stored.filter((s) => s.exerciseId === exerciseId),
-    [stored],
+    (exerciseId: string) => all.filter((s) => s.exerciseId === exerciseId),
+    [all],
   );
 
   /**
@@ -192,8 +253,10 @@ export function LogScreen() {
     if (!draft || !active || !athleteId || !canComplete(draft)) return;
     const row = draft;
     setBusy(true);
-    // Optimistic: the row appears logged immediately, because instant is the
-    // feature. Durable queueing and retries are Order 9.
+    // The row appears logged immediately because it *is* logged: logSet writes
+    // it to the durable queue, and nothing here waits for Appwrite. There is no
+    // rollback path any more, and that is the point -- a set the athlete saw
+    // land never quietly disappears because a lift happened in a basement.
     const optimistic: UnnamedSet = {
       exerciseId: row.exerciseId,
       clientSetId: row.clientSetId,
@@ -203,13 +266,13 @@ export function LogScreen() {
       isWarmup: row.isWarmup,
       loggedAt: new Date(),
     };
-    setStored((prev) => [...prev, optimistic]);
+    setLocal((prev) => [...prev, optimistic]);
     setDraft(draftFor(row.exerciseId, { loadKg: optimistic.loadKg, reps: optimistic.reps }));
     setPad(null);
     setRpeOpen(false);
 
     try {
-      await logSet({ userId: athleteId }, {
+      await logSet({
         sessionId: active.id,
         exerciseId: row.exerciseId,
         setIndex: setsOf(row.exerciseId).length + 1,
@@ -220,9 +283,9 @@ export function LogScreen() {
         clientSetId: row.clientSetId,
       });
     } catch {
-      // Taken back off rather than left looking logged. Order 9 is what turns
-      // this into a queue that survives; until then, honesty beats a lie.
-      setStored((prev) => prev.filter((s) => s.clientSetId !== row.clientSetId));
+      // Only reachable if the device cannot write to its own storage at all.
+      // Then the set genuinely is not logged, and saying so beats a lie.
+      setLocal((prev) => prev.filter((s) => s.clientSetId !== row.clientSetId));
     } finally {
       setBusy(false);
     }
@@ -231,9 +294,10 @@ export function LogScreen() {
   const undoLast = async (exerciseId: string) => {
     const last = setsOf(exerciseId).at(-1);
     if (!last || !athleteId) return;
+    setLocal((prev) => prev.filter((s) => s.clientSetId !== last.clientSetId));
     setStored((prev) => prev.filter((s) => s.clientSetId !== last.clientSetId));
     setDraft((prev) => (prev?.exerciseId === exerciseId ? draftFor(exerciseId) : prev));
-    await removeSet({ userId: athleteId }, last.clientSetId).catch(() => {});
+    await removeSet(last.clientSetId).catch(() => {});
   };
 
   const startHere = async () => {
@@ -315,6 +379,7 @@ export function LogScreen() {
               name={block.name}
               sets={setsOf(block.id).map<LoggedSet>((s) => ({
                 clientSetId: s.clientSetId,
+                pendingSync: unsynced.has(s.clientSetId),
                 loadKg: s.loadKg,
                 reps: s.reps,
                 rpe: (s.rpe as RpeValue | null) ?? null,
@@ -331,6 +396,21 @@ export function LogScreen() {
       )}
 
       <div className="mt-auto flex flex-col gap-3">
+        {/*
+          A queued set that will never send. Offline is normal and gets a quiet
+          dot; this is the other thing, and it is the one case where staying
+          quiet would be dishonest -- the athlete believes that work is logged.
+        */}
+        {failed.length > 0 ? (
+          <p
+            role="status"
+            className="m-0 rounded-card border border-border bg-surface p-3 text-caption text-muted"
+          >
+            {failed.length} {failed.length === 1 ? "entry" : "entries"} could not be saved and
+            {failed.length === 1 ? " is" : " are"} not on your coach&rsquo;s side. Everything else synced.
+          </p>
+        ) : null}
+
         {phase === "confirming" ? (
           <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
             <p className="m-0 text-body">

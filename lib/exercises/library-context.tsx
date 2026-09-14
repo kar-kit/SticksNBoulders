@@ -2,16 +2,18 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { fetchExerciseLibrary } from "./library";
+import { cacheLibrary, cachedLibrary } from "./library-cache";
 import type { Exercise } from "./match";
 
 /**
  * The exercise library, fetched once per app load.
  *
- * Same shape as SessionProvider, and deliberately not TanStack Query yet: the
- * cache this list actually needs is a persistent one, and that arrives with
- * IndexedDB at Order 9. An in-memory cache that empties on reload is the wrong
- * property for a PWA an athlete reopens between sets, and wiring one now would
- * be re-wired three tickets later.
+ * Same shape as SessionProvider, and deliberately not TanStack Query yet.
+ *
+ * The list is cached on the device, because the alternative is an athlete
+ * reopening the app in a basement and finding an empty typeahead. A stale
+ * exercise name is harmless -- names are the only thing on these rows -- so the
+ * cache is shown while a fresh copy is fetched, and replaced when it arrives.
  */
 
 export type LibraryState =
@@ -39,10 +41,16 @@ async function resolveLibrary(
 ): Promise<LibraryState> {
   if (!userId) return { status: "ready", exercises: [] };
   try {
-    return { status: "ready", exercises: await load(userId) };
+    const exercises = await load(userId);
+    cacheLibrary(userId, exercises);
+    return { status: "ready", exercises };
   } catch {
-    // A library that fails to load must not block logging. The athlete can
-    // still type a name; it simply is not matched against the library.
+    // A library that fails to load must not block logging. Whatever the last
+    // visit saw is shown instead -- to the athlete that is simply the library,
+    // which is the point. Only with nothing cached does the typeahead fall back
+    // to accepting a typed name it cannot match.
+    const cached = cachedLibrary(userId);
+    if (cached && cached.length > 0) return { status: "ready", exercises: cached };
     return { status: "failed", exercises: previous };
   }
 }
@@ -65,10 +73,19 @@ export function ExerciseLibraryProvider({
 
   useEffect(() => {
     let cancelled = false;
-    // The await sits inside the effect so the setState is visibly asynchronous,
-    // and so a provider unmounted mid-flight does not set state afterwards.
+    // The awaits sit inside the effect so the setStates are visibly
+    // asynchronous, and so a provider unmounted mid-flight does not set state
+    // afterwards. The cache is read behind one too: reading it during render
+    // would disagree with the server's empty first paint and break hydration.
     void (async () => {
-      const next = await resolveLibrary(userId, load, []);
+      const cached = await Promise.resolve(userId ? cachedLibrary(userId) : null);
+      // Shown before the fetch resolves, so the list is there on the frame
+      // after a cold start rather than a second later. On a phone with no
+      // signal, that second never ends.
+      if (cached && cached.length > 0 && !cancelled) {
+        setState({ status: "ready", exercises: cached });
+      }
+      const next = await resolveLibrary(userId, load, cached ?? []);
       if (!cancelled) setState(next);
     })();
     return () => {
@@ -80,14 +97,18 @@ export function ExerciseLibraryProvider({
     () => ({
       state,
       remember: (exercise) =>
-        setState((prev) =>
-          prev.exercises.some((e) => e.id === exercise.id)
-            ? prev
-            : { ...prev, exercises: [...prev.exercises, exercise] },
-        ),
+        setState((prev) => {
+          if (prev.exercises.some((e) => e.id === exercise.id)) return prev;
+          const exercises = [...prev.exercises, exercise];
+          // Cached as well as held, so a lift typed with no signal is still in
+          // the typeahead after a reload -- and its queued sets still show a
+          // name rather than an id.
+          if (userId) cacheLibrary(userId, exercises);
+          return { ...prev, exercises };
+        }),
       reload,
     }),
-    [state, reload],
+    [state, reload, userId],
   );
 
   return <LibraryContext.Provider value={value}>{children}</LibraryContext.Provider>;

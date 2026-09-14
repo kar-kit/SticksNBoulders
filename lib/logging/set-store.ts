@@ -1,8 +1,5 @@
-import { AppwriteException, ID, Query } from "appwrite";
-import { browserAppwrite } from "@/appwrite/browser-client";
-import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { createSet, deleteSet, type Actor } from "@/appwrite/documents";
-import { ensureMyCircle } from "@/lib/auth/circle";
+import { ID } from "appwrite";
+import { cancelQueued, enqueue } from "@/lib/offline/client";
 import type { UnnamedSet } from "./session-store";
 import type { RpeValue } from "./set";
 
@@ -10,9 +7,10 @@ import type { RpeValue } from "./set";
  * Writing sets.
  *
  * Separate from session-store because this is the write an athlete makes forty
- * times a session and the one that has to feel instant. It stays deliberately
- * thin: no retry loop, no queue, no persistence. The write-ahead queue is Order
- * 9, and half of one built here would only have to be unpicked.
+ * times a session and the one that has to feel instant. It is instant because
+ * it never waits for Appwrite: the set is written to the durable queue and the
+ * function returns. Whether there is signal in the room changes nothing about
+ * how long this takes or what the screen does next.
  */
 
 export interface NewSet {
@@ -23,46 +21,31 @@ export interface NewSet {
   reps: number;
   rpe: RpeValue | null;
   isWarmup: boolean;
-  /** Generated when the row appears, reused on every retry of that row. */
+  /** Generated when the row appears, and used as the Appwrite row id. */
   clientSetId: string;
 }
 
-/** Appwrite's "already exists". For an idempotency key, that is success. */
-const CONFLICT = 409;
-
 /**
- * Logs a set, or recovers the one this row already wrote.
+ * Logs a set.
  *
- * The circle is ensured here and not only at session start. A session resumed
- * on a fresh page load never ran the start path, so the memoised promise is
- * cold and the first set of the day would come back 401 -- the same bug Order 7
- * found, in a window narrow enough to be much harder to spot.
+ * Resolves once the op is on disk, not once Appwrite has it. That is the whole
+ * design: a set that reached IndexedDB is a set that will reach the coach, and
+ * a set that has not reached IndexedDB has not been logged. There is no third
+ * state for the athlete to worry about, and nothing for them to retry by hand.
  */
-export async function logSet(actor: Actor, input: NewSet): Promise<UnnamedSet> {
-  await ensureMyCircle();
-
+export async function logSet(input: NewSet): Promise<UnnamedSet> {
   const loggedAt = new Date();
-  try {
-    await createSet(browserWriteDeps(() => ID.unique()), actor, {
-      sessionId: input.sessionId,
-      exerciseId: input.exerciseId,
-      setIndex: input.setIndex,
-      loadKg: input.loadKg,
-      reps: input.reps,
-      rpe: input.rpe,
-      isWarmup: input.isWarmup,
-      clientSetId: input.clientSetId,
-      loggedAt,
-      // e1RM is computed and stored at write time from Order 11. Until the
-      // formula is verified, leaving it unset is honest; the rebuild script
-      // backfills every set once it lands.
-    });
-  } catch (error) {
-    // The first attempt may well have succeeded with the response lost on the
-    // way back. client_set_id is unique-indexed precisely so the retry lands
-    // here rather than writing the set twice.
-    if (!(error instanceof AppwriteException) || error.code !== CONFLICT) throw error;
-  }
+  await enqueue("set.create", {
+    setId: input.clientSetId,
+    sessionId: input.sessionId,
+    exerciseId: input.exerciseId,
+    setIndex: input.setIndex,
+    loadKg: input.loadKg,
+    reps: input.reps,
+    rpe: input.rpe,
+    isWarmup: input.isWarmup,
+    loggedAt: loggedAt.toISOString(),
+  });
 
   return {
     exerciseId: input.exerciseId,
@@ -75,19 +58,23 @@ export async function logSet(actor: Actor, input: NewSet): Promise<UnnamedSet> {
   };
 }
 
-/** Removes a set. Used by Undo, for the tap that logged the wrong thing. */
-export async function removeSet(actor: Actor, clientSetId: string): Promise<void> {
-  const { tables, databaseId } = browserAppwrite();
-  const rows = await tables.listRows({
-    databaseId,
-    tableId: "sets",
-    queries: [Query.equal("client_set_id", clientSetId), Query.limit(1)],
-  });
-  const row = rows.rows[0];
-  // Already gone is the outcome Undo wanted, so it is not an error.
-  if (!row) return;
-  await deleteSet(browserWriteDeps(() => ID.unique()), actor, row.$id);
+/**
+ * Removes a set. Used by Undo, for the tap that logged the wrong thing.
+ *
+ * A set undone before its write was ever attempted just leaves the queue, which
+ * is both faster and one less row for Appwrite to create and destroy. Once the
+ * write has been tried, it may have landed with the response lost on the way
+ * back, so the delete is queued properly and runs behind it.
+ */
+export async function removeSet(clientSetId: string): Promise<void> {
+  if (await cancelQueued("set.create", clientSetId)) return;
+  await enqueue("set.delete", { setId: clientSetId });
 }
 
-/** One per active row, so a retry of that row cannot write a second set. */
+/**
+ * One per row, generated on the device -- and used as the Appwrite row id.
+ *
+ * The same trick as a session's: one id rather than two, so the row that
+ * appears on screen with no signal is already the row Appwrite will store.
+ */
 export const newClientSetId = (): string => `st-${ID.unique()}`;
