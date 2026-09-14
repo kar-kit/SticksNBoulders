@@ -85,6 +85,10 @@ function heartbeat() {
  */
 export async function attachQueue(who: Actor): Promise<QueuedOp[]> {
   actor = who;
+  // IndexedDB is evictable when the device is short of space, and what is in it
+  // here is someone's training. Asking costs nothing and is ignored where it is
+  // not supported.
+  void navigator.storage?.persist?.().catch(() => false);
   const open = await ready();
   await refresh(open);
   heartbeat();

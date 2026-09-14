@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -121,26 +121,28 @@ export function LogScreen() {
    *
    * After a reload with no signal, that is every set of the session: Appwrite
    * could not be asked, and the queue is the only record.
+   *
+   * The reset and the merge are one effect deliberately. As two they raced --
+   * both deferred through a microtask, so on the first session the reset ran
+   * after the merge and wiped it, and the list only came back because the queue
+   * happened to announce again.
    */
+  const shownSession = useRef<string | null>(null);
   useEffect(() => {
     // Behind an await so the update is visibly asynchronous, the same shape the
     // providers use.
     void (async () => {
       await Promise.resolve();
+      // A different session is a different list. Nothing from the last one
+      // carries over, not even a set still waiting to send.
+      const fresh = shownSession.current !== sessionId;
+      shownSession.current = sessionId;
       setLocal((prev) => {
-        const merged = mergeById(prev, queued, (s) => s.clientSetId);
-        return merged.length === prev.length ? prev : merged;
+        const merged = mergeById(fresh ? [] : prev, queued, (s) => s.clientSetId);
+        return !fresh && merged.length === prev.length ? prev : merged;
       });
     })();
-  }, [queued]);
-
-  // A different session is a different list. Nothing from the last one carries.
-  useEffect(() => {
-    void (async () => {
-      await Promise.resolve();
-      setLocal([]);
-    })();
-  }, [sessionId]);
+  }, [sessionId, queued]);
 
   /** Everything logged this session, whether Appwrite has heard of it or not. */
   const all = useMemo(

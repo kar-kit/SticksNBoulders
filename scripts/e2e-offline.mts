@@ -41,12 +41,17 @@ const check = (label: string, ok: boolean) => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
 };
 
-const rowsOf = async (table: "sets" | "sessions", athleteId: string) =>
+const rowsOf = async (table: "sets" | "sessions" | "exercises", athleteId: string) =>
   (
     await adminDb.listRows({
       databaseId: db,
       tableId: table,
-      queries: [Query.equal("athlete_id", athleteId), Query.limit(50)],
+      queries: [
+        // Exercises are owned rather than logged, so they are found by a
+        // different column.
+        Query.equal(table === "exercises" ? "owner_id" : "athlete_id", athleteId),
+        Query.limit(50),
+      ],
       // Never a cached read: this script's whole job is to know exactly what
       // has and has not reached the server at a given moment.
       ttl: 0,
@@ -67,6 +72,16 @@ const goOffline = (page: Page) =>
   });
 
 const goOnline = (page: Page) => page.unroute("**/*");
+
+/** Waits for the server to catch up. The queue sends when it sends. */
+const until = async (ok: () => Promise<boolean>, ms = 30000) => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await ok()) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+};
 
 const signIn = async (page: Page, email: string) => {
   await page.goto(`${BASE}/sign-in`);
@@ -132,8 +147,23 @@ await page.getByRole("group", { name: "Set 2" }).waitFor({ timeout: 10000 }).cat
 await page.getByRole("button", { name: "Log Set 2" }).click();
 await page.waitForTimeout(1000);
 
-check("all three sets show as logged", (await page.getByRole("group", { name: /Set|Warm-up set/ }).count()) >= 3);
-check("each carries a queued mark", (await page.getByLabel("Queued, will sync").count()) >= 3);
+console.log("\nAnd a lift the library has never heard of");
+// The path that has no signal *and* no row to point at. The exercise is created
+// on the device, queued, and the set logged into it references its id straight
+// away -- the whole reason the client id is the row id.
+const invented = `Basement Good Morning ${stamp}`;
+await page.getByRole("combobox").fill(invented);
+await page.getByRole("option", { name: `Add custom exercise: ${invented}` }).click();
+await page.getByRole("region", { name: invented }).waitFor({ timeout: 10000 }).catch(() => {});
+check("it can be added with no signal", await page.getByRole("region", { name: invented }).isVisible().catch(() => false));
+check("and nothing reached Appwrite", (await rowsOf("exercises", athlete.$id)).length === 0);
+
+await enter(page, "80", "8");
+await page.getByRole("button", { name: "Log Set 1" }).last().click();
+await page.waitForTimeout(500);
+
+check("all four sets show as logged", (await page.getByRole("group", { name: /Set|Warm-up set/ }).count()) >= 4);
+check("each carries a queued mark", (await page.getByLabel("Queued, will sync").count()) >= 4);
 check("nothing reads as an error", (await page.getByText(/could not be saved/).count()) === 0);
 check("and still nothing reached Appwrite", (await rowsOf("sets", athlete.$id)).length === 0);
 
@@ -145,21 +175,37 @@ await page.getByRole("button", { name: "Finish session" }).waitFor({ timeout: 15
 check("the session is still running", await page.getByRole("button", { name: "Finish session" }).isVisible());
 check("the warm-up survived the reload", await page.getByRole("group", { name: "Warm-up set" }).isVisible());
 check("and both working sets", await page.getByRole("group", { name: "Set 2" }).isVisible());
+// It is only in the typeahead's cache, so a name here means both the exercise
+// and its set came back off the disk.
+check("the invented lift came back by name", await page.getByRole("region", { name: invented }).isVisible().catch(() => false));
 check("still queued, still nothing sent", (await rowsOf("sets", athlete.$id)).length === 0);
 
 console.log("\nWalking back out into the signal");
 await goOnline(page);
 // Nothing is tapped. The queue notices on its own, which is the point: an
-// athlete should never have to know there was anything to notice.
-await page.waitForTimeout(8000);
+// athlete should never have to know there was anything to notice. Six ops go
+// out -- the exercise, the session and four sets -- so this waits for them
+// rather than guessing how long six round trips take.
+await until(async () => (await rowsOf("sets", athlete.$id)).length >= 4);
 
 const sessions = await rowsOf("sessions", athlete.$id);
 const sets = await rowsOf("sets", athlete.$id);
 check("exactly one session landed", sessions.length === 1);
-check("exactly three sets landed, not six", sets.length === 3);
+check("exactly four sets landed, not eight", sets.length === 4);
 check("the warm-up kept its flag", sets.filter((r) => r.is_warmup === true).length === 1);
 check("the RPE came with it", sets.some((r) => r.rpe === 8));
 check("the loads are the ones that were typed", sets.filter((r) => r.load_kg === 140).length === 2);
+
+const invented_rows = (await rowsOf("exercises", athlete.$id)).filter((r) => r.name === invented);
+check("the invented lift landed too", invented_rows.length === 1);
+check("as the athlete's own, not a library row", invented_rows[0]?.is_global === false);
+check("with the id the device chose", String(invented_rows[0]?.$id ?? "").startsWith("ex-"));
+// The assertion the whole single-id design exists for: a set written offline
+// points at an exercise that did not exist anywhere when the set was logged.
+check(
+  "and the set logged into it points at exactly that row",
+  sets.some((r) => r.exercise_id === invented_rows[0]?.$id && r.load_kg === 80),
+);
 check(
   "every set points at the session that was started offline",
   sets.every((r) => r.session_id === sessions[0]?.$id),
@@ -168,7 +214,7 @@ check(
   "the row id is the client id, so a replay cannot write a twin",
   sets.every((r) => r.$id === r.client_set_id),
 );
-check("no duplicate client ids", new Set(sets.map((r) => r.client_set_id)).size === 3);
+check("no duplicate client ids", new Set(sets.map((r) => r.client_set_id)).size === 4);
 
 await page.waitForTimeout(1500);
 check("the queued marks are gone once it syncs", (await page.getByLabel("Queued, will sync").count()) === 0);
@@ -183,8 +229,8 @@ await page.getByText("Session done").waitFor({ timeout: 15000 }).catch(() => {})
 await page.waitForTimeout(2000);
 const finished = await rowsOf("sessions", athlete.$id);
 check("the session closes", finished[0]?.finished_at != null);
-check("set_count counts working sets only", finished[0]?.set_count === 2);
-check("tonnage excludes the warm-up", finished[0]?.tonnage_kg === 1400);
+check("set_count counts working sets only", finished[0]?.set_count === 3);
+check("tonnage excludes the warm-up", finished[0]?.tonnage_kg === 2040);
 
 // --- teardown ---------------------------------------------------------
 await browser.close();
@@ -193,6 +239,9 @@ for (const row of await rowsOf("sets", athlete.$id)) {
 }
 for (const row of await rowsOf("sessions", athlete.$id)) {
   await adminDb.deleteRow({ databaseId: db, tableId: "sessions", rowId: row.$id });
+}
+for (const row of await rowsOf("exercises", athlete.$id)) {
+  await adminDb.deleteRow({ databaseId: db, tableId: "exercises", rowId: row.$id });
 }
 await teams.delete({ teamId: circleTeamId(athlete.$id) }).catch(() => {});
 await users.delete({ userId: athlete.$id });
