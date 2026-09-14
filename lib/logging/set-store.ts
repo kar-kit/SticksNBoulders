@@ -1,5 +1,6 @@
 import { ID } from "appwrite";
 import { cancelQueued, enqueue } from "@/lib/offline/client";
+import { weekStart } from "@/lib/strength/rollup";
 import type { UnnamedSet } from "./session-store";
 import type { RpeValue } from "./set";
 
@@ -46,6 +47,7 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
     isWarmup: input.isWarmup,
     loggedAt: loggedAt.toISOString(),
   });
+  await queueRollupRefresh(input.exerciseId, loggedAt);
 
   return {
     exerciseId: input.exerciseId,
@@ -66,9 +68,30 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
  * write has been tried, it may have landed with the response lost on the way
  * back, so the delete is queued properly and runs behind it.
  */
-export async function removeSet(clientSetId: string): Promise<void> {
+export async function removeSet(clientSetId: string, set?: { exerciseId: string; loggedAt: Date }): Promise<void> {
+  // A set undone before it was ever sent leaves the queue, and the rollup never
+  // heard of it, so there is nothing to recompute.
   if (await cancelQueued("set.create", clientSetId)) return;
   await enqueue("set.delete", { setId: clientSetId });
+  if (set) await queueRollupRefresh(set.exerciseId, set.loggedAt);
+}
+
+/**
+ * Behind every set write, queued rather than called.
+ *
+ * It runs after the set op, so the bucket is recomputed from what has actually
+ * landed. Queued rather than fired and forgotten because a rollup that fails to
+ * update looks exactly like one that is correct -- the queue retries it, and a
+ * refusal that will never succeed ends up visible instead of silent.
+ */
+async function queueRollupRefresh(exerciseId: string, loggedAt: Date): Promise<void> {
+  await enqueue("rollup.refresh", {
+    exerciseId,
+    loggedAt: loggedAt.toISOString(),
+    // Carried so two sets in the same week collapse to one refresh, without
+    // the queue having to know how a week is defined.
+    weekKey: weekStart(loggedAt).toISOString(),
+  });
 }
 
 /**

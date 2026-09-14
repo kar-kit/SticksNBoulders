@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { rollupFrom, rollupKey, rollupMatches, weekStart, type RollupSet } from "./rollup";
+import {
+  rollupFrom,
+  rollupKey,
+  rollupMatches,
+  weekStart,
+  WEEK_TIME_ZONE,
+  type RollupSet,
+} from "./rollup";
 
 const set = (over: Partial<RollupSet> = {}): RollupSet => ({
   loadKg: 100,
@@ -10,17 +17,46 @@ const set = (over: Partial<RollupSet> = {}): RollupSet => ({
 });
 
 describe("weekStart", () => {
+  const week = (iso: string) => weekStart(new Date(iso)).toISOString().slice(0, 10);
+
   it("is the Monday of that week, at midnight UTC", () => {
     // 14 Sep 2026 is a Monday.
     expect(weekStart(new Date("2026-09-14T09:30:00Z")).toISOString()).toBe("2026-09-14T00:00:00.000Z");
-    expect(weekStart(new Date("2026-09-17T23:59:00Z")).toISOString()).toBe("2026-09-14T00:00:00.000Z");
+    expect(week("2026-09-17T23:59:00Z")).toBe("2026-09-14");
   });
 
   it("puts Sunday at the end of its week, not the start of the next one", () => {
     // The off-by-one that would split a Sunday session away from the week it
     // belongs to. getUTCDay is 0 for Sunday, which is the trap.
-    expect(weekStart(new Date("2026-09-20T18:00:00Z")).toISOString()).toBe("2026-09-14T00:00:00.000Z");
-    expect(weekStart(new Date("2026-09-21T00:00:01Z")).toISOString()).toBe("2026-09-21T00:00:00.000Z");
+    expect(week("2026-09-20T18:00:00Z")).toBe("2026-09-14");
+    expect(week("2026-09-21T08:00:00Z")).toBe("2026-09-21");
+  });
+
+  it("keeps an early Monday session in the UK in the week it started", () => {
+    // The bug UTC alone has. 23:30Z on Sunday is 00:30 Monday in London under
+    // BST, and a UTC-only rule files a Monday-morning session into the week
+    // that just ended -- one hour every Monday, for most of the year.
+    expect(week("2026-09-13T23:30:00Z")).toBe("2026-09-14");
+    // And the half hour before it really is still Sunday.
+    expect(week("2026-09-13T22:30:00Z")).toBe("2026-09-07");
+  });
+
+  it("does the same thing in winter, when London is UTC", () => {
+    // 14 Dec 2026 is a Monday and GMT is UTC, so the two rules agree here.
+    expect(week("2026-12-14T00:30:00Z")).toBe("2026-12-14");
+    expect(week("2026-12-13T23:30:00Z")).toBe("2026-12-07");
+  });
+
+  it("survives an environment that cannot resolve the timezone", () => {
+    // Off by at most an hour beats losing the set. A thrown error here would
+    // take out the write path for every set in the product.
+    expect(weekStart(new Date("2026-09-17T10:00:00Z"), "Not/AZone").toISOString()).toBe(
+      "2026-09-14T00:00:00.000Z",
+    );
+  });
+
+  it("is the UK, because that is where the gym is", () => {
+    expect(WEEK_TIME_ZONE).toBe("Europe/London");
   });
 
   it("keys a set by athlete, exercise and week", () => {

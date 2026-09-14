@@ -36,25 +36,68 @@ export interface Rollup {
 }
 
 /**
- * Monday, midnight UTC, of the week containing `date`.
+ * The timezone that decides which week a set belongs to.
  *
- * Monday because a training week starts on one; UTC because a rollup keyed on
- * the athlete's local week would move when they travel, and a set logged at a
- * Sunday-night session in one timezone must not land in two different weeks
- * depending on where the phone was.
+ * Joey's call, 14 Sep 2026: the gym is in the UK and a training week runs
+ * Monday to Sunday.
  *
- * [SME to confirm] Ruairi may run weeks Sunday-to-Saturday. It is one constant
- * and the rebuild script re-keys everything, so this is cheap to change.
+ * This is emphatically not the same as storing times in UTC, which the product
+ * does and should -- `logged_at` is an instant. It is about which calendar week
+ * an instant falls in, and in the UK that is not a question UTC can answer.
+ * Under BST, roughly seven months of the year, a set logged at 00:30 on a
+ * Monday morning is 23:30 UTC on the Sunday, so a UTC-only rule files it in the
+ * week that just ended. Checked against the live clock, not assumed:
+ *
+ *     2026-09-13T23:30:00Z  ->  Monday 14 Sep 00:30 BST  ->  UTC rule says w/c 7 Sep
+ *
+ * One hour every Monday, for most of the year, landing in last week's volume.
+ * Deciding membership in London time and labelling the week by its local
+ * calendar date fixes it, and stays deterministic -- the rebuild script derives
+ * the same answer from the same stored instant, forever.
+ *
+ * [SME to confirm] the day itself. Joey confirmed Monday to Sunday; if Ruairi
+ * runs Sunday to Saturday it is one constant here and a rebuild run.
  */
-export function weekStart(date: Date): Date {
-  const utc = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-  );
+export const WEEK_TIME_ZONE = "Europe/London";
+
+/** The year, month and day `date` falls on in that timezone. */
+function localYmd(date: Date, timeZone: string): [number, number, number] {
+  // en-CA formats as YYYY-MM-DD, which is the one locale that needs no parsing
+  // of month names and no assumptions about day/month order.
+  const text = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+  const [year, month, day] = text.split("-").map(Number);
+  return [year, month, day];
+}
+
+/**
+ * The Monday of the week containing `date`, as a UTC midnight.
+ *
+ * The returned value is a label rather than an instant: "the week beginning
+ * Monday 14 September". Storing it as the local midnight would make week_start
+ * jump by an hour across the BST boundary and put a Sunday 23:00 timestamp in a
+ * column every human reading the database expects to be a Monday.
+ */
+export function weekStart(date: Date, timeZone: string = WEEK_TIME_ZONE): Date {
+  let ymd: [number, number, number];
+  try {
+    ymd = localYmd(date, timeZone);
+  } catch {
+    // An unknown zone, or an environment built without full ICU. Falling back
+    // to UTC is off by at most an hour; throwing would lose the set entirely.
+    ymd = [date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate()];
+  }
+
+  const [year, month, day] = ymd;
+  const monday = new Date(Date.UTC(year, month - 1, day));
   // getUTCDay is 0 for Sunday, so Sunday belongs to the week that began six
   // days earlier rather than starting a new one.
-  const daysSinceMonday = (utc.getUTCDay() + 6) % 7;
-  utc.setUTCDate(utc.getUTCDate() - daysSinceMonday);
-  return utc;
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  return monday;
 }
 
 /** The key a set belongs under. Warm-ups included: exclusion happens later. */

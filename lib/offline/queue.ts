@@ -30,7 +30,8 @@ export type OpKind =
   | "session.finish"
   | "set.create"
   | "set.delete"
-  | "exercise.create";
+  | "exercise.create"
+  | "rollup.refresh";
 
 export interface QueuedOp {
   /** Stable across retries. Also the store's key. */
@@ -169,5 +170,32 @@ export function collapsibleCreate(ops: readonly QueuedOp[], kind: OpKind, rowId:
     ops.find(
       (op) => op.kind === kind && op.attempts === 0 && !op.permanentError && op.payload[key] === rowId,
     ) ?? null
+  );
+}
+
+/**
+ * Whether a queued rollup refresh has already been made pointless by a later one.
+ *
+ * Five sets of squats queue five refreshes of one bucket, each recomputing the
+ * same week. Only the last matters, because each recomputes from scratch.
+ *
+ * Skipped here at the front of the queue rather than deduped when enqueued, and
+ * the difference is the whole bug it replaces. Collapsing at enqueue keeps the
+ * FIRST refresh, which sits in the queue AHEAD of the sets that follow it: it
+ * runs, sees one set landed, writes a rollup for one set, and nothing ever
+ * recomputes it. The week's totals then sit frozen at whatever had arrived
+ * partway through the session. Keeping the last one instead means the surviving
+ * refresh runs behind every set it should count.
+ */
+export function supersededRefresh(ops: readonly QueuedOp[], op: QueuedOp): boolean {
+  if (op.kind !== "rollup.refresh") return false;
+  return ops.some(
+    (other) =>
+      other.kind === "rollup.refresh" &&
+      other.id !== op.id &&
+      !other.permanentError &&
+      other.sequence > op.sequence &&
+      other.payload.exerciseId === op.payload.exerciseId &&
+      other.payload.weekKey === op.payload.weekKey,
   );
 }
