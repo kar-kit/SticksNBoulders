@@ -5,6 +5,11 @@
  *   node scripts/shot.mjs /design --width 1440 --out .shots/design.png
  *   node scripts/shot.mjs /log --mobile
  *   node scripts/shot.mjs /design --selector "[data-shot=set-row]"
+ *   node scripts/shot.mjs /design --fill "[role=combobox]::rdl"
+ *
+ * --fill types into a field before capturing, so a component that only shows
+ * its interesting state once someone has typed -- a typeahead, a number pad --
+ * can be screenshotted in that state rather than empty. Repeatable.
  */
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -51,6 +56,22 @@ if (!response?.ok()) {
 await page.evaluate(() => document.fonts.ready);
 
 await mkdir(dirname(out), { recursive: true });
+
+// Typing before capture, so an interactive state can be photographed.
+const fills = args.reduce((acc, arg, i) => {
+  if (arg === "--fill" && args[i + 1]) acc.push(args[i + 1]);
+  return acc;
+}, []);
+for (const fill of fills) {
+  // Separated by "::" rather than "=", which appears inside attribute
+  // selectors like [role=combobox] and would split in the wrong place.
+  const at = fill.indexOf("::");
+  if (at === -1) throw new Error(`--fill needs "<selector>::<text>", got "${fill}"`);
+  const field = page.locator(fill.slice(0, at)).first();
+  await field.waitFor({ state: "visible" });
+  await field.click();
+  await field.fill(fill.slice(at + 2));
+}
 
 // Scoping to one element keeps a PR screenshot about the thing that changed.
 const selector = flag("selector", null);

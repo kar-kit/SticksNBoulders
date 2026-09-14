@@ -135,6 +135,54 @@ export async function createExercise(deps: WriteDeps, actor: Actor, input: Creat
   });
 }
 
+/**
+ * A row in the shared library.
+ *
+ * Server-only, and permanently so: `exercisePermissions` grants a global
+ * exercise read to everyone and write to nobody, so once seeded, nothing in
+ * the app can correct a typo in one. That is why the seed script reconciles
+ * rather than only inserting -- see scripts/seed-exercises.mts.
+ */
+export async function createGlobalExercise(deps: WriteDeps, input: CreateExerciseInput) {
+  const name = input.name.trim();
+  if (!name) throw new Error("createGlobalExercise: name is required");
+
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: deps.newId(),
+    data: {
+      name,
+      normalised_name: normaliseExerciseName(name),
+      is_global: true,
+      // No owner. The library belongs to the product, not to whoever ran the
+      // seed script from their laptop.
+      owner_id: undefined,
+      created_at: iso(deps.now()),
+    },
+    // athleteId is required by the policy's signature but unused for a global
+    // row, which resolves to a plain read for every signed-in user.
+    permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
+  });
+}
+
+/** Corrects the display name of a library row. The normalised form follows it. */
+export async function renameGlobalExercise(
+  deps: WriteDeps,
+  input: { rowId: string; name: string },
+) {
+  const name = input.name.trim();
+  if (!name) throw new Error("renameGlobalExercise: name is required");
+
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: input.rowId,
+    data: { name, normalised_name: normaliseExerciseName(name) },
+    permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
+  });
+}
+
 /* -------------------------------------------------------------------------
  * Sessions
  * ---------------------------------------------------------------------- */

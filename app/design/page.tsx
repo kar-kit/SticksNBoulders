@@ -11,10 +11,14 @@ import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
 import { Table, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TabBar } from "@/components/ui/tab-bar";
 import { Tabs } from "@/components/ui/tabs";
+import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 import { LoadCell } from "@/components/logging/load-cell";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
 import { ExerciseTarget, SetRow, SetRowHeader } from "@/components/logging/set-row";
 import { contrastRatio } from "@/lib/design/contrast";
+import { SEED_EXERCISES } from "@/lib/exercises/seed";
+import { normaliseExerciseName } from "@/appwrite/documents";
+import type { Exercise } from "@/lib/exercises/match";
 import type { RpeValue } from "@/lib/logging/set";
 import { Caption, Panel, Rule } from "./section";
 
@@ -31,6 +35,23 @@ const INK = [
   ["muted-2", "#96969b"],
   ["success", "#6fa787"],
 ] as const;
+
+/** The real seed, plus one an athlete typed in mid-session. */
+const DEMO_LIBRARY: Exercise[] = [
+  ...SEED_EXERCISES.map((name) => ({
+    id: name,
+    name,
+    normalisedName: normaliseExerciseName(name),
+    isGlobal: true,
+  })),
+  {
+    id: "joeys-machine",
+    name: "That Machine In The Corner",
+    normalisedName: normaliseExerciseName("That Machine In The Corner"),
+    isGlobal: false,
+    ownerId: "joey",
+  },
+];
 
 const FILLS = [
   ["accent-fill", "#bc8c5e", "#1d1c22"],
@@ -437,7 +458,47 @@ export default function DesignSystemPage() {
             most one action.
           </p>
         </Panel>
+
+        <Panel label="Exercise typeahead" width={390}>
+          <ExerciseTypeaheadDemo />
+        </Panel>
       </div>
     </main>
+  );
+}
+
+function ExerciseTypeaheadDemo() {
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [created, setCreated] = useState<string | null>(null);
+
+  return (
+    <>
+      <ExerciseTypeahead
+        exercises={DEMO_LIBRARY}
+        size="lg"
+        onSelect={(exercise) => {
+          setChosen(exercise.name);
+          setCreated(null);
+        }}
+        onCreate={(name) => {
+          setCreated(name);
+          setChosen(null);
+        }}
+      />
+      <Caption>
+        {created
+          ? `would create "${created}" as yours`
+          : chosen
+            ? `selected ${chosen}`
+            : `${DEMO_LIBRARY.length} in the library — try "rdl", "bech press", "split"`}
+      </Caption>
+      <Rule />
+      <p className="m-0 text-caption text-muted-2">
+        Ranked on the device, never on the server: an athlete picking a lift in a basement gym has
+        no signal, and offline is normal rather than an error. Abbreviations and typos both match.
+        A name the library does not hold is offered last, so a thumb never creates a duplicate of a
+        lift that was already there.
+      </p>
+    </>
   );
 }
