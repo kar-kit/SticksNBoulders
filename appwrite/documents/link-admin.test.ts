@@ -1,4 +1,9 @@
-import { redeemInviteCode, resolveInviteCode, type LinkTables } from "./link-admin";
+import {
+  redeemInviteCode,
+  resolveInviteCode,
+  revokeCoachAccess,
+  type LinkTables,
+} from "./link-admin";
 import { circleTeamId } from "./circle";
 
 const DB = "sticksnboulders";
@@ -69,7 +74,12 @@ function harness(options: {
           })),
         };
       },
-      async deleteMembership() {
+      async deleteMembership({ teamId, membershipId }) {
+        // Actually removes, so the re-read in revokeCoachAccess means
+        // something. A stub that returned {} would make the guard look broken
+        // when it is the double that is.
+        const userId = membershipId.replace(/^m_/, "");
+        members[teamId] = (members[teamId] ?? []).filter((id) => id !== userId);
         return {};
       },
     },
@@ -258,5 +268,117 @@ describe("redeeming a code", () => {
   it("refuses to redeem for nobody", async () => {
     const { tables } = harness();
     await expect(redeemInviteCode(tables, DB, "", CODE)).rejects.toThrow(/athleteId/);
+  });
+});
+
+describe("withdrawing a coach's access", () => {
+  const linked = () =>
+    harness({
+      links: [{ $id: "row_1", coach_id: COACH, athlete_id: ATHLETE, status: "active" }],
+      members: { [circle]: [ATHLETE, COACH] },
+    });
+
+  it("removes the access and then records it", async () => {
+    const { tables, members, writes } = linked();
+    const result = await revokeCoachAccess(tables, DB, ATHLETE);
+
+    expect(result).toEqual({ status: "unlinked", coachId: COACH });
+    expect(members[circle]).not.toContain(COACH);
+    expect(writes[0].data).toMatchObject({ status: "revoked" });
+    expect(writes[0].data.revoked_at).toEqual(expect.any(String));
+  });
+
+  it("removes the access BEFORE writing the record", async () => {
+    // The inverse of linking, serving the same invariant: never access without
+    // a record of why. Revoking the row first and failing to remove the
+    // membership would leave a coach reading training the record says they
+    // cannot see.
+    const order: string[] = [];
+    const { tables } = linked();
+    const realDelete = tables.teams.deleteMembership;
+    tables.teams.deleteMembership = async (p) => {
+      order.push("membership");
+      return realDelete(p);
+    };
+    const realUpdate = tables.writer.updateRow;
+    tables.writer.updateRow = async (p) => {
+      order.push("row");
+      return realUpdate(p);
+    };
+
+    await revokeCoachAccess(tables, DB, ATHLETE);
+    expect(order).toEqual(["membership", "row"]);
+  });
+
+  it("leaves the athlete in their own circle", async () => {
+    const { tables, members } = linked();
+    await revokeCoachAccess(tables, DB, ATHLETE);
+    expect(members[circle]).toContain(ATHLETE);
+  });
+
+  it("writes nothing when the membership cannot be removed", async () => {
+    const { tables, writes, links } = linked();
+    tables.teams.deleteMembership = async () => {
+      throw new Error("appwrite down");
+    };
+
+    expect(await revokeCoachAccess(tables, DB, ATHLETE)).toEqual({
+      status: "still-visible",
+      coachId: COACH,
+    });
+    expect(writes).toEqual([]);
+    expect(links[0].status).toBe("active");
+  });
+
+  it("writes nothing when the coach is somehow still in the circle afterwards", async () => {
+    // removeCoachFromCircle returns silently when it finds no membership, so a
+    // successful-looking call proves nothing. This is the re-read that does.
+    const { tables, writes } = linked();
+    tables.teams.deleteMembership = async () => ({});
+
+    expect(await revokeCoachAccess(tables, DB, ATHLETE)).toEqual({
+      status: "still-visible",
+      coachId: COACH,
+    });
+    expect(writes).toEqual([]);
+  });
+
+  it("reports an athlete with no coach as done, not as a failure", async () => {
+    const { tables, writes } = harness();
+    expect(await revokeCoachAccess(tables, DB, ATHLETE)).toEqual({ status: "not-linked" });
+    expect(writes).toEqual([]);
+  });
+
+  it("ignores an already-revoked link", async () => {
+    const { tables } = harness({
+      links: [{ $id: "row_1", coach_id: COACH, athlete_id: ATHLETE, status: "revoked" }],
+    });
+    expect(await revokeCoachAccess(tables, DB, ATHLETE)).toEqual({ status: "not-linked" });
+  });
+
+  it("revokes rather than deletes, so the row survives to be re-linked", async () => {
+    const { tables, links } = linked();
+    await revokeCoachAccess(tables, DB, ATHLETE);
+    expect(links).toHaveLength(1);
+    expect(links[0].$id).toBe("row_1");
+  });
+
+  it("lets the same coach be linked again afterwards, reusing the row", async () => {
+    // End to end through both paths: the unique index on the pair forbids a
+    // second row, so unlink-then-relink has to land back on row_1.
+    const { tables, links, members } = linked();
+    await revokeCoachAccess(tables, DB, ATHLETE);
+    const again = await redeemInviteCode(tables, DB, ATHLETE, CODE);
+
+    expect(again).toMatchObject({ status: "linked", reactivated: true });
+    expect(links).toHaveLength(1);
+    expect(links[0].status).toBe("active");
+    expect(links[0].revoked_at).toBeNull();
+    expect(members[circle]).toContain(COACH);
+  });
+
+  it("refuses to revoke for nobody", async () => {
+    const { tables } = harness();
+    await expect(revokeCoachAccess(tables, DB, "")).rejects.toThrow(/athleteId/);
   });
 });

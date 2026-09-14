@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CoachLink } from "./coach-link";
 
@@ -12,6 +12,7 @@ const store = vi.hoisted(() => ({
   fetchMyCoach: vi.fn(),
   resolveCode: vi.fn(),
   redeemCode: vi.fn(),
+  unlinkCoach: vi.fn(),
 }));
 vi.mock("@/lib/coach/link-store", () => store);
 
@@ -32,6 +33,7 @@ beforeEach(() => {
     coachName: "Ruairi Deane",
     reactivated: false,
   });
+  store.unlinkCoach.mockResolvedValue({ status: "unlinked", coachId: "ruairi" });
 });
 
 const typeCode = async (value = CODE) => {
@@ -174,5 +176,84 @@ describe("a signed-out visitor", () => {
     const { container } = render(<CoachLink />);
     await waitFor(() => expect(container).toBeEmptyDOMElement());
     expect(store.fetchMyCoach).not.toHaveBeenCalled();
+  });
+});
+
+describe("withdrawing a coach", () => {
+  const linked = () => {
+    store.fetchMyCoach.mockResolvedValue({
+      coachId: "ruairi",
+      coachName: "Ruairi Deane",
+      linkedAt: new Date("2026-09-02T09:00:00.000Z"),
+    });
+  };
+
+  const openConfirm = async () => {
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Unlink" }));
+    return user;
+  };
+
+  it("asks first, naming the coach and what stops", async () => {
+    linked();
+    render(<CoachLink />);
+    await openConfirm();
+
+    expect(await screen.findByText("Unlink Ruairi Deane?")).toBeInTheDocument();
+    expect(screen.getByText(/will no longer see your sessions/)).toBeInTheDocument();
+    expect(store.unlinkCoach).not.toHaveBeenCalled();
+  });
+
+  it("reassures the athlete their own training is untouched", async () => {
+    // The fear at this moment is losing your own log, not the coach's view.
+    linked();
+    render(<CoachLink />);
+    await openConfirm();
+    expect(await screen.findByText(/Your own training stays exactly as it is/)).toBeInTheDocument();
+  });
+
+  it("keeps the coach if they back out", async () => {
+    linked();
+    render(<CoachLink />);
+    const user = await openConfirm();
+    await user.click(await screen.findByRole("button", { name: "Keep" }));
+
+    expect(await screen.findByText("Ruairi Deane")).toBeInTheDocument();
+    expect(store.unlinkCoach).not.toHaveBeenCalled();
+  });
+
+  it("returns to the code field once unlinked", async () => {
+    linked();
+    render(<CoachLink />);
+    const user = await openConfirm();
+    const confirm = await screen.findByText("Unlink Ruairi Deane?");
+    await user.click(within(confirm.parentElement!).getByRole("button", { name: "Unlink" }));
+
+    expect(await screen.findByLabelText("Enter a coach code")).toBeInTheDocument();
+    expect(store.unlinkCoach).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not claim success when the access could not be removed", async () => {
+    // Nothing was written and the coach may still see everything. Reporting
+    // this as done would leave the athlete believing they had withdrawn.
+    linked();
+    store.unlinkCoach.mockResolvedValue({ status: "still-visible", coachId: "ruairi" });
+    render(<CoachLink />);
+    const user = await openConfirm();
+    const confirm = await screen.findByText("Unlink Ruairi Deane?");
+    await user.click(within(confirm.parentElement!).getByRole("button", { name: "Unlink" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Nothing changed/);
+  });
+
+  it("treats an athlete who was already unlinked as done", async () => {
+    linked();
+    store.unlinkCoach.mockResolvedValue({ status: "not-linked" });
+    render(<CoachLink />);
+    const user = await openConfirm();
+    const confirm = await screen.findByText("Unlink Ruairi Deane?");
+    await user.click(within(confirm.parentElement!).getByRole("button", { name: "Unlink" }));
+
+    expect(await screen.findByLabelText("Enter a coach code")).toBeInTheDocument();
   });
 });

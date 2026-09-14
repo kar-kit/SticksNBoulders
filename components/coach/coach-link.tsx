@@ -5,8 +5,14 @@ import { Button } from "@/components/ui/button";
 import { FieldLabel, TextField } from "@/components/ui/input";
 import { useSession } from "@/lib/auth/session-context";
 import { INVITE_PREFIX, normaliseInviteCode } from "@/lib/coach/invite-code";
-import { linkConsentSentence, linkedDateLabel } from "@/lib/coach/link";
-import { fetchMyCoach, redeemCode, resolveCode, type MyCoach } from "@/lib/coach/link-store";
+import { linkConsentSentence, linkedDateLabel, unlinkConsequenceSentence } from "@/lib/coach/link";
+import {
+  fetchMyCoach,
+  redeemCode,
+  resolveCode,
+  unlinkCoach,
+  type MyCoach,
+} from "@/lib/coach/link-store";
 
 /**
  * The COACH section: who can see this athlete's training, and how to let
@@ -26,6 +32,8 @@ type State =
   | { status: "confirming"; coachId: string; coachName: string }
   | { status: "linking"; coachName: string }
   | { status: "linked"; coach: MyCoach }
+  | { status: "unlinking-confirm"; coach: MyCoach }
+  | { status: "unlinking"; coach: MyCoach }
   | { status: "refused"; message: string };
 
 export function CoachLink() {
@@ -110,6 +118,26 @@ export function CoachLink() {
     }
   };
 
+  const unlink = async (coach: MyCoach) => {
+    setState({ status: "unlinking", coach });
+    try {
+      const result = await unlinkCoach();
+      if (result.status === "unlinked" || result.status === "not-linked") {
+        setState({ status: "solo" });
+        await refresh();
+      } else {
+        // Nothing was written and the coach may still be able to see
+        // everything. Saying so is the only thing that gets anyone to retry.
+        setState({
+          status: "refused",
+          message: "Couldn't remove their access. Nothing changed — try again.",
+        });
+      }
+    } catch {
+      setState({ status: "refused", message: "Couldn't reach the server. Try again." });
+    }
+  };
+
   return (
     <section aria-label="Coach" className="flex flex-col items-start gap-2">
       <h2 className="m-0 text-caption font-semibold tracking-wide text-muted-2">COACH</h2>
@@ -120,7 +148,41 @@ export function CoachLink() {
           {state.coach.linkedAt ? (
             <span className="text-ui text-muted">{linkedDateLabel(state.coach.linkedAt)}</span>
           ) : null}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setState({ status: "unlinking-confirm", coach: state.coach })}
+          >
+            Unlink
+          </Button>
         </>
+      ) : state.status === "unlinking-confirm" ? (
+        <>
+          <span className="text-body font-semibold">
+            Unlink {state.coach.coachName || "your coach"}?
+          </span>
+          {/* Named and specific, the mirror of the linking sentence. Consent
+              has to be as easy to withdraw as it was to give, which does not
+              mean withdrawing it should be careless. */}
+          <p className="m-0 max-w-[340px] text-ui text-muted">
+            {unlinkConsequenceSentence(state.coach.coachName)}
+          </p>
+          <div className="flex gap-2">
+            <Button variant="danger" onClick={() => void unlink(state.coach)}>
+              Unlink
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setState({ status: "linked", coach: state.coach })}
+            >
+              Keep
+            </Button>
+          </div>
+        </>
+      ) : state.status === "unlinking" ? (
+        <span className="text-ui text-muted">
+          Removing {state.coach.coachName || "your coach"}&rsquo;s access…
+        </span>
       ) : state.status === "confirming" ? (
         <>
           <span className="text-body font-semibold">

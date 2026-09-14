@@ -53,6 +53,11 @@ export type ResolvedCode =
   | { status: "unknown-code" }
   | { status: "self" };
 
+export type UnlinkOutcome =
+  | { status: "unlinked"; coachId: string }
+  | { status: "not-linked" }
+  | { status: "still-visible"; coachId: string };
+
 export type RedeemOutcome =
   | { status: "linked"; coachId: string; coachName: string; reactivated: boolean }
   | { status: "already-linked"; coachId: string; coachName: string }
@@ -61,14 +66,14 @@ export type RedeemOutcome =
   | { status: "unknown-code" }
   | { status: "self" };
 
-async function post<T>(path: string, code: string): Promise<T> {
+async function post<T>(path: string, code?: string): Promise<T> {
   const { account } = browserAppwrite();
   const { jwt } = await account.createJWT();
 
   const response = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${jwt}` },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify(code === undefined ? {} : { code }),
   });
   if (!response.ok) {
     const error = new Error(`${path} failed: ${response.status}`) as Error & { code: number };
@@ -83,3 +88,10 @@ export const resolveCode = (code: string) => post<ResolvedCode>("/api/link/resol
 
 /** Links them. Only ever called after the athlete has seen the coach's name. */
 export const redeemCode = (code: string) => post<RedeemOutcome>("/api/link", code);
+
+/**
+ * Withdraws the coach. Takes no code: an athlete has one coach, and asking
+ * them to retype a code to get rid of it would be a hurdle in front of
+ * withdrawing consent.
+ */
+export const unlinkCoach = () => post<UnlinkOutcome>("/api/link/revoke");

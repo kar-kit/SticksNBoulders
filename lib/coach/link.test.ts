@@ -1,4 +1,11 @@
-import { decideRedemption, linkConsentSentence, linkedDateLabel, type ExistingLink } from "./link";
+import {
+  decideRedemption,
+  decideUnlink,
+  linkConsentSentence,
+  linkedDateLabel,
+  unlinkConsequenceSentence,
+  type ExistingLink,
+} from "./link";
 
 const ATHLETE = "athlete_joey";
 const COACH = "coach_ruairi";
@@ -95,5 +102,44 @@ describe("when the link happened", () => {
 
   it("says nothing rather than 'linked NaN undefined'", () => {
     expect(linkedDateLabel(new Date("nonsense"))).toBe("");
+  });
+});
+
+describe("deciding what withdrawing access does", () => {
+  it("revokes the active link", () => {
+    expect(decideUnlink(ATHLETE, [link(COACH, "active", "row_1")])).toEqual({
+      kind: "revoke",
+      rowId: "row_1",
+      coachId: COACH,
+    });
+  });
+
+  it("treats an athlete with no coach as already done, not as an error", () => {
+    // Two devices, two taps. The second one finds nothing and that is a
+    // success, the same way redeeming an already-redeemed code is.
+    expect(decideUnlink(ATHLETE, [])).toEqual({ kind: "not-linked" });
+    expect(decideUnlink(ATHLETE, [link(COACH, "revoked")])).toEqual({ kind: "not-linked" });
+  });
+
+  it("ignores revoked history and picks the active link", () => {
+    const history = [link(OTHER, "revoked", "old"), link(COACH, "active", "current")];
+    expect(decideUnlink(ATHLETE, history)).toEqual({ kind: "revoke", rowId: "current", coachId: COACH });
+  });
+
+  it("refuses to decide without an athlete", () => {
+    expect(() => decideUnlink("", [])).toThrow(/athleteId/);
+  });
+});
+
+describe("the sentence withdrawal is confirmed against", () => {
+  it("names the coach and says what stops", () => {
+    const sentence = unlinkConsequenceSentence("Ruairi");
+    expect(sentence).toMatch(/^Ruairi will no longer see your sessions/);
+    // The reassurance matters: the fear at this moment is losing your own log.
+    expect(sentence).toMatch(/Your own training stays exactly as it is\.$/);
+  });
+
+  it("stays a sentence when the coach has no name set", () => {
+    expect(unlinkConsequenceSentence("")).toMatch(/^Your coach will no longer see/);
   });
 });
