@@ -77,6 +77,29 @@ describe("creating one that does not exist", () => {
     expect(options().at(-1)).toContain("new");
   });
 
+  it("offers creation as an action, not as a command built from half a word", async () => {
+    const { user, input } = setup();
+    await user.type(input, "bench");
+
+    const create = screen.getByRole("option", { name: /Add custom exercise/ });
+    expect(create).toHaveTextContent("Add custom exercise");
+    expect(screen.queryByText("Add bench")).not.toBeInTheDocument();
+  });
+
+  it("still shows the name it would create, so nothing lands in the library unseen", async () => {
+    // This row is one tap from a permanent entry in the athlete's library.
+    const { user, input } = setup();
+    await user.type(input, "bench");
+    expect(screen.getByRole("option", { name: /Add custom exercise/ })).toHaveTextContent("bench");
+  });
+
+  it("creates exactly what was typed, not the generic label", async () => {
+    const { user, input, onCreate } = setup();
+    await user.type(input, "bench");
+    await user.click(screen.getByRole("option", { name: /Add custom exercise/ }));
+    expect(onCreate).toHaveBeenCalledWith("bench");
+  });
+
   it("offers it last, never under the thumb", async () => {
     // Choosing an existing lift is the common case, and an accidental create
     // splits that lift's history across two ids.

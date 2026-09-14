@@ -191,6 +191,11 @@ export function ExerciseTypeahead({
                   id={`${baseId}-option-${index}`}
                   role="option"
                   aria-selected={active}
+                  aria-label={
+                    option.kind === "create"
+                      ? `Add custom exercise: ${option.name}`
+                      : option.exercise.name
+                  }
                   // Selection must survive the blur that a tap would otherwise
                   // fire first, closing the list before the click lands.
                   onMouseDown={(event) => event.preventDefault()}
@@ -216,8 +221,16 @@ export function ExerciseTypeahead({
                     </>
                   ) : (
                     <>
-                      <span className="text-body text-foreground">
-                        Add <span className="font-semibold">{option.name}</span>
+                      {/*
+                        The heading is generic rather than "Add bench", which
+                        reads as a command built from half a typed word --
+                        Joey's call, 14 Sep. The name still shows underneath,
+                        because this row is one tap from putting a row in the
+                        library forever and nothing should get there unseen.
+                      */}
+                      <span className="flex flex-col gap-0.5 py-2">
+                        <span className="text-body text-foreground">Add custom exercise</span>
+                        <span className="text-caption text-muted">&ldquo;{option.name}&rdquo;</span>
                       </span>
                       <span className="font-mono text-label uppercase text-muted-2">new</span>
                     </>

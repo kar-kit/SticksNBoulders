@@ -58,6 +58,12 @@ A typo still does. `bech press` might genuinely be this athlete's lift, the
 right match sits directly above it, and being unable to add something is the
 failure that sends a coach back to a spreadsheet.
 
+**Joey's call, 14 Sep: creation stays available whatever you have typed, and
+the row reads "Add custom exercise" rather than "Add bench"** — a command built
+from half a typed word reads as a mistake. The typed name still shows
+underneath it in quotes, because that row is one tap from a permanent entry in
+the athlete's library and nothing should get there unseen.
+
 Both states, captured at 390pt (`.shots/typeahead-match.png`,
 `.shots/typeahead-create.png` — gitignored, so rendered here):
 
@@ -68,12 +74,13 @@ Both states, captured at 390pt (`.shots/typeahead-match.png`,
   | rdl                        |    | Zercher Squat              |
   +----------------------------+    +----------------------------+
   +----------------------------+    +----------------------------+
-  | Romanian Deadlift          |    | | Add Zercher Squat   NEW  |
-  +----------------------------+    +----------------------------+
+  | Romanian Deadlift          |    | | Add custom exercise NEW  |
+  +----------------------------+    | | "Zercher Squat"          |
+                                    +----------------------------+
                                      ^ accent rule marks a create
 
-  an abbreviation offers no          a name the library does not
-  "Add rdl"                          hold is offered, always last
+  an abbreviation offers no          creation is always available,
+  "Add rdl"                          and always last
 ```
 
 ### Create-on-the-fly resolves before it writes
