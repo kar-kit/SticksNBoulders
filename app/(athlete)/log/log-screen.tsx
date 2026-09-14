@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 import { ExerciseBlock, type LoggedSet } from "@/components/logging/exercise-block";
 import { NumberPad } from "@/components/logging/number-pad";
+import { RestBar } from "@/components/logging/rest-bar";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
@@ -20,6 +21,8 @@ import { subscribeToQueue } from "@/lib/offline/client";
 import { failedOps, type QueuedOp } from "@/lib/offline/queue";
 import { beginEdit, padValue, rpeAfterWarmupChange, type PadState } from "@/lib/logging/number-pad";
 import { resolvePrefill } from "@/lib/logging/prefill";
+import { extendRest, startRest, type RestTimer } from "@/lib/logging/rest-timer";
+import { forgetRest, recallRest, rememberRest } from "@/lib/logging/rest-store";
 import { canComplete, type RpeValue } from "@/lib/logging/set";
 import {
   elapsedMs,
@@ -77,10 +80,20 @@ export function LogScreen() {
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
   const [ops, setOps] = useState<QueuedOp[]>([]);
+  const [rest, setRest] = useState<RestTimer | null>(null);
 
   // The queue is attached by the provider; this only watches it, so a set that
   // is still on its way keeps its mark and a reload gets its sets back.
   useEffect(() => subscribeToQueue(setOps), []);
+
+  // A rest that was running when the page went away. It is stored as a
+  // timestamp, so what comes back is the real remaining time.
+  useEffect(() => {
+    void (async () => {
+      await Promise.resolve();
+      setRest(recallRest());
+    })();
+  }, []);
 
   // Ticks the clock. The value shown is always derived from started_at, so a
   // phone that slept through twenty minutes shows twenty minutes.
@@ -200,6 +213,13 @@ export function LogScreen() {
     [setsOf],
   );
 
+  /** One place that changes the rest timer, so the stored copy cannot drift. */
+  const changeRest = useCallback((next: RestTimer | null) => {
+    setRest(next);
+    if (next) rememberRest(next);
+    else forgetRest();
+  }, []);
+
   const activate = useCallback(
     (exerciseId: string) => {
       setDraft(draftFor(exerciseId));
@@ -272,6 +292,10 @@ export function LogScreen() {
     setDraft(draftFor(row.exerciseId, { loadKg: optimistic.loadKg, reps: optimistic.reps }));
     setPad(null);
     setRpeOpen(false);
+    // Warm-ups start it too. Anything else is a rule an athlete has to learn,
+    // and the feature list is explicit that this is the part Strong keeps
+    // simple on purpose.
+    changeRest(startRest());
 
     try {
       await logSet({
@@ -298,6 +322,8 @@ export function LogScreen() {
     if (!last || !athleteId) return;
     setLocal((prev) => prev.filter((s) => s.clientSetId !== last.clientSetId));
     setStored((prev) => prev.filter((s) => s.clientSetId !== last.clientSetId));
+    // The set that started the rest is gone, so the rest is gone.
+    changeRest(null);
     setDraft((prev) => (prev?.exerciseId === exerciseId ? draftFor(exerciseId) : prev));
     await removeSet(last.clientSetId).catch(() => {});
   };
@@ -317,6 +343,7 @@ export function LogScreen() {
     setBusy(true);
     try {
       await finish(active.id, { setCount: summary.setCount, tonnageKg: summary.tonnageKg });
+      changeRest(null);
       setPhase("finished");
     } finally {
       setBusy(false);
@@ -352,7 +379,17 @@ export function LogScreen() {
       .map((e) => ({ id: e.id, name: e.name })),
   ];
 
-  const sheetOpen = pad !== null || rpeOpen;
+  /**
+   * What gets the bottom of the screen. Exactly one thing does.
+   *
+   * The order is by how committed the athlete already is. Mid-entry beats
+   * everything. Confirming a finish beats the rest timer, which beats adding an
+   * exercise -- and the last two are the collision worth naming, because a set
+   * being logged is the same instant the timer starts and the typeahead comes
+   * back. Stacking them would push both out of the thumb zone.
+   */
+  const bottom: "pad" | "rpe" | "confirm" | "rest" | "add" =
+    pad !== null ? "pad" : rpeOpen ? "rpe" : phase === "confirming" ? "confirm" : rest ? "rest" : "add";
 
   return (
     <div className="pt-safe-8 flex flex-1 flex-col gap-5 pb-6">
@@ -413,7 +450,7 @@ export function LogScreen() {
           </p>
         ) : null}
 
-        {phase === "confirming" ? (
+        {bottom === "confirm" ? (
           <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
             <p className="m-0 text-body">
               Finish this session? {summary.setCount} set{summary.setCount === 1 ? "" : "s"} logged.
@@ -430,7 +467,7 @@ export function LogScreen() {
         ) : null}
 
         {/* One sheet at a time, and only where a thumb already is. */}
-        {pad !== null && draft ? (
+        {bottom === "pad" && pad !== null && draft ? (
           <NumberPad
             state={pad}
             onChange={applyPad}
@@ -442,7 +479,7 @@ export function LogScreen() {
           />
         ) : null}
 
-        {rpeOpen && draft ? (
+        {bottom === "rpe" && draft ? (
           <RpeSheet
             setIndex={setsOf(draft.exerciseId).filter((s) => !s.isWarmup).length + 1}
             value={draft.rpe}
@@ -453,7 +490,16 @@ export function LogScreen() {
           />
         ) : null}
 
-        {!sheetOpen ? (
+        {bottom === "rest" && rest ? (
+          <RestBar
+            timer={rest}
+            now={now}
+            onExtend={() => changeRest(extendRest(rest))}
+            onSkip={() => changeRest(null)}
+          />
+        ) : null}
+
+        {bottom === "add" ? (
           <ExerciseTypeahead
             exercises={library.exercises}
             label="Add exercise"

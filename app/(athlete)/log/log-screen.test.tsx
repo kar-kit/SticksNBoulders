@@ -72,12 +72,16 @@ function setup(overrides: Record<string, unknown> = {}) {
     reload: vi.fn(),
     ...overrides,
   };
-  render(<LogScreen />);
-  return { start, finish, user: userEvent.setup() };
+  const { unmount } = render(<LogScreen />);
+  return { start, finish, unmount, user: userEvent.setup() };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The rest timer is remembered across a reload, and jsdom keeps localStorage
+  // between tests in a file. Without this, one test's rest hides the next
+  // test's typeahead -- they share the bottom of the screen.
+  localStorage.clear();
   // Both resolve by default: clearAllMocks wipes the implementation, and a
   // mock that returns undefined is not a stand-in for one that returns a
   // promise -- the screen awaits both.
@@ -391,5 +395,90 @@ describe("when the gym has no signal", () => {
     // Nothing about it reads as a failure: offline is normal.
     expect(screen.queryByText(/could not be saved/)).not.toBeInTheDocument();
     resetQueueForTests();
+  });
+});
+
+describe("the rest timer", () => {
+  const addAndLog = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("combobox", { name: "Add exercise" }));
+    await user.click(await screen.findByRole("option", { name: "Squat" }));
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    for (const key of ["1", "4", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "5" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+  };
+
+  it("starts at two minutes when a set is logged", async () => {
+    const { user } = setup({ active: session() });
+    await addAndLog(user);
+
+    const timer = await screen.findByRole("timer", { name: "Rest timer" });
+    expect(timer).toHaveTextContent("2:00");
+  });
+
+  it("takes the bottom of the screen from the typeahead, rather than stacking", async () => {
+    // The collision worth naming: logging a set is the same instant the timer
+    // starts and the next-exercise box comes back. Both in the thumb zone
+    // pushes one of them out of it.
+    const { user } = setup({ active: session() });
+    await addAndLog(user);
+
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Add exercise" })).not.toBeInTheDocument();
+  });
+
+  it("gives the box back when the rest is skipped", async () => {
+    const { user } = setup({ active: session() });
+    await addAndLog(user);
+    await user.click(await screen.findByRole("button", { name: "Skip rest" }));
+
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Add exercise" })).toBeInTheDocument();
+  });
+
+  it("adds thirty seconds to the rest on each tap", async () => {
+    const { user } = setup({ active: session() });
+    await addAndLog(user);
+    await user.click(await screen.findByRole("button", { name: "Add 30 seconds to the rest" }));
+
+    // The clock has not moved in this test, so the whole extension shows.
+    expect(screen.getByRole("timer")).toHaveTextContent("2:30");
+    await user.click(screen.getByRole("button", { name: "Add 30 seconds to the rest" }));
+    expect(screen.getByRole("timer")).toHaveTextContent("3:00");
+  });
+
+  it("stands down while a number is being entered", async () => {
+    // Mid-entry beats everything: the pad is what the thumb is already on.
+    const { user } = setup({ active: session() });
+    await addAndLog(user);
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+  });
+
+  it("goes away when the set that started it is undone", async () => {
+    const { user } = setup({ active: session() });
+    await addAndLog(user);
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Undo last set" }));
+    await waitFor(() => expect(screen.queryByRole("timer")).not.toBeInTheDocument());
+  });
+
+  it("is still running after the page is thrown away", async () => {
+    // Stored as a timestamp, so this is the real remaining time and not a
+    // counter that restarted.
+    const { user, unmount } = setup({ active: session() });
+    await addAndLog(user);
+    await user.click(await screen.findByRole("button", { name: "Add 30 seconds to the rest" }));
+    unmount();
+
+    setup({ active: session() });
+    // A little under 2:30, because real seconds passed between the two renders
+    // -- which is exactly the proof wanted. A counter that restarted would read
+    // 2:00, and one that reset its extension would too.
+    expect(await screen.findByRole("timer")).toHaveTextContent(/2:2[0-9]|2:30/);
   });
 });

@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from "@/lib/local-store";
 import type { Exercise } from "./match";
 
 /**
@@ -20,30 +21,15 @@ interface Stored {
   exercises: readonly Exercise[];
 }
 
-function safely<T>(run: () => T, fallback: T): T {
-  try {
-    return run();
-  } catch {
-    return fallback;
-  }
-}
-
 export function cacheLibrary(userId: string, exercises: readonly Exercise[]): void {
-  safely(
-    () => localStorage.setItem(KEY, JSON.stringify({ userId, exercises } satisfies Stored)),
-    undefined,
-  );
+  writeLocal(KEY, { userId, exercises } satisfies Stored);
 }
 
 /** Scoped to the athlete, so a shared phone never shows someone else's lifts. */
 export function cachedLibrary(userId: string): Exercise[] | null {
-  return safely(() => {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const stored = JSON.parse(raw) as Partial<Stored>;
-    if (stored.userId !== userId || !Array.isArray(stored.exercises)) return null;
-    return stored.exercises.filter(
-      (e): e is Exercise => typeof e?.id === "string" && typeof e?.name === "string",
-    );
-  }, null);
+  const stored = readLocal<Partial<Stored>>(KEY);
+  if (stored?.userId !== userId || !Array.isArray(stored.exercises)) return null;
+  return stored.exercises.filter(
+    (e): e is Exercise => typeof e?.id === "string" && typeof e?.name === "string",
+  );
 }

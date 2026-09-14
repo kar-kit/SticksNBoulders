@@ -1,3 +1,4 @@
+import { readLocal, removeLocal, writeLocal } from "@/lib/local-store";
 import type { SessionRecord } from "./session";
 
 /**
@@ -34,51 +35,35 @@ interface Stored {
   athleteId: string;
 }
 
-/** Storage can throw -- private mode, a full quota -- and never for a reason worth failing a workout over. */
-function safely<T>(run: () => T, fallback: T): T {
-  try {
-    return run();
-  } catch {
-    return fallback;
-  }
-}
-
 export function rememberActiveSession(athleteId: string, session: SessionRecord): void {
-  safely(() => {
-    const stored: Stored = {
-      id: session.id,
-      clientSessionId: session.clientSessionId,
-      startedAt: session.startedAt.toISOString(),
-      athleteId,
-    };
-    localStorage.setItem(KEY, JSON.stringify(stored));
-  }, undefined);
+  writeLocal(KEY, {
+    id: session.id,
+    clientSessionId: session.clientSessionId,
+    startedAt: session.startedAt.toISOString(),
+    athleteId,
+  } satisfies Stored);
 }
 
 export function forgetActiveSession(): void {
-  safely(() => localStorage.removeItem(KEY), undefined);
+  removeLocal(KEY);
 }
 
 /** The remembered session, if it belongs to this athlete and still parses. */
 export function recallActiveSession(athleteId: string, now: Date = new Date()): SessionRecord | null {
-  return safely(() => {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const stored = JSON.parse(raw) as Partial<Stored>;
-    if (stored.athleteId !== athleteId || !stored.id || !stored.startedAt) return null;
-    const startedAt = new Date(stored.startedAt);
-    if (Number.isNaN(startedAt.getTime())) return null;
-    if (now.getTime() - startedAt.getTime() > MAX_AGE_MS) return null;
-    return {
-      id: stored.id,
-      clientSessionId: stored.clientSessionId ?? stored.id,
-      startedAt,
-      finishedAt: null,
-      // Totals are whatever the sets say once they load. Storing a stale count
-      // here would put a wrong number on the finish screen.
-      setCount: 0,
-      tonnageKg: 0,
-      notes: null,
-    } satisfies SessionRecord;
-  }, null);
+  const stored = readLocal<Partial<Stored>>(KEY);
+  if (stored?.athleteId !== athleteId || !stored.id || !stored.startedAt) return null;
+  const startedAt = new Date(stored.startedAt);
+  if (Number.isNaN(startedAt.getTime())) return null;
+  if (now.getTime() - startedAt.getTime() > MAX_AGE_MS) return null;
+  return {
+    id: stored.id,
+    clientSessionId: stored.clientSessionId ?? stored.id,
+    startedAt,
+    finishedAt: null,
+    // Totals are whatever the sets say once they load. Storing a stale count
+    // here would put a wrong number on the finish screen.
+    setCount: 0,
+    tonnageKg: 0,
+    notes: null,
+  } satisfies SessionRecord;
 }

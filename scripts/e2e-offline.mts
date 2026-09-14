@@ -96,6 +96,20 @@ const pad = async (page: Page, digits: string) => {
     await page.getByRole("button", { name: key === "." ? "Decimal point" : key, exact: true }).click();
   }
 };
+/**
+ * Adds an exercise, skipping the rest timer first if one is running.
+ *
+ * They share the bottom of the screen deliberately -- a set being logged is the
+ * same instant the timer starts and the box comes back, and stacking both
+ * pushes one out of the thumb zone. So an athlete adding the next exercise
+ * dismisses the rest on the way, and so does this.
+ */
+const addExercise = async (page: Page, name: string) => {
+  const skip = page.getByRole("button", { name: "Skip rest" });
+  if (await skip.count()) await skip.click();
+  await page.getByRole("combobox").fill(name);
+};
+
 const enter = async (page: Page, kg: string, reps: string) => {
   await page.getByRole("button", { name: /weight in kilograms/ }).click();
   await pad(page, kg);
@@ -130,7 +144,7 @@ check("the session starts anyway", await page.getByRole("button", { name: "Finis
 check("and nothing reached Appwrite", (await rowsOf("sessions", athlete.$id)).length === 0);
 
 console.log("\nLogging into it");
-await page.getByRole("combobox").fill("squat");
+await addExercise(page, "squat");
 await page.getByRole("option", { name: "Squat", exact: true }).first().click();
 await page.getByRole("group", { name: "Set 1" }).waitFor({ timeout: 10000 }).catch(() => {});
 
@@ -152,7 +166,7 @@ console.log("\nAnd a lift the library has never heard of");
 // on the device, queued, and the set logged into it references its id straight
 // away -- the whole reason the client id is the row id.
 const invented = `Basement Good Morning ${stamp}`;
-await page.getByRole("combobox").fill(invented);
+await addExercise(page, invented);
 await page.getByRole("option", { name: `Add custom exercise: ${invented}` }).click();
 await page.getByRole("region", { name: invented }).waitFor({ timeout: 10000 }).catch(() => {});
 check("it can be added with no signal", await page.getByRole("region", { name: invented }).isVisible().catch(() => false));
