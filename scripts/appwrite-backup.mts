@@ -53,7 +53,8 @@ const backup = await dumpInstance(source, {
   schemaVersion: schema.version,
 });
 
-const dir = join(root, backupDirName(backup.manifest.takenAt));
+const dirName = backupDirName(backup.manifest.takenAt);
+const dir = join(root, dirName);
 await writeBackup(dir, backup);
 
 for (const table of backup.manifest.tables) {
@@ -71,21 +72,27 @@ if (problems.length > 0) {
     console.log(`  ${problem.severity === "blocking" ? "BLOCKING" : "warning "}  ${problem.message}`);
   }
 }
-const blocking = problems.filter((p) => p.severity === "blocking");
-
-if (keep) {
-  const all = await listBackups(root);
-  for (const name of all.slice(0, Math.max(0, all.length - keep))) {
-    await rm(join(root, name), { recursive: true, force: true });
-    console.log(`  pruned   ${name}`);
-  }
-}
-
 console.log(`\nWrote ${dir}/`);
+
+// Before pruning, not after. A dump that fails its own validation must never
+// be the reason an older, good one is deleted.
+const blocking = problems.filter((p) => p.severity === "blocking");
 if (blocking.length > 0) {
   console.error(
     `\n${blocking.length} blocking problem(s). This dump would be refused by a restore.`,
   );
+  console.error("Nothing was pruned.");
   process.exit(1);
+}
+
+if (keep) {
+  // listBackups returns only directories with a readable manifest, and the
+  // dump just written is excluded outright. Both guards exist because this is
+  // the one code path here that deletes data.
+  const older = (await listBackups(root)).filter((name) => name !== dirName);
+  for (const name of older.slice(0, Math.max(0, older.length + 1 - keep))) {
+    await rm(join(root, name), { recursive: true, force: true });
+    console.log(`  pruned   ${name}`);
+  }
 }
 console.log("This dump is on the same machine as Appwrite. See docs/backups.md — step 3 is yours.");

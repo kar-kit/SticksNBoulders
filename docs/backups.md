@@ -139,4 +139,8 @@ Run it after anything that touches the permission model, the circle model or
 the schema. A dump nobody has restored is not a backup, it is a directory of
 JSON that makes people feel safe.
 
-Point it at dev. It deletes what it creates, but it creates real accounts.
+Point it at dev. It deletes what it creates, but it creates real accounts —
+and its restore step replays the whole dump, not only its own cast. On dev that
+is a no-op, since everything else still exists and is skipped as already there.
+On an instance where something was legitimately deleted between the dump and
+the restore, it would bring that back.

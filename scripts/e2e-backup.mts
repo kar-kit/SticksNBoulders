@@ -10,7 +10,11 @@
  * still read the athlete's set afterwards.
  *
  * It builds its own cast and removes it again. Point it at dev, never at
- * anything with real athletes on it.
+ * anything with real athletes on it -- and note the restore step replays the
+ * WHOLE dump, not just the cast. On dev that is a no-op, because everything
+ * else still exists and every write is skipped as already there. On an instance
+ * where something was legitimately deleted between the dump and the restore,
+ * it would bring that back.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

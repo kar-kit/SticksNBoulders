@@ -57,17 +57,33 @@ export async function readBackup(dir: string): Promise<Backup> {
   };
 }
 
-/** Dump directories under `root`, newest last. Used to report on a schedule. */
+/**
+ * Dump directories under `root`, newest last.
+ *
+ * Only directories holding a readable manifest count. The manifest is written
+ * last, so anything without one is a dump that crashed -- and since the caller
+ * of this function deletes what it returns, a crashed dump counting toward the
+ * retention window would evict a good backup to keep a corpse.
+ */
 export async function listBackups(root: string): Promise<string[]> {
+  let entries;
   try {
-    const entries = await readdir(root, { withFileTypes: true });
-    return entries
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort();
+    entries = await readdir(root, { withFileTypes: true });
   } catch {
     return [];
   }
+
+  const found: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    try {
+      const manifest = JSON.parse(await readFile(join(root, entry.name, MANIFEST), "utf8"));
+      if (typeof manifest?.formatVersion === "number") found.push(entry.name);
+    } catch {
+      // Not a backup. Never ours to delete.
+    }
+  }
+  return found.sort();
 }
 
 export { BACKUP_FORMAT_VERSION };

@@ -1,107 +1,99 @@
-## FTP1-4 — Next.js PWA shell, routing and layout
+## FTP1-5 — Backups: a dump that can actually be restored
 
-**Notion:** https://app.notion.com/3da64699b43c81959c99f1de2aca37f3
-**Depends on:** #1–#4 (all merged)
+**Notion:** [MVP Feature List — Order 5](https://app.notion.com/p/c1595d12346b47fd9939ea81cd33ab4d)
+**Depends on:** #1–#5 (all merged)
 
-### What was built
+### Scope, and what was cut
 
-Both shells from `00 — Conventions`, the route structure underneath them, and
-the role switching between them.
+Order 5 reads "Deploy pipeline, env config and backups". It is a `Source:
+Inferred` row, and two thirds of it are already done or unspecified:
 
-- **Athlete shell** — four tabs, 16px gutters, safe areas top and bottom, tab
-  bar outside the scroll region so a thumb never has to hunt for it.
-- **Coach shell** — top nav with the review count, persistent 180px athlete
-  rail on every screen, `Athlete mode` switch.
-- **Route groups** `(athlete)` and `(coach)`, so the two surfaces are separate
-  trees rather than one responsive app with breakpoints.
-- **`SessionProvider`** — the session fetched once per app load, not per screen.
+- **Env config: already done in #1.** `appwrite/env.ts` validates endpoint,
+  project and database through Zod with a protocol check, with tests. Nothing
+  to build.
+- **Deploy pipeline: descoped, Joey's call, 14 Sep.** There is no deploy
+  target. Appwrite is self-hosted by hand, Cloud is phase 5, and no host,
+  staging or domain for the Next.js app has been described. Inventing a
+  deployment story here would be inventing a requirement.
+- **Backups: built, and this is the whole PR.** It is the half that is
+  genuinely load-bearing — Ruairi's data is someone's livelihood even in beta.
 
-**Role is a relationship, not an account type.** There is no coach flag and
-there never will be: `fetchCoachStatus` reads `coach_athlete_links`, and the
-`Coach mode` button on Me appears and disappears on its own as links are made
-and revoked. The e2e proves it by creating a real link mid-run and watching the
-app notice.
+### Appwrite has no backups to lend us
 
-### The bug this feature nearly shipped with
+Self-hosted 1.9.0 returns `404 general_route_not_found` on
+`/backups/policies` and `/backups/archives`. The Backups service exists in the
+SDK and is Cloud-only, so the dump is ours to write.
 
-After signing in, `SessionProvider` still held `signed-out`. So the athlete
-shell bounced back to `/sign-in`, which saw a valid Appwrite session and bounced
-to `/today`, which bounced back — **two screens redirecting at each other about
-thirty times a second, hammering Appwrite with 131 `/account` requests every
-four seconds.**
+### What a dump holds, and why each part is load-bearing
 
-Every unit test passed throughout. It only surfaced when Playwright reported
-`element was detached from the DOM, retrying` thirteen times and I went looking.
+- **Rows with `$permissions`.** Under Appwrite the permissions *are* the access
+  control — there is no policy to re-derive them from. A dump that loses them
+  restores data nobody can read.
+- **Users as identities.** Row permissions name `user:<id>`.
+- **Teams and memberships.** A coach's read comes from
+  `team:circle_<athlete>`, so the circle graph is the access model, not
+  metadata.
 
-The cause was two sources of session truth: the sign-in screen ran its own
-`account.get()` alongside the provider. It now reads the provider, and callers
-that are about to navigate await `refresh()` first. **After: 0 requests while
-idle.**
+**No password hashes.** Writing argon2 hashes and emails to unencrypted JSON
+would put a credential file on the same machine as the database it protects.
+The manifest states its own omissions in the file itself. A restored account is
+claimed through password reset or its OAuth provider; credentials are the
+host-level backup's job, and `docs/backups.md` draws that line explicitly.
 
-### Decisions not specified
+### Restore order is the whole problem
 
-- **Sign-in lands on `/`, never on a surface.** The root is the only place that
-  knows whether someone has athletes linked, so it is the only place that can
-  route by role. Sending sign-in straight to `/today` put a coach in the athlete
-  app with no signposted way out — caught by the e2e, not by a test I wrote.
-- **The shell chrome paints before the session resolves.** Gating the whole
-  shell meant no first contentful paint at all on a cold load: `FCP NaN`,
-  a dark rectangle for a full Appwrite round trip. Measured, not guessed. Almost
-  every load of a training logger is a signed-in one, so the shell renders first
-  and fills in. A signed-out visitor sees chrome for one frame; their data never
-  appears.
-- **Every route in both navs exists**, including `/coach/review`,
-  `/coach/programs` and `/coach/athletes/[id]`. Next prefetches nav links, and
-  those were 404ing. Each shows the real empty state of the screen that will
-  replace it — which is genuinely what Ruairi sees on an account with nothing on
-  it, so none of it is throwaway copy.
+**users → teams → memberships → rows.** Appwrite validates a row's permissions
+when the row is written, so rows first would produce permissions naming a team
+that does not exist yet: a restore that looks clean while every coach screen
+comes back empty. Before anything is written, every `user:` and `team:` the
+rows name is confirmed present in the dump, or the restore refuses outright.
 
-### The load budget, measured
+### The bug this replaces
 
-Order 4 sets it: interactive under 2.5s on 4G. `npm run perf:check` measures it
-against a production build with a cold cache and Chrome's own throttling
-presets, so it stays honest as screens land.
+`appwrite-reset.mts` dumped every table before deleting it — with one
+unpaginated `listRows`, which Appwrite caps at 25 rows. Any table larger than
+that was silently truncated, and the reset then deleted the original. It shares
+this code now.
 
-```
-Fast 4G   /sign-in  FCP 440ms  interactive 385ms  load 783ms   57KB
-          /today    FCP 444ms  interactive 388ms  load 798ms   54KB
-Slow 4G   /sign-in  FCP 932ms  interactive 793ms  load 2327ms  57KB
-          /today    FCP 924ms  interactive 807ms  load 2226ms  54KB
-```
+Paging stops when a page comes back **empty**, not when it comes back short:
+Appwrite caps page size server-side and the cap has moved between versions, so
+stopping on a short page would truncate the moment the cap dropped below what
+we asked for. Collected counts are reconciled against the instance's own total
+— short throws, long is recorded, because a set can be logged mid-dump. Reads
+pass `ttl: 0`, so a backup is never a backup of a ten-minute-old cached page.
 
-Interactive at **388ms on Fast 4G** against a 2500ms budget, and 807ms on Slow
-4G. Slowness was Ruairi's first complaint about RTS; this is the number that has
-to keep holding.
+### Verification
 
-### Tests
-
-34 new, 487 total, plus `npm run e2e:shell` — 15 assertions driving both shells
-against the live instance with a real coach link, circle team and profile:
+`npm run e2e:backup` — builds an athlete, a coach, a circle and a logged set on
+the live instance, dumps it, **deletes all of it**, restores from the dump,
+then checks the only thing that really matters:
 
 ```
-A plain athlete
-  lands on Today / four-tab shell / each tab reaches its route
-  no coach switch, because nobody is linked to them
-  every screen has a real empty state, not a blank
-Once an athlete is linked
-  a coach lands on their roster, not on Today
-  the rail names the athlete
-  athlete mode switches on the same account, and the way back is on Me
-Every link in the coach nav goes somewhere
+Before the disaster        the coach can read the athlete's set to begin with
+The dump                   holds the set, its permissions, the account, the circle
+                           and no password material anywhere in it
+After losing all of it     the set is gone
+After restoring            same id, same load, byte-identical permissions
+                           the account exists again, the circle has both members
+                           THE COACH CAN READ THE SET AGAIN
+                           restoring twice changes nothing
+
+17/17 passed. Cast, circle and dump removed.
 ```
 
-### Also fixed
+Retention was exercised against real dumps, not just unit-tested: `--keep 1`
+pruned the two older valid dumps, kept the newest, and left a legacy-format
+directory it could not verify untouched.
 
-**The write guard crashed on a staged deletion.** It read every path `git
-ls-files` reported, including files deleted from disk but still in the index —
-a half-finished rebase turned a security check into a confusing `ENOENT` at the
-worst possible moment. It skips missing paths now.
+29 new tests, 517 total.
 
-`appwrite/browser-client.ts` may construct `TablesDB` for **reads**. The
-row-mutator ban still covers it, and that is the rule that matters — verified by
-adding a bypassing file and watching the guard fail.
+### Not in this PR — and it is a real gap
 
-### Not in this PR
+**Step 3, getting the dump off the machine, is not done.** Joey's call: build
+and verify the dump first rather than guess at a destination. Until it is done
+the dump sits on the same disk as the database it protects, which covers a bad
+migration and a wrong `appwrite:reset`, and covers nothing else.
+`docs/backups.md` §3 writes it up as the open task with three ways to close it,
+so phase 0 ships knowing which guarantee it does not yet have.
 
-The service worker, install prompt and offline check are Order 40. The manifest
-and icons are correct and serving; nothing caches offline yet.
+🤖 Generated with [Claude Code](https://claude.com/claude-code)

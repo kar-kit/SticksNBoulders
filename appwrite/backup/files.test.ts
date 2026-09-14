@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backupDirName, listBackups, readBackup, writeBackup } from "./files";
@@ -84,6 +84,16 @@ describe("a backup on disk", () => {
       "2026-09-13T00-00-00-000Z",
       "2026-09-14T00-00-00-000Z",
     ]);
+  });
+
+  it("ignores a directory with no manifest, so a crashed dump cannot displace a good one", async () => {
+    // Retention deletes what this returns. A half-written dump counting toward
+    // the window would evict a real backup to make room for a corpse.
+    await writeBackup(join(dir, "2026-09-14T00-00-00-000Z"), backup);
+    await mkdir(join(dir, "2026-09-15T00-00-00-000Z", "tables"), { recursive: true });
+    await mkdir(join(dir, "not-a-backup-at-all"), { recursive: true });
+
+    expect(await listBackups(dir)).toEqual(["2026-09-14T00-00-00-000Z"]);
   });
 
   it("stores one file per table, readable on its own", async () => {
