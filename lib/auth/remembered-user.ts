@@ -1,3 +1,4 @@
+import { readLocal, removeLocal, writeLocal } from "@/lib/local-store";
 import type { CoachStatus } from "./role";
 import type { SessionUser } from "./session-context";
 
@@ -24,28 +25,16 @@ interface Stored {
   coach: CoachStatus;
 }
 
-function safely<T>(run: () => T, fallback: T): T {
-  try {
-    return run();
-  } catch {
-    return fallback;
-  }
-}
-
 export function rememberUser(user: SessionUser, coach: CoachStatus): void {
-  safely(() => localStorage.setItem(KEY, JSON.stringify({ user, coach } satisfies Stored)), undefined);
+  writeLocal(KEY, { user, coach } satisfies Stored);
 }
 
 export function forgetUser(): void {
-  safely(() => localStorage.removeItem(KEY), undefined);
+  removeLocal(KEY);
 }
 
 export function recallUser(): Stored | null {
-  return safely(() => {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const stored = JSON.parse(raw) as Partial<Stored>;
-    if (!stored.user?.id || !stored.coach) return null;
-    return { user: stored.user, coach: stored.coach };
-  }, null);
+  const stored = readLocal<Partial<Stored>>(KEY);
+  if (!stored?.user?.id || !stored.coach) return null;
+  return { user: stored.user, coach: stored.coach };
 }

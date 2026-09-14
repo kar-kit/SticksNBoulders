@@ -151,6 +151,18 @@ check("the next row prefills from the set just logged", prefilled.includes("140"
 await page.getByRole("button", { name: "Log Set 2" }).click();
 await until(async () => (await setsOf(athlete.$id)).length === 3);
 
+console.log("\nThe rest timer");
+const restBar = page.getByRole("timer", { name: "Rest timer" });
+await restBar.waitFor({ timeout: 10000 }).catch(() => {});
+check("starts when a set is logged", await restBar.isVisible());
+check(
+  "and takes the bottom of the screen rather than stacking on the typeahead",
+  (await page.getByRole("combobox").count()) === 0,
+);
+await page.getByRole("button", { name: "Add 30 seconds to the rest" }).click();
+const extended = await restBar.innerText();
+check("+30s extends it", /2:[23]\d/.test(extended));
+
 const written = await setsOf(athlete.$id);
 check("three sets reached Appwrite", written.length === 3);
 check("one of them is flagged as a warm-up", written.filter((r) => r.is_warmup === true).length === 1);
@@ -164,6 +176,16 @@ check("no second session was created", (await sessionsOf(athlete.$id)).length ==
 check("the warm-up came back", await page.getByRole("group", { name: "Warm-up set" }).isVisible());
 check("and both working sets, numbered", await page.getByRole("group", { name: "Set 2" }).isVisible());
 check("no fourth set was written by the reload", (await setsOf(athlete.$id)).length === 3);
+// Derived from a timestamp, so it survives the page going away. A tick counter
+// would come back at 2:00, or not at all.
+const afterReload = await page
+  .getByRole("timer", { name: "Rest timer" })
+  .innerText()
+  .catch(() => "");
+check("and the rest timer is still counting the same rest", /2:[012]\d/.test(afterReload));
+
+await page.getByRole("button", { name: "Skip rest" }).click();
+check("skipping it gives the typeahead back", (await page.getByRole("combobox").count()) === 1);
 
 await page.goto(`${BASE}/today`);
 await page.getByRole("button", { name: "Resume session" }).waitFor({ timeout: 15000 }).catch(() => {});
