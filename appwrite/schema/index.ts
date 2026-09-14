@@ -23,7 +23,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 1,
+  version: 2,
   tables: [
     {
       id: "profiles",
@@ -154,6 +154,12 @@ export const schema: DatabaseSpec = {
         // the same rule the logger applies.
         { key: "best_single_kg", type: "float", required: false, min: 0 },
         { key: "best_single_reps", type: "integer", required: false, min: 0 },
+        // The most reps done in one working set that week, and what it was
+        // done with. Lift Detail shows it as a personal record, and "most
+        // reps ever" is an aggregate -- so it is stored here rather than
+        // scanned out of raw sets, like every other aggregate in the product.
+        { key: "best_reps", type: "integer", required: false, min: 0 },
+        { key: "best_reps_load_kg", type: "float", required: false, min: 0 },
         { key: "rebuilt_at", type: "datetime", required: true },
       ],
       indexes: [
