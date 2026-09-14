@@ -142,6 +142,7 @@ client side*, and this route is the same privilege at the same boundary as the
 rollup and circle routes.
 
 Worth stating plainly because FTP1-12 flagged Order 16 as the ticket with no
-clean fallback if the broken events pipeline stayed broken. That was wrong.
-Redemption is request/response — an athlete types a code and taps a button — so
-it never needed database events at all.
+clean fallback if the events pipeline stayed broken. That was wrong twice over:
+redemption is request/response — an athlete types a code and taps a button — so
+it never needed database events, and events work anyway since the 1.9.6 upgrade
+on 14 Sep 2026. See `docs/appwrite-events.md`.

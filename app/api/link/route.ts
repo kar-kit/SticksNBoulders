@@ -22,9 +22,10 @@ import { normaliseInviteCode } from "@/lib/coach/invite-code";
  * browser write. The feature list says "an Appwrite Function"; what it means is
  * never client side, and this route is the same privilege at the same boundary.
  * Worth saying plainly, because FTP1-12 flagged this ticket as the one with no
- * clean fallback if the events pipeline stayed broken: that was wrong.
- * Redemption is request/response -- an athlete types a code and taps a button
- * -- so it never needed database events at all.
+ * clean fallback if the events pipeline stayed broken. That was wrong twice
+ * over: redemption is request/response -- an athlete types a code and taps a
+ * button -- so it never needed database events, and events work anyway as of
+ * the 1.9.6 upgrade on 14 Sep 2026.
  *
  * Rate limited per athlete, not only per caller address: a gym shares one IP,
  * and the thing worth limiting is how many codes one account can try.

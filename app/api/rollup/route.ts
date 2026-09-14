@@ -13,15 +13,25 @@ import { adminRollupTables, rebuildRollup } from "@/appwrite/documents/rollup-ad
  * rather than raw sets, and `stats_rollups` is a server-only table -- no user
  * session may write one, by policy. So this cannot happen in the browser.
  *
- * The feature list asks for an Appwrite Function on set creation. Functions
- * deploy and execute on the self-hosted instance, but database events do not
- * trigger them there -- verified on 14 Sep 2026 with a deployed probe
- * subscribed to `databases.*`, which never fired while a manual execution of
- * the same function completed in milliseconds. Until that pipeline is fixed,
- * this route does the same job at the same privilege level through the same
- * write helper. Moving to a Function later is a change of caller, not of
- * logic: the Appwrite part is in appwrite/documents/rollup-admin.ts and the
- * arithmetic is in lib/strength/rollup.ts, shared with the rebuild script.
+ * The feature list asks for an Appwrite Function on set creation. This route
+ * does that job instead, at the same privilege level and through the same
+ * write helper.
+ *
+ * It was originally a workaround: database events did not trigger Functions on
+ * this instance at all. That was true on Appwrite 1.9.0 and is fixed on 1.9.6
+ * -- re-measured on 14 Sep 2026 after the upgrade, 332 event-triggered
+ * executions where 1.9.0 produced none, first one 26 minutes after the
+ * upgrade landed.
+ *
+ * The route stays anyway, and now by choice rather than necessity. A Function
+ * would need its own copy of the arithmetic in lib/strength/rollup.ts, and two
+ * implementations of an aggregate is exactly how a repair script stops
+ * repairing -- the reason rollupFrom is shared with the rebuild script in the
+ * first place. The one thing a Function buys is firing on writes that did not
+ * come through this app, and by policy there are none.
+ *
+ * If that ever changes, moving is a change of caller and not of logic: the
+ * Appwrite part is in appwrite/documents/rollup-admin.ts.
  *
  * The caller proves who they are with a short-lived Appwrite JWT, and the
  * athlete id comes from that token and never from the request body. Accepting
