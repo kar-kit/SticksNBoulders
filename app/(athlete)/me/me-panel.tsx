@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { CoachLink } from "@/components/coach/coach-link";
 import { InviteCodePanel } from "@/components/coach/invite-code";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth/session";
@@ -8,8 +9,9 @@ import { useSession } from "@/lib/auth/session-context";
 
 /**
  * Profile & Settings is Order 35. What exists here now is what the shell needs
- * plus Order 15: who is signed in, the way out, the switch into coach mode for
- * someone who has athletes, and the invite code that gets them their first one.
+ * plus Orders 15 and 16: who is signed in, the way out, the switch into coach
+ * mode for someone who has athletes, the invite code that gets them their first
+ * one, and the coach who can see this athlete's training.
  */
 export function MePanel() {
   const router = useRouter();
@@ -24,6 +26,8 @@ export function MePanel() {
         <span className="text-title font-semibold">{state.user.name}</span>
         <span className="text-body text-muted">{state.user.email}</span>
       </div>
+
+      <CoachLink />
 
       <InviteCodePanel />
 
