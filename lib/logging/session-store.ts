@@ -1,8 +1,6 @@
-import { AppwriteException, ID, Query } from "appwrite";
+import { ID, Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
-import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { createSession, finishSession, type Actor } from "@/appwrite/documents";
-import { ensureMyCircle } from "@/lib/auth/circle";
+import { enqueue } from "@/lib/offline/client";
 import type { SessionRecord, SessionSet } from "./session";
 
 /**
@@ -16,10 +14,11 @@ export type UnnamedSet = Omit<SessionSet, "exerciseName"> & { clientSetId: strin
 /**
  * Reading and writing training sessions from the browser.
  *
- * Reads go straight to Appwrite; writes go through the document helper, which
- * is the only thing allowed to stamp permissions. Nothing here decides product
- * rules -- which session to resume, what a summary contains -- those live in
- * session.ts, where they are testable without a network.
+ * Reads go straight to Appwrite; writes go through the offline queue, which
+ * runs them through the document helper -- still the only thing allowed to
+ * stamp permissions. Nothing here decides product rules -- which session to
+ * resume, what a summary contains -- those live in session.ts, where they are
+ * testable without a network.
  */
 
 /** Enough history for Today's last-session line without paging. */
@@ -120,74 +119,61 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
     .filter((set): set is UnnamedSet => set !== null);
 }
 
-/** Appwrite's "already exists", which for a session start is a success. */
-const CONFLICT = 409;
-
 /**
- * Starts a session, or returns the one this device already started.
+ * Starts a session on the device.
  *
- * `client_session_id` is unique-indexed precisely so a retry after a timeout
- * cannot create a second session. The first attempt may well have succeeded
- * with the response lost on the way back, so a conflict here is not an error to
- * show anybody -- it is the row we were trying to write, and we go and read it.
- * Order 9's queue will retry far more often than a flaky connection does.
+ * It does not touch the network. The id is generated here, written to the
+ * queue, and returned -- so a session started in a basement is a real session
+ * with a real Appwrite row id, and the sets logged into it reference an id that
+ * will still be that row's id when the signal comes back.
+ *
+ * `client_session_id` is the row id, which means a retry cannot create a second
+ * session even if the unique index were dropped tomorrow. The read-back this
+ * function used to do on a 409 is gone with it: there is nothing to discover,
+ * because we chose the id.
+ *
+ * No actor is passed: the queue carries one, attached when the athlete surface
+ * mounts, because the op may well be run by a flush hours after this returns.
  */
 export async function startOrRecoverSession(
-  actor: Actor,
   clientSessionId: string,
   startedAt: Date = new Date(),
 ): Promise<SessionRecord> {
-  // Appwrite rejects a team: permission from a user who is not in the team, and
-  // every session row carries a read for the athlete's circle. Without this the
-  // write comes back 401 and no athlete can start anything.
-  await ensureMyCircle();
-
-  try {
-    const row = await createSession(browserWriteDeps(() => ID.unique()), actor, {
-      clientSessionId,
-      startedAt,
-    });
-    const session = toSession(row as unknown as SessionRow);
-    if (session) return session;
-  } catch (error) {
-    if (!(error instanceof AppwriteException) || error.code !== CONFLICT) throw error;
-  }
-
-  const existing = await findByClientId(actor.userId, clientSessionId);
-  if (!existing) {
-    throw new Error(`Session ${clientSessionId} was rejected as a duplicate but cannot be read back`);
-  }
-  return existing;
-}
-
-async function findByClientId(athleteId: string, clientSessionId: string) {
-  const { tables, databaseId } = browserAppwrite();
-  const rows = await tables.listRows({
-    databaseId,
-    tableId: "sessions",
-    queries: [
-      Query.equal("athlete_id", athleteId),
-      Query.equal("client_session_id", clientSessionId),
-      Query.limit(1),
-    ],
+  await enqueue("session.create", {
+    sessionId: clientSessionId,
+    startedAt: startedAt.toISOString(),
   });
-  const row = rows.rows[0];
-  return row ? toSession(row as unknown as SessionRow) : null;
+
+  return {
+    id: clientSessionId,
+    clientSessionId,
+    startedAt,
+    finishedAt: null,
+    setCount: 0,
+    tonnageKg: 0,
+    notes: null,
+  };
 }
 
 export async function finishSessionNow(
-  actor: Actor,
   sessionId: string,
   totals: { setCount: number; tonnageKg: number },
   finishedAt: Date = new Date(),
 ): Promise<void> {
-  await finishSession(browserWriteDeps(() => ID.unique()), actor, {
+  await enqueue("session.finish", {
     sessionId,
-    finishedAt,
+    finishedAt: finishedAt.toISOString(),
     setCount: totals.setCount,
     tonnageKg: totals.tonnageKg,
   });
 }
 
-/** One per session, generated on the device so a retry stays idempotent. */
+/**
+ * One per session, generated on the device -- and used as the Appwrite row id.
+ *
+ * 23 characters of lowercase, digits and a hyphen, which is a legal row id
+ * (Appwrite allows 36, and forbids a leading special character). Having one id
+ * rather than two is what lets a set reference its session before either exists
+ * on the server.
+ */
 export const newClientSessionId = (): string => `cs-${ID.unique()}`;

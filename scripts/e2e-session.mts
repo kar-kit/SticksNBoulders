@@ -55,6 +55,23 @@ const sessionsOf = async (athleteId: string) =>
     })
   ).rows;
 
+/**
+ * Waits for something to become true on the server, up to a limit.
+ *
+ * Writes go through the offline queue now, so they land a moment after the
+ * screen says so rather than in the same tick. That is the design -- the
+ * athlete never waits for Appwrite -- and it makes "assert immediately after
+ * tapping" a race rather than a test.
+ */
+const until = async (ok: () => Promise<boolean>, ms = 15000) => {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await ok()) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+};
+
 const signIn = async (page: Page, email: string) => {
   await page.goto(`${BASE}/sign-in`);
   await page.getByLabel("Email").fill(email);
@@ -88,9 +105,10 @@ check("goes to the logger", page.url().endsWith("/log"));
 await page.getByRole("button", { name: "Finish session" }).waitFor({ timeout: 15000 }).catch(() => {});
 check("a clock is running", /\d:\d\d:\d\d/.test(await page.getByRole("button", { name: "Finish session" }).innerText()));
 
+await until(async () => (await sessionsOf(athlete.$id)).length === 1);
 const afterStart = await sessionsOf(athlete.$id);
 check("exactly one session row exists", afterStart.length === 1);
-check("and it is live, with no finished_at", afterStart[0]?.finished_at == null);
+check("and it is live, with no finished_at", afterStart.length === 1 && afterStart[0].finished_at == null);
 
 console.log("\nAdding an exercise by typing");
 await page.getByRole("combobox").fill("squat");
@@ -131,7 +149,7 @@ await page.getByRole("group", { name: "Set 2" }).waitFor({ timeout: 10000 }).cat
 const prefilled = await page.getByRole("group", { name: "Set 2" }).innerText();
 check("the next row prefills from the set just logged", prefilled.includes("140"));
 await page.getByRole("button", { name: "Log Set 2" }).click();
-await page.waitForTimeout(1500);
+await until(async () => (await setsOf(athlete.$id)).length === 3);
 
 const written = await setsOf(athlete.$id);
 check("three sets reached Appwrite", written.length === 3);
@@ -160,6 +178,7 @@ await page.getByRole("button", { name: "Finish", exact: true }).click();
 await page.getByText("Session done").waitFor({ timeout: 15000 }).catch(() => {});
 check("shows a summary", await page.getByText("Session done").isVisible());
 
+await until(async () => (await sessionsOf(athlete.$id))[0]?.finished_at != null);
 const afterFinish = await sessionsOf(athlete.$id);
 check("finished_at is written", afterFinish[0]?.finished_at != null);
 check("still exactly one session", afterFinish.length === 1);

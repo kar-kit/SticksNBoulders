@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { LogScreen } from "./log-screen";
 import type { SessionRecord } from "@/lib/logging/session";
 import type { Exercise } from "@/lib/exercises/match";
+import { createMemoryStore } from "@/lib/offline/memory-store";
+import { enqueue, resetQueueForTests } from "@/lib/offline/client";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -32,11 +34,8 @@ vi.mock("@/lib/logging/session-store", () => ({
 }));
 
 // Typed so the argument assertions below are checked rather than assumed.
-type Actor = { userId: string };
-const logSet = vi.hoisted(() =>
-  vi.fn<(actor: Actor, input: Record<string, unknown>) => Promise<void>>(),
-);
-const removeSet = vi.hoisted(() => vi.fn<(actor: Actor, clientSetId: string) => Promise<void>>());
+const logSet = vi.hoisted(() => vi.fn<(input: Record<string, unknown>) => Promise<void>>());
+const removeSet = vi.hoisted(() => vi.fn<(clientSetId: string) => Promise<void>>());
 let clientIds = 0;
 vi.mock("@/lib/logging/set-store", () => ({
   logSet,
@@ -79,6 +78,11 @@ function setup(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Both resolve by default: clearAllMocks wipes the implementation, and a
+  // mock that returns undefined is not a stand-in for one that returns a
+  // promise -- the screen awaits both.
+  logSet.mockResolvedValue(undefined);
+  removeSet.mockResolvedValue(undefined);
   library.exercises = [squat];
   storedSets.value = [];
   clientIds = 0;
@@ -214,7 +218,7 @@ describe("logging a set", () => {
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
 
     await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
-    expect(logSet.mock.calls[0][1]).toMatchObject({
+    expect(logSet.mock.calls[0][0]).toMatchObject({
       exerciseId: "squat",
       loadKg: 140,
       reps: 5,
@@ -254,7 +258,7 @@ describe("logging a set", () => {
     await user.click(screen.getByRole("button", { name: "Log Warm-up set" }));
 
     await waitFor(() => expect(logSet).toHaveBeenCalled());
-    expect(logSet.mock.calls[0][1]).toMatchObject({ isWarmup: true, loadKg: 60 });
+    expect(logSet.mock.calls[0][0]).toMatchObject({ isWarmup: true, loadKg: 60 });
   });
 
   it("never asks a warm-up for RPE", async () => {
@@ -284,7 +288,7 @@ describe("logging a set", () => {
 
     // A forced guess pollutes the personal RPE curve worse than a null does.
     await waitFor(() => expect(logSet).toHaveBeenCalled());
-    expect(logSet.mock.calls[0][1]).toMatchObject({ rpe: null });
+    expect(logSet.mock.calls[0][0]).toMatchObject({ rpe: null });
   });
 
   it("undoes the set that was just logged", async () => {
@@ -358,5 +362,34 @@ describe("finishing", () => {
 
     expect(finish).toHaveBeenCalledWith("s1", { setCount: 0, tonnageKg: 0 });
     expect(await screen.findByText("Session done")).toBeInTheDocument();
+  });
+});
+
+describe("when the gym has no signal", () => {
+  it("shows a set that is still queued, with a quiet mark and no error", async () => {
+    // The reload case. Appwrite returns nothing because it cannot be reached,
+    // and the only record of the set is the queue on the device.
+    resetQueueForTests(createMemoryStore());
+    await enqueue("set.create", {
+      setId: "st-queued",
+      sessionId: "s1",
+      exerciseId: "squat",
+      setIndex: 1,
+      loadKg: 140,
+      reps: 5,
+      rpe: 8,
+      isWarmup: false,
+      loggedAt: new Date().toISOString(),
+    });
+
+    setup({ active: session() });
+
+    const row = await screen.findByRole("group", { name: "Set 1" });
+    expect(row).toHaveTextContent("140");
+    expect(screen.getByLabelText("Queued, will sync")).toBeInTheDocument();
+    expect(screen.getByText("queued · no signal")).toBeInTheDocument();
+    // Nothing about it reads as a failure: offline is normal.
+    expect(screen.queryByText(/could not be saved/)).not.toBeInTheDocument();
+    resetQueueForTests();
   });
 });

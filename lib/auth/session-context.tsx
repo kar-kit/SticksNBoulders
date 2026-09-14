@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { currentUser } from "./session";
 import { fetchCoachStatus, NOT_A_COACH, type CoachStatus } from "./role";
+import { forgetUser, recallUser, rememberUser } from "./remembered-user";
 
 /**
  * The signed-in athlete, fetched once per app load rather than per screen.
@@ -29,12 +30,24 @@ const SessionContext = createContext<{ state: SessionState; refresh: () => Promi
 /** Resolves the session. No React in here, so it is testable on its own. */
 async function resolveSession(): Promise<SessionState> {
   const result = await currentUser();
-  if (!result.ok) return { status: "signed-out" };
+  if (!result.ok) {
+    // Told no is different from not being able to ask. A request that never
+    // reached Appwrite means a gym with no signal, and bouncing that athlete to
+    // a sign-in screen they cannot use -- mid-session, with sets queued on the
+    // device -- is the exact failure the offline queue exists to prevent.
+    if (result.failure.kind === "offline") {
+      const remembered = recallUser();
+      if (remembered) return { status: "signed-in", ...remembered };
+    }
+    forgetUser();
+    return { status: "signed-out" };
+  }
 
   const user = { id: result.value.$id, name: result.value.name, email: result.value.email };
   // A failed link lookup must not lock someone out of their own app. They are
   // treated as not a coach until it succeeds.
   const coach = await fetchCoachStatus(user.id).catch(() => NOT_A_COACH);
+  rememberUser(user, coach);
   return { status: "signed-in", user, coach };
 }
 

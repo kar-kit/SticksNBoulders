@@ -39,17 +39,21 @@ await pwField(page).fill("Probe-pass-123!");
 await page.getByRole("button", { name: "Create account" }).click();
 await page.waitForURL("**/today", { timeout: 20000 }).catch(() => {});
 check("creating an account signs you straight in", page.url().endsWith("/today"));
+// Who is signed in, and the way out, both live on Me. Today is the training
+// screen and carries nothing about the account.
+await page.goto(`${BASE}/me`);
 const nameShown = await page
   .getByText("E2E Athlete")
   .waitFor({ timeout: 10000 })
   .then(() => true)
   .catch(() => false);
-check("Today shows who is signed in", nameShown);
+check("Me shows who is signed in", nameShown);
 
 console.log("\nSession handling");
 await page.goto(`${BASE}/sign-in`);
 await page.waitForURL("**/today", { timeout: 10000 }).catch(() => {});
 check("sign-in is skipped while a session exists", page.url().endsWith("/today"));
+await page.goto(`${BASE}/me`);
 await page.getByRole("button", { name: "Sign out" }).click();
 await page.waitForURL("**/sign-in", { timeout: 10000 }).catch(() => {});
 check("signing out returns to sign-in", page.url().includes("/sign-in"));
@@ -69,6 +73,7 @@ await pwField(page).fill("Probe-pass-123!");
 await page.getByRole("button", { name: "Sign in" }).click();
 await page.waitForURL("**/today", { timeout: 20000 }).catch(() => {});
 check("signs in", page.url().endsWith("/today"));
+await page.goto(`${BASE}/me`);
 await page.getByRole("button", { name: "Sign out" }).click();
 await page.waitForURL("**/sign-in", { timeout: 10000 }).catch(() => {});
 
