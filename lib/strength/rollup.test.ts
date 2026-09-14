@@ -101,6 +101,23 @@ describe("rollupFrom", () => {
     expect(rollupFrom([set({ e1rmKg: null })]).bestE1rmKg).toBeNull();
   });
 
+  it("takes the most reps in one set, and on a tie the heavier one", () => {
+    // A rep record that ignored the weight would reward the lightest set of
+    // the week: 100x12 is a record, 60x12 on the same day is not.
+    const rollup = rollupFrom([
+      set({ loadKg: 60, reps: 12 }),
+      set({ loadKg: 100, reps: 12 }),
+      set({ loadKg: 140, reps: 5 }),
+    ]);
+    expect(rollup.bestReps).toBe(12);
+    expect(rollup.bestRepsLoadKg).toBe(100);
+  });
+
+  it("does not count a warm-up as a rep record", () => {
+    const rollup = rollupFrom([set({ loadKg: 40, reps: 20, isWarmup: true }), set({ reps: 5 })]);
+    expect(rollup.bestReps).toBe(5);
+  });
+
   it("takes the heaviest working set, and the most reps at that weight", () => {
     // 140x5 is a better week than 140x3. A rollup that called them the same
     // would flatten exactly the progress the chart exists to show.
@@ -122,6 +139,8 @@ describe("rollupFrom", () => {
       bestE1rmKg: null,
       bestSingleKg: null,
       bestSingleReps: null,
+      bestReps: null,
+      bestRepsLoadKg: null,
     });
   });
 

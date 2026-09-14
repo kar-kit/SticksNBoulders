@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SetRow, SetRowHeader } from "@/components/logging/set-row";
@@ -211,7 +212,17 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
         <div className="flex flex-col gap-6">
           {blocks.map((block) => (
             <section key={block.exerciseId} aria-label={block.name} className="flex flex-col gap-2">
-              <h2 className="m-0 text-body font-semibold">{block.name}</h2>
+              {/* Lift Detail is reached from here rather than from the tab bar:
+                  it answers a question you arrive with about one lift. */}
+              <h2 className="m-0 text-body font-semibold">
+                <Link
+                  href={`/lift/${block.exerciseId}`}
+                  className="text-foreground no-underline"
+                  aria-label={`${block.name} progression`}
+                >
+                  {block.name} <span aria-hidden className="text-muted-2">›</span>
+                </Link>
+              </h2>
               <SetRowHeader />
               <div className="flex flex-col gap-1.5">
                 {block.sets.map((set, at) => {

@@ -380,6 +380,8 @@ export interface UpsertRollupInput {
   bestE1rmKg?: number | null;
   bestSingleKg?: number | null;
   bestSingleReps?: number | null;
+  bestReps?: number | null;
+  bestRepsLoadKg?: number | null;
   /** Supplied when updating an existing rollup rather than creating one. */
   rowId?: string;
 }
@@ -395,6 +397,8 @@ export async function writeRollup(deps: WriteDeps, input: UpsertRollupInput) {
     best_e1rm_kg: input.bestE1rmKg ?? undefined,
     best_single_kg: input.bestSingleKg ?? undefined,
     best_single_reps: input.bestSingleReps ?? undefined,
+    best_reps: input.bestReps ?? undefined,
+    best_reps_load_kg: input.bestRepsLoadKg ?? undefined,
     rebuilt_at: iso(deps.now()),
   };
   const permissions = rollupPermissions({ athleteId: input.athleteId });

@@ -140,6 +140,8 @@ for (const [key, bucket] of buckets) {
       bestE1rmKg: num(stored.best_e1rm_kg),
       bestSingleKg: num(stored.best_single_kg),
       bestSingleReps: num(stored.best_single_reps),
+      bestReps: num(stored.best_reps),
+      bestRepsLoadKg: num(stored.best_reps_load_kg),
     },
     computed,
   );

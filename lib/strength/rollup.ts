@@ -33,6 +33,9 @@ export interface Rollup {
   /** The heaviest working set of the week, and what it was done for. */
   bestSingleKg: number | null;
   bestSingleReps: number | null;
+  /** The most reps in one working set that week, and what it was done with. */
+  bestReps: number | null;
+  bestRepsLoadKg: number | null;
 }
 
 /**
@@ -126,6 +129,8 @@ export function rollupFrom(sets: readonly RollupSet[]): Rollup {
   let bestE1rmKg: number | null = null;
   let bestSingleKg: number | null = null;
   let bestSingleReps: number | null = null;
+  let bestReps: number | null = null;
+  let bestRepsLoadKg: number | null = null;
 
   for (const set of working) {
     volumeReps += set.reps;
@@ -146,6 +151,17 @@ export function rollupFrom(sets: readonly RollupSet[]): Rollup {
       bestSingleKg = set.loadKg;
       bestSingleReps = set.reps;
     }
+
+    // Most reps, and on a tie the heavier one: 100x12 beats 60x12, and a rep
+    // record that ignored the weight would reward the lightest set of the week.
+    if (
+      bestReps === null ||
+      set.reps > bestReps ||
+      (set.reps === bestReps && set.loadKg > (bestRepsLoadKg ?? 0))
+    ) {
+      bestReps = set.reps;
+      bestRepsLoadKg = set.loadKg;
+    }
   }
 
   return {
@@ -155,6 +171,8 @@ export function rollupFrom(sets: readonly RollupSet[]): Rollup {
     bestE1rmKg,
     bestSingleKg,
     bestSingleReps,
+    bestReps,
+    bestRepsLoadKg,
   };
 }
 
@@ -166,6 +184,8 @@ export function rollupMatches(stored: Partial<Rollup>, computed: Rollup): boolea
     stored.tonnageKg === computed.tonnageKg &&
     (stored.bestE1rmKg ?? null) === computed.bestE1rmKg &&
     (stored.bestSingleKg ?? null) === computed.bestSingleKg &&
-    (stored.bestSingleReps ?? null) === computed.bestSingleReps
+    (stored.bestSingleReps ?? null) === computed.bestSingleReps &&
+    (stored.bestReps ?? null) === computed.bestReps &&
+    (stored.bestRepsLoadKg ?? null) === computed.bestRepsLoadKg
   );
 }

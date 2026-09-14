@@ -1,79 +1,91 @@
-## FTP1-13 — Workout history (Order 13)
+## FTP1-14 — Lift detail: progression chart and PRs (Order 14)
 
-Grouped by week, newest first, searchable by exercise, tapping into the full session. No calendar grid — nobody navigates their training by looking at a month view, and a list is faster to scan and far cheaper to build.
+One lift, all of it: is this going up, what is my best, what have I actually been doing. Reached from History rather than the tab bar — it answers a question you arrive holding about one lift.
 
 ```
-+--------------------------------+     +--------------------------------+
-|  History                       |     |  ← History                     |
-|  [ Search by exercise        ] |     |  Monday 14 Sep                 |
-|                                |     |  1h 12m · 5 sets · 3,338 kg    |
-|  THIS WEEK                     |     |                                |
-|  +--------------------------+  |     |  Squat                         |
-|  | Tuesday 15 Sep      58m  |  |     |  #  KG      REPS  RPE          |
-|  | Bench Press, Barbell Row |  |     |  W  60      5     —       ✓    |
-|  | 2 sets · 1,285 kg        |  |     |  1  142.5   5     7       ✓    |
-|  +--------------------------+  |     | +--------------------------+   |
-|  +--------------------------+  |     | |2  142.5   5     8    ✓ | |   |
-|  | Monday 14 Sep     1h 12m |  |     | +--------------------------+   |
-|  | Squat, Bench Press       |  |     |                                |
-|  | 5 sets · 3,338 kg        |  |     |  [ Cancel ]   [ Delete set ]   |
-|  +--------------------------+  |     |  [ number pad ]                |
-|  LAST WEEK ...                 |     |                                |
-+--------------------------------+     +--------------------------------+
++--------------------------------+
+|  ← Back                        |
+|  Deadlift                      |
+|  ESTIMATED 1RM                 |
+|  204.9 kg     +24.9 (12w)      |
+|                       .--*     |
+|              .---''''          |
+|      ..--''''                  |
+|   --'                          |
+|  [ 8w ][ 12W ][ 6m ][ all ]    |
+|                                |
+|  PERSONAL RECORDS              |
+|  Heaviest single      200 × 1  |
+|  Best estimated      205.3 kg  |
+|  Most reps           140 × 12  |
+|                                |
+|  RECENT SETS                   |
+|  16 Sep   185 × 3     RPE 8.5  |
+|  09 Sep   182.5 × 3     RPE 8  |
++--------------------------------+
 ```
 
-### Two queries, however long the list
+### The chart is hand-rolled SVG
 
-Sessions come from the provider Today and Log already use. The sets for **every card on the page** arrive in one query — Appwrite's `equal()` takes an array, which is an IN. Verified against the live instance before building on it, rather than assumed. Names come from the library already in memory, because there are no joins.
+One line, no axes, no legend, no tooltip, no interaction. Every charting library that could draw that brings a hundred times more than that, and six dependencies is a deliberate property of this repo rather than an accident.
 
-**Card totals come from the session row, not from the sets on screen.** The finish screen showed the athlete those exact numbers; recomputing here would mean a session whose finish op is still queued reports one total on the summary and a different one on History, with nothing to say which is right.
+Two details that matter:
 
-### Editing — and the Order 11 gap it closes
+- **Points are spaced by time, not by index.** Three weeks of training either side of a three-month layoff would otherwise read as steady progress.
+- **Fewer than three points and the chart is hidden, not emptied.** A two-point line turns a coincidence into a direction — on the one screen that exists to answer whether the line is going up.
 
-I flagged this in FTP1-11: `updateSet` didn't recompute `e1rm_kg`, and *couldn't* from a partial input.
+### Personal records are all-time, not per range
 
-It now requires **load, reps, RPE and the warm-up flag together**. e1RM is a function of all four, so an edit that changed reps while leaving last week's estimate on the row is exactly the drift that computing it inside the helper exists to prevent. Requiring the full set makes the stale case unrepresentable rather than merely discouraged.
+A record that changed when you tapped "8w" would not be a record.
 
-The estimate is written as `null`, not `undefined`, when an edit removes the grounds for one — an RPE cleared, a set flagged as a warm-up. `undefined` would leave the old number sitting there.
+### "Most reps" needed two new rollup columns
 
-A correction queues a rollup refresh behind it, and so does a delete: changing a weight changes the week's tonnage, and marking a set as a warm-up after the fact removes it from the week entirely.
+`best_reps` and `best_reps_load_kg`. It's an aggregate over all time, so scanning raw sets for it would have made this the one number on the screen derived a second way — which is exactly how a stored answer and a computed one start disagreeing. **Schema v2, already applied to the instance**; `rollups:rebuild` fills them.
 
-**The row being corrected is the same component, in the same active state, as the row being logged.** An edit is the same gesture as an entry and shouldn't look like a different thing.
+On a tie the heavier set wins: a rep record that ignored the weight would crown the lightest set of the week.
 
-### One accessibility fix worth naming
+### One thing a screenshot caught that no test would have
 
-The number pad's backspace was labelled **"Delete"**. On this screen it sits directly beside a **"Delete set"** button — a screen reader announcing two adjacent controls as Delete is a destructive confusion, not a cosmetic one. Renamed to "Backspace".
+The recent-sets list **excludes warm-ups**. Including them looked defensible when I wrote it — "how you warm up is part of what you've been doing" — until the screen was full of `60 × 5`. An athlete who warms up every session gets a list that's half warm-up, and warm-ups already count toward no total, no record and no rollup anywhere else in the product.
 
-### Deferred, not dropped
+### Deferred, with reasons
 
-- **PR marker** (in the wireframe) belongs to Lift Detail at Order 14, which reads the same rollups. A second PR derivation here would be the two-implementations-of-an-aggregate mistake Order 12 just avoided.
-- **Prescription** (Order 22), **video** (Order 29) and **coach's threaded comments** (phase 3) are visibly absent rather than faked.
+- **Personal RPE curve panel** — needs `personal_rpe_curves` and the RPE engine at phase 2b. Its own blueprint carries an open question on the sample threshold, and a curve fitted to six sets is noise presented as insight.
+- **Volume/tonnage charts** — out per the blueprint's own note.
+- **Log Session as an entry point** — listed in the blueprint, but the exercise name there is already a tap target for reactivating the row. A second behaviour on one control needs a design decision, not a quiet addition. **Joey: worth a view when you're next in the logger.**
 
 ### Verification
 
 ```
-npm test                 778 passed (54 files)
+npm test                 810 passed (56 files)
+npm run e2e:lift          17/17
 npm run e2e:history       19/19
 npm run e2e:session       44/44
 npm run e2e:offline       33/33
-npm run e2e:rollups       16/16
+npm run e2e:rollups       17/17
 npm run e2e:e1rm          11/11
 npm run e2e:shell         15/15
 npm run appwrite:probe    19/19
-npm run perf:check        interactive 630ms on Slow 4G
 ```
 
-`e2e:history` corrects a set **through the UI** and follows the consequences all the way down — this is the assertion that matters, because every one of these could fail silently:
+`e2e:lift` seeds five weeks arranged so **no record can be read off the newest row**, then walks in from History:
 
 ```
-Correcting a set
-  PASS  the correction shows straight away
-  PASS  the set is rewritten at Appwrite
-  PASS  and its e1RM is recomputed, not left stale     ← 140→145 gives 174
-  PASS  the week's tonnage follows the correction      ← 1,400 → 1,425
-  PASS  and so does its best e1RM
-Deleting a set
-  PASS  the rollup drops the deleted set               ← 1 set, 725 kg
+  16w  140 × 12 @ 8   rep record — 14 reps to failure, past the cutoff,
+                      so it earns NO estimate (the cutoff working)
+   8w  200 × 1  @ 10  heaviest single, e1RM exactly 200 by definition
+   4w  180 × 3  @ 8   best estimated: 202.5
+   0w  175 × 3  @ 8   current: 196.9 — deliberately BELOW the best
+
+  PASS  shows the current estimate                        (196.9)
+  PASS  and how far it has moved, including downward      (−3.1)
+  PASS  best estimated, all-time                          (202.5)
+  PASS  most reps, with the weight it was done at         (140 × 12)
+  PASS  records stay all-time after narrowing the range
 ```
+
+A screen that only ever showed a rising line and a plus sign would pass a test built on climbing data. This one doesn't.
+
+Also fixed a fragility in `e2e:e1rm` that went red for the right reason: it asserted exact instance-wide counts from the backfill's plan, which fails as soon as the instance holds any other data.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

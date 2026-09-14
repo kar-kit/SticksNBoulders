@@ -144,6 +144,9 @@ check("volume is reps of working sets", squat?.volume_reps === 8);
 check("tonnage excludes the warm-up", squat?.tonnage_kg === 1150);
 check("best e1RM is the best of the week", squat?.best_e1rm_kg === 176.5);
 check("best single is the heaviest, with its reps", squat?.best_single_kg === 150 && squat?.best_single_reps === 3);
+// The rep record Lift Detail shows. Stored rather than scanned out of raw
+// sets, because "most reps ever" is an aggregate like every other one here.
+check("most reps in one set, with the weight it was done at", squat?.best_reps === 5 && squat?.best_reps_load_kg === 140);
 // The BST case. A set at 23:30Z on the Sunday is 00:30 Monday in London, and a
 // UTC-only rule would have put it in the week before -- splitting one session
 // across two bars on the chart.

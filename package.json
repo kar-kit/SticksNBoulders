@@ -23,6 +23,7 @@
     "perf:check": "tsx scripts/perf-check.mts",
     "e2e:session": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-session.mts",
     "e2e:history": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-history.mts",
+    "e2e:lift": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-lift.mts",
     "e2e:offline": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-offline.mts",
     "e2e:e1rm": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-e1rm.mts",
     "e2e:rollups": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-rollups.mts",
