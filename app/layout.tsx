@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Archivo, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
+import { SessionProvider } from "@/lib/auth/session-context";
 
 // Archivo carries content, IBM Plex Mono carries labels only. Both are loaded
 // with the weights the design actually uses -- adding more costs load time, and
@@ -46,7 +47,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${archivo.variable} ${plexMono.variable} h-full`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        {children}
+        <SessionProvider>{children}</SessionProvider>
       </body>
     </html>
   );

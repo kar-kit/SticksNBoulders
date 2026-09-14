@@ -16,13 +16,8 @@ import {
   type AuthFailure,
   type OAuthProviderName,
 } from "@/lib/auth/errors";
-import {
-  currentUser,
-  fetchMethodHint,
-  signInWithPassword,
-  signUpWithPassword,
-  startOAuth,
-} from "@/lib/auth/session";
+import { fetchMethodHint, signInWithPassword, signUpWithPassword, startOAuth } from "@/lib/auth/session";
+import { useSession } from "@/lib/auth/session-context";
 import type { ProviderOption } from "@/lib/auth/providers";
 
 export type Mode = "sign-in" | "create";
@@ -46,18 +41,20 @@ export function SignInForm({ providers, destination }: SignInFormProps) {
   const [busy, setBusy] = useState(false);
 
   const creating = mode === "create";
+  const { state: session, refresh: refreshSession } = useSession();
 
-  // "Already signed in -- skip this screen entirely." Checked on the client
-  // because the session lives in the browser, not in a cookie the server reads.
+  /**
+   * "Already signed in -- skip this screen entirely."
+   *
+   * This reads the shared session rather than fetching its own. It used to call
+   * account.get() directly, which meant two sources of truth: after a
+   * successful sign-in the provider still held "signed-out", so the shell
+   * bounced back here, this screen saw a valid session and bounced to the app,
+   * and the two redirected at each other about thirty times a second.
+   */
   useEffect(() => {
-    let cancelled = false;
-    void currentUser().then((result) => {
-      if (!cancelled && result.ok) router.replace(destination);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [router, destination]);
+    if (session.status === "signed-in") router.replace(destination);
+  }, [session.status, router, destination]);
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -76,6 +73,9 @@ export function SignInForm({ providers, destination }: SignInFormProps) {
       : await signInWithPassword(email, password);
 
     if (result.ok) {
+      // The provider is told before navigating, so the shell on the other side
+      // sees a signed-in session rather than a stale one.
+      await refreshSession();
       router.replace(destination);
       return;
     }

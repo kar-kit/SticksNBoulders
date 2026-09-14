@@ -1,122 +1,107 @@
-## FTP1-3.5 — Password reset and account recovery
+## FTP1-4 — Next.js PWA shell, routing and layout
 
-**Notion:** https://app.notion.com/3da64699b43c81968d3ce635b01ff18b
-**Depends on:** #1, #2, #3 (all merged)
+**Notion:** https://app.notion.com/3da64699b43c81959c99f1de2aca37f3
+**Depends on:** #1–#4 (all merged)
 
 ### What was built
 
-All three frames from `01c` — request a link, the confirmation, and choosing a
-new password from the emailed link — plus two states the design does not draw
-but the flow needs: a link with no token, and a link that has been used or has
-expired.
+Both shells from `00 — Conventions`, the route structure underneath them, and
+the role switching between them.
 
-- `/sign-in/forgot` — request, then a confirmation with a 60-second resend
-  cooldown that counts down.
-- `/sign-in/reset` — new password and confirm, then signed in.
-- The stub that shipped in #3 saying reset was not set up yet is gone.
+- **Athlete shell** — four tabs, 16px gutters, safe areas top and bottom, tab
+  bar outside the scroll region so a thumb never has to hunt for it.
+- **Coach shell** — top nav with the review count, persistent 180px athlete
+  rail on every screen, `Athlete mode` switch.
+- **Route groups** `(athlete)` and `(coach)`, so the two surfaces are separate
+  trees rather than one responsive app with breakpoints.
+- **`SessionProvider`** — the session fetched once per app load, not per screen.
 
-### The rule that shapes the whole flow
+**Role is a relationship, not an account type.** There is no coach flag and
+there never will be: `fetchCoachStatus` reads `coach_athlete_links`, and the
+`Coach mode` button on Me appears and disappears on its own as links are made
+and revoked. The e2e proves it by creating a real link mid-run and watching the
+app notice.
 
-The confirmation says *"If joey@example.com has an account, a reset link is on
-its way."* It means it. **The result of `createRecovery` is never read.**
+### The bug this feature nearly shipped with
 
-That is not caution for its own sake — Appwrite may well answer differently for
-an address with no account, and a screen that branches on the outcome leaks
-exactly what the sign-in screen goes to some trouble to hide. Not reading it is
-the only version that cannot leak by accident, and it is tested: the
-confirmation renders identically whether the call succeeds, fails, or returns
-`user_not_found`.
+After signing in, `SessionProvider` still held `signed-out`. So the athlete
+shell bounced back to `/sign-in`, which saw a valid Appwrite session and bounced
+to `/today`, which bounced back — **two screens redirecting at each other about
+thirty times a second, hammering Appwrite with 131 `/account` requests every
+four seconds.**
 
-There is a live proof of this in the PR right now. SMTP is not enabled on the
-instance yet, so `createRecovery` currently returns `503`. **The confirmation
-still appears, unchanged** — that assertion is in the e2e run below.
+Every unit test passed throughout. It only surfaced when Playwright reported
+`element was detached from the DOM, retrying` thirteen times and I went looking.
+
+The cause was two sources of session truth: the sign-in screen ran its own
+`account.get()` alongside the provider. It now reads the provider, and callers
+that are about to navigate await `refresh()` first. **After: 0 requests while
+idle.**
 
 ### Decisions not specified
 
-- **The email is carried from one screen to the other.** Appwrite's docs say
-  the recovery link carries the address in the query string; the SDK documents
-  only `userId` and `secret`, and I cannot confirm which is true without a
-  delivered email. So the reset screen takes the query param if present, falls
-  back to `sessionStorage` stashed when the link was requested, and falls back
-  again to sending the athlete to sign-in. All three paths work; only the copy
-  and the auto-sign-in differ. Marked `[Unverified]` in the code and worth
-  deleting the fallback once a real email is seen.
-- **A used or expired link changes the screen** rather than showing a message.
-  Appwrite reports both the same way, and neither is something a sentence under
-  a field can fix — the answer is a fresh link, so that is what the screen
-  offers.
-- **Being offline is not treated as a spent link.** The link is still good;
-  telling someone to request a new one would waste the one they have.
-- **No password composition rules.** "At least 8 characters. Nothing else
-  required", straight from the design. Rules demanding a symbol push people to
-  weaker passwords they write down.
-- **Validation runs before the request**, so nobody is told a rule after the
-  fact — and a too-short password is reported before a mismatch, rather than
-  two errors in sequence.
+- **Sign-in lands on `/`, never on a surface.** The root is the only place that
+  knows whether someone has athletes linked, so it is the only place that can
+  route by role. Sending sign-in straight to `/today` put a coach in the athlete
+  app with no signposted way out — caught by the e2e, not by a test I wrote.
+- **The shell chrome paints before the session resolves.** Gating the whole
+  shell meant no first contentful paint at all on a cold load: `FCP NaN`,
+  a dark rectangle for a full Appwrite round trip. Measured, not guessed. Almost
+  every load of a training logger is a signed-in one, so the shell renders first
+  and fills in. A signed-out visitor sees chrome for one frame; their data never
+  appears.
+- **Every route in both navs exists**, including `/coach/review`,
+  `/coach/programs` and `/coach/athletes/[id]`. Next prefetches nav links, and
+  those were 404ing. Each shows the real empty state of the screen that will
+  replace it — which is genuinely what Ruairi sees on an account with nothing on
+  it, so none of it is throwaway copy.
+
+### The load budget, measured
+
+Order 4 sets it: interactive under 2.5s on 4G. `npm run perf:check` measures it
+against a production build with a cold cache and Chrome's own throttling
+presets, so it stays honest as screens land.
+
+```
+Fast 4G   /sign-in  FCP 440ms  interactive 385ms  load 783ms   57KB
+          /today    FCP 444ms  interactive 388ms  load 798ms   54KB
+Slow 4G   /sign-in  FCP 932ms  interactive 793ms  load 2327ms  57KB
+          /today    FCP 924ms  interactive 807ms  load 2226ms  54KB
+```
+
+Interactive at **388ms on Fast 4G** against a 2500ms budget, and 807ms on Slow
+4G. Slowness was Ruairi's first complaint about RTS; this is the number that has
+to keep holding.
 
 ### Tests
 
-24 new, 457 total, plus the e2e extended to 23 assertions against the live
-instance:
+34 new, 487 total, plus `npm run e2e:shell` — 15 assertions driving both shells
+against the live instance with a real coach link, circle team and profile:
 
 ```
-Password reset
-  PASS  the Forgot link reaches the reset screen
-  PASS  it says up front that the link expires
-  PASS  the send button is inert until the address looks like one
-  PASS  and active once it does
-  PASS  the confirmation appears whatever the server answered
-  PASS  it stays conditional about whether the account exists
-  PASS  resending is on a cooldown
-Reset link states
-  PASS  a link with no token says it is incomplete
-  PASS  a token Appwrite rejects is reported as expired, with a way to get another
+A plain athlete
+  lands on Today / four-tab shell / each tab reaches its route
+  no coach switch, because nobody is linked to them
+  every screen has a real empty state, not a blank
+Once an athlete is linked
+  a coach lands on their roster, not on Today
+  the rail names the athlete
+  athlete mode switches on the same account, and the way back is on Me
+Every link in the coach nav goes somewhere
 ```
 
-That last one is a genuine round trip: a bogus secret is sent to Appwrite,
-rejected, and the screen reports it correctly. Unit tests cover token parsing
-(including a link a mail client broke across a line), the cooldown arithmetic,
-the password rules, and storage being unavailable in private browsing.
+### Also fixed
 
-`RECOVERY_LINK_TTL_MINUTES` is asserted to be 60 because the screen promises
-"expires in an hour" and Appwrite enforces exactly that — the copy and the
-constant must not drift apart.
+**The write guard crashed on a staged deletion.** It read every path `git
+ls-files` reported, including files deleted from disk but still in the index —
+a half-finished rebase turned a security check into a confusing `ENOENT` at the
+worst possible moment. It skips missing paths now.
 
-### Bugs found
+`appwrite/browser-client.ts` may construct `TablesDB` for **reads**. The
+row-mutator ban still covers it, and that is the rule that matters — verified by
+adding a bypassing file and watching the guard fail.
 
-1. **A default parameter swallowed an explicit `undefined`**, so the
-   "no email known" test was silently exercising the with-email path and
-   passing. Caught because the assertion contradicted itself.
-2. **Reading `sessionStorage` in an effect** tripped
-   `react-hooks/set-state-in-effect` — a cascading render, and a frame of wrong
-   copy before it corrected. Replaced with `useSyncExternalStore`, whose server
-   snapshot is null, so server and first client render agree.
+### Not in this PR
 
-### 🔴 SMTP is not actually live
-
-I checked rather than assumed, and **`createRecovery` still returns
-`503 general_smtp_disabled`.** The mail queue worker is up (`/health/queue/mails`
-responds), so the container is running — Appwrite simply has no SMTP host.
-
-My API key lacks `projects.read`/`platforms.read`, so I cannot read the
-instance config to say which of these it is. In likelihood order:
-
-1. **Configured at project level only** (Console → Settings → SMTP). This is
-   the `[Unverified]` case flagged in `docs/appwrite-smtp.md` — the docs
-   describe an empty instance-level `_APP_SMTP_HOST` as disabling mail *"from
-   the server"*, which reads instance-wide. **Set the `_APP_*` env vars too.**
-2. **Containers restarted rather than recreated.** `docker compose restart`
-   does not re-read `.env`. It needs `docker compose up -d`.
-3. Variables set but not applied — check with
-   `docker compose exec appwrite vars | grep _APP_SMTP`.
-
-**Nothing in this PR is blocked by it.** Every screen and state is built and
-tested, and the one unverifiable step is that a real email arrives. When SMTP
-is live, run `npm run e2e:auth` and then do one manual reset against a real
-inbox — and remember the unverified-domain trap from §1 of the SMTP doc: with
-`onboarding@resend.dev`, mail reaches your own address and nobody else's.
-
-### Screenshots
-
-`.shots/forgot.png` and `.shots/reset.png`, both 390pt, matching frames `01c`
-and `01e`.
+The service worker, install prompt and offline check are Order 40. The manifest
+and icons are correct and serving; nothing caches offline yet.
