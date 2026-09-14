@@ -2,6 +2,7 @@ import { ID, Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
 import { createExercise, type Actor } from "@/appwrite/documents";
+import { ensureMyCircle } from "@/lib/auth/circle";
 import { findByName, type Exercise } from "./match";
 
 /**
@@ -105,6 +106,9 @@ export async function resolveOrCreateExercise(
   const existing = findByName(name, library);
   if (existing) return { exercise: existing, created: false };
 
+  // A custom exercise is stamped with the athlete's circle too, so it needs the
+  // same precondition a session start does.
+  await ensureMyCircle();
   const row = await createExercise(browserWriteDeps(() => ID.unique()), actor, { name });
   const created = toExercise(row as unknown as ExerciseRow);
   if (!created) throw new Error(`Appwrite returned an unusable exercise row for "${name}"`);

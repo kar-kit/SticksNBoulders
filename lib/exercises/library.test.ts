@@ -7,6 +7,7 @@ vi.mock("@/appwrite/documents", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/appwrite/documents")>()),
   createExercise,
 }));
+vi.mock("@/lib/auth/circle", () => ({ ensureMyCircle: async () => {} }));
 vi.mock("@/appwrite/documents/browser-writer", () => ({
   browserWriteDeps: () => ({ writer: {}, databaseId: "db", newId: () => "id", now: () => new Date() }),
 }));
