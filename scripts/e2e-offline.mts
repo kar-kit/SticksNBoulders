@@ -209,6 +209,17 @@ check("exactly four sets landed, not eight", sets.length === 4);
 check("the warm-up kept its flag", sets.filter((r) => r.is_warmup === true).length === 1);
 check("the RPE came with it", sets.some((r) => r.rpe === 8));
 check("the loads are the ones that were typed", sets.filter((r) => r.load_kg === 140).length === 2);
+// The queue carries no estimate: runOp calls the same write helper, so a set
+// logged in a basement gets the same number as one logged on wifi. 140 x 5 @
+// RPE 8 is seven reps to failure -> 140 x 36 / 30.
+check(
+  "e1RM was computed on the way through the queue, not skipped",
+  sets.some((r) => r.rpe === 8 && r.e1rm_kg === 168),
+);
+check(
+  "and still left empty where no estimate is owed",
+  sets.filter((r) => r.is_warmup === true || r.rpe == null).every((r) => r.e1rm_kg == null),
+);
 
 const invented_rows = (await rowsOf("exercises", athlete.$id)).filter((r) => r.name === invented);
 check("the invented lift landed too", invented_rows.length === 1);
