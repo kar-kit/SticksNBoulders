@@ -8,6 +8,8 @@ import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { buildQueue, firstItem, groupByAthlete, nextAfter, type QueueItem } from "@/lib/review/queue";
+import { countBySet, type Comment } from "@/lib/review/comments";
+import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
 import {
   clearClip,
   fetchClipUrls,
@@ -22,6 +24,7 @@ import {
 } from "@/lib/review/queue-store";
 import { ClipContext } from "./clip-context";
 import { ClipPlayer } from "./clip-player";
+import { CommentBox } from "./comment-box";
 
 /**
  * The Review Queue: the screen that replaces WhatsApp.
@@ -31,11 +34,10 @@ import { ClipPlayer } from "./clip-player";
  * time to clear the queue, so the next clip's context is already on screen
  * before the coach decides anything about this one.
  *
- * Order 32 ships with clearing but no comment box. "Comment & next" is
- * Order 33, so the action here is the blueprint's Skip -- which is not a
- * degraded version of the feature but the honest half of it: a coach watching
- * a clip that is simply fine marks it seen and moves on. Saying something
- * about one arrives next.
+ * Two ways out of a clip, both from the blueprint. "Comment & next" says
+ * something and advances in one action; Skip advances without, for a clip that
+ * is simply fine. Both clear it from the queue, because both mean the coach has
+ * dealt with it.
  */
 
 interface Detail {
@@ -68,6 +70,9 @@ export function ReviewQueue() {
   const [urls, setUrls] = useState<Map<string, string>>(new Map());
   const [loaded, setLoaded] = useState<LoadedDetail | null>(null);
   const [lastCleared, setLastCleared] = useState<QueueItem | null>(null);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [posting, setPosting] = useState(false);
+  const [athleteNames, setAthleteNames] = useState<Map<string, string>>(new Map());
 
   const current = useMemo(
     () => items.find((item) => item.id === currentId) ?? firstItem(items),
@@ -87,11 +92,14 @@ export function ReviewQueue() {
       fetchAthleteNames(athleteIds),
       fetchExerciseNames(waiting.map((clip) => clip.exerciseId)),
     ]);
-    const queue = buildQueue(clips, reviewed, {
-      athletes: new Map(athletes.map((athlete) => [athlete.id, athlete.name])),
-      exercises,
-    });
+    const byId = new Map(athletes.map((athlete) => [athlete.id, athlete.name]));
+    const queue = buildQueue(clips, reviewed, { athletes: byId, exercises });
+    setAthleteNames(byId);
     setItems(queue);
+    // What has already been said about what is waiting. Read with the queue
+    // rather than per clip, so a coach who commented last Sunday sees it the
+    // moment the clip opens instead of a blank box that invites a repeat.
+    setComments(await fetchCommentsForSets(queue.map((item) => item.id)));
     return queue;
   }, [athleteIds, coachId]);
 
@@ -200,7 +208,40 @@ export function ReviewQueue() {
       .catch(() => {});
   }, [coachId, lastCleared, refresh]);
 
-  // Enter clears and advances, the blueprint's "barely touch the mouse".
+  /**
+   * Says something, then clears.
+   *
+   * Two writes, in this order on purpose. If the comment lands and the review
+   * does not, the clip comes back with the comment already on it and the coach
+   * sees what they said -- a duplicate they can skip. The other order loses the
+   * feedback entirely and shows an empty box, which is the same screen as
+   * having never commented at all.
+   */
+  const commentAndNext = useCallback(
+    async (item: QueueItem, body: string): Promise<boolean> => {
+      if (!coachId) return false;
+      setPosting(true);
+      try {
+        const outcome = await submitComment({
+          athleteId: item.athleteId,
+          setId: item.id,
+          authorId: coachId,
+          body,
+        });
+        if (!outcome.ok) return false;
+        setComments((all) => [...all, outcome.comment]);
+        clear(item);
+        return true;
+      } finally {
+        setPosting(false);
+      }
+    },
+    [clear, coachId],
+  );
+
+  // Enter clears and advances, the blueprint's "barely touch the mouse". Never
+  // while the coach is writing -- the comment box owns Cmd/Ctrl+Enter, and a
+  // bare Enter there is a new paragraph.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Enter" || !current) return;
@@ -245,6 +286,7 @@ export function ReviewQueue() {
   }
 
   const groups = groupByAthlete(items);
+  const commentCounts = countBySet(comments);
 
   return (
     <div className="flex h-full min-h-0">
@@ -273,6 +315,14 @@ export function ReviewQueue() {
                     )}
                   >
                     {item.exerciseName}
+                    {commentCounts.has(item.id) ? (
+                      // A clip already spoken about. Marked rather than hidden:
+                      // it is still waiting to be cleared, and the coach should
+                      // know they have been here before opening it.
+                      <span className="ml-1 text-muted-2" aria-label="already commented">
+                        ·
+                      </span>
+                    ) : null}
                   </button>
                 </li>
               ))}
@@ -294,10 +344,18 @@ export function ReviewQueue() {
             previousBestKg={detail.previousBestKg}
           />
 
-          <div className="flex items-center gap-3">
-            <Button onClick={() => clear(current)}>Reviewed — next</Button>
+          <div className="flex flex-col gap-3">
+            <CommentBox
+              clipId={current.id}
+              comments={comments.filter((comment) => comment.setId === current.id)}
+              names={athleteNames}
+              viewerId={coachId ?? ""}
+              busy={posting}
+              onPost={(body) => commentAndNext(current, body)}
+              onSkip={() => clear(current)}
+            />
             {lastCleared ? (
-              <Button variant="ghost" size="sm" onClick={undo}>
+              <Button variant="ghost" size="sm" onClick={undo} className="self-start">
                 Undo
               </Button>
             ) : null}

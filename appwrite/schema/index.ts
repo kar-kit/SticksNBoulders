@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 6,
+  version: 7,
   tables: [
     {
       id: "profiles",
@@ -161,6 +161,39 @@ export const schema: DatabaseSpec = {
       indexes: [
         { key: "idx_coach_reviewed", type: "key", columns: ["coach_id", "reviewed_at"], orders: ["asc", "desc"] },
         { key: "idx_client_review_id", type: "unique", columns: ["client_review_id"] },
+      ],
+    },
+
+    {
+      id: "set_comments",
+      name: "Set comments",
+      purpose:
+        "What the coach says about a filmed set, anchored to the set rather than sitting in an inbox. This is the WhatsApp thread, and the reason it can be short: the set already carries load, reps, RPE and the athlete's note, so none of the context has to be typed.",
+      rowSecurity: true,
+      permissions: [perm.createUsers],
+      columns: [
+        { key: "set_id", type: "string", size: 36, required: true },
+        // Whose set it is, not who wrote the comment. Denormalised because the
+        // athlete's feedback screen at Order 34 reads by athlete, and Appwrite
+        // cannot join back to the set to find out.
+        { key: "athlete_id", type: "string", size: 36, required: true },
+        { key: "author_id", type: "string", size: 36, required: true },
+        // Long enough for a paragraph of form feedback. `sets.notes` is 500
+        // because an athlete taps it out mid-set; this replaces the essay
+        // Joey currently types into WhatsApp, and truncating a coach's
+        // correction is the kind of bug that ends with them retyping it.
+        { key: "body", type: "string", size: 2000, required: true },
+        // Null on the coach's opening comment; the parent's id on a reply.
+        // Threading is modelled now even though only Order 34 draws it, because
+        // adding the column later means backfilling every comment ever written.
+        { key: "parent_id", type: "string", size: 36, required: false },
+        { key: "created_at", type: "datetime", required: true },
+        { key: "client_comment_id", type: "string", size: 80, required: true },
+      ],
+      indexes: [
+        { key: "idx_set_created", type: "key", columns: ["set_id", "created_at"], orders: ["asc", "asc"] },
+        { key: "idx_athlete_created", type: "key", columns: ["athlete_id", "created_at"], orders: ["asc", "desc"] },
+        { key: "idx_client_comment_id", type: "unique", columns: ["client_comment_id"] },
       ],
     },
 

@@ -26,6 +26,7 @@ describe("schema shape", () => {
       "profiles",
       "reference_maxes",
       "sessions",
+      "set_comments",
       "set_reviews",
       "sets",
       "stats_rollups",

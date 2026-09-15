@@ -161,7 +161,9 @@ export function ClipPlayer({ src, clipId }: ClipPlayerProps) {
         </div>
       </div>
 
-      <p className="m-0 text-ui text-muted-2">Space plays, arrows step a frame, Enter clears and moves on.</p>
+      <p className="m-0 text-ui text-muted-2">
+        Space plays, arrows step a frame. Enter skips; ⌘/Ctrl + Enter comments and moves on.
+      </p>
     </div>
   );
 }

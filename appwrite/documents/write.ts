@@ -5,6 +5,7 @@ import {
   invitePermissions,
   linkPermissions,
   profilePermissions,
+  commentPermissions,
   referenceMaxPermissions,
   reviewPermissions,
   rollupPermissions,
@@ -444,6 +445,65 @@ export async function unmarkSetReviewed(deps: WriteDeps, actor: Actor, setId: st
     databaseId: deps.databaseId,
     tableId: "set_reviews",
     rowId: `${actor.userId}_${setId}`,
+  });
+}
+
+/* -------------------------------------------------------------------------
+ * Set comments
+ * ---------------------------------------------------------------------- */
+
+export interface PostCommentInput {
+  /** Whose set it is. Not the author, even when the athlete is replying. */
+  athleteId: string;
+  setId: string;
+  body: string;
+  /** The comment being replied to, or null for the opening one. */
+  parentId?: string | null;
+  clientCommentId: string;
+}
+
+/**
+ * Says something about a set.
+ *
+ * Written by either party -- the coach opens the thread, the athlete replies --
+ * and stamped by whoever called it. `athleteId` names whose set is under
+ * discussion and is never the author on a coach's comment, which is the one
+ * place those two ids come apart in this file.
+ *
+ * The client id is the idempotency key, generated where the comment is typed
+ * so a retried request cannot post the same correction twice. A coach whose
+ * feedback appears twice looks careless to the person being coached.
+ */
+export async function postComment(deps: WriteDeps, actor: Actor, input: PostCommentInput) {
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: "set_comments",
+    rowId: input.clientCommentId,
+    data: {
+      set_id: input.setId,
+      athlete_id: input.athleteId,
+      author_id: actor.userId,
+      body: input.body,
+      parent_id: input.parentId ?? null,
+      created_at: iso(deps.now()),
+      client_comment_id: input.clientCommentId,
+    },
+    permissions: commentPermissions({ athleteId: input.athleteId, authorId: actor.userId }),
+  });
+}
+
+/**
+ * Removes a comment.
+ *
+ * Only the author can, and that is enforced by Appwrite rather than here: the
+ * row carries a delete for its author alone. A coach cannot withdraw an
+ * athlete's reply and an athlete cannot withdraw a coach's correction.
+ */
+export async function deleteComment(deps: WriteDeps, _actor: Actor, rowId: string) {
+  return deps.writer.deleteRow({
+    databaseId: deps.databaseId,
+    tableId: "set_comments",
+    rowId,
   });
 }
 
