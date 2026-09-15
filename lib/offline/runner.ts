@@ -5,6 +5,7 @@ import {
   createExercise,
   createSession,
   createSet,
+  attachVideo,
   deleteSet,
   finishSession,
   updateSet,
@@ -102,6 +103,16 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
     }
     case "set.delete": {
       await deleteSet(browserWriteDeps(() => ""), actor, asString(p.setId));
+      return;
+    }
+    case "set.attachVideo": {
+      // The upload already happened; this is the durable record of it. Null is
+      // a real value here -- detaching a clip has to clear the id, not leave
+      // it pointing at a file that is gone.
+      await attachVideo(browserWriteDeps(() => ""), actor, {
+        rowId: asString(p.setId),
+        videoFileId: typeof p.videoFileId === "string" ? p.videoFileId : null,
+      });
       return;
     }
   }

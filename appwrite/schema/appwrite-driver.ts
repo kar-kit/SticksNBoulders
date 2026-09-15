@@ -1,7 +1,7 @@
-import { TablesDB, type Client } from "node-appwrite";
+import { Storage, TablesDB, type Client } from "node-appwrite";
 import type { SchemaDriver } from "./driver";
 import type { CurrentState } from "./plan";
-import type { ColumnSpec, IndexSpec, TableSpec } from "./types";
+import type { BucketSpec, ColumnSpec, IndexSpec, TableSpec } from "./types";
 
 const INDEX_TYPE = { key: "key", unique: "unique", fulltext: "fulltext" } as const;
 
@@ -11,16 +11,36 @@ const COLUMN_POLL_MS = 400;
 
 export function createAppwriteDriver(client: Client): SchemaDriver {
   const db = new TablesDB(client);
+  const storage = new Storage(client);
+
+  /** Buckets live beside the database rather than inside it, so they are read
+   *  separately -- and a missing database must not hide an existing bucket. */
+  const readBuckets = async () => {
+    const { buckets } = await storage.listBuckets();
+    return buckets.map((b) => ({
+      id: b.$id,
+      permissions: b.$permissions ?? [],
+      fileSecurity: Boolean(b.fileSecurity),
+      maximumFileSizeBytes: Number(b.maximumFileSize ?? 0),
+      allowedFileExtensions: (b.allowedFileExtensions ?? []) as string[],
+      compression: String(b.compression ?? "none"),
+      encryption: Boolean(b.encryption),
+      antivirus: Boolean(b.antivirus),
+    }));
+  };
 
   return {
     async readState(databaseId) {
       const databases = await db.list();
       const databaseExists = databases.databases.some((d) => d.$id === databaseId);
-      if (!databaseExists) return { databaseExists: false, tables: [] };
+      if (!databaseExists) {
+        return { databaseExists: false, tables: [], buckets: await readBuckets() };
+      }
 
       const tables = await db.listTables({ databaseId });
       return {
         databaseExists: true,
+        buckets: await readBuckets(),
         tables: tables.tables.map((t) => ({
           id: t.$id,
           permissions: t.$permissions ?? [],
@@ -45,6 +65,34 @@ export function createAppwriteDriver(client: Client): SchemaDriver {
 
     async createDatabase(databaseId, name) {
       await db.create({ databaseId, name });
+    },
+
+    async createBucket(bucket: BucketSpec) {
+      await storage.createBucket({
+        bucketId: bucket.id,
+        name: bucket.name,
+        permissions: [...bucket.permissions],
+        fileSecurity: bucket.fileSecurity,
+        maximumFileSize: bucket.maximumFileSizeBytes,
+        allowedFileExtensions: [...bucket.allowedFileExtensions],
+        compression: bucket.compression as never,
+        encryption: bucket.encryption,
+        antivirus: bucket.antivirus,
+      });
+    },
+
+    async updateBucket(bucket: BucketSpec) {
+      await storage.updateBucket({
+        bucketId: bucket.id,
+        name: bucket.name,
+        permissions: [...bucket.permissions],
+        fileSecurity: bucket.fileSecurity,
+        maximumFileSize: bucket.maximumFileSizeBytes,
+        allowedFileExtensions: [...bucket.allowedFileExtensions],
+        compression: bucket.compression as never,
+        encryption: bucket.encryption,
+        antivirus: bucket.antivirus,
+      });
     },
 
     async createTable(databaseId, table: TableSpec) {

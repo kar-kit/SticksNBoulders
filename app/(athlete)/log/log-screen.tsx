@@ -10,6 +10,8 @@ import { NumberPad } from "@/components/logging/number-pad";
 import { RestBar } from "@/components/logging/rest-bar";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
 import { useSession } from "@/lib/auth/session-context";
+import { AttachVideo } from "@/components/logging/attach-video";
+import { setForNewClip } from "@/lib/video/clip";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { resolveOrCreateExercise } from "@/lib/exercises/library";
 import type { Exercise } from "@/lib/exercises/match";
@@ -432,6 +434,26 @@ export function LogScreen() {
               onConfirm={confirmSet}
               onActivate={() => activate(block.id)}
               onUndo={() => void undoLast(block.id)}
+              camera={(() => {
+                // Attaches to the most recently logged set of this exercise,
+                // per the Set Row spec. Absent until there is one, so the
+                // athlete is never offered a camera with nowhere to put a clip.
+                const target = setForNewClip(
+                  setsOf(block.id).map((set) => ({
+                    ...set,
+                    loggedAt: set.loggedAt instanceof Date ? set.loggedAt : new Date(set.loggedAt),
+                  })),
+                  block.id,
+                );
+                if (!target || !athleteId) return null;
+                return (
+                  <AttachVideo
+                    key={target.clientSetId}
+                    setId={target.clientSetId}
+                    athleteId={athleteId}
+                  />
+                );
+              })()}
             />
           ))}
         </div>

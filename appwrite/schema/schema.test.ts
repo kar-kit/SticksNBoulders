@@ -237,3 +237,51 @@ describe("logging rules encoded in the schema", () => {
     expect(columnKeys("exercises")).toContain("normalised_name");
   });
 });
+
+describe("the video bucket", () => {
+  const bucket = schema.buckets.find((b) => b.id === "set_videos")!;
+
+  it("exists, because infrastructure is not clicked into a console", () => {
+    expect(bucket).toBeDefined();
+    expect(schema.buckets).toHaveLength(1);
+  });
+
+  /**
+   * Per-file, for the same reason tables use row security: the reader differs
+   * per clip. A bucket-wide read would make every athlete's video visible to
+   * every signed-in user on the instance.
+   */
+  it("secures each file rather than the bucket", () => {
+    expect(bucket.fileSecurity).toBe(true);
+    expect(bucket.permissions.join(" ")).not.toContain("read(");
+  });
+
+  /**
+   * The instance's _APP_STORAGE_LIMIT is the hard ceiling -- Appwrite rejects
+   * a bucket asking for more than the instance allows -- so this has to track
+   * it rather than what we would like. Raised from Appwrite's 30MB default
+   * when uploads moved to the NAS, because 30MB does not hold a 60-second
+   * 1080p clip.
+   */
+  it("caps files at what the instance will actually accept", () => {
+    expect(bucket.maximumFileSizeBytes).toBe(200_000_000);
+  });
+
+  it("accepts only what a phone camera produces", () => {
+    expect([...bucket.allowedFileExtensions].sort()).toEqual(["m4v", "mov", "mp4", "webm"]);
+  });
+
+  /**
+   * Appwrite skips encryption above 20MB, so enabling it would encrypt short
+   * clips and silently not long ones. A guarantee that holds only sometimes is
+   * worse than one that does not exist.
+   */
+  it("claims no encryption or antivirus it cannot actually deliver", () => {
+    expect(bucket.encryption).toBe(false);
+    expect(bucket.antivirus).toBe(false);
+  });
+
+  it("does not waste CPU compressing already-compressed video", () => {
+    expect(bucket.compression).toBe("none");
+  });
+});

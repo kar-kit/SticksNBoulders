@@ -170,6 +170,29 @@ export function invitePermissions({ coachId }: CodeOwner): string[] {
   return [read(user(requireId(coachId, "coachId")))];
 }
 
+/**
+ * A clip on a set.
+ *
+ * Stamped per file, the same shape as the set it belongs to, because it is the
+ * same fact: the athlete's work, readable by whoever coaches them. A video is
+ * more revealing than a row of numbers, so it gets no wider audience than the
+ * numbers do -- the circle and nobody else.
+ *
+ * The athlete may delete. Deleting a set should take its clip with it, and an
+ * athlete who filmed something they would rather not share must be able to
+ * remove it without asking. The coach may not: a clip is evidence of what
+ * happened, and a review tool whose reviewer can destroy the thing under
+ * review is the wrong shape.
+ *
+ * Not in POLICIES, which is keyed by table. A bucket is not a table, and
+ * pretending otherwise to satisfy a lookup would put a file policy where the
+ * next person looks for a row policy.
+ */
+export function videoPermissions({ athleteId }: RowOwner): string[] {
+  const id = requireId(athleteId, "athleteId");
+  return [...athleteAndCircle(id), del(user(id))];
+}
+
 /** Every policy in one place, so a table can never be added without one. */
 export const POLICIES = {
   profiles: profilePermissions,

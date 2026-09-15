@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { SetRow, SetRowHeader } from "./set-row";
 import type { LoggableSet, RpeValue } from "@/lib/logging/set";
@@ -30,6 +31,13 @@ export interface ExerciseBlockProps {
   onActivate?: () => void;
   /** Removes the most recently logged set. The fix for a wrong tap. */
   onUndo?: () => void;
+  /**
+   * The camera for this exercise, composed in rather than built here so this
+   * component stays presentational. Absent when nothing has been logged yet:
+   * a camera with nowhere to attach produces a clip the product then has to
+   * explain away.
+   */
+  camera?: ReactNode;
 }
 
 /**
@@ -52,6 +60,7 @@ export function ExerciseBlock({
   onConfirm,
   onActivate,
   onUndo,
+  camera,
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const nextIndex: number | "W" = draft?.isWarmup ? "W" : working + 1;
@@ -71,11 +80,14 @@ export function ExerciseBlock({
             {name}
           </button>
         )}
-        {sets.length > 0 && onUndo ? (
-          <Button variant="ghost" size="sm" onClick={onUndo}>
-            Undo last set
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-1">
+          {sets.length > 0 ? camera : null}
+          {sets.length > 0 && onUndo ? (
+            <Button variant="ghost" size="sm" onClick={onUndo}>
+              Undo last set
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       {sets.length > 0 || draft ? <SetRowHeader /> : null}

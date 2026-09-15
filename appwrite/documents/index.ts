@@ -50,6 +50,7 @@ export {
   createProfile,
   createSession,
   createSet,
+  attachVideo,
   deleteSet,
   finishSession,
   normaliseExerciseName,

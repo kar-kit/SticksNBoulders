@@ -1,4 +1,4 @@
-import type { ColumnSpec, IndexSpec, TableSpec } from "./types";
+import type { BucketSpec, ColumnSpec, IndexSpec, TableSpec } from "./types";
 import type { CurrentState } from "./plan";
 
 /**
@@ -19,4 +19,6 @@ export interface SchemaDriver {
    * are available fails, so the executor waits rather than sleeping and hoping.
    */
   waitForColumns(databaseId: string, tableId: string, keys: readonly string[]): Promise<void>;
+  createBucket(bucket: BucketSpec): Promise<void>;
+  updateBucket(bucket: BucketSpec): Promise<void>;
 }

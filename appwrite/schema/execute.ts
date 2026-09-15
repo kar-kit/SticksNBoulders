@@ -37,6 +37,12 @@ function describe(action: Action): string {
       return `orphan column ${action.tableId}.${action.key}`;
     case "orphan-index":
       return `orphan index ${action.tableId}.${action.key}`;
+    case "create-bucket":
+      return `create bucket ${action.bucket.id}`;
+    case "update-bucket":
+      return `update bucket ${action.bucket.id} — ${action.reason}`;
+    case "orphan-bucket":
+      return `orphan bucket ${action.bucketId} exists on the server but not in the schema`;
   }
 }
 
@@ -91,6 +97,12 @@ export async function applySchema(
         await driver.createIndex(schema.id, action.tableId, action.index);
         break;
       }
+      case "create-bucket":
+        await driver.createBucket(action.bucket);
+        break;
+      case "update-bucket":
+        await driver.updateBucket(action.bucket);
+        break;
     }
   }
 

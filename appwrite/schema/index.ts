@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 4,
+  version: 5,
   tables: [
     {
       id: "profiles",
@@ -268,6 +268,50 @@ export const schema: DatabaseSpec = {
         { key: "idx_athlete_status", type: "key", columns: ["athlete_id", "status"] },
         { key: "idx_coach_status", type: "key", columns: ["coach_id", "status"] },
       ],
+    },
+  ],
+
+  buckets: [
+    {
+      id: "set_videos",
+      name: "Set videos",
+      purpose:
+        "A clip attached to one logged set. The highest-value thing in the product -- neither RTS nor Excel does it -- and the reason the essay-length WhatsApp message disappears: the set already carries load, reps, RPE and notes, so the context writes itself.",
+      // Per file, like row security on a table: the reader differs per clip.
+      // An athlete's video is theirs and their circle's, never the roster's.
+      fileSecurity: true,
+      permissions: [perm.createUsers],
+      /**
+       * Tracks `_APP_STORAGE_LIMIT` on the instance, which is the hard ceiling
+       * -- Appwrite rejects a bucket asking for more than the instance allows.
+       *
+       * It was 30,000,000 (Appwrite's default) until 15 Sep 2026, which is not
+       * enough for a 60-second 1080p phone clip. Joey raised the instance to
+       * 200MB when uploads moved to the NAS, so this follows. Client-side
+       * compression at Order 31 should bring real clips far below it; this is
+       * the ceiling, not the target.
+       *
+       * If a bucket create or update starts failing with "Invalid
+       * maximumFileSize", the instance limit moved and this is what has to
+       * change.
+       */
+      maximumFileSizeBytes: 200_000_000,
+      // What a phone camera produces. Deliberately narrow: an athlete who
+      // manages to attach a PDF has found a bug, not a feature.
+      allowedFileExtensions: ["mp4", "mov", "m4v", "webm"],
+      // Video is already compressed; gzip over it burns CPU at both ends to
+      // save nothing.
+      compression: "none",
+      /**
+       * Both off deliberately. Appwrite skips encryption above 20MB, so
+       * turning it on would encrypt short clips and silently not long ones --
+       * a guarantee that holds only sometimes is worse than none. Antivirus
+       * needs ClamAV running beside the instance, which this one does not
+       * have, and claiming it here would make every apply report drift it
+       * cannot fix.
+       */
+      encryption: false,
+      antivirus: false,
     },
   ],
 } as const;

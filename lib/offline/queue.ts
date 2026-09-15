@@ -31,6 +31,7 @@ export type OpKind =
   | "set.create"
   | "set.update"
   | "set.delete"
+  | "set.attachVideo"
   | "exercise.create"
   | "rollup.refresh";
 
