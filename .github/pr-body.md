@@ -1,107 +1,126 @@
-## Order 31 — Chunked background upload
+## Order 32 — Coach review queue
 
-Two halves: resume is built, compression is recommended against.
+The screen that replaces WhatsApp. One list across every athlete, oldest first,
+with the context Joey currently types by hand, cleared without switching apps.
 
-### Resume, and why it had to be hand-rolled
+### The queue
 
-The ticket asks whether Appwrite's chunked upload resumes after a dropped
-connection or restarts from zero. It restarts from zero.
+Sets that have a clip, **minus** the ones this coach has already cleared. Two
+tables, because Appwrite has no joins, so the subtraction happens in memory.
 
-**It resumes at the protocol level and the SDK does not use it:**
-`chunkedUpload` always starts at chunk 0, takes no existing upload id, and
-never asks the server what it already holds. So `lib/video/resumable-upload.ts`
-talks to the endpoint directly.
+`Query.isNotNull("video_file_id")` composes with an `equal()` IN filter over the
+coach's athletes — **checked against the instance before designing around it.**
+Had it not worked, this would have needed a denormalised `has_video` column and
+a backfill.
 
-Three server behaviours make that safe, all verified against the instance
-rather than assumed:
+Oldest first: a clip filmed on Tuesday is the one the athlete is still wondering
+about. Ties break on id, so the queue does not reshuffle between renders and
+lose the coach's place.
 
-1. The upload id **is** the file id we choose, so a half-finished upload is
-   addressable from state we already hold — including after a reload.
-2. A user session can read `chunksUploaded` on an incomplete file, so the
-   client finds its own resume point with no server route.
-3. Re-sending a chunk the server already has is idempotent. A response lost in
-   flight is harmless, so this errs toward sending again rather than stranding
-   an upload.
+The in-memory filter is the first thing here that stops scaling, and it's chosen
+rather than missed — the comment at that line says so, and names the fix (a
+`last_reviewed_at` watermark) for whoever hits it.
 
-Sequential, deliberately. Appwrite reports progress as a **count**, not a map
-of which ranges landed, so uploading in order is what makes that number a
-resume point. Parallel chunks do assemble correctly — also verified — but then
-"four uploaded" cannot tell you *which* four. On gym wifi, resumable beats fast.
+### ⚠️ Permission-model change
 
-### Surviving a reload
+**`set_reviews` is the first table a coach writes, from their own session, and
+`USER_WRITABLE_TABLES` grows by one.** Worth a look rather than inferring it
+from the policy diff.
 
-The blob is kept in IndexedDB, not a reference: a `File` from an `<input>` is
-gone the moment the page reloads, so an upload that could not survive that
-would only survive the failures that were never going to lose it. It is a
-**separate database** from the offline write queue — that one holds small rows,
-is read on every render, and must stay fast.
+The row is stamped `read("team:circle_<athleteId>")` — **not**
+`read("user:<athleteId>")`, which is the obvious spelling and the one Appwrite
+refuses. A caller may only stamp roles it holds itself. Order 17 paid for that
+lesson on the athlete's side; this is the first time it applies to the coach.
 
-The entry is written **before the first byte moves**. The gap between starting
-and recording is exactly when a phone gets locked.
+Client-writable where `reference_maxes` is server-only, and the difference is
+the point: a forged review row can only carry roles its author holds, so the
+real coach cannot read it and it filters nothing out of the real queue. Litter,
+not a lie — and a training max is a number on a bar where this is only whether a
+video has been watched.
 
-`resumeInterruptedUploads()` runs from the same effect that flushes the offline
-queue, and is deliberately silent — the athlete already saw the set logged, and
-a clip finishing in the background is not news worth interrupting them for.
+Id is `<coachId>_<setId>`, so a double tap is one row.
 
-Retries stop at `MAX_UPLOAD_ATTEMPTS = 5`. Any 4xx drops immediately; retrying
-a 4xx is a loop, not resilience.
+### Playback, which had no shortcut
 
-### Proved against the instance, not asserted
+A `<video>` element cannot send a header and clips are stamped to a circle. Four
+approaches, all against the live instance:
 
-`npm run e2e:video` drives the real `uploadResumable` against the live server
-with an 11.7MB file — two and a half chunks, deliberately not a round number,
-so the short final range is exercised. It interrupts the upload the moment the
-first chunk is confirmed, resumes, and compares a SHA-256 of what came back
-against what went up.
+| Approach | Result |
+| --- | --- |
+| Appwrite file URL, no auth | **404** |
+| `x-appwrite-jwt` header | 200 — unreachable from a `<video>` |
+| `?jwt=` query parameter | **404**, not supported |
+| Appwrite session cookie | 200 — and a trap: different origins make it third-party, so no browser sends it from localhost |
 
-Unit tests cannot catch the failure that actually matters here. A
-`content-range` built from the slice rather than the whole file assembles into
-a corrupt clip **and still reports success** — every chunk 200s,
-`chunksUploaded` reaches the total, and the coach opens a broken video weeks
-later. Only the hash catches it.
+So clips stream through this app's origin behind a signed ticket, and **the
+ticket carries identity, not authority**. It says who the URL was minted for and
+nothing else; the stream route mints a fresh JWT for that user and asks Appwrite
+as them.
 
-8/8 pass. Writing it found two things:
+- No permission logic in a media route to forget. CLAUDE.md calls a missed
+  permission path sev-1; the way to never miss one is not to have one.
+- **An unlinked coach's existing, unexpired ticket stops working mid-scrub**,
+  because they have left the circle team. That's Order 16.6 item 3 arrived at
+  for free rather than built.
+- A stranger gets a perfectly valid ticket that fetches a 404. The e2e asserts
+  exactly that, because it's the assertion that makes the design defensible
+  rather than merely clever.
 
-- **The JWT was being minted per chunk.** A 150MB clip is thirty chunks, so
-  thirty round trips before any bytes move, on precisely the connection this
-  module exists to tolerate. Appwrite's JWTs last fifteen minutes; one per
-  attempt is enough. Hoisted.
-- **An athlete not in their own circle team cannot upload at all.** A clip
-  names that team as a reader, and Appwrite only lets a caller stamp roles it
-  holds — the same restriction that made reference maxes server-only at
-  Order 17. The symptom is a 401 on the first chunk with a message about
-  permissions, which reads like an auth bug and is not one. Onboarding already
-  calls `/api/circle` and `ensureCircle` is idempotent, so nothing is broken;
-  the dependency was just invisible. The e2e now asserts the refusal.
+### The bug worth reading
 
-### Compression: recommended against, for now
+**Appwrite gzips file responses. `fetch` decompresses transparently. The
+upstream `content-length` describes the compressed bytes while the body holds
+the decompressed ones — so forwarding it truncated a 40,000-byte clip to 498 and
+returned `200 OK`.**
 
-**Compression is not built, and the ticket's own metadata is the argument.**
-Order 31 is `Inferred`, nobody asked for it, and CLAUDE.md says to say so
-rather than grinding out an awkward one.
+That's the class of bug that ships, sits for a month, and surfaces as "the
+videos are broken sometimes". Found by hashing what came out of the proxy, not
+by reading the code.
 
-- ffmpeg.wasm is a ~25MB bundle against a 2.5s interactive budget. Speed is
-  constraint #1 and this trades it away for a problem we do not have.
-- WebCodecs is the light alternative and is only partially there on iOS Safari,
-  which is the athlete's phone.
-- The stated reason is Cloud cost economics for January 2027, not the beta.
-- Nothing is blocked: uploads land on 941GB of NAS behind a 200MB ceiling.
+Fixed twice: the upstream request asks for `accept-encoding: identity` (video is
+already compressed — gzip buys nothing here and costs correctness), and
+`content-length` is dropped if an encoding arrives anyway.
 
-The better shape, if it becomes real: record in-app with `MediaRecorder` at a
-capped bitrate, so the phone never produces the large file in the first place.
-That costs an in-app camera UI instead of the system one — a product decision
-for Joey, not a technical one.
+Range requests are forwarded both ways and the body streams unbuffered. Both
+matter: 0.25x frame-stepping *is* seeking, and buffering a 150MB clip to hand it
+on passes every test and falls over on the first real one.
 
-### [SME to confirm]
+### What the blueprint asks for and this does not do
 
-Resume-after-reload assumes the blob is still in IndexedDB. Browsers evict
-under storage pressure, and a phone that is nearly full may drop it. Worth
-knowing whether athletes' phones routinely run near capacity before relying on
-this for a long session.
+- **"Prescribed: 3 @ RPE 8" is absent.** It needs a stored program and there's no
+  programs table until Order 19 (blocked on your block-shape question). The
+  blueprint calls the context panel "the product", so the missing line is worth
+  knowing about — but inferring a target from what was lifted would put a number
+  in front of a coach that nobody prescribed.
+- **"Still uploading" is not shown.** A set row carries no trace of a clip that
+  hasn't landed: the upload flow sends the file first and records it second.
+  Showing it honestly means writing intent before the bytes move — a redesign of
+  Orders 29 and 31 for a state that exists only while an upload is in flight. A
+  clip that won't play says so in the player instead.
+- **Clearing is Skip, and only Skip.** "Comment & next" is Order 33. This ships
+  as the honest half of the loop rather than a stubbed whole one: a coach can
+  watch everything and mark it seen.
+- **Voice notes** belong with Order 33, and the blueprint already marks them
+  `[Inference — not discussed on the call]`.
+
+### Also
+
+`npm start` took a hardcoded port, so a stale server on 3100 made the e2e run
+against somebody else's build and report failures that looked like bugs in this
+code. It honours `PORT` now.
 
 ### Verification
 
-`typecheck` · `lint` · **1111 tests, 71 files** · `build` · `perf:check` within
-the 2.5s interactive budget · `e2e:video` 8/8 against the live instance.
+`typecheck` · `lint` · **1149 tests, 73 files** · `build` · `perf:check` inside
+the 2.5s budget · `appwrite:probe` 42/42 · schema applied at v6.
+
+Live against the instance:
+
+- `npm run e2e:review` — **11/11**, including the one this ticket rests on: a
+  coach writing a row stamped with the athlete's circle team from their own
+  session.
+- `npm run e2e:clip` — **15/15**: whole-file byte equality, ranges, ticket
+  forgery, a stranger's valid ticket fetching nothing, and an unlinked coach's
+  live ticket dying immediately.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
