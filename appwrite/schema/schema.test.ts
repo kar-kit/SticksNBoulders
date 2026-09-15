@@ -1,3 +1,4 @@
+import { SERVER_ONLY_TABLES } from "@/appwrite/documents/policy";
 import { DATABASE_ID, schema } from "./index";
 import type { TableSpec } from "./types";
 
@@ -15,12 +16,15 @@ describe("schema shape", () => {
     expect(schema.version).toBeGreaterThanOrEqual(1);
   });
 
-  it("covers phases 0, 1 and the coach link, and nothing still an open question", () => {
+  // Titled by what it asserts rather than by which phase happens to be done:
+  // the old title named the phases and went stale twice in three tickets.
+  it("holds every table the build has agreed on, and none it has not", () => {
     expect(schema.tables.map((t) => t.id).sort()).toEqual([
       "coach_athlete_links",
       "exercises",
       "invite_codes",
       "profiles",
+      "reference_maxes",
       "sessions",
       "sets",
       "stats_rollups",
@@ -30,6 +34,19 @@ describe("schema shape", () => {
     // the expensive retrofit.
     expect(schema.tables.map((t) => t.id)).not.toContain("programs");
     expect(schema.tables.map((t) => t.id)).not.toContain("prescriptions");
+  });
+
+  /**
+   * The drift this catches bit mid-ticket: reference_maxes was designed
+   * client-writable, inverted to server-only when the probe proved a stranger
+   * could forge a row, and the live table kept its create("users") until the
+   * applier ran again. A build-time assertion is cheaper than finding it in a
+   * probe against a live instance.
+   */
+  it("gives no table-level create to a server-only table", () => {
+    for (const table of schema.tables.filter((t) => SERVER_ONLY_TABLES.includes(t.id as never))) {
+      expect(table.permissions, `${table.id} must be written only with the API key`).toEqual([]);
+    }
   });
 
   it("names every table uniquely, with unique columns and indexes inside each", () => {

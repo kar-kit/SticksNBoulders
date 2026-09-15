@@ -21,6 +21,7 @@ import {
   exercisePermissions,
   invitePermissions,
   linkPermissions,
+  referenceMaxPermissions,
   rollupPermissions,
   setPermissions,
 } from "../appwrite/documents/policy";
@@ -160,6 +161,45 @@ check(
   (await samDb.listRows({ databaseId: db, tableId: "invite_codes" })).total === 0,
 );
 
+console.log("\nReference maxes");
+/**
+ * The table where the coach is the author, and still may not write from a
+ * browser. Appwrite polices who reads a row, not what the row says: with any
+ * table-level create, a stranger could write a row carrying Joey's athlete_id,
+ * stamp it read("users"), and that invented number would be what Joey's
+ * percentages resolve against. So every client-side create below must fail --
+ * the coach's and the athlete's included -- and the real writes go through the
+ * API key behind app/api/reference-max.
+ */
+const refMaxData = (athleteId: string, recordedBy: string, valueKg: number) => ({
+  athlete_id: athleteId,
+  exercise_id: globalEx.$id,
+  kind: "training",
+  value_kg: valueKg,
+  effective_from: new Date().toISOString(),
+  recorded_by: recordedBy,
+  created_at: new Date().toISOString(),
+});
+
+const coachMax = await adminDb.createRow<Models.DefaultRow>({
+  databaseId: db, tableId: "reference_maxes", rowId: ID.unique(),
+  data: refMaxData(joey.$id, ruairi.$id, 180),
+  permissions: referenceMaxPermissions({ athleteId: joey.$id }),
+});
+const athleteMax = await adminDb.createRow<Models.DefaultRow>({
+  databaseId: db, tableId: "reference_maxes", rowId: ID.unique(),
+  data: { ...refMaxData(joey.$id, joey.$id, 185), kind: "tested" },
+  permissions: referenceMaxPermissions({ athleteId: joey.$id }),
+});
+
+check("Joey reads the max his coach set", await canRead(joeyDb, "reference_maxes", coachMax.$id));
+check("Ruairi reads it too", await canRead(ruairiDb, "reference_maxes", coachMax.$id));
+check("Sam reads neither", !(await canRead(samDb, "reference_maxes", coachMax.$id)));
+check(
+  "and cannot list the table to find them",
+  (await samDb.listRows({ databaseId: db, tableId: "reference_maxes" })).total === 0,
+);
+
 console.log("\nForgery");
 const cannot = async (label: string, fn: () => Promise<unknown>) => {
   try { await fn(); check(label, false); } catch { check(label, true); }
@@ -183,6 +223,36 @@ await cannot("Ruairi cannot rewrite his own code to point at somebody else", () 
     databaseId: db, tableId: "invite_codes", rowId: inviteCode, data: { coach_id: sam.$id },
   }),
 );
+await cannot("Ruairi cannot set a max from the browser, though he is the author", () =>
+  ruairiDb.createRow<Models.DefaultRow>({
+    databaseId: db, tableId: "reference_maxes", rowId: ID.unique(),
+    data: refMaxData(joey.$id, ruairi.$id, 200),
+    permissions: referenceMaxPermissions({ athleteId: joey.$id }),
+  }),
+);
+await cannot("nor can Joey, for his own", () =>
+  joeyDb.createRow<Models.DefaultRow>({
+    databaseId: db, tableId: "reference_maxes", rowId: ID.unique(),
+    data: refMaxData(joey.$id, joey.$id, 200),
+    permissions: referenceMaxPermissions({ athleteId: joey.$id }),
+  }),
+);
+await cannot("so Louis cannot forge one carrying Joey's id and a role everyone holds", () =>
+  louisDb.createRow<Models.DefaultRow>({
+    databaseId: db, tableId: "reference_maxes", rowId: ID.unique(),
+    data: refMaxData(joey.$id, louis.$id, 999),
+    // read("users") -- everybody signed in -- taken from the one policy that
+    // legitimately emits it rather than written as a literal here, which the
+    // guard test forbids and rightly so. This is the forgery the table's
+    // server-only write path exists to refuse: Joey's id on a row Louis wrote.
+    permissions: exercisePermissions({ athleteId: louis.$id, isGlobal: true }),
+  }),
+);
+await cannot("nobody can edit a max in place, because the table is append-only", () =>
+  ruairiDb.updateRow<Models.DefaultRow>({
+    databaseId: db, tableId: "reference_maxes", rowId: coachMax.$id, data: { value_kg: 999 },
+  }),
+);
 await cannot("Joey cannot grant himself a coach link", () =>
   joeyDb.createRow<Models.DefaultRow>({
     databaseId: db, tableId: "coach_athlete_links", rowId: ID.unique(),
@@ -196,6 +266,13 @@ await teams.deleteMembership({ teamId: joeyCircle.$id, membershipId: ruairiMembe
 check("a revoked coach loses access to everything at once", !(await canRead(ruairiDb, "sets", oldSet.$id)));
 check("and to rows logged after linking too", !(await canRead(ruairiDb, "sets", newerSet.$id)));
 check("while Joey keeps his own data", await canRead(joeyDb, "sets", oldSet.$id));
+/**
+ * The case the circle design makes free: nothing re-stamps these rows on
+ * revocation, so if membership were not the only thing granting write access,
+ * a sacked coach would still be setting the numbers an athlete trains to.
+ */
+check("a revoked coach can no longer read a max", !(await canRead(ruairiDb, "reference_maxes", coachMax.$id)));
+check("while Joey keeps the max he recorded himself", await canRead(joeyDb, "reference_maxes", athleteMax.$id));
 
 // --- teardown ---------------------------------------------------------
 for (const row of [oldSet, newerSet, samSet]) {
@@ -205,6 +282,9 @@ for (const row of [globalEx, customEx]) {
   await adminDb.deleteRow({ databaseId: db, tableId: "exercises", rowId: row.$id });
 }
 await adminDb.deleteRow({ databaseId: db, tableId: "invite_codes", rowId: inviteCode });
+for (const row of [coachMax, athleteMax]) {
+  await adminDb.deleteRow({ databaseId: db, tableId: "reference_maxes", rowId: row.$id });
+}
 for (const links of [await adminDb.listRows({ databaseId: db, tableId: "coach_athlete_links" })]) {
   for (const row of links.rows) {
     await adminDb.deleteRow({ databaseId: db, tableId: "coach_athlete_links", rowId: row.$id });

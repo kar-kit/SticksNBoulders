@@ -5,6 +5,7 @@ import {
   invitePermissions,
   linkPermissions,
   profilePermissions,
+  referenceMaxPermissions,
   rollupPermissions,
   sessionPermissions,
   setPermissions,
@@ -419,6 +420,80 @@ export async function writeRollup(deps: WriteDeps, input: UpsertRollupInput) {
     rowId: deps.newId(),
     data,
     permissions,
+  });
+}
+
+/* -------------------------------------------------------------------------
+ * Reference maxes
+ * ---------------------------------------------------------------------- */
+
+export interface CreateReferenceMaxInput {
+  athleteId: string;
+  exerciseId: string;
+  kind: "tested" | "training";
+  valueKg: number;
+  /**
+   * The date the number applies from, which is not the date it was typed --
+   * a coach entering Monday's test on Wednesday means Monday. Defaults to now.
+   */
+  effectiveFrom?: Date;
+}
+
+/**
+ * Records what a percentage is a percentage OF.
+ *
+ * Append-only: there is no updateReferenceMax, and the policy stamps no update
+ * permission. A new number is a new row with a new effective date, so a block
+ * written in August still resolves to the max it was written against.
+ *
+ * The coach is this table's author, which is the one place the product's usual
+ * rule inverts -- but the write still runs with the API key, not from their
+ * browser. Appwrite can police who reads a row and not what the row claims, so
+ * a client able to create one could create it carrying somebody else's
+ * `athlete_id`. reference-max-admin.ts is the only caller, and it checks the
+ * caller is the athlete or actively coaches them. `recorded_by` keeps who
+ * decided the number auditable afterwards.
+ *
+ * Note there is no "estimated" kind. That one is the best e1RM already sitting
+ * in stats_rollups, and storing a second copy would give the rollup rebuild
+ * script only half the data to repair.
+ */
+export async function createReferenceMax(
+  deps: WriteDeps,
+  actor: Actor,
+  input: CreateReferenceMaxInput,
+) {
+  const now = deps.now();
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: "reference_maxes",
+    rowId: deps.newId(),
+    data: {
+      athlete_id: input.athleteId,
+      exercise_id: input.exerciseId,
+      kind: input.kind,
+      value_kg: input.valueKg,
+      effective_from: iso(input.effectiveFrom ?? now),
+      recorded_by: actor.userId,
+      created_at: iso(now),
+    },
+    permissions: referenceMaxPermissions({ athleteId: input.athleteId }),
+  });
+}
+
+/**
+ * The undo for a typo. Deleting the row that was wrong is the only edit.
+ *
+ * Takes no actor on purpose: there is no permission check to make here that
+ * would mean anything, because this runs with the API key and bypasses row
+ * permissions entirely. The check that decides it lives in
+ * reference-max-admin.ts, which reads the row to find whose it is.
+ */
+export async function deleteReferenceMax(deps: WriteDeps, rowId: string) {
+  return deps.writer.deleteRow({
+    databaseId: deps.databaseId,
+    tableId: "reference_maxes",
+    rowId,
   });
 }
 
