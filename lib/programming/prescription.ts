@@ -1,4 +1,8 @@
 import type { SetForEstimate } from "@/lib/strength/e1rm";
+// Re-exported: plate maths moved to lib/strength when the RPE suggestion
+// engine needed it too, and callers here should not have to know that.
+export { LOADABLE_INCREMENT_KG, roundToLoadable } from "@/lib/strength/plates";
+import { roundToLoadable } from "@/lib/strength/plates";
 import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import type { RpeValue } from "@/lib/logging/set";
 import { RPE_VALUES } from "@/lib/logging/set";
@@ -188,31 +192,6 @@ export function formatPrescription(spec: PrescriptionSpec): string {
  * Resolving
  * ---------------------------------------------------------------------- */
 
-/**
- * The smallest jump a loaded barbell actually makes: a 1.25kg plate on each
- * side. 73% of 182.5 is 133.225, and nobody can put that on a bar.
- *
- * [Inference] Neither the ticket nor the blueprint specifies an increment;
- * 2.5kg is the standard plate pair. Micro-plates would make 1.25 defensible
- * instead. [SME to confirm] with Ruairi.
- */
-export const LOADABLE_INCREMENT_KG = 2.5;
-
-/**
- * Down, never up, and this is a product decision rather than arithmetic.
- *
- * A percentage is a target intensity, and the two directions are not equally
- * wrong: prescribing more than the coach asked for is a missed rep or a
- * failed set, prescribing slightly less is a set that was a shade light.
- * Rounding to nearest also makes 100% of a 191.5kg max resolve to 192.5 --
- * a weight the athlete has never lifted, prescribed as if they had.
- *
- * The cost is that every resolved percentage sits up to 2.4kg under its exact
- * value, about 1% on a heavy squat. [SME to confirm] alongside the increment:
- * if Ruairi wants nearest, it is one word here.
- */
-export const roundToLoadable = (kg: number): number =>
-  Math.floor(kg / LOADABLE_INCREMENT_KG) * LOADABLE_INCREMENT_KG;
 
 export interface ResolvedPrescription {
   /**
