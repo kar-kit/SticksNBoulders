@@ -12,7 +12,7 @@ import type { ColumnSpec, DatabaseSpec, IndexSpec, TableSpec } from "./types";
  */
 function fakeDriver() {
   const calls: string[] = [];
-  const state: CurrentState = { databaseExists: false, tables: [] };
+  const state: CurrentState = { databaseExists: false, tables: [], buckets: [] };
 
   const APPWRITE_TYPE: Record<ColumnSpec["type"], string> = {
     string: "string",
@@ -36,6 +36,24 @@ function fakeDriver() {
     async createDatabase(databaseId) {
       calls.push(`createDatabase:${databaseId}`);
       state.databaseExists = true;
+    },
+    async createBucket(bucket) {
+      calls.push(`createBucket:${bucket.id}`);
+      state.buckets.push({
+        id: bucket.id,
+        permissions: [...bucket.permissions],
+        fileSecurity: bucket.fileSecurity,
+        maximumFileSizeBytes: bucket.maximumFileSizeBytes,
+        allowedFileExtensions: [...bucket.allowedFileExtensions],
+        compression: bucket.compression,
+        encryption: bucket.encryption,
+        antivirus: bucket.antivirus,
+      });
+    },
+    async updateBucket(bucket) {
+      calls.push(`updateBucket:${bucket.id}`);
+      const existing = state.buckets.find((b) => b.id === bucket.id);
+      if (existing) Object.assign(existing, { ...bucket, maximumFileSizeBytes: bucket.maximumFileSizeBytes });
     },
     async createTable(_db, table: TableSpec) {
       calls.push(`createTable:${table.id}`);

@@ -360,6 +360,38 @@ export async function updateSet(deps: WriteDeps, actor: Actor, input: UpdateSetI
   });
 }
 
+export interface AttachVideoInput {
+  rowId: string;
+  /** The storage file id, or null to detach a clip that was removed. */
+  videoFileId: string | null;
+}
+
+/**
+ * Records the clip on the set it belongs to.
+ *
+ * Separate from `updateSet` on purpose. That one demands load, reps, RPE and
+ * the warm-up flag together so e1RM cannot go stale, which is right for an
+ * edit and wrong here: a video changes nothing about what the athlete lifted,
+ * and making the caller restate four numbers to attach a clip invites it to
+ * restate them wrongly.
+ *
+ * The upload itself is not a queued write -- it is a large binary transfer
+ * that either finishes or does not. This is the small durable fact that
+ * follows it, and it goes through the queue like every other row mutation so a
+ * clip that uploaded on gym wifi is not lost to a dropped response.
+ */
+export async function attachVideo(deps: WriteDeps, actor: Actor, input: AttachVideoInput) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "sets",
+    rowId: input.rowId,
+    // Null rather than undefined when detaching: undefined would leave the old
+    // id in place, pointing at a file that has been deleted.
+    data: { video_file_id: input.videoFileId },
+    permissions: setPermissions({ athleteId: actor.userId }),
+  });
+}
+
 export async function deleteSet(deps: WriteDeps, _actor: Actor, rowId: string) {
   return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: "sets", rowId });
 }

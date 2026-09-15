@@ -1,4 +1,4 @@
-import type { ColumnSpec, DatabaseSpec, IndexSpec, TableSpec } from "./types";
+import type { BucketSpec, ColumnSpec, DatabaseSpec, IndexSpec, TableSpec } from "./types";
 
 /**
  * Diffing the schema is pure. The executor talks to Appwrite; this decides what
@@ -30,9 +30,21 @@ export interface CurrentTable {
   indexes: CurrentIndex[];
 }
 
+export interface CurrentBucket {
+  id: string;
+  permissions: string[];
+  fileSecurity: boolean;
+  maximumFileSizeBytes: number;
+  allowedFileExtensions: string[];
+  compression: string;
+  encryption: boolean;
+  antivirus: boolean;
+}
+
 export interface CurrentState {
   databaseExists: boolean;
   tables: CurrentTable[];
+  buckets: CurrentBucket[];
 }
 
 export type Action =
@@ -50,7 +62,10 @@ export type Action =
   /** Something exists on the server that the schema does not describe. */
   | { kind: "orphan-table"; tableId: string }
   | { kind: "orphan-column"; tableId: string; key: string }
-  | { kind: "orphan-index"; tableId: string; key: string };
+  | { kind: "orphan-index"; tableId: string; key: string }
+  | { kind: "create-bucket"; bucket: BucketSpec }
+  | { kind: "update-bucket"; bucket: BucketSpec; reason: string }
+  | { kind: "orphan-bucket"; bucketId: string };
 
 const APPWRITE_TYPE: Record<ColumnSpec["type"], string> = {
   string: "string",
@@ -185,11 +200,61 @@ export function planSchema(current: CurrentState, desired: DatabaseSpec): Action
     }
   }
 
+  for (const bucket of desired.buckets) {
+    const actual = current.buckets.find((b) => b.id === bucket.id);
+    if (!actual) {
+      actions.push({ kind: "create-bucket", bucket });
+      continue;
+    }
+    const reason = bucketMismatch(bucket, actual);
+    if (reason) actions.push({ kind: "update-bucket", bucket, reason });
+  }
+
+  const desiredBucketIds = new Set(desired.buckets.map((b) => b.id));
+  for (const bucket of current.buckets) {
+    if (!desiredBucketIds.has(bucket.id)) {
+      actions.push({ kind: "orphan-bucket", bucketId: bucket.id });
+    }
+  }
+
   return actions;
 }
 
+/**
+ * Every field, because each one silently changes what the product can do.
+ *
+ * A size cap raised on one instance and not the next means video uploads that
+ * work in development and fail for the athlete; an extension list that drifts
+ * means the same. This is the check that makes the Cloud migration in January
+ * a script run rather than an afternoon of comparing consoles.
+ */
+function bucketMismatch(spec: BucketSpec, actual: CurrentBucket): string | null {
+  if (actual.fileSecurity !== spec.fileSecurity) {
+    return `file security is ${actual.fileSecurity}, schema says ${spec.fileSecurity}`;
+  }
+  if (!permissionsEqual(actual.permissions, spec.permissions)) {
+    return `permissions are [${actual.permissions.join(", ")}], schema says [${spec.permissions.join(", ")}]`;
+  }
+  if (actual.maximumFileSizeBytes !== spec.maximumFileSizeBytes) {
+    return `max file size is ${actual.maximumFileSizeBytes}, schema says ${spec.maximumFileSizeBytes}`;
+  }
+  if (!sameExtensions(actual.allowedFileExtensions, spec.allowedFileExtensions)) {
+    return `extensions are [${actual.allowedFileExtensions.join(", ")}], schema says [${spec.allowedFileExtensions.join(", ")}]`;
+  }
+  if (actual.compression !== spec.compression) {
+    return `compression is ${actual.compression}, schema says ${spec.compression}`;
+  }
+  if (actual.encryption !== spec.encryption) return `encryption is ${actual.encryption}`;
+  if (actual.antivirus !== spec.antivirus) return `antivirus is ${actual.antivirus}`;
+  return null;
+}
+
+const sameExtensions = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && [...a].sort().join(",") === [...b].sort().join(",");
+
 /** Orphans and manual changes are reported, never executed. */
 export const REPORT_ONLY: ReadonlySet<Action["kind"]> = new Set([
+  "orphan-bucket",
   "orphan-table",
   "orphan-column",
   "orphan-index",

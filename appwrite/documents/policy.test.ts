@@ -6,6 +6,7 @@ import {
   POLICIES,
   profilePermissions,
   referenceMaxPermissions,
+  videoPermissions,
   rollupPermissions,
   sessionPermissions,
   setPermissions,
@@ -262,5 +263,40 @@ describe("circle team ids", () => {
 
   it("refuses an empty athlete id", () => {
     expect(() => circleTeamId("")).toThrow(/athleteId is required/);
+  });
+});
+
+describe("a video on a set", () => {
+  it("is readable by the athlete and their circle, like the set itself", () => {
+    const permissions = videoPermissions({ athleteId: ATHLETE });
+    expect(permissions).toContain(`read("user:${ATHLETE}")`);
+    expect(permissions).toContain(`read("team:${circle}")`);
+  });
+
+  /**
+   * A clip is more revealing than a row of numbers and gets no wider audience
+   * than the numbers do.
+   */
+  it("reaches nobody outside the circle", () => {
+    const permissions = videoPermissions({ athleteId: ATHLETE }).join(" ");
+    expect(permissions).not.toContain(STRANGER);
+    expect(permissions).not.toContain('"users"');
+    expect(permissions).not.toContain('"any"');
+  });
+
+  /**
+   * The athlete may delete -- removing a set should take its clip, and someone
+   * who filmed something they would rather not share must be able to remove it.
+   * The coach may not: a review tool whose reviewer can destroy the thing under
+   * review is the wrong shape.
+   */
+  it("is deletable by the athlete and by nobody else", () => {
+    const permissions = videoPermissions({ athleteId: ATHLETE });
+    expect(permissions).toContain(`delete("user:${ATHLETE}")`);
+    expect(permissions).not.toContain(`delete("team:${circle}")`);
+  });
+
+  it("refuses to be stamped without an athlete", () => {
+    expect(() => videoPermissions({ athleteId: "" })).toThrow(/athleteId/);
   });
 });

@@ -5,6 +5,7 @@ const tiny: DatabaseSpec = {
   id: "db",
   name: "DB",
   version: 1,
+  buckets: [],
   tables: [
     {
       id: "sets",
@@ -27,6 +28,7 @@ const tiny: DatabaseSpec = {
 /** The state Appwrite reports once `tiny` has been applied. */
 const matching: CurrentState = {
   databaseExists: true,
+  buckets: [],
   tables: [
     {
       id: "sets",
@@ -46,7 +48,7 @@ const matching: CurrentState = {
 };
 
 describe("planSchema on an empty server", () => {
-  const plan = planSchema({ databaseExists: false, tables: [] }, tiny);
+  const plan = planSchema({ databaseExists: false, tables: [], buckets: [] }, tiny);
 
   it("creates the database first", () => {
     expect(plan[0]).toMatchObject({ kind: "create-database", databaseId: "db" });

@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 4,
+  version: 5,
   tables: [
     {
       id: "profiles",
@@ -268,6 +268,44 @@ export const schema: DatabaseSpec = {
         { key: "idx_athlete_status", type: "key", columns: ["athlete_id", "status"] },
         { key: "idx_coach_status", type: "key", columns: ["coach_id", "status"] },
       ],
+    },
+  ],
+
+  buckets: [
+    {
+      id: "set_videos",
+      name: "Set videos",
+      purpose:
+        "A clip attached to one logged set. The highest-value thing in the product -- neither RTS nor Excel does it -- and the reason the essay-length WhatsApp message disappears: the set already carries load, reps, RPE and notes, so the context writes itself.",
+      // Per file, like row security on a table: the reader differs per clip.
+      // An athlete's video is theirs and their circle's, never the roster's.
+      fileSecurity: true,
+      permissions: [perm.createUsers],
+      /**
+       * The instance refuses anything larger -- _APP_STORAGE_LIMIT is
+       * 30,000,000 bytes and createBucket rejects a higher number outright. A
+       * 60-second 1080p phone clip is several times this, so client-side
+       * compression is mandatory rather than the optimisation Order 31 calls
+       * it. Raising the instance limit is Joey's call; this tracks what the
+       * instance actually allows rather than pretending.
+       */
+      maximumFileSizeBytes: 30_000_000,
+      // What a phone camera produces. Deliberately narrow: an athlete who
+      // manages to attach a PDF has found a bug, not a feature.
+      allowedFileExtensions: ["mp4", "mov", "m4v", "webm"],
+      // Video is already compressed; gzip over it burns CPU at both ends to
+      // save nothing.
+      compression: "none",
+      /**
+       * Both off deliberately. Appwrite skips encryption above 20MB, so
+       * turning it on would encrypt short clips and silently not long ones --
+       * a guarantee that holds only sometimes is worse than none. Antivirus
+       * needs ClamAV running beside the instance, which this one does not
+       * have, and claiming it here would make every apply report drift it
+       * cannot fix.
+       */
+      encryption: false,
+      antivirus: false,
     },
   ],
 } as const;

@@ -42,12 +42,42 @@ export interface TableSpec {
   indexes: readonly IndexSpec[];
 }
 
+/**
+ * A storage bucket, declared the same way a table is.
+ *
+ * CLAUDE.md is explicit that infrastructure is never clicked into existence in
+ * the console, and a bucket is infrastructure: its size cap and its allowed
+ * extensions are as load-bearing as a column type. A video that silently fails
+ * to upload because a bucket was configured by hand on one instance and not on
+ * the next is the Cloud migration going wrong in January.
+ */
+export interface BucketSpec {
+  id: string;
+  name: string;
+  /** Why it exists, in the product's terms. Same reason TableSpec has one. */
+  purpose: string;
+  /**
+   * Per-file permissions, for the same reason tables use row security: the
+   * reader differs per file. An athlete's clip is theirs and their circle's.
+   */
+  fileSecurity: boolean;
+  /** Bucket-level permissions. Creation rights, never reads. */
+  permissions: readonly string[];
+  maximumFileSizeBytes: number;
+  allowedFileExtensions: readonly string[];
+  /** Appwrite compresses on its side; video is already compressed. */
+  compression: "none" | "gzip" | "zstd";
+  encryption: boolean;
+  antivirus: boolean;
+}
+
 export interface DatabaseSpec {
   id: string;
   name: string;
   /** Bumped whenever tables or columns change, so drift is attributable. */
   version: number;
   tables: readonly TableSpec[];
+  buckets: readonly BucketSpec[];
 }
 
 /**
