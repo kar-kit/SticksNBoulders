@@ -29,6 +29,7 @@
     "e2e:prune": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/prune-e2e-fixtures.mts",
     "e2e:offline": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-offline.mts",
     "e2e:e1rm": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-e1rm.mts",
+    "e2e:video": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-video.mts",
     "e2e:rollups": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-rollups.mts",
     "e2e:backup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-backup.mts",
     "e2e:shell": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-shell.mts"

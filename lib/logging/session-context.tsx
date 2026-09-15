@@ -11,6 +11,7 @@ import { lastFinishedSession, pickActiveSession, type SessionRecord } from "./se
 import { mergeById, queuedSessions } from "./offline-view";
 import { forgetActiveSession, recallActiveSession, rememberActiveSession } from "./active-session-cache";
 import { attachQueue, subscribeToQueue } from "@/lib/offline/client";
+import { resumeInterruptedUploads } from "@/lib/video/upload";
 import type { QueuedOp } from "@/lib/offline/queue";
 
 /**
@@ -103,6 +104,12 @@ export function TrainingSessionProvider({
     if (!athleteId) return;
     const stop = subscribeToQueue(setOps);
     void attachQueue({ userId: athleteId });
+    // Clips that were mid-upload when the app last stopped. Same moment, same
+    // reason as the queue flush: a locked phone or a killed tab should cost
+    // seconds of re-sending rather than the whole file. Deliberately silent --
+    // the athlete already saw the set logged, and a video finishing in the
+    // background is not news they need interrupting for.
+    void resumeInterruptedUploads();
     return stop;
   }, [athleteId]);
 

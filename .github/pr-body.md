@@ -1,106 +1,107 @@
-## Order 29 — Attach video to a set
+## Order 31 — Chunked background upload
 
-> "Highest value feature in the product. Neither RTS nor Excel does it."
+Two halves: resume is built, compression is recommended against.
 
-The set already carries load, reps, RPE and notes, so a clip attached to it
-writes its own context and the essay-length WhatsApp message disappears.
+### Resume, and why it had to be hand-rolled
 
-### Two findings that shape the rest of phase 3
+The ticket asks whether Appwrite's chunked upload resumes after a dropped
+connection or restarts from zero. It restarts from zero.
 
-**1. The instance caps files at 30MB, and that is not enough.**
+**It resumes at the protocol level and the SDK does not use it:**
+`chunkedUpload` always starts at chunk 0, takes no existing upload id, and
+never asks the server what it already holds. So `lib/video/resumable-upload.ts`
+talks to the endpoint directly.
 
-[Fact] `_APP_STORAGE_LIMIT` is **30,000,000 bytes**; `createBucket` rejects any
-higher `maximumFileSize` outright. A 60-second 1080p phone clip is several times
-that.
+Three server behaviours make that safe, all verified against the instance
+rather than assumed:
 
-So **client-side compression is mandatory, not the optimisation Order 31 calls
-it** — or the instance limit goes up and the containers restart. That is Joey's
-call. The schema tracks what the instance actually allows rather than what we
-would like, and an oversized clip is refused *before* the upload starts, because
-an athlete on gym wifi should not wait two minutes to be told no.
+1. The upload id **is** the file id we choose, so a half-finished upload is
+   addressable from state we already hold — including after a reload.
+2. A user session can read `chunksUploaded` on an incomplete file, so the
+   client finds its own resume point with no server route.
+3. Re-sending a chunk the server already has is idempotent. A response lost in
+   flight is harmless, so this errs toward sending again rather than stranding
+   an upload.
 
-**2. Chunked uploads DO resume — the SDK just doesn't use it.** Closes the
-`[Unverified]` on Order 31 and in CLAUDE.md. Probed live with a 15MB file in
-four chunks:
+Sequential, deliberately. Appwrite reports progress as a **count**, not a map
+of which ranges landed, so uploading in order is what makes that number a
+resume point. Parallel chunks do assemble correctly — also verified — but then
+"four uploaded" cannot tell you *which* four. On gym wifi, resumable beats fast.
 
-| | |
-| --- | --- |
-| Server reports partial progress? | **Yes** — `getFile` returns `chunksUploaded: 1/4` |
-| Can you send only the missing chunks? | **Yes** — with `x-appwrite-id` + `content-range` |
-| Result correct? | **Yes** — `sizeOriginal` exact |
-| Does the SDK do it? | **No** — `chunkedUpload` always restarts from chunk 0 |
+### Surviving a reload
 
-[Fact] **The upload id is the file id we choose** — asserted directly, not
-inferred. That is what lets resume survive a page reload, since a half-finished
-upload is findable from state we already hold. Worth re-checking on an Appwrite
-upgrade, because Order 31's design rests on it. Evidence is written into
-`docs/video.md` so that ticket starts from it rather than repeating the probe.
+The blob is kept in IndexedDB, not a reference: a `File` from an `<input>` is
+gone the moment the page reloads, so an upload that could not survive that
+would only survive the failures that were never going to lose it. It is a
+**separate database** from the offline write queue — that one holds small rows,
+is read on every render, and must stay fast.
 
-### Why the upload is not a queued write
+The entry is written **before the first byte moves**. The gap between starting
+and recording is exactly when a phone gets locked.
 
-The offline queue is a write-ahead log for **row mutations**. Replaying a 30MB
-binary through it would mean holding the video in IndexedDB and re-sending it on
-every retry. So: the set is logged first as it already was; the upload runs
-separately as a progress line, never a blocking spinner; and only the small
-durable fact that follows — *this set now has this file* — goes through the
-queue as `set.attachVideo`.
+`resumeInterruptedUploads()` runs from the same effect that flushes the offline
+queue, and is deliberately silent — the athlete already saw the set logged, and
+a clip finishing in the background is not news worth interrupting them for.
 
-`attachVideo` is separate from `updateSet` deliberately. That one demands load,
-reps, RPE and the warm-up flag together so e1RM cannot go stale — right for an
-edit, wrong for a video, which changes nothing about what was lifted. Making the
-caller restate four numbers invites it to restate them wrongly.
+Retries stop at `MAX_UPLOAD_ATTEMPTS = 5`. Any 4xx drops immediately; retrying
+a 4xx is a loop, not resilience.
 
-### Detaching does not delete the file, and the ordering is why
+### Proved against the instance, not asserted
 
-The row clear is queued, so on a bad connection it may not land for minutes.
-Deleting the file immediately leaves the row pointing at something gone — a
-broken player in the coach's review queue, which is the state the first draft's
-comment claimed to avoid while causing it. The other order needs the queue to
-report when the write landed, which it does not. So the file is left and
-reclaiming it is a sweep: an orphan is a storage bill, a broken player is a
-coach losing trust in the review queue.
+`npm run e2e:video` drives the real `uploadResumable` against the live server
+with an 11.7MB file — two and a half chunks, deliberately not a round number,
+so the short final range is exercised. It interrupts the upload the moment the
+first chunk is confirmed, resumes, and compares a SHA-256 of what came back
+against what went up.
 
-### Where a clip goes
+Unit tests cannot catch the failure that actually matters here. A
+`content-range` built from the slice rather than the whole file assembles into
+a corrupt clip **and still reports success** — every chunk 200s,
+`chunksUploaded` reaches the total, and the coach opens a broken video weeks
+later. Only the hash catches it.
 
-One camera **per exercise**, attaching to the **most recently logged set of that
-exercise** — straight from the Set Row spec. No row carries a camera; a per-row
-one bought nothing and cost the confirm target its column, and confirm is what an
-athlete hits 20–40 times a session. The button is **absent, not disabled**, until
-there is a set to attach to. Warm-ups are eligible: a coach asking to see a
-warm-up is asking about setup, and the warm-up rule is about numbers.
+8/8 pass. Writing it found two things:
 
-### Buckets are now schema-as-code
+- **The JWT was being minted per chunk.** A 150MB clip is thirty chunks, so
+  thirty round trips before any bytes move, on precisely the connection this
+  module exists to tolerate. Appwrite's JWTs last fifteen minutes; one per
+  attempt is enough. Hoisted.
+- **An athlete not in their own circle team cannot upload at all.** A clip
+  names that team as a reader, and Appwrite only lets a caller stamp roles it
+  holds — the same restriction that made reference maxes server-only at
+  Order 17. The symptom is a 401 on the first chunk with a message about
+  permissions, which reads like an auth bug and is not one. Onboarding already
+  calls `/api/circle` and `ensureCircle` is idempotent, so nothing is broken;
+  the dependency was just invisible. The e2e now asserts the refusal.
 
-CLAUDE.md says infrastructure is never clicked into a console, and a bucket is
-infrastructure — its size cap and extension list are as load-bearing as a column
-type. `BucketSpec` joins `TableSpec`, the planner diffs every field, the applier
-creates or corrects it. **Verified idempotent**: the second run reports "Schema
-already matches."
+### Compression: recommended against, for now
 
-`encryption` and `antivirus` are off deliberately. Appwrite skips encryption
-above 20MB, so enabling it would encrypt short clips and silently not long ones —
-a guarantee that holds only sometimes is worse than none. Antivirus needs ClamAV
-beside the instance, which this one lacks; claiming it would make every apply
-report drift it cannot fix.
+**Compression is not built, and the ticket's own metadata is the argument.**
+Order 31 is `Inferred`, nobody asked for it, and CLAUDE.md says to say so
+rather than grinding out an awkward one.
 
-### Permissions, proved on files rather than rows
+- ffmpeg.wasm is a ~25MB bundle against a 2.5s interactive budget. Speed is
+  constraint #1 and this trades it away for a problem we do not have.
+- WebCodecs is the light alternative and is only partially there on iOS Safari,
+  which is the athlete's phone.
+- The stated reason is Cloud cost economics for January 2027, not the beta.
+- Nothing is blocked: uploads land on 941GB of NAS behind a 200MB ceiling.
 
-A clip is stamped **per file**, and that is a different code path in Appwrite
-from a row — a policy right for a set proves nothing about the video on it. So
-the probe grew a **Set videos** section, run against the live instance:
+The better shape, if it becomes real: record in-app with `MediaRecorder` at a
+capped bitrate, so the phone never produces the large file in the first place.
+That costs an in-app camera UI instead of the system one — a product decision
+for Joey, not a technical one.
 
-- the athlete reads their own clip;
-- the coach reads it — the whole review loop;
-- a stranger cannot, and cannot list the bucket to find it;
-- **the coach cannot delete the clip under review** (a review tool whose reviewer
-  can destroy the thing under review is the wrong shape);
-- the athlete can delete their own.
+### [SME to confirm]
 
-Probe now **42/42**.
+Resume-after-reload assumes the blob is still in IndexedDB. Browsers evict
+under storage pressure, and a phone that is nearly full may drop it. Worth
+knowing whether athletes' phones routinely run near capacity before relying on
+this for a long session.
 
 ### Verification
 
-`typecheck` · `lint` · **1093 tests** · `build` · `appwrite:probe` **42/42**.
-Schema **v5**, applied live and idempotent.
+`typecheck` · `lint` · **1111 tests, 71 files** · `build` · `perf:check` within
+the 2.5s interactive budget · `e2e:video` 8/8 against the live instance.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
