@@ -5,7 +5,9 @@ import {
   formatPrescription,
   parsePrescription,
   readPrescription,
+  resolveExercise,
   resolvePrescription,
+  sessionMaxFrom,
   roundToLoadable,
   toPrefillPrescription,
   type PrescriptionSpec,
@@ -310,5 +312,85 @@ describe("handing off to the logger", () => {
       loadKg: null,
       reps: 3,
     });
+  });
+});
+
+describe("syncing percentages to today's first set", () => {
+  const stored = { training: 180 };
+  /** 5 @ RPE 8 with 170 on the bar: reps-to-failure 7, e1RM 204. */
+  const firstSet = { loadKg: 170, reps: 5, rpe: 8 };
+
+  it("derives today's working max from the set the athlete just did", () => {
+    expect(sessionMaxFrom(firstSet)).toBe(204);
+  });
+
+  it("refuses a warm-up, a set with no RPE, or one too far from failure", () => {
+    expect(sessionMaxFrom({ ...firstSet, isWarmup: true })).toBeNull();
+    expect(sessionMaxFrom({ ...firstSet, rpe: null })).toBeNull();
+    expect(sessionMaxFrom({ loadKg: 60, reps: 20, rpe: 8 })).toBeNull();
+  });
+
+  /**
+   * The point of the whole percentage model. A stored training max is a number
+   * from weeks ago; the first working set is a measurement from minutes ago,
+   * and it is what the remaining sets should be priced against.
+   */
+  it("prices the rest of the exercise off the first set, not the stored max", () => {
+    const resolved = resolvePrescription(parse("75%")!, { ...stored, session: 204 });
+    // 75% of 204 = 153, not 75% of 180 = 135.
+    expect(resolved.loadKg).toBe(152.5);
+    expect(resolved.basisUsed).toBe("session");
+    expect(resolved.synced).toBe(true);
+  });
+
+  it("falls back to the stored max before the first set is logged", () => {
+    const resolved = resolvePrescription(parse("75%")!, stored);
+    expect(resolved.loadKg).toBe(135);
+    expect(resolved.basisUsed).toBe("training");
+    expect(resolved.synced).toBe(false);
+  });
+
+  /** A coach naming a specific stored number gets it. The escape hatch is a word. */
+  it("does not autoregulate a basis the coach spelled out", () => {
+    const maxes = { training: 180, tested: 195, session: 204 };
+    const resolved = resolvePrescription(parse("100% of tested")!, maxes);
+    expect(resolved.loadKg).toBe(195);
+    expect(resolved.basisUsed).toBe("tested");
+    expect(resolved.synced).toBe(false);
+  });
+
+  it("resolves a whole exercise from its first set in one go", () => {
+    const specs = [
+      parse("@8")!,
+      parse("75%")!,
+      parse("70%")!,
+      parse("70%")!,
+    ];
+    const resolved = resolveExercise(specs, stored, firstSet);
+
+    // The top set stays an RPE -- the athlete picks it, and it is what
+    // establishes the max the rest are priced off.
+    expect(resolved[0]).toMatchObject({ rpe: 8, loadKg: null });
+    // 75% and 70% of 204, rounded down to a loadable weight.
+    expect(resolved.slice(1).map((r) => r.loadKg)).toEqual([152.5, 142.5, 142.5]);
+    expect(resolved.slice(1).every((r) => r.synced)).toBe(true);
+  });
+
+  it("opens the session on stored numbers rather than on blanks", () => {
+    const resolved = resolveExercise([parse("@8")!, parse("75%")!], stored, null);
+    expect(resolved[1].loadKg).toBe(135);
+    expect(resolved[1].synced).toBe(false);
+  });
+
+  /** A warm-up first must not re-price the working sets off a warm-up. */
+  it("ignores a first set that cannot honestly produce a max", () => {
+    const resolved = resolveExercise([parse("75%")!], stored, { ...firstSet, isWarmup: true });
+    expect(resolved[0].loadKg).toBe(135);
+    expect(resolved[0].synced).toBe(false);
+  });
+
+  it("still resolves nothing when there is no max from either source", () => {
+    const resolved = resolveExercise([parse("75%")!], {}, { ...firstSet, rpe: null });
+    expect(resolved[0]).toMatchObject({ loadKg: null, unresolved: true, synced: false });
   });
 });

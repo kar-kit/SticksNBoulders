@@ -58,6 +58,47 @@ which is exactly what tempo bench at a percentage of competition bench would
 be. Whether Ruairi wants that anyway is **[SME to confirm]**; if he does, it is
 one nullable field, not a reshaped union.
 
+## Percentages are weight guidance, and they sync to the session
+
+This is what percentages are *for*, and it is easy to build the useless version
+by accident. A percentage is not arithmetic against a stored number — it is a
+recommendation for how much weight to put on the bar for that set.
+
+The mechanism: a coach prescribes the first set at an RPE and the rest as
+percentages. The athlete hits the first set, and `sessionMaxFrom` turns it into
+today's working max via the e1RM estimate. Every remaining percentage on that
+exercise is then priced off that max, so they all carry a real weight.
+
+```
+Squat   set 1   @8            athlete picks it -- 170 x 5 @ 8
+        set 2   75%           152.5 kg   (75% of 204, today's max)
+        set 3   70%           142.5 kg
+        set 4   70%           142.5 kg
+```
+
+Before the first set is logged, the percentages fall back to the stored
+training max, so the session opens with numbers rather than blanks.
+
+Today's set beats the stored training max whenever there is one, and that is
+the point: the training max is a number from weeks ago, the first working set
+is a measurement from minutes ago. Preferring the stored one leaves percentages
+priced against a max the athlete has already outgrown — the complaint the
+ticket opens with, *"athletes max out mid block and wreck his programming"*.
+
+A coach who spells out `of tested` or `of e1RM` is naming a specific stored
+number and gets it. Only the default basis autoregulates, so the escape hatch
+is one word.
+
+**It is a suggestion, not an imposition.** Order 27 is explicit that a load
+suggestion is "always a suggestion, always overridable, never silently
+imposed", so a resolved prescription carries `synced` for the logger to show.
+A warm-up, or a set logged without an RPE, produces no session max at all —
+`estimateOneRepMax` already refuses those, and the percentages stay on the
+stored max, which is the safe direction.
+
+`resolveExercise(specs, maxes, firstWorkingSet)` does the whole loop in one
+call.
+
 ## Rounding, which is a product decision
 
 A resolved percentage is rounded **down** to 2.5kg — a 1.25kg plate on each

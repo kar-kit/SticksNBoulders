@@ -1,3 +1,5 @@
+import type { SetForEstimate } from "@/lib/strength/e1rm";
+import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import type { RpeValue } from "@/lib/logging/set";
 import { RPE_VALUES } from "@/lib/logging/set";
 import type { MaxKind } from "@/lib/strength/reference-max";
@@ -230,10 +232,56 @@ export interface ResolvedPrescription {
    * athlete just sees the percentage and picks a weight.
    */
   unresolved: boolean;
+  /** Which number the percentage was resolved against, if any. */
+  basisUsed: BasisUsed | null;
+  /**
+   * True when the weight came from today's first working set rather than from
+   * a stored max.
+   *
+   * It is a suggestion, and the feature list is explicit that a load
+   * suggestion is "always a suggestion, always overridable, never silently
+   * imposed" (Order 27). So the flag exists to be shown, not just recorded --
+   * the athlete sees where the number came from and can ignore it.
+   */
+  synced: boolean;
 }
 
-/** The maxes available for the prescription's own exercise, in kg. */
-export type BasisMaxes = Partial<Record<MaxKind, number | null>>;
+/**
+ * The maxes available for the prescription's own exercise, in kg.
+ *
+ * `session` is the one that makes a percentage useful rather than decorative.
+ * See `sessionMaxFrom` below.
+ */
+export interface BasisMaxes extends Partial<Record<MaxKind, number | null>> {
+  /** Derived from the first working set of this exercise today. */
+  session?: number | null;
+}
+
+/** Which number the percentage actually got resolved against. */
+export type BasisUsed = MaxKind | "session";
+
+/**
+ * Today's working max for one exercise, from the set the athlete just did.
+ *
+ * This is the mechanism that makes a percentage a weight recommendation
+ * instead of arithmetic against a stale number. A coach prescribes the first
+ * set at an RPE and the rest as percentages; the athlete hits the RPE, and
+ * that set says what they are actually good for TODAY. Every remaining
+ * percentage on that exercise then has a real weight against it.
+ *
+ * It is the answer to the problem the ticket opens with -- "athletes max out
+ * mid block and wreck his programming". A stored training max goes stale the
+ * moment someone gets stronger or turns up tired; the first working set does
+ * not.
+ *
+ * Returns null for a warm-up, for a set logged without an RPE, and for one too
+ * far from failure to estimate from -- all of which `estimateOneRepMax`
+ * already refuses, because a wrong number here is a wrong weight on every
+ * remaining set of the exercise.
+ */
+export function sessionMaxFrom(set: SetForEstimate): number | null {
+  return estimateOneRepMax(set);
+}
 
 const kgLabel = (kg: number): string => `${trimZero(kg)} kg`;
 
@@ -245,37 +293,78 @@ const kgLabel = (kg: number): string => `${trimZero(kg)} kg`;
  * failure: inventing a number here would put a weight on a bar that no
  * coach chose and no data supports.
  */
+const usable = (value: number | null | undefined): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value > 0;
+
+/**
+ * Which number a percentage resolves against, and why.
+ *
+ * Today's working set beats the stored training max whenever there is one.
+ * That is the whole point of prescribing the first set at an RPE: the training
+ * max is a number from weeks ago, and the set the athlete just did is a
+ * measurement from minutes ago. Preferring the stored number would leave a
+ * coach's percentages priced against a max the athlete has already outgrown --
+ * the exact complaint this ticket opens with.
+ *
+ * A coach who spells out `of tested` or `of e1RM` is naming a specific stored
+ * number and gets it. Only the default basis autoregulates, so the escape
+ * hatch is a word.
+ */
+function chooseBasis(basis: MaxKind, maxes: BasisMaxes): { kg: number; used: BasisUsed } | null {
+  if (basis === DEFAULT_BASIS && usable(maxes.session)) {
+    return { kg: maxes.session, used: "session" };
+  }
+  const stored = maxes[basis];
+  return usable(stored) ? { kg: stored, used: basis } : null;
+}
+
 export function resolvePrescription(
   spec: PrescriptionSpec,
   maxes: BasisMaxes = {},
 ): ResolvedPrescription {
+  const none = { basisUsed: null, synced: false } as const;
+
   switch (spec.kind) {
     case "fixed":
-      return { loadKg: spec.loadKg, rpe: null, display: kgLabel(spec.loadKg), unresolved: false };
+      return {
+        loadKg: spec.loadKg,
+        rpe: null,
+        display: kgLabel(spec.loadKg),
+        unresolved: false,
+        ...none,
+      };
 
     case "rpe":
-      return { loadKg: null, rpe: spec.rpe, display: `RPE ${trimZero(spec.rpe)}`, unresolved: false };
+      return {
+        loadKg: null,
+        rpe: spec.rpe,
+        display: `RPE ${trimZero(spec.rpe)}`,
+        unresolved: false,
+        ...none,
+      };
 
     case "freeform":
-      return { loadKg: null, rpe: null, display: spec.text, unresolved: false };
+      return { loadKg: null, rpe: null, display: spec.text, unresolved: false, ...none };
 
     case "percent":
     case "capped": {
-      const basisKg = maxes[spec.basis];
+      const chosen = chooseBasis(spec.basis, maxes);
       const cap = spec.kind === "capped" ? spec.rpe : null;
       const percentLabel = `${trimZero(spec.percent)}%`;
       const capLabel = cap === null ? "" : `, stop at RPE ${trimZero(cap)}`;
 
-      if (typeof basisKg !== "number" || !Number.isFinite(basisKg) || basisKg <= 0) {
+      if (!chosen) {
         return {
           loadKg: null,
           rpe: cap,
           display: `${percentLabel}${capLabel}`,
           unresolved: true,
+          ...none,
         };
       }
 
-      const loadKg = roundToLoadable((spec.percent / 100) * basisKg);
+      const loadKg = roundToLoadable((spec.percent / 100) * chosen.kg);
+      const synced = chosen.used === "session";
       return {
         // The resolved kilos lead, because that is what goes on the bar. The
         // percentage stays visible so an athlete can see what it was a
@@ -284,9 +373,40 @@ export function resolvePrescription(
         rpe: cap,
         display: `${kgLabel(loadKg)} (${percentLabel})${capLabel}`,
         unresolved: false,
+        basisUsed: chosen.used,
+        synced,
       };
     }
   }
+}
+
+/**
+ * Every prescription for one exercise, resolved against the same session.
+ *
+ * This is the loop the whole percentage model exists for. A coach writes a
+ * first set at an RPE and the rest as percentages. The athlete hits the first
+ * set; that set says what they are good for today; every remaining percentage
+ * on that exercise turns into a weight they can actually load. Before the
+ * first set is logged, the percentages fall back to the stored training max,
+ * so the session still opens with numbers rather than blanks.
+ *
+ * `firstWorkingSet` is the athlete's own first working set of this exercise.
+ * Warm-ups and sets logged without an RPE produce no session max -- see
+ * `sessionMaxFrom` -- and the percentages simply stay on the stored max, which
+ * is the safe direction.
+ *
+ * Nothing here is imposed: a resolved prescription carries `synced` so the
+ * logger can show where the weight came from, per Order 27's rule that a load
+ * suggestion is never silently applied.
+ */
+export function resolveExercise(
+  specs: readonly PrescriptionSpec[],
+  maxes: BasisMaxes = {},
+  firstWorkingSet?: SetForEstimate | null,
+): ResolvedPrescription[] {
+  const session = firstWorkingSet ? sessionMaxFrom(firstWorkingSet) : null;
+  const withSession: BasisMaxes = { ...maxes, session: session ?? maxes.session ?? null };
+  return specs.map((spec) => resolvePrescription(spec, withSession));
 }
 
 /**
@@ -318,8 +438,14 @@ export function readPrescription(
  * Note what does not survive the trip: a capped prescription's RPE ceiling has
  * nowhere to go in prefill's contract, which carries a load and reps and
  * nothing else. That is correct for now -- the ceiling is an instruction to
- * display, not a value to prefill -- and the RPE engine at phase 2b is what
- * turns it into a suggested weight.
+ * display, not a value to prefill.
+ *
+ * `synced` does not survive either, and that one matters. prefill has separate
+ * "prescribed" and "suggested" sources, and a weight derived from today's
+ * first set is a suggestion -- Order 27 is explicit that a load suggestion is
+ * never silently imposed. A caller wiring this up at Order 22 should read
+ * `resolved.synced` and choose the source accordingly rather than letting a
+ * derived weight present itself as the coach's own number.
  */
 export function toPrefillPrescription(
   resolved: ResolvedPrescription,
