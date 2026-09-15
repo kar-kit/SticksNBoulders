@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 5,
+  version: 6,
   tables: [
     {
       id: "profiles",
@@ -137,6 +137,30 @@ export const schema: DatabaseSpec = {
           orders: ["asc", "asc", "desc"],
         },
         { key: "idx_client_set_id", type: "unique", columns: ["client_set_id"] },
+      ],
+    },
+
+    {
+      id: "set_reviews",
+      name: "Set reviews",
+      purpose:
+        "One row per coach per clip they have cleared. The Review Queue is sets-with-video MINUS these, so a queue emptied on Sunday is still empty on Monday. Per coach on purpose: Ruairi and Louis both coach at Uxbridge, and one clearing a clip must not clear it for the other.",
+      rowSecurity: true,
+      permissions: [perm.createUsers],
+      columns: [
+        { key: "coach_id", type: "string", size: 36, required: true },
+        // Denormalised from the set, like athlete_id everywhere else: Appwrite
+        // cannot join, and the queue filters on who the clip belongs to.
+        { key: "athlete_id", type: "string", size: 36, required: true },
+        { key: "set_id", type: "string", size: 36, required: true },
+        { key: "reviewed_at", type: "datetime", required: true },
+        // Derived from coach and set rather than random, so clearing the same
+        // clip twice -- a double tap, a replayed request -- is one row.
+        { key: "client_review_id", type: "string", size: 80, required: true },
+      ],
+      indexes: [
+        { key: "idx_coach_reviewed", type: "key", columns: ["coach_id", "reviewed_at"], orders: ["asc", "desc"] },
+        { key: "idx_client_review_id", type: "unique", columns: ["client_review_id"] },
       ],
     },
 

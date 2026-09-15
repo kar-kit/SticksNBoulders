@@ -6,6 +6,7 @@ import {
   POLICIES,
   profilePermissions,
   referenceMaxPermissions,
+  reviewPermissions,
   videoPermissions,
   rollupPermissions,
   sessionPermissions,
@@ -195,6 +196,42 @@ describe("a reference max", () => {
   });
 });
 
+describe("a coach's record that they have watched a clip", () => {
+  /**
+   * The rule Order 17 learned the expensive way: Appwrite refuses a permission
+   * naming a role the caller does not hold. A coach cannot grant the athlete
+   * anything by name, so the row is stamped with the circle they share -- and
+   * an athlete read spelled `user:<athleteId>` would 401 every review the
+   * coach ever tried to write.
+   */
+  it("is read through the circle and never by naming the athlete", () => {
+    const permissions = reviewPermissions({ athleteId: ATHLETE, coachId: COACH });
+    expect(permissions).toContain(`read("team:${circle}")`);
+    expect(permissions.join(" ")).not.toContain(`read("user:${ATHLETE}")`);
+  });
+
+  it("is edited and removed by the coach alone", () => {
+    const permissions = reviewPermissions({ athleteId: ATHLETE, coachId: COACH });
+    expect(permissions).toContain(`update("user:${COACH}")`);
+    expect(permissions).toContain(`delete("user:${COACH}")`);
+    // Clearing a coach's queue is not the athlete's to do.
+    expect(permissions.join(" ")).not.toContain(`update("user:${ATHLETE}")`);
+    expect(permissions.join(" ")).not.toContain(`delete("user:${ATHLETE}")`);
+  });
+
+  it("is never readable by everyone", () => {
+    const permissions = reviewPermissions({ athleteId: ATHLETE, coachId: COACH }).join(" ");
+    expect(permissions).not.toContain('"users"');
+    expect(permissions).not.toContain('"any"');
+    expect(permissions).not.toContain(STRANGER);
+  });
+
+  it("refuses to be stamped without both parties", () => {
+    expect(() => reviewPermissions({ athleteId: "", coachId: COACH })).toThrow(/athleteId/);
+    expect(() => reviewPermissions({ athleteId: ATHLETE, coachId: "" })).toThrow(/coachId/);
+  });
+});
+
 describe("policy hygiene", () => {
   it("covers every table, so one cannot be added without a policy", () => {
     expect(Object.keys(POLICIES).sort()).toEqual([
@@ -204,6 +241,7 @@ describe("policy hygiene", () => {
       "profiles",
       "reference_maxes",
       "sessions",
+      "set_reviews",
       "sets",
       "stats_rollups",
     ]);
