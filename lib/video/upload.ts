@@ -1,9 +1,14 @@
 "use client";
 
-import { ID, type UploadProgress } from "appwrite";
-import { browserAppwrite } from "@/appwrite/browser-client";
-import { videoPermissions } from "@/appwrite/documents/policy";
+import { ID } from "appwrite";
 import { enqueue } from "@/lib/offline/client";
+import {
+  forgetUpload,
+  pendingUploads,
+  recordAttempt,
+  rememberUpload,
+} from "./pending-store";
+import { uploadResumable } from "./resumable-upload";
 import { checkClip, type ClipRejection } from "./clip";
 
 /**
@@ -26,7 +31,17 @@ import { checkClip, type ClipRejection } from "./clip";
  * again from state we already hold. See docs/video.md.
  */
 
-export const VIDEO_BUCKET = "set_videos";
+export { VIDEO_BUCKET } from "./bucket";
+
+/**
+ * How many times a clip is retried across app starts before it is abandoned.
+ *
+ * Five, because the failures this exists for are transient -- a dropped
+ * connection, a locked phone -- and anything surviving five separate app
+ * launches is broken in a way retrying will not fix. Left in the store
+ * forever it would hold tens of megabytes of a phone's quota indefinitely.
+ */
+export const MAX_UPLOAD_ATTEMPTS = 5;
 
 export type UploadResult =
   | { ok: true; fileId: string }
@@ -53,36 +68,96 @@ export async function attachClipToSet(
   const check = checkClip(file);
   if (!check.ok) return check;
 
-  const { storage } = browserAppwrite();
   // We choose the id rather than letting Appwrite mint one. It is what makes
   // an interrupted upload findable later, because Appwrite uses the file id as
   // the upload id -- verified against the live instance, see docs/video.md.
   const fileId = ID.unique();
 
-  try {
-    await storage.createFile({
-      bucketId: VIDEO_BUCKET,
-      fileId,
-      file,
-      // Stamped for the athlete and their circle, exactly like the set it
-      // belongs to. A video is more revealing than a row of numbers and gets
-      // no wider audience than the numbers do.
-      permissions: videoPermissions({ athleteId }),
-      onProgress: (progress: UploadProgress) => onProgress?.(progress.progress),
-    });
-  } catch (error) {
-    console.error("[video] upload failed", error);
+  // Remembered BEFORE the first byte moves. An upload the app does not know
+  // about cannot be resumed, and the window where it is in flight but
+  // unrecorded is exactly the window a phone gets locked or a tab is killed.
+  await rememberUpload({
+    fileId,
+    setId,
+    athleteId,
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    blob: file,
+    startedAt: Date.now(),
+    attempts: 1,
+  });
+
+  const result = await uploadResumable(
+    file,
+    { fileId, athleteId, name: file.name },
+    { onProgress },
+  );
+
+  if (!result.ok) {
+    // Kept on a retryable failure so the next app start picks it up; dropped
+    // on a permanent one, because a file the server will never accept should
+    // not be retried until the quota fills.
+    if (!result.retryable) await forgetUpload(fileId);
     return {
       ok: false,
       reason: "failed",
-      message: "That clip didn't upload. Your set is saved — try attaching it again.",
+      message: result.retryable
+        ? "That clip didn't finish uploading. Your set is saved — it will carry on by itself."
+        : result.message,
     };
   }
 
+  await forgetUpload(fileId);
   // Through the queue, like every other row write: the upload is done and must
   // not be repeated just because this one small write did not land.
   await enqueue("set.attachVideo", { setId, videoFileId: fileId });
   return { ok: true, fileId };
+}
+
+/**
+ * Picks up clips that were mid-flight when the app last stopped.
+ *
+ * Called on app start. Each one asks the server how far it got and sends only
+ * what is missing, so a session interrupted by a locked phone or a dead tab
+ * costs seconds rather than the whole file.
+ *
+ * Deliberately quiet: the athlete already saw the set logged, and a clip
+ * finishing in the background is not news. Failures stay in the store for the
+ * next attempt rather than interrupting whatever they are doing now.
+ */
+export async function resumeInterruptedUploads(): Promise<{ resumed: number; failed: number }> {
+  const pending = await pendingUploads();
+  let resumed = 0;
+  let failed = 0;
+
+  for (const entry of pending) {
+    if (entry.attempts >= MAX_UPLOAD_ATTEMPTS) {
+      // Something about this file is wrong in a way retrying will not fix.
+      // Dropped rather than left to occupy quota on a phone forever.
+      await forgetUpload(entry.fileId);
+      failed += 1;
+      continue;
+    }
+
+    await recordAttempt(entry.fileId);
+    const result = await uploadResumable(entry.blob, {
+      fileId: entry.fileId,
+      athleteId: entry.athleteId,
+      name: entry.name,
+    });
+
+    if (result.ok) {
+      await forgetUpload(entry.fileId);
+      await enqueue("set.attachVideo", { setId: entry.setId, videoFileId: entry.fileId });
+      resumed += 1;
+    } else {
+      if (!result.retryable) await forgetUpload(entry.fileId);
+      failed += 1;
+    }
+  }
+
+  return { resumed, failed };
 }
 
 /**
