@@ -1,5 +1,3 @@
-import type { LoggableSet } from "@/lib/logging/set";
-
 /**
  * Rules about a clip attached to a set.
  *
@@ -76,11 +74,19 @@ export function checkClip(file: { name: string; size: number }): ClipCheck {
   return { ok: true };
 }
 
-/** A logged set a clip could attach to. */
-export interface AttachableSet extends LoggableSet {
+/**
+ * A logged set a clip could attach to.
+ *
+ * Only what choosing a target actually needs, rather than the full set. A
+ * caller should not have to narrow an RPE to a half-point union to ask which
+ * row a video belongs on.
+ */
+export interface AttachableSet {
   clientSetId: string;
   exerciseId: string;
   loggedAt: Date;
+  /** Attaching again replaces what is there. */
+  hasVideo?: boolean;
 }
 
 /**

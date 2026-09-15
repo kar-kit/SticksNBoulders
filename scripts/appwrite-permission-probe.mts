@@ -12,7 +12,7 @@
  * them all. Point it at dev, never at anything with real athletes on it.
  * This is the permission audit script at Order 38 in embryo.
  */
-import { Client, ID, TablesDB, Teams, Users, type Models } from "node-appwrite";
+import { Client, ID, Storage, TablesDB, Teams, Users, type Models } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
@@ -22,6 +22,7 @@ import {
   invitePermissions,
   linkPermissions,
   referenceMaxPermissions,
+  videoPermissions,
   rollupPermissions,
   setPermissions,
 } from "../appwrite/documents/policy";
@@ -42,6 +43,10 @@ const check = (label: string, ok: boolean) => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
 };
 
+const cannotFile = async (label: string, fn: () => Promise<unknown>) => {
+  try { await fn(); check(label, false); } catch { check(label, true); }
+};
+
 const canRead = async (client: TablesDB, tableId: string, rowId: string) => {
   try {
     await client.getRow({ databaseId: db, tableId, rowId });
@@ -51,12 +56,15 @@ const canRead = async (client: TablesDB, tableId: string, rowId: string) => {
   }
 };
 
-const sessionFor = async (userId: string) => {
+const clientFor = async (userId: string) => {
   const session = await users.createSession({ userId });
-  return new TablesDB(
-    new Client().setEndpoint(config.endpoint).setProject(config.projectId).setSession(session.secret),
-  );
+  return new Client()
+    .setEndpoint(config.endpoint)
+    .setProject(config.projectId)
+    .setSession(session.secret);
 };
+
+const sessionFor = async (userId: string) => new TablesDB(await clientFor(userId));
 
 const mkUser = (tag: string, name: string) =>
   users.create({ userId: ID.unique(), email: `probe-${tag}-${stamp}@example.com`, password: "Probe-pass-123!", name });
@@ -198,6 +206,60 @@ check("Sam reads neither", !(await canRead(samDb, "reference_maxes", coachMax.$i
 check(
   "and cannot list the table to find them",
   (await samDb.listRows({ databaseId: db, tableId: "reference_maxes" })).total === 0,
+);
+
+console.log("\nSet videos");
+/**
+ * Files, not rows. The rest of this probe checks table permissions; a clip is
+ * stamped per FILE and the check is a different code path in Appwrite, so a
+ * policy that is right for a set row proves nothing about the video on it.
+ */
+const adminStorage = new Storage(admin);
+const storageFor = async (userId: string) => new Storage(await clientFor(userId));
+
+const clip = await adminStorage.createFile({
+  bucketId: "set_videos",
+  fileId: ID.unique(),
+  file: new File([Buffer.alloc(1024, 1)], "probe.mp4", { type: "video/mp4" }),
+  permissions: videoPermissions({ athleteId: joey.$id }),
+});
+
+const canReadFile = async (storage: Storage, fileId: string) => {
+  try {
+    await storage.getFile({ bucketId: "set_videos", fileId });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const joeyStorage = await storageFor(joey.$id);
+const ruairiStorage = await storageFor(ruairi.$id);
+const samStorage = await storageFor(sam.$id);
+
+check("Joey reads his own clip", await canReadFile(joeyStorage, clip.$id));
+check("Ruairi reads it, which is the whole review loop", await canReadFile(ruairiStorage, clip.$id));
+check("Sam cannot", !(await canReadFile(samStorage, clip.$id)));
+check(
+  "and cannot list the bucket to find it",
+  await (async () => {
+    try {
+      return (await samStorage.listFiles({ bucketId: "set_videos" })).total === 0;
+    } catch {
+      return true;
+    }
+  })(),
+);
+
+await cannotFile("Ruairi cannot delete the clip he is reviewing", () =>
+  ruairiStorage.deleteFile({ bucketId: "set_videos", fileId: clip.$id }),
+);
+check(
+  "Joey can delete his own",
+  await joeyStorage
+    .deleteFile({ bucketId: "set_videos", fileId: clip.$id })
+    .then(() => true)
+    .catch(() => false),
 );
 
 console.log("\nForgery");

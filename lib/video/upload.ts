@@ -86,20 +86,20 @@ export async function attachClipToSet(
 }
 
 /**
- * Removes a clip from a set, and the file with it.
+ * Removes a clip from a set.
  *
- * The row is cleared first. An orphaned file is a storage bill nobody notices;
- * a row pointing at a file that is gone is a broken player in the coach's
- * review queue, which is worse, so the dangling direction is chosen
- * deliberately rather than by accident of ordering.
+ * The row is cleared through the queue. The file is deliberately NOT deleted
+ * here, and the ordering is the reason: the clear is queued, so on a bad
+ * connection it may not land for minutes. Deleting the file immediately would
+ * leave the row pointing at a file that is gone -- a broken player in the
+ * coach's review queue -- which is exactly the state this is meant to avoid.
+ * Doing it the other way round is impossible without the queue telling us when
+ * the write landed, which it does not.
+ *
+ * So the file is left behind, and reclaiming it is a sweep over files no set
+ * references. An orphan is a storage bill; a broken player is a coach losing
+ * trust in the review queue, and between the two this picks the bill.
  */
-export async function detachClipFromSet(setId: string, fileId: string): Promise<void> {
+export async function detachClipFromSet(setId: string): Promise<void> {
   await enqueue("set.attachVideo", { setId, videoFileId: null });
-  try {
-    await browserAppwrite().storage.deleteFile({ bucketId: VIDEO_BUCKET, fileId });
-  } catch (error) {
-    // The row no longer points at it, so the athlete sees the right thing. A
-    // file left behind is a cleanup job, not a user-facing failure.
-    console.error("[video] could not delete file", error);
-  }
 }

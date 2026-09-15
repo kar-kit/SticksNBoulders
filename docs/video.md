@@ -84,10 +84,15 @@ reps, RPE and the warm-up flag together so e1RM cannot go stale, which is right
 for an edit and wrong here: a video changes nothing about what was lifted, and
 making the caller restate four numbers invites it to restate them wrongly.
 
-Detaching clears the row first and deletes the file second. An orphaned file is
-a storage bill nobody notices; a row pointing at a file that is gone is a broken
-player in the coach's review queue, which is worse — so the dangling direction
-is chosen rather than accidental.
+Detaching clears the row through the queue and **does not delete the file**.
+The ordering forces it: the clear is queued, so on a bad connection it may not
+land for minutes, and deleting the file immediately would leave the row pointing
+at a file that is gone — a broken player in the coach's review queue, the exact
+state this is meant to avoid. Doing it the other way round needs the queue to
+report when the write landed, which it does not. So the file is left behind and
+reclaiming it is a sweep over files no set references: an orphan is a storage
+bill, a broken player is a coach losing trust in the review queue, and between
+the two this picks the bill.
 
 ## Permissions
 
@@ -127,4 +132,14 @@ would make every apply report drift it cannot fix.
 | `lib/video/upload.ts` | The upload itself, and detaching |
 | `appwrite/documents/write.ts` | `attachVideo` |
 | `appwrite/documents/policy.ts` | `videoPermissions` |
+| `components/logging/attach-video.tsx` | The camera button and its progress line |
 | `appwrite/schema/` | `BucketSpec`, bucket planning and applying |
+
+## Verified against the live instance
+
+The permission probe grew a **Set videos** section, because a clip is stamped
+per *file* and that is a different code path in Appwrite from a row — a policy
+that is right for a set proves nothing about the video on it. Six cases, all
+passing: the athlete reads their own clip, the coach reads it (the review loop),
+a stranger cannot and cannot list the bucket to find it, the coach cannot delete
+the clip under review, and the athlete can delete their own. Probe now 42/42.

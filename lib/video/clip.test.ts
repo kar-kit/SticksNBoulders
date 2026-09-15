@@ -15,10 +15,6 @@ const BENCH = "ex-bench";
 
 const set = (over: Partial<AttachableSet> & { clientSetId: string }): AttachableSet => ({
   exerciseId: SQUAT,
-  loadKg: 170,
-  reps: 5,
-  rpe: 8,
-  isWarmup: false,
   loggedAt: new Date("2026-09-15T10:00:00.000Z"),
   ...over,
 });
@@ -104,7 +100,9 @@ describe("which set a clip attaches to", () => {
    * coaching question. The warm-up rule is about numbers, not about video.
    */
   it("will attach to a warm-up", () => {
-    const sets = [set({ clientSetId: "w", isWarmup: true })];
+    // Choosing a target does not consider the warm-up flag at all, which is
+    // the point: a coach asking to see a warm-up is asking about setup.
+    const sets = [set({ clientSetId: "w" })];
     expect(setForNewClip(sets, SQUAT)?.clientSetId).toBe("w");
   });
 
