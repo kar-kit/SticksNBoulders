@@ -66,6 +66,40 @@ IndexedDB. Browsers evict under storage pressure, and a phone that is nearly
 full may drop it. Worth knowing whether athletes' phones routinely run near
 capacity before relying on this for a long session.
 
+## Proved against the instance, not asserted
+
+`npm run e2e:video` drives the real `uploadResumable` against the live server
+with an 11.7MB file — two and a half chunks, deliberately not a round number, so
+the short final range is exercised. It interrupts the upload the moment the
+first chunk is confirmed, resumes, and then compares a SHA-256 of what came back
+against what went up.
+
+Unit tests cannot catch the failure that actually matters here. A `content-range`
+built from the slice rather than the whole file assembles into a corrupt clip
+**and still reports success** — every chunk 200s, `chunksUploaded` reaches the
+total, and the coach opens a broken video weeks later. Only the hash catches it.
+
+What the run establishes:
+
+- The clip that comes back is byte-for-byte the clip that went up, across a
+  resume boundary.
+- A JWT is accepted for a chunked **write**. The earlier probe only proved reads.
+- Resume sends two chunks of three, not three of three. A resume that re-sent
+  everything would pass a hash check and still be worthless on gym wifi.
+- One JWT is minted per upload attempt, not per chunk. A 150MB clip is 30
+  chunks; minting one each would be 30 avoidable round trips before any bytes
+  move, on precisely the connection this module exists to tolerate.
+
+### The circle dependency
+
+An athlete who is not a member of their own circle team **cannot upload at all**.
+A clip is stamped `read("team:circle_<id>")`, and Appwrite only permits a caller
+to stamp roles it actually holds. The symptom is a 401 on the first chunk with a
+message about permissions, which reads like an auth bug and is not one —
+onboarding calls `/api/circle`, and `ensureCircle` is idempotent, so the repair
+is to call it again. The e2e asserts this failure rather than leaving it to be
+rediscovered at 2am.
+
 ## Compression: recommended against, for now
 
 Order 31 is **`Inferred`** — nobody asked for it. CLAUDE.md is explicit that
@@ -98,3 +132,4 @@ Joey rather than a technical one.
 | `lib/video/resumable-upload.ts` | The hand-rolled transport |
 | `lib/video/pending-store.ts` | Interrupted uploads, blob included, in IndexedDB |
 | `lib/video/upload.ts` | `attachClipToSet`, `resumeInterruptedUploads` |
+| `scripts/e2e-video.mts` | Proves the above against the live instance |

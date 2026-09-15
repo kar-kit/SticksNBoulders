@@ -71,17 +71,17 @@ export async function uploadedSoFar(fileId: string): Promise<number> {
   }
 }
 
-/** Sends one chunk. Exported so the retry policy lives with the caller. */
+/** Sends one chunk. The retry policy lives with the caller, not here. */
 async function sendChunk(
   blob: Blob,
   fileId: string,
   athleteId: string,
   name: string,
   range: { start: number; end: number },
+  jwt: string,
   signal?: AbortSignal,
 ): Promise<ChunkOutcome> {
   const config = endpoint();
-  const { account } = browserAppwrite();
 
   const form = new FormData();
   form.append("fileId", fileId);
@@ -90,19 +90,15 @@ async function sendChunk(
   }
   form.append("file", new File([blob.slice(range.start, range.end + 1)], name), name);
 
-  let jwt: string;
-  try {
-    jwt = (await account.createJWT()).jwt;
-  } catch {
-    return { ok: false, retryable: true, message: "Not signed in" };
-  }
-
   try {
     const response = await fetch(`${config.endpoint}/storage/buckets/${VIDEO_BUCKET}/files`, {
       method: "POST",
       headers: {
         "x-appwrite-project": config.projectId,
         "x-appwrite-jwt": jwt,
+        // Absolute offsets into the WHOLE file and the whole file's size --
+        // not the slice's. The slice is only the bytes on the wire; the header
+        // is what tells Appwrite where they belong.
         "content-range": contentRange({ index: 0, ...range }, blob.size),
         "x-appwrite-id": fileId,
       },
@@ -160,6 +156,17 @@ export async function uploadResumable(
     return { ok: false, retryable: false, message: "That file is empty.", uploadedCount: 0 };
   }
 
+  // One JWT for the whole attempt, not one per chunk. Appwrite's JWTs last 15
+  // minutes and a 150MB clip is 30 chunks -- minting one each would be 30
+  // avoidable round trips before any bytes move, on exactly the connection
+  // this module exists to tolerate.
+  let jwt: string;
+  try {
+    jwt = (await browserAppwrite().account.createJWT()).jwt;
+  } catch {
+    return { ok: false, retryable: true, message: "Not signed in", uploadedCount: 0 };
+  }
+
   let uploadedCount = await uploadedSoFar(fileId);
   onProgress?.(percentDone(uploadedCount, ranges.length));
 
@@ -168,7 +175,7 @@ export async function uploadResumable(
       return { ok: false, retryable: true, message: "Cancelled", uploadedCount };
     }
 
-    const outcome = await sendChunk(blob, fileId, athleteId, name, range, signal);
+    const outcome = await sendChunk(blob, fileId, athleteId, name, range, jwt, signal);
     if (!outcome.ok) {
       return { ...outcome, uploadedCount };
     }
