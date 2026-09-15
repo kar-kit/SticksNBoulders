@@ -96,8 +96,18 @@ A warm-up, or a set logged without an RPE, produces no session max at all —
 `estimateOneRepMax` already refuses those, and the percentages stay on the
 stored max, which is the safe direction.
 
-`resolveExercise(specs, maxes, firstWorkingSet)` does the whole loop in one
-call.
+`resolveExercise(specs, maxes, loggedSoFar)` does the whole loop in one call.
+Every spec passed must belong to the same exercise — they are all priced off
+those sets, so a whole day's rows would resolve a bench percentage against a
+squat's top set.
+
+The session max is the **highest** estimate among the sets logged so far, not
+the latest. Usually there is one RPE set and the two are identical, but they
+differ in the two cases that matter: working up (a second, heavier RPE set is a
+better measurement, and anchoring on the first would price backoffs off a set
+already beaten) and fatigue (a tired late set estimates lower, and a 75%
+backoff must not shrink because the athlete is tired — that is what the RPE cap
+is for).
 
 ## Rounding, which is a product decision
 

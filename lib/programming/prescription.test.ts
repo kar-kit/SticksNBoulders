@@ -366,7 +366,7 @@ describe("syncing percentages to today's first set", () => {
       parse("70%")!,
       parse("70%")!,
     ];
-    const resolved = resolveExercise(specs, stored, firstSet);
+    const resolved = resolveExercise(specs, stored, [firstSet]);
 
     // The top set stays an RPE -- the athlete picks it, and it is what
     // establishes the max the rest are priced off.
@@ -377,20 +377,61 @@ describe("syncing percentages to today's first set", () => {
   });
 
   it("opens the session on stored numbers rather than on blanks", () => {
-    const resolved = resolveExercise([parse("@8")!, parse("75%")!], stored, null);
+    const resolved = resolveExercise([parse("@8")!, parse("75%")!], stored, []);
     expect(resolved[1].loadKg).toBe(135);
     expect(resolved[1].synced).toBe(false);
   });
 
   /** A warm-up first must not re-price the working sets off a warm-up. */
   it("ignores a first set that cannot honestly produce a max", () => {
-    const resolved = resolveExercise([parse("75%")!], stored, { ...firstSet, isWarmup: true });
+    const resolved = resolveExercise([parse("75%")!], stored, [{ ...firstSet, isWarmup: true }]);
     expect(resolved[0].loadKg).toBe(135);
     expect(resolved[0].synced).toBe(false);
   });
 
   it("still resolves nothing when there is no max from either source", () => {
-    const resolved = resolveExercise([parse("75%")!], {}, { ...firstSet, rpe: null });
+    const resolved = resolveExercise([parse("75%")!], {}, [{ ...firstSet, rpe: null }]);
     expect(resolved[0]).toMatchObject({ loadKg: null, unresolved: true, synced: false });
+  });
+});
+
+describe("more than one RPE set in the same exercise", () => {
+  const stored = { training: 180 };
+  /** 170 x 5 @ 8 -> 204. Then a heavier working-up set: 180 x 3 @ 8 -> 194.4. */
+  const lighter = { loadKg: 170, reps: 5, rpe: 8 };
+  const heavier = { loadKg: 185, reps: 3, rpe: 8 };
+
+  /**
+   * Anchoring on the first set would price every backoff off a set the athlete
+   * has already beaten. The highest estimate is the best evidence of what they
+   * are good for today.
+   */
+  it("works up to the best estimate rather than sticking on the first", () => {
+    const best = Math.max(sessionMaxFrom(lighter)!, sessionMaxFrom(heavier)!);
+    const resolved = resolveExercise([parse("75%")!], stored, [lighter, heavier]);
+    expect(resolved[0].loadKg).toBe(roundToLoadable(0.75 * best));
+    expect(resolved[0].synced).toBe(true);
+  });
+
+  /**
+   * The other direction, and the one that would be a bug: a tired late set
+   * must not shrink the backoffs. Dropping the weight because the athlete is
+   * fatigued is a second silent autoregulation on top of the RPE cap.
+   */
+  it("does not let a fatigued later set lower the weights", () => {
+    const fatigued = { loadKg: 150, reps: 5, rpe: 9 };
+    const onlyFirst = resolveExercise([parse("75%")!], stored, [lighter]);
+    const withFatigue = resolveExercise([parse("75%")!], stored, [lighter, fatigued]);
+    expect(withFatigue[0].loadKg).toBe(onlyFirst[0].loadKg);
+  });
+
+  it("skips sets that cannot produce an estimate and uses the ones that can", () => {
+    const resolved = resolveExercise([parse("75%")!], stored, [
+      { loadKg: 60, reps: 5, rpe: null },
+      { loadKg: 100, reps: 5, rpe: 6, isWarmup: true },
+      lighter,
+    ]);
+    expect(resolved[0].loadKg).toBe(roundToLoadable(0.75 * 204));
+    expect(resolved[0].synced).toBe(true);
   });
 });

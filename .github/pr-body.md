@@ -42,10 +42,54 @@ their typing landed as. **Order 19 owes the athlete that indicator.**
 - **An out-of-range RPE stays the coach's words.** `@12` becomes freeform rather
   than a silently clamped RPE 10.
 
+### Percentages are weight guidance, and they sync to the session
+
+This is what percentages are *for*, and the useless version is easy to build by
+accident. A percentage is not arithmetic against a stored number — it is a
+recommendation for how much weight goes on the bar for that set.
+
+A coach prescribes the first set at an RPE and the rest as percentages. The
+athlete hits the RPE, and that set says what they are good for **today**. Every
+remaining percentage on that exercise is priced off it:
+
+```
+Squat   set 1   @8       athlete picks it — 170 x 5 @ 8
+        set 2   75%      152.5 kg   (75% of 204, today's max)
+        set 3   70%      142.5 kg
+        set 4   70%      142.5 kg
+```
+
+Today's set beats the stored training max whenever there is one. The training
+max is weeks old; the first working set is minutes old. Preferring the stored
+number leaves percentages priced against a max the athlete has already outgrown
+— which is the complaint this ticket opens with, *"athletes max out mid block
+and wreck his programming"*.
+
+Before the first set is logged, percentages fall back to the stored max, so a
+session opens with numbers rather than blanks. The session max comes from
+`estimateOneRepMax`, which already refuses warm-ups, sets logged without an RPE,
+and sets too far from failure — refusals that are load-bearing here, since a
+wrong number becomes a wrong weight on every remaining set.
+
+**It is a suggestion, not an imposition.** Order 27: a load suggestion is
+"always a suggestion, always overridable, never silently imposed". So a resolved
+prescription carries `synced` and `basisUsed` for the logger to show, and the
+prefill adapter notes that Order 22 must map `synced` onto prefill's
+`"suggested"` source rather than `"prescribed"` — otherwise a derived weight
+presents itself as the coach's own number.
+
+The anchor is the **highest** estimate among sets logged so far, not the latest.
+Usually there is one RPE set and they are identical; they differ when the
+athlete works up (a heavier second RPE set is the better measurement) and under
+fatigue (a tired late set must not shrink the backoffs — that is what the RPE
+cap is for). Both cases are pinned as tests.
+
 ### Which max a percentage points at
 
-"A percentage needs a reference max, which defaults to the training max and can
-be changed per row" — which **kind** of max, resolved against Order 17's table.
+A percentage names which **kind** of max — `training` by default, resolved
+against Order 17's table. Only the default basis autoregulates: a coach who
+spells out `of tested` or `of e1RM` is naming a specific stored number and gets
+it, so the escape hatch is one word.
 
 Deliberately **not** a pointer at another exercise's max. This ticket's own
 notes reject "a single reference max standing in for lifts that move different
@@ -84,13 +128,14 @@ storage question safely deferrable: Order 19 can store the typed text or the
 structured fields and derive the other. Freeform forces the raw text to be kept
 either way.
 
-`toPrefillPrescription` is a typed seam onto the athlete's set row. **Nothing
-calls it yet** — `prefill.ts` does not import it — because the caller is the
-Program Editor. Deliberate, not an oversight, same as Order 17's write path.
+`toPrefillPrescription` and `resolveExercise` are typed seams onto the athlete's
+set row. **Nothing calls them yet** — `prefill.ts` does not import them — because
+the callers are the Program Editor (Order 19) and the prescribed session in the
+logger (Order 22). Deliberate, not an oversight, same as Order 17's write path.
 
 ### Verification
 
-`typecheck` · `lint` · **1028 tests** (54 on this module) · `build`.
+`typecheck` · `lint` · **1040 tests** (66 on this module) · `build`.
 No schema change, so no `appwrite:setup` and no probe run.
 
 Also corrects the schema docstring, which still claimed reference maxes were

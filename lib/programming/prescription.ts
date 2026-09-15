@@ -390,10 +390,26 @@ export function resolvePrescription(
  * first set is logged, the percentages fall back to the stored training max,
  * so the session still opens with numbers rather than blanks.
  *
- * `firstWorkingSet` is the athlete's own first working set of this exercise.
- * Warm-ups and sets logged without an RPE produce no session max -- see
- * `sessionMaxFrom` -- and the percentages simply stay on the stored max, which
- * is the safe direction.
+ * `loggedSoFar` is the athlete's working sets of THIS exercise, in the order
+ * they were logged. Warm-ups and sets without an RPE produce no estimate --
+ * see `sessionMaxFrom` -- and the percentages stay on the stored max, which is
+ * the safe direction.
+ *
+ * The session max is the HIGHEST estimate among them, not the latest. Usually
+ * there is only one RPE set and the two are the same thing, but they part
+ * company in two cases that both matter:
+ *
+ *   - Working up. A coach prescribing two RPE sets gets a better measurement
+ *     from the second, and anchoring on the first would price every backoff
+ *     off a set the athlete has already beaten.
+ *   - Fatigue. Later sets estimate lower as the session wears on, and a 75%
+ *     backoff must not shrink because the athlete is tired. That is what the
+ *     RPE cap on a capped prescription is for; re-pricing the weight downward
+ *     mid-exercise would be a second, silent autoregulation on top of it.
+ *
+ * Precondition: every spec belongs to the same exercise, because they are all
+ * priced off these sets. Passing a whole day's rows would resolve a bench
+ * percentage against a squat's top set. Order 22 groups by exercise first.
  *
  * Nothing here is imposed: a resolved prescription carries `synced` so the
  * logger can show where the weight came from, per Order 27's rule that a load
@@ -402,9 +418,12 @@ export function resolvePrescription(
 export function resolveExercise(
   specs: readonly PrescriptionSpec[],
   maxes: BasisMaxes = {},
-  firstWorkingSet?: SetForEstimate | null,
+  loggedSoFar: readonly SetForEstimate[] = [],
 ): ResolvedPrescription[] {
-  const session = firstWorkingSet ? sessionMaxFrom(firstWorkingSet) : null;
+  const estimates = loggedSoFar
+    .map((set) => sessionMaxFrom(set))
+    .filter((kg): kg is number => kg !== null);
+  const session = estimates.length > 0 ? Math.max(...estimates) : null;
   const withSession: BasisMaxes = { ...maxes, session: session ?? maxes.session ?? null };
   return specs.map((spec) => resolvePrescription(spec, withSession));
 }
