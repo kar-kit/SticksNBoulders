@@ -1,6 +1,7 @@
 import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import { circleTeamId } from "./circle";
 import {
+  bodyweightPermissions,
   exercisePermissions,
   invitePermissions,
   linkPermissions,
@@ -504,6 +505,96 @@ export async function deleteComment(deps: WriteDeps, _actor: Actor, rowId: strin
     databaseId: deps.databaseId,
     tableId: "set_comments",
     rowId,
+  });
+}
+
+/* -------------------------------------------------------------------------
+ * Bodyweight
+ * ---------------------------------------------------------------------- */
+
+/** Appwrite ids allow a-z A-Z 0-9 . - _ up to 36 characters. */
+const MAX_ROW_ID = 36;
+
+/**
+ * The id of one athlete's weigh-in on one day.
+ *
+ * Derived rather than generated, which is what makes "one entry per day" true
+ * without a read-then-write: logging again on the same morning updates the row
+ * that is already there, and the blueprint's whole flow is one tap on a pad
+ * prefilled with yesterday's number.
+ *
+ * Guarded like `circleTeamId`, and for the same reason. Appwrite ids stop at
+ * 36 characters; a generated user id is 20, which leaves room, but a custom one
+ * would silently push this over and the failure would look like a rejected
+ * weigh-in rather than a naming problem.
+ */
+export function bodyweightRowId(athleteId: string, measuredOn: string): string {
+  if (!athleteId) throw new Error("bodyweightRowId: athleteId is required");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(measuredOn)) {
+    throw new Error(`bodyweightRowId: measuredOn must be YYYY-MM-DD, got ${JSON.stringify(measuredOn)}`);
+  }
+  // The dashes go: they are the only characters here that buy nothing, and
+  // dropping them is eight characters of headroom.
+  const id = `${athleteId}_${measuredOn.replace(/-/g, "")}`;
+  if (id.length > MAX_ROW_ID) {
+    throw new Error(`bodyweightRowId: "${id}" exceeds Appwrite's ${MAX_ROW_ID}-character limit`);
+  }
+  return id;
+}
+
+export interface RecordBodyweightInput {
+  weightKg: number;
+  /** The day it refers to, YYYY-MM-DD. */
+  measuredOn: string;
+}
+
+/**
+ * Records a weigh-in, replacing today's if there is one.
+ *
+ * Created rather than upserted, with the caller falling back to an update on a
+ * collision -- Appwrite has no upsert, and the row id makes the collision
+ * meaningful rather than a race to lose.
+ */
+export async function recordBodyweight(
+  deps: WriteDeps,
+  actor: Actor,
+  input: RecordBodyweightInput,
+) {
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: "bodyweight_entries",
+    rowId: bodyweightRowId(actor.userId, input.measuredOn),
+    data: {
+      athlete_id: actor.userId,
+      weight_kg: input.weightKg,
+      measured_on: input.measuredOn,
+      recorded_at: iso(deps.now()),
+    },
+    permissions: bodyweightPermissions({ athleteId: actor.userId }),
+  });
+}
+
+/** Corrects a weigh-in already logged for that day. */
+export async function reviseBodyweight(
+  deps: WriteDeps,
+  actor: Actor,
+  input: RecordBodyweightInput,
+) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "bodyweight_entries",
+    rowId: bodyweightRowId(actor.userId, input.measuredOn),
+    data: { weight_kg: input.weightKg, recorded_at: iso(deps.now()) },
+    permissions: bodyweightPermissions({ athleteId: actor.userId }),
+  });
+}
+
+/** Removes one. The undo for a fat-fingered number. */
+export async function deleteBodyweight(deps: WriteDeps, actor: Actor, measuredOn: string) {
+  return deps.writer.deleteRow({
+    databaseId: deps.databaseId,
+    tableId: "bodyweight_entries",
+    rowId: bodyweightRowId(actor.userId, measuredOn),
   });
 }
 
