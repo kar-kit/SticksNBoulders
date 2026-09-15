@@ -14,13 +14,17 @@ export const DATABASE_ID = "sticksnboulders";
  * 2. There is no GROUP BY. Aggregates cannot be computed on read, so e1rm_kg
  *    is stored on the set and stats_rollups exists at all.
  *
- * Scope is phase 0, phase 1, and the first half of the coach link: the write
- * helper needs coach_athlete_links, the athlete logger needs the rest, and
- * invite_codes is how a coach reaches an athlete in the first place. Programs,
- * prescriptions and reference maxes are deliberately absent -- the Program
- * Editor's shape is still an open question with Ruairi, and guessing it here
- * is the one retrofit the build plan calls expensive. They arrive as later
- * migrations.
+ * Scope is phase 0, phase 1, the coach link, and reference maxes: the write
+ * helper needs coach_athlete_links, the athlete logger needs the rest,
+ * invite_codes is how a coach reaches an athlete in the first place, and
+ * reference_maxes is what a percentage is a percentage of.
+ *
+ * Programs and prescriptions are still deliberately absent. Order 18 models a
+ * prescription as a pure value -- parsed, formatted and resolved in
+ * lib/programming/prescription.ts -- but where one is stored depends on
+ * whether a block is written up front or session by session, which is still an
+ * open question with Ruairi and the one retrofit the build plan calls
+ * expensive. The table arrives with the Program Editor at Order 19.
  */
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
