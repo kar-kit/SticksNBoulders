@@ -2,6 +2,8 @@
 
 import { OAuthProvider } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
+import { forgetCircle } from "./circle";
+import { forgetProfile } from "@/lib/profile/profile-store";
 import { toAuthFailure, type AuthFailure, type OAuthProviderName } from "./errors";
 import { normaliseEmail } from "./method-hint";
 
@@ -49,6 +51,13 @@ export async function currentUser() {
 
 export async function signOut() {
   const { account } = browserAppwrite();
+  // Both memos are per page load and keyed to nobody, so on a shared phone the
+  // next person to sign in would inherit whatever was cached for the last.
+  // `forgetCircle` has been exported for this since Order 9 and was never
+  // wired up; `forgetProfile` would have had the same latent bug, and the
+  // profile one is worse because it carries a name.
+  forgetCircle();
+  forgetProfile();
   return attempt(() => account.deleteSession({ sessionId: "current" }));
 }
 
