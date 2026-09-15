@@ -52,9 +52,13 @@ describe("what can be attached", () => {
   it("refuses a clip the instance would reject, before the upload starts", () => {
     const result = checkClip({ name: "clip.mov", size: MAX_VIDEO_BYTES + 1 });
     expect(result).toMatchObject({ ok: false, reason: "too-big" });
+    // Derived rather than hardcoded: the limit tracks the instance and moved
+    // once already, and a test pinning the old number just breaks on the day
+    // somebody fixes the thing it was measuring.
+    const message = (result as { message: string }).message;
+    expect(message).toContain(`${MAX_VIDEO_BYTES / 1_000_000}MB`);
     // The message has to be actionable on a gym floor, not a status code.
-    expect((result as { message: string }).message).toMatch(/30MB/);
-    expect((result as { message: string }).message).toMatch(/shorter|trim/);
+    expect(message).toMatch(/shorter|trim/);
   });
 
   it("allows a clip exactly at the limit", () => {

@@ -19,14 +19,18 @@ export const VIDEO_EXTENSIONS = ["mp4", "mov", "m4v", "webm"] as const;
 export type VideoExtension = (typeof VIDEO_EXTENSIONS)[number];
 
 /**
- * The hard ceiling, from the Appwrite instance rather than from a preference:
- * `_APP_STORAGE_LIMIT` is 30,000,000 bytes and storage rejects anything above
- * it outright. A 60-second 1080p clip off a modern phone is several times
- * this, so most real videos must be compressed before they get here -- which
- * is Order 31's job, and why this refusal names compression rather than just
- * saying no.
+ * The hard ceiling, from the instance rather than from a preference: storage
+ * rejects anything above `_APP_STORAGE_LIMIT` outright, and the bucket cannot
+ * ask for more than the instance allows.
+ *
+ * Raised from Appwrite's 30MB default on 15 Sep 2026, because 30MB does not
+ * hold a 60-second 1080p clip and video was unusable without it. Order 31's
+ * client-side compression should put real clips far below this; it is the
+ * ceiling, not the target.
+ *
+ * Must stay equal to the bucket's `maximumFileSizeBytes` in appwrite/schema.
  */
-export const MAX_VIDEO_BYTES = 30_000_000;
+export const MAX_VIDEO_BYTES = 200_000_000;
 
 export function extensionOf(filename: string): string {
   const dot = filename.lastIndexOf(".");

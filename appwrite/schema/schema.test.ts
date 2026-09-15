@@ -257,12 +257,14 @@ describe("the video bucket", () => {
   });
 
   /**
-   * The instance refuses anything larger -- createBucket rejects a higher
-   * number outright. Raising it is an instance config change, and this must
-   * track what the instance actually allows rather than what we would like.
+   * The instance's _APP_STORAGE_LIMIT is the hard ceiling -- Appwrite rejects
+   * a bucket asking for more than the instance allows -- so this has to track
+   * it rather than what we would like. Raised from Appwrite's 30MB default
+   * when uploads moved to the NAS, because 30MB does not hold a 60-second
+   * 1080p clip.
    */
   it("caps files at what the instance will actually accept", () => {
-    expect(bucket.maximumFileSizeBytes).toBe(30_000_000);
+    expect(bucket.maximumFileSizeBytes).toBe(200_000_000);
   });
 
   it("accepts only what a phone camera produces", () => {

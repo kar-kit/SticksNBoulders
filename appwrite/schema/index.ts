@@ -282,14 +282,20 @@ export const schema: DatabaseSpec = {
       fileSecurity: true,
       permissions: [perm.createUsers],
       /**
-       * The instance refuses anything larger -- _APP_STORAGE_LIMIT is
-       * 30,000,000 bytes and createBucket rejects a higher number outright. A
-       * 60-second 1080p phone clip is several times this, so client-side
-       * compression is mandatory rather than the optimisation Order 31 calls
-       * it. Raising the instance limit is Joey's call; this tracks what the
-       * instance actually allows rather than pretending.
+       * Tracks `_APP_STORAGE_LIMIT` on the instance, which is the hard ceiling
+       * -- Appwrite rejects a bucket asking for more than the instance allows.
+       *
+       * It was 30,000,000 (Appwrite's default) until 15 Sep 2026, which is not
+       * enough for a 60-second 1080p phone clip. Joey raised the instance to
+       * 200MB when uploads moved to the NAS, so this follows. Client-side
+       * compression at Order 31 should bring real clips far below it; this is
+       * the ceiling, not the target.
+       *
+       * If a bucket create or update starts failing with "Invalid
+       * maximumFileSize", the instance limit moved and this is what has to
+       * change.
        */
-      maximumFileSizeBytes: 30_000_000,
+      maximumFileSizeBytes: 200_000_000,
       // What a phone camera produces. Deliberately narrow: an athlete who
       // manages to attach a PDF has found a bug, not a feature.
       allowedFileExtensions: ["mp4", "mov", "m4v", "webm"],
