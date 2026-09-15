@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 7,
+  version: 8,
   tables: [
     {
       id: "profiles",
@@ -194,6 +194,42 @@ export const schema: DatabaseSpec = {
         { key: "idx_set_created", type: "key", columns: ["set_id", "created_at"], orders: ["asc", "asc"] },
         { key: "idx_athlete_created", type: "key", columns: ["athlete_id", "created_at"], orders: ["asc", "desc"] },
         { key: "idx_client_comment_id", type: "unique", columns: ["client_comment_id"] },
+      ],
+    },
+
+    {
+      id: "bodyweight_entries",
+      name: "Bodyweight entries",
+      purpose:
+        "One weigh-in per athlete per day. Exists because Ruairi said he currently has to ask athletes what they weigh -- so the job is to make the number appear on his Athlete View without him asking.",
+      rowSecurity: true,
+      permissions: [perm.createUsers],
+      columns: [
+        { key: "athlete_id", type: "string", size: 36, required: true },
+        // Stored in kilograms like every other weight in the product. The
+        // profile's units setting is a display preference and never reaches
+        // storage, so a switch to pounds cannot rewrite anyone's history.
+        { key: "weight_kg", type: "float", required: true, min: 20, max: 400 },
+        // The DAY it refers to, as YYYY-MM-DD, not a timestamp. A weigh-in
+        // belongs to a morning rather than to an instant, and a date string is
+        // what makes "one per day" expressible as an id.
+        { key: "measured_on", type: "string", size: 10, required: true },
+        // When it was actually typed. Differs from measured_on when somebody
+        // catches up on yesterday's weight, and is what a coach would want if
+        // two numbers ever disagreed.
+        { key: "recorded_at", type: "datetime", required: true },
+      ],
+      indexes: [
+        {
+          key: "idx_athlete_measured",
+          type: "key",
+          columns: ["athlete_id", "measured_on"],
+          orders: ["asc", "desc"],
+        },
+        // Belt and braces. The row id already encodes athlete and day, so a
+        // second entry for the same morning cannot be written -- this says so
+        // in the schema as well, where the next person looks.
+        { key: "idx_one_per_day", type: "unique", columns: ["athlete_id", "measured_on"] },
       ],
     },
 
