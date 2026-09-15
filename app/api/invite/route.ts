@@ -14,10 +14,9 @@ import { adminInviteTables, ensureInviteCode } from "@/appwrite/documents/invite
  * else there would hand their athletes to you -- so this cannot happen on the
  * client, and the coach id comes from the caller's JWT rather than the body.
  *
- * Unlike rollups, nothing here wants an Appwrite Function. Generation is
- * user-initiated, so it never depends on the database events pipeline that is
- * broken on this instance (see app/api/rollup/route.ts). Redemption at Order
- * 16 is the half that does, and it needs a plan.
+ * Nothing here wants an Appwrite Function either way: generation is
+ * user-initiated, so it never depended on database events -- which were dead
+ * on Appwrite 1.9.0 and work on 1.9.6, measured 14 Sep 2026.
  *
  * Idempotent: a coach who taps twice, or whose first request died on gym wifi,
  * gets the same code back rather than a second one that makes the code they
