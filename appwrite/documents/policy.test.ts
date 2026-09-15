@@ -5,6 +5,7 @@ import {
   linkPermissions,
   POLICIES,
   profilePermissions,
+  commentPermissions,
   referenceMaxPermissions,
   reviewPermissions,
   videoPermissions,
@@ -232,6 +233,43 @@ describe("a coach's record that they have watched a clip", () => {
   });
 });
 
+describe("a comment on a set", () => {
+  /**
+   * Symmetric with a review, and that symmetry is load-bearing: both parties
+   * are circle members, so both can stamp this, and the athlete's reply at
+   * Order 34 needs no second policy.
+   */
+  it("is stamped the same way whichever of them wrote it", () => {
+    const byCoach = commentPermissions({ athleteId: ATHLETE, authorId: COACH });
+    const byAthlete = commentPermissions({ athleteId: ATHLETE, authorId: ATHLETE });
+    expect(byCoach).toContain(`read("team:${circle}")`);
+    expect(byAthlete).toContain(`read("team:${circle}")`);
+    expect(byCoach.join(" ")).not.toContain(`read("user:${ATHLETE}")`);
+  });
+
+  it("gives edit and delete to the author and to nobody else", () => {
+    // A record one side can edit is not a record. A coach must not be able to
+    // withdraw an athlete's reply, nor an athlete a coach's correction.
+    const byCoach = commentPermissions({ athleteId: ATHLETE, authorId: COACH });
+    expect(byCoach).toContain(`update("user:${COACH}")`);
+    expect(byCoach).toContain(`delete("user:${COACH}")`);
+    expect(byCoach.join(" ")).not.toContain(`update("user:${ATHLETE}")`);
+    expect(byCoach.join(" ")).not.toContain(`delete("user:${ATHLETE}")`);
+  });
+
+  it("reads through the circle, so revoking a link takes the thread with it", () => {
+    const permissions = commentPermissions({ athleteId: ATHLETE, authorId: COACH }).join(" ");
+    expect(permissions).not.toContain('"users"');
+    expect(permissions).not.toContain('"any"');
+    expect(permissions).not.toContain(STRANGER);
+  });
+
+  it("refuses to be stamped without both ids", () => {
+    expect(() => commentPermissions({ athleteId: "", authorId: COACH })).toThrow(/athleteId/);
+    expect(() => commentPermissions({ athleteId: ATHLETE, authorId: "" })).toThrow(/authorId/);
+  });
+});
+
 describe("policy hygiene", () => {
   it("covers every table, so one cannot be added without a policy", () => {
     expect(Object.keys(POLICIES).sort()).toEqual([
@@ -241,6 +279,7 @@ describe("policy hygiene", () => {
       "profiles",
       "reference_maxes",
       "sessions",
+      "set_comments",
       "set_reviews",
       "sets",
       "stats_rollups",

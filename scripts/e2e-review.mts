@@ -24,8 +24,14 @@ import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
 import { ensureCircle, addCoachToCircle } from "../appwrite/documents/circle-admin";
 import { circleTeamId } from "../appwrite/documents/circle";
-import { reviewPermissions, setPermissions, videoPermissions } from "../appwrite/documents/policy";
+import {
+  commentPermissions,
+  reviewPermissions,
+  setPermissions,
+  videoPermissions,
+} from "../appwrite/documents/policy";
 import { buildQueue } from "../lib/review/queue";
+import { threadComments, type Comment } from "../lib/review/comments";
 
 dedupeSdkWarnings();
 
@@ -268,6 +274,122 @@ try {
     check("a cleared clip leaves the queue", queue.length === 0, `${queue.length} left`);
   }
 
+  // --- comments -----------------------------------------------------------
+  // The coach opens, the athlete replies. Both stamp the same circle team, and
+  // the athlete direction is the one Order 34's reply box will lean on -- a
+  // different caller against the same rule that refused the coach at Order 17.
+  const coachComment = `${coach.$id}_c_${stamp}`;
+  let coachSaid = true;
+  let coachSaidError = "";
+  try {
+    await coachDb.createRow({
+      databaseId: db,
+      tableId: "set_comments",
+      rowId: coachComment,
+      data: {
+        set_id: filmed,
+        athlete_id: athlete.$id,
+        author_id: coach.$id,
+        body: "Hips shot up on the second rep. Keep 170 next week.",
+        parent_id: null,
+        created_at: new Date(stamp).toISOString(),
+        client_comment_id: coachComment,
+      },
+      permissions: commentPermissions({ athleteId: athlete.$id, authorId: coach.$id }),
+    });
+    created.push({ table: "set_comments", id: coachComment });
+  } catch (error) {
+    coachSaid = false;
+    coachSaidError = (error as Error).message;
+  }
+  check("a coach can comment on an athlete's set", coachSaid, coachSaidError);
+
+  const athleteReply = `${athlete.$id}_r_${stamp}`;
+  let athleteReplied = true;
+  let athleteReplyError = "";
+  try {
+    await athleteDb.createRow({
+      databaseId: db,
+      tableId: "set_comments",
+      rowId: athleteReply,
+      data: {
+        set_id: filmed,
+        athlete_id: athlete.$id,
+        author_id: athlete.$id,
+        body: "Felt it. I'll drop to 170.",
+        parent_id: coachComment,
+        created_at: new Date(stamp + 60_000).toISOString(),
+        client_comment_id: athleteReply,
+      },
+      permissions: commentPermissions({ athleteId: athlete.$id, authorId: athlete.$id }),
+    });
+    created.push({ table: "set_comments", id: athleteReply });
+  } catch (error) {
+    athleteReplied = false;
+    athleteReplyError = (error as Error).message;
+  }
+  check("and the athlete can reply to it", athleteReplied, athleteReplyError);
+
+  if (coachSaid && athleteReplied) {
+    const read = async (tables: WebTablesDB) =>
+      (
+        await tables.listRows({
+          databaseId: db,
+          tableId: "set_comments",
+          queries: [Query.equal("set_id", filmed), Query.orderAsc("created_at"), Query.limit(25)],
+        })
+      ).rows;
+
+    check("the coach sees both sides of the thread", (await read(coachDb)).length === 2);
+    check("so does the athlete", (await read(athleteDb)).length === 2);
+    check("a stranger sees none of it", (await read(strangerDb)).length === 0);
+
+    const threads = threadComments(
+      (await read(coachDb)).map((row) => {
+        const raw = row as unknown as Record<string, unknown>;
+        return {
+          id: row.$id,
+          setId: String(raw.set_id),
+          athleteId: String(raw.athlete_id),
+          authorId: String(raw.author_id),
+          body: String(raw.body),
+          parentId: typeof raw.parent_id === "string" && raw.parent_id ? raw.parent_id : null,
+          createdAt: String(raw.created_at),
+        } satisfies Comment;
+      }),
+    );
+    check(
+      "the reply threads under the comment it answers",
+      threads.length === 1 && threads[0].replies.length === 1,
+      `${threads.length} threads`,
+    );
+
+    // A record one side can edit is not a record.
+    let coachDeletedReply = true;
+    try {
+      await coachDb.deleteRow({ databaseId: db, tableId: "set_comments", rowId: athleteReply });
+    } catch {
+      coachDeletedReply = false;
+    }
+    check("a coach cannot delete the athlete's reply", !coachDeletedReply);
+
+    let athleteDeletedComment = true;
+    try {
+      await athleteDb.deleteRow({ databaseId: db, tableId: "set_comments", rowId: coachComment });
+    } catch {
+      athleteDeletedComment = false;
+    }
+    check("an athlete cannot delete the coach's correction", !athleteDeletedComment);
+
+    let authorDeleted = true;
+    try {
+      await athleteDb.deleteRow({ databaseId: db, tableId: "set_comments", rowId: athleteReply });
+    } catch {
+      authorDeleted = false;
+    }
+    check("but each of them can withdraw their own words", authorDeleted);
+  }
+
   // --- revocation ---------------------------------------------------------
   // Order 16.6 item 3 asks that a coach who loses a link sees a real state
   // rather than a 401. Leaving the circle is what produces it, and it is worth
@@ -279,6 +401,17 @@ try {
   }
   const afterRevoke = await queueQuery(coachDb);
   check("an unlinked coach's queue goes empty rather than stale", afterRevoke.length === 0, `${afterRevoke.length} rows`);
+
+  const threadAfterRevoke = await coachDb.listRows({
+    databaseId: db,
+    tableId: "set_comments",
+    queries: [Query.equal("set_id", filmed), Query.limit(25)],
+  });
+  check(
+    "and the thread goes with it",
+    threadAfterRevoke.rows.length === 0,
+    `${threadAfterRevoke.rows.length} rows`,
+  );
 } catch (error) {
   failure = error;
   check("ran without throwing", false, String(error));

@@ -12,7 +12,13 @@ import { circleTeamId } from "./circle";
  * exhaustively testable, and the tests are the real specification.
  */
 
-export type WritableTable = "profiles" | "exercises" | "sessions" | "sets" | "set_reviews";
+export type WritableTable =
+  | "profiles"
+  | "exercises"
+  | "sessions"
+  | "sets"
+  | "set_reviews"
+  | "set_comments";
 export type ServerTable =
   | "stats_rollups"
   | "coach_athlete_links"
@@ -50,6 +56,13 @@ export interface CodeOwner {
 export interface ReviewParties {
   athleteId: string;
   coachId: string;
+}
+
+export interface CommentAuthor {
+  /** Whose set is being discussed. Never the author on a coach's comment. */
+  athleteId: string;
+  /** Who wrote it. Either party -- the coach opens, the athlete replies. */
+  authorId: string;
 }
 
 function requireId(value: string, label: string): string {
@@ -228,6 +241,27 @@ export function reviewPermissions({ athleteId, coachId }: ReviewParties): string
   ];
 }
 
+/**
+ * A comment on a set.
+ *
+ * Stamped by whoever wrote it, and the shape is deliberately symmetric: the
+ * circle reads, the author edits and deletes. That symmetry is the whole
+ * reason the athlete's reply at Order 34 needs no second policy -- both
+ * parties are circle members, so both can stamp this, and neither can stamp
+ * anything naming the other by name.
+ *
+ * The author owns their own words and nobody else's. A coach cannot delete an
+ * athlete's reply and an athlete cannot delete a coach's correction: this is a
+ * record of what was said, and a record one side can edit is not one.
+ */
+export function commentPermissions({ athleteId, authorId }: CommentAuthor): string[] {
+  return [
+    read(team(circleTeamId(requireId(athleteId, "athleteId")))),
+    update(user(requireId(authorId, "authorId"))),
+    del(user(requireId(authorId, "authorId"))),
+  ];
+}
+
 /** Every policy in one place, so a table can never be added without one. */
 export const POLICIES = {
   profiles: profilePermissions,
@@ -235,6 +269,7 @@ export const POLICIES = {
   sessions: sessionPermissions,
   sets: setPermissions,
   set_reviews: reviewPermissions,
+  set_comments: commentPermissions,
   stats_rollups: rollupPermissions,
   coach_athlete_links: linkPermissions,
   invite_codes: invitePermissions,
@@ -248,6 +283,7 @@ export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
   "sessions",
   "sets",
   "set_reviews",
+  "set_comments",
 ];
 
 export const SERVER_ONLY_TABLES: readonly ServerTable[] = [
