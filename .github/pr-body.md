@@ -1,112 +1,114 @@
-## Order 33 — Coach comments threaded on the set
+## Order 35 — Profile: name, sex, units
 
-Comments anchored to the set they're about rather than sitting in an inbox. The
-set already carries load, reps, RPE and the athlete's own note, so none of the
-context gets typed by anyone — which is the whole reason a comment can be short.
+Picked next because it unblocks the most: sex feeds the DOTS coefficients, so
+**Order 36 (bodyweight) and Order 37 (DOTS) both sit behind it.**
 
-### The permission shape is symmetric, and that's the load-bearing part
+The ticket reads "name, sex, units". The useful part is underneath it.
 
-`commentPermissions({ athleteId, authorId })` — circle-team read, update and
-delete for the **author**.
+### ⚠️ The bug this actually closes
 
-Both parties are circle members, so both can stamp it. **The athlete's reply at
-Order 34 needs no second policy, no new table and no server route.** Not
-assumed: the e2e has an athlete authoring a comment stamped with their own
-circle — a different caller against the same rule that refused the coach at
-Order 17.
+**`createProfile` has existed since Order 2 and was never called from anywhere.**
 
-The author owns their own words and nobody else's. A coach cannot delete an
-athlete's reply; an athlete cannot delete a coach's correction. **A record one
-side can edit is not a record.** Both asserted live, along with each of them
-withdrawing their own.
+`fetchAthleteNames` reads the `profiles` table — so every athlete has been
+nameless to their coach this whole time. An empty rail, and every clip in the
+Review Queue falling back to "Unnamed athlete". It looked like a display problem
+and was a missing write.
 
-Revoking a link takes the thread with it, for free — the read is the circle.
+`ensureMyProfile` runs in two places:
 
-### Choices worth a look
+- **`runOp`**, beside `ensureMyCircle` — the moment an athlete first writes
+  something a coach will read. Deliberately *not* awaited into the failure path:
+  a profile that cannot be written must never stop a set from being logged.
+- **The Me screen**, so an account that has logged nothing still gets a row.
 
-**Body is 2000, not the 500 a set note gets.** An athlete taps a note out
-mid-set; this replaces an essay. Truncating a coach's correction ends with them
-retyping it.
+Idempotent, memoised, seeded from the Appwrite account rather than a form — so
+existing accounts and Google sign-ins both get one without a form standing
+between an athlete and their first session.
 
-**`parent_id` exists now though only Order 34 draws replies.** Adding it later
-means backfilling every comment ever written.
+### No server route, and why that's safe here
 
-**Threading stops at one level, on purpose.** The blueprint says outright that
-if a real conversation is needed they have WhatsApp — so a reply to a reply
-flattens onto its thread rather than indenting again. Nesting invites the
-conversation the screen is trying not to host.
+Every other owned table either goes through a route or had to be argued into
+client-writability. Profiles need neither argument: **the row id IS the user id,
+and every permission on it names the owner**, so Appwrite refuses a profile
+stamped for anybody else — the Order 17 stamping rule working in our favour for
+once.
 
-Two cases that would otherwise lose someone's words: an orphaned reply (parent
-deleted) is promoted to its own thread rather than dropped, and a cycle in
-`parent_id` is bounded rather than spun on — it can only come from corrupt data,
-and freezing the screen is worse than losing one comment.
+The forgery that forced `reference_maxes` onto the server needed a field the row
+merely *claimed*. Here the claim is the row's own identity, which Appwrite
+polices. The e2e tries the cross-user forgery and expects to be refused.
 
-### "Comment & next" writes two rows, in this order
+### Sex: the blueprint and the schema genuinely disagree
 
-Comment first, review second. **If the comment lands and the review doesn't, the
-clip comes back with the comment already on it** and the coach sees what they
-said — a duplicate they can skip. The other order loses the feedback and shows
-an empty box, which is indistinguishable from never having commented.
+> **Blueprint:** "Sex is required, not optional, because the DOTS coefficients
+> differ and there is no sensible default."
+>
+> **Schema:** `required: false` — "Nullable: collected at onboarding, and an
+> athlete may decline."
 
-A clip that already carries a comment is marked in the queue rail, so a coach
-who was here last Sunday knows before opening it.
+The column stays nullable and the product asks anyway. Making it required would
+refuse every profile backfilled onto an existing account — turning a missing
+number into a missing athlete — and `planSchema` refuses that migration as a
+`manual-column-change` for the same reason.
 
-### The keyboard collision
+So `needsSex` is deliberately *not* `sex === null`; the screen shows an
+unanswered sex as a question with its reason attached, and `computeDots` takes a
+non-nullable `Sex`, so a missing answer cannot reach a coefficient set. **DOTS
+renders nothing rather than picking one of the two formulas.**
 
-The player owns space and the arrows, the queue owns Enter, and all three stop
-listening while a field has focus — otherwise a coach couldn't type the word
-"space". So the composer takes **⌘/Ctrl + Enter**. The player's hint line is
-updated to say so.
+**[SME to confirm]** — the blueprint wants this asked at *onboarding*, not in
+settings. The onboarding flow is its own blueprint page and not this ticket, so
+today an athlete who never opens Profile & Settings has no DOTS and isn't told
+why. Worth deciding before the beta.
 
-The box focuses on arrival, and **a failed post keeps the draft**. Retyping your
-own feedback because the network blinked is the worst thing this screen could do
-to someone.
+### The rest
 
-### Athlete View
+Name is trimmed and whitespace-collapsed, so a rail never shows `Joey    Pang`.
+`fallbackName` never surfaces a raw id or a full email address — account name,
+then the local part of the email, then "Athlete". A hex string in a coach's rail
+is bad; somebody's contact details in front of a third party is worse.
 
-`RecentFeedback` — everything said to one person, newest first, read-only.
-Replying belongs with the clip where the video and the numbers are; a second
-composer here would be a second place to say the same thing with less context.
+Units are **display only**. Everything is stored in kilograms, switching never
+changes a logged number, and the screen says so rather than leaving someone to
+wonder whether their history just moved.
 
-It exists because the queue is organised around *clearing*, so a clip leaves the
-moment it's dealt with and there'd otherwise be nowhere to read back what's
-already been said.
+Writes are optimistic and roll back on failure — a settings screen that claims
+something the server doesn't hold is worse than one that lags, and here a wrong
+sex is a wrong DOTS score later.
 
-### Voice notes: recommended against, for now
+### A latent bug fixed on the way past
 
-**Not built, and the ticket's own metadata is the argument.** The feature list
-says voice "was not discussed on the call". The blueprint marks it `[Inference —
-not discussed on the call]` and says outright: *"Cut it if December is tight."*
+**`forgetCircle` has been exported since Order 9 and never called.** Both memos
+are per page load and keyed to nobody, so on a shared phone the next person to
+sign in would inherit whatever was cached for the last. `signOut` clears both
+now; `forgetProfile` would have had the same bug, and it's worse because a
+profile carries a name.
 
-- Second bucket, a `MediaRecorder` UI, an audio player on the athlete side, and
-  a story for a coach who can't re-listen.
-- It arrives **before anyone has used the text version**.
-- December is the hand-over, and this is the first thing the blueprint itself
-  nominates to cut.
+### Not in scope
 
-The case for it — talking beats typing across twenty clips — is real, and worth
-testing against you and Ruairi actually clearing a queue rather than designing
-around. If it comes back it's the same bucket pattern as clips and the same
-ticket route for playback, so nothing here blocks it.
+The blueprint's Profile page lists five features. **15** and **16** already
+shipped. **Bodyweight** is Order 36's row. **The suggestion toggle is Order 28
+and is blocked** — the blueprint marks it `[SME to confirm]` because it's a
+coaching philosophy question, not a product one. **CSV export** is Order 39. The
+coach-side **BILLING** section waits for something to bill.
 
-### What's not here
+### Still yours to do
 
-**The athlete's reply box.** Order 34 owns the Coach Feedback screen, the unread
-badge, and tapping through to the set in its session. The table, the policy and
-`submitComment` already take a `parentId`, so that ticket is a screen rather
-than a model.
+The ticket asks for something that isn't code: *"Collect the real values from
+Ruairi and the first athletes before the beta."* Sex and units are per-person
+and nobody can fill them in for somebody else.
 
 ### Verification
 
-`typecheck` · `lint` · **1171 tests, 74 files** · `build` · `perf:check` inside
-budget · `appwrite:probe` 42/42 · schema applied at v7.
+`typecheck` · `lint` · **1188 tests, 75 files** · `build` · `perf:check` inside
+budget · `appwrite:probe` 42/42 · no schema change.
 
 Live against the instance:
 
-- `npm run e2e:review` — **21/21**, eleven of them new: both directions of
-  authorship, both parties reading the thread, a stranger seeing none of it,
-  threading, each side failing to delete the other's words, each side
-  withdrawing their own, and the thread disappearing when the link is revoked.
-- `npm run e2e:clip` — **15/15**, unchanged.
+- `npm run e2e:profile` — **8/8**: an athlete creating their own profile with no
+  server route, the backfill case with no sex, **the coach read that makes the
+  rail work**, a stranger seeing nothing, answering sex later, the coach unable
+  to edit it, the cross-user forgery refused, and an unlinked coach losing the
+  name with everything else.
+- `npm run e2e:review` — 21/21, unchanged.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
