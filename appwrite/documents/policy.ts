@@ -12,7 +12,7 @@ import { circleTeamId } from "./circle";
  * exhaustively testable, and the tests are the real specification.
  */
 
-export type WritableTable = "profiles" | "exercises" | "sessions" | "sets";
+export type WritableTable = "profiles" | "exercises" | "sessions" | "sets" | "set_reviews";
 export type ServerTable =
   | "stats_rollups"
   | "coach_athlete_links"
@@ -44,6 +44,11 @@ export interface LinkParties {
 }
 
 export interface CodeOwner {
+  coachId: string;
+}
+
+export interface ReviewParties {
+  athleteId: string;
   coachId: string;
 }
 
@@ -193,12 +198,43 @@ export function videoPermissions({ athleteId }: RowOwner): string[] {
   return [...athleteAndCircle(id), del(user(id))];
 }
 
+/**
+ * A coach's record that they have cleared a clip.
+ *
+ * Read through the circle team and NOT through `read("user:<athleteId>")`,
+ * which looks like the obvious spelling and is the one Appwrite refuses. A
+ * caller may only stamp roles it holds itself, so a coach cannot grant the
+ * athlete anything by name -- the lesson Order 17 learned the expensive way.
+ * The circle is the role they share, so the circle is what the row is stamped
+ * with, and both of them read it because both are in it.
+ *
+ * Written from the coach's browser rather than a server route, which is safe
+ * here and is not elsewhere. The forgery that makes `reference_maxes`
+ * server-only does not bite: a stranger could create a row naming somebody
+ * else's coach and set, but they can only stamp roles they hold, so the row
+ * would be unreadable by the real coach and would filter nothing out of the
+ * real queue. It is litter, not a lie -- and a training max is a number on a
+ * bar, where this is only whether a video has been watched.
+ *
+ * The athlete never writes one, and cannot: update and delete are the coach's
+ * alone. Clearing a coach's queue is not something the person being coached
+ * gets to do.
+ */
+export function reviewPermissions({ athleteId, coachId }: ReviewParties): string[] {
+  return [
+    read(team(circleTeamId(requireId(athleteId, "athleteId")))),
+    update(user(requireId(coachId, "coachId"))),
+    del(user(requireId(coachId, "coachId"))),
+  ];
+}
+
 /** Every policy in one place, so a table can never be added without one. */
 export const POLICIES = {
   profiles: profilePermissions,
   exercises: exercisePermissions,
   sessions: sessionPermissions,
   sets: setPermissions,
+  set_reviews: reviewPermissions,
   stats_rollups: rollupPermissions,
   coach_athlete_links: linkPermissions,
   invite_codes: invitePermissions,
@@ -211,6 +247,7 @@ export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
   "exercises",
   "sessions",
   "sets",
+  "set_reviews",
 ];
 
 export const SERVER_ONLY_TABLES: readonly ServerTable[] = [

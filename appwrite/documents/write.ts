@@ -6,6 +6,7 @@ import {
   linkPermissions,
   profilePermissions,
   referenceMaxPermissions,
+  reviewPermissions,
   rollupPermissions,
   sessionPermissions,
   setPermissions,
@@ -389,6 +390,60 @@ export async function attachVideo(deps: WriteDeps, actor: Actor, input: AttachVi
     // id in place, pointing at a file that has been deleted.
     data: { video_file_id: input.videoFileId },
     permissions: setPermissions({ athleteId: actor.userId }),
+  });
+}
+
+/* -------------------------------------------------------------------------
+ * Set reviews
+ * ---------------------------------------------------------------------- */
+
+export interface MarkReviewedInput {
+  athleteId: string;
+  setId: string;
+}
+
+/**
+ * Records that this coach has cleared this clip.
+ *
+ * The id is derived from the coach and the set rather than generated, which is
+ * what makes clearing idempotent: a double tap on "Skip", or a request the
+ * browser retried, writes the same row twice and the unique index makes the
+ * second one a no-op rather than a duplicate the queue then has to dedupe.
+ *
+ * The actor is the COACH here, not the athlete -- the one place in this file
+ * where that is true. A review is the coach's record of their own work, and
+ * the athlete it concerns neither writes it nor can.
+ */
+export async function markSetReviewed(deps: WriteDeps, actor: Actor, input: MarkReviewedInput) {
+  const reviewId = `${actor.userId}_${input.setId}`;
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: "set_reviews",
+    rowId: reviewId,
+    data: {
+      coach_id: actor.userId,
+      athlete_id: input.athleteId,
+      set_id: input.setId,
+      reviewed_at: iso(deps.now()),
+      client_review_id: reviewId,
+    },
+    permissions: reviewPermissions({ athleteId: input.athleteId, coachId: actor.userId }),
+  });
+}
+
+/**
+ * Puts a clip back in the queue.
+ *
+ * The undo for a mis-tapped Skip, and the only edit this table has. Deleting
+ * the row rather than flagging it: a clip is either cleared or it is not, and
+ * a tombstone would mean the queue query has to read and then discard rows
+ * whose only purpose is to say they do not count.
+ */
+export async function unmarkSetReviewed(deps: WriteDeps, actor: Actor, setId: string) {
+  return deps.writer.deleteRow({
+    databaseId: deps.databaseId,
+    tableId: "set_reviews",
+    rowId: `${actor.userId}_${setId}`,
   });
 }
 
