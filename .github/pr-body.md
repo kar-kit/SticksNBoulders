@@ -1,144 +1,87 @@
-## Order 18 — Prescription model: fixed, percent, RPE, capped, freeform
+## Order 26 — RPE chart and e1RM derivation
 
-The ticket calls this "the central schema decision and the expensive one to
-retrofit". The blueprint calls the load cell "the hardest control in the
-product": one cell accepting five kinds of prescription, **typed** rather than
-picked from a dropdown first. Making Ruairi choose a load type before he can
-type the load is what sends him back to Excel.
+CLAUDE.md required this chart be checked against a published source before
+anything hardcoded it, because wrong numbers here are wrong numbers in every
+athlete's program. **This is that check.** The findings matter more than the
+code, and nothing is wired to the result.
 
-| Kind | He types | She sees |
-| --- | --- | --- |
-| Fixed | `142.5`, `60 kg` | 142.5 kg |
-| Percent | `75%`, `75% of tested` | 135 kg (75%) |
-| RPE | `@8`, `rpe8` | RPE 8 |
-| Capped | `75% @8` | 135 kg (75%), stop at RPE 8 |
-| Freeform | anything else | shown as written |
+> Taken out of numeric order because 19–23 all sit behind Ruairi's
+> block-up-front question and 24 behind his review-day question. Order 26 is
+> `No UI (backend)` and fully unblocked.
 
-`75% @8` and `@8 75%` are the same prescription. Spellings normalise — `rpe 8`
-formats back as `@8`.
+### It is one curve, not a grid
 
-### Parsing never fails, and that needs a guard
+Published as an 8 × 10 table of RPE against reps, it is really a function of a
+single variable: **reps-to-failure**. 3 reps @ RPE 10, 2 @ RPE 9 and 1 @ RPE 8
+are all three reps from failure, and all three are 92.2%.
 
-Freeform is the escape hatch and it is not optional, so anything the grammar
-does not recognise becomes freeform rather than an error. The risk is the
-opposite direction: parsing *too* eagerly and silently dropping what the coach
-actually said.
+[Fact] **All 80 published cells collapse onto 26 distinct values with zero
+contradictions**, checked cell by cell.
 
-The percent and RPE regexes are non-global, so they see only the first match in
-a cell. A whole-cell check is what stops `75% 80%` parsing as a clean 75% and
-putting one of two percentages on the bar with no indication. Twelve ambiguous
-cells checked by hand — `@8 @9`, `3x8 @8`, `5x5 60kg`, `work up to rpe 8`,
-`rperformance 8` — all correctly freeform; the seven that would break first are
-pinned as tests.
+That collapse *is* the verification, not a tidy-up — an 8 × 10 grid can only
+fold onto one curve if every cell agrees with every other cell the same
+distance from failure. So the test keeps the published grid in its original
+shape and asserts the fold: a transcription error anywhere breaks the build
+instead of sitting in the table unnoticed.
 
-A mistyped `75%%` still becomes literal text. The fix is not rejection — it is
-visibility: every spec carries its `kind`, so the editor shows the coach what
-their typing landed as. **Order 19 owes the athlete that indicator.**
+### The kink is real, and row 11 was the right place to look
 
-### Two rules that will look like bugs
+[Fact] Each step down shrinks smoothly as the curve flattens — −4.5, −3.3,
+−3.0, −2.9, −2.6, −2.6, −2.5, −2.4, −2.3 — then jumps to **−3.2** at 10 → 11
+and returns to −2.7. As second differences: +0.3, +0.1, +0.3, 0.0, +0.1, +0.1,
++0.1, **−0.9**, +0.5. One sign reversal in the entire series, exactly at 11.
 
-- **A bare `8` is 8kg, not RPE 8.** The grammar requires `@` or `rpe`, per the
-  blueprint. A coach who means RPE 8 and types `8` gets a very light single.
-- **An out-of-range RPE stays the coach's words.** `@12` becomes freeform rather
-  than a silently clamped RPE 10.
+**Kept as published, not smoothed.** Smoothing swaps a sourced number for an
+invented one and hides the defect from the next reader; a chart that quietly
+disagrees with the one Ruairi has seen is worse than one that matches it and
+says where it is soft. The trend would put it near 71.6.
 
-### Percentages are weight guidance, and they sync to the session
+### How far the tail can be trusted
 
-This is what percentages are *for*, and the useless version is easy to build by
-accident. A percentage is not arithmetic against a stored number — it is a
-recommendation for how much weight goes on the bar for that set.
+[Fact] A second source gives 73%, 74% and 71% for three cells that are all
+eleven reps from failure and must be equal — it breaks the chart's own
+invariant, so its tail is rounding noise, not data.
 
-A coach prescribes the first set at an RPE and the rest as percentages. The
-athlete hits the RPE, and that set says what they are good for **today**. Every
-remaining percentage on that exercise is priced off it:
+[Fact] A third, citing Nuzzo et al. (2024), reports the spread of reps at a
+given percentage is "surprisingly large, especially at low percentages" and
+cautions about RIR reports beyond 12 reps — **independent support for
+`MAX_REPS_TO_FAILURE = 12`**, which had been set on Brzycki's range alone.
 
-```
-Squat   set 1   @8       athlete picks it — 170 x 5 @ 8
-        set 2   75%      152.5 kg   (75% of 204, today's max)
-        set 3   70%      142.5 kg
-        set 4   70%      142.5 kg
-```
+So the lookup returns null outside the published range rather than
+extrapolating into the region where sources stop agreeing.
 
-Today's set beats the stored training max whenever there is one. The training
-max is weeks old; the first working set is minutes old. Preferring the stored
-number leaves percentages priced against a max the athlete has already outgrown
-— which is the complaint this ticket opens with, *"athletes max out mid block
-and wreck his programming"*.
+### The decision this hands over — not taken here
 
-Before the first set is logged, percentages fall back to the stored max, so a
-session opens with numbers rather than blanks. The session max comes from
-`estimateOneRepMax`, which already refuses warm-ups, sets logged without an RPE,
-and sets too far from failure — refusals that are load-bearing here, since a
-wrong number becomes a wrong weight on every remaining set.
+| | 170 × 5 @ RPE 8 |
+| --- | --- |
+| Brzycki (shipping today) | **204.0 kg** |
+| RTS chart | **209.6 kg** |
+| gap | 5.6 kg, ~2.7% |
 
-**It is a suggestion, not an imposition.** Order 27: a load suggestion is
-"always a suggestion, always overridable, never silently imposed". So a resolved
-prescription carries `synced` and `basisUsed` for the logger to show, and the
-prefill adapter notes that Order 22 must map `synced` onto prefill's
-`"suggested"` source rather than `"prescribed"` — otherwise a derived weight
-presents itself as the coach's own number.
+They agree **exactly** on a true single, so the anchor argument that chose
+Brzycki over Epley does not separate these two. The chart reads higher
+everywhere else, never lower. Downstream, 5.6kg becomes **2.5kg on a 75%
+backoff** once Order 18 rounds to something loadable.
 
-The anchor is the **highest** estimate among sets logged so far, not the latest.
-Usually there is one RPE set and they are identical; they differ when the
-athlete works up (a heavier second RPE set is the better measurement) and under
-fatigue (a tired late set must not shrink the backoffs — that is what the RPE
-cap is for). Both cases are pinned as tests.
+Adopting it would rewrite every stored `e1rm_kg` via `e1rm:backfill`, and with
+it every rollup's `best_e1rm_kg`, every `estimated` reference max, and every
+percentage Order 18 syncs to a session — on an instance being dogfooded from
+mid-October. That is a live-data migration, so it is Joey's call, and this
+ships as a reference that changes nothing. The switch stays a one-line change
+plus a script run, which is the position `e1rm.ts` says it wants to be in.
 
-### Which max a percentage points at
-
-A percentage names which **kind** of max — `training` by default, resolved
-against Order 17's table. Only the default basis autoregulates: a coach who
-spells out `of tested` or `of e1RM` is naming a specific stored number and gets
-it, so the escape hatch is one word.
-
-Deliberately **not** a pointer at another exercise's max. This ticket's own
-notes reject "a single reference max standing in for lifts that move different
-weights", which is exactly what tempo bench at a percentage of competition bench
-would be. Whether Ruairi wants that anyway is **[SME to confirm]** — one
-nullable field if he does, not a reshaped union.
-
-### Rounding, which is a product decision — please read
-
-Resolved percentages round **down** to 2.5kg.
-
-Down rather than to nearest, because the directions are not equally wrong:
-prescribing more than the coach asked for is a missed rep, prescribing a shade
-less is a set that was light. Rounding to nearest also made 100% of a 191.5kg
-max resolve to **192.5** — a weight the athlete has never lifted, prescribed as
-if they had. That surfaced as a failing test rather than as a decision, which is
-the only reason it got made deliberately.
-
-Cost: every resolved percentage sits up to 2.4kg under its exact value, ~1% on a
-heavy squat. **Both the increment and the direction are [SME to confirm] with
-Ruairi, and both are one-word changes.**
-
-A percentage with no max resolves to **no load**, not to a guess — `prefill.ts`
-already documents exactly that case. A capped prescription keeps its RPE ceiling
-even then, because the ceiling is still a real instruction.
-
-### Scope: no table, on purpose
-
-A prescription hangs off a block, a week and a day, and that container is
-**Order 19 — still blocked on Ruairi's question** about whether he writes a block
-up front, week by week, or session by session. `schema.test.ts` still asserts
-`prescriptions` is absent.
-
-`parse` and `format` round-trip exactly for every kind, which is what makes the
-storage question safely deferrable: Order 19 can store the typed text or the
-structured fields and derive the other. Freeform forces the raw text to be kept
-either way.
-
-`toPrefillPrescription` and `resolveExercise` are typed seams onto the athlete's
-set row. **Nothing calls them yet** — `prefill.ts` does not import them — because
-the callers are the Program Editor (Order 19) and the prescribed session in the
-logger (Order 22). Deliberate, not an oversight, same as Order 17's write path.
+**[SME to confirm]** — the strongest argument for switching is that Ruairi is
+RTS-trained and this is the chart in his head; the Lift Detail blueprint
+already contrasts a personal curve against what "the standard chart says".
+That is a claim about Ruairi, not a fact.
 
 ### Verification
 
-`typecheck` · `lint` · **1040 tests** (66 on this module) · `build`.
-No schema change, so no `appwrite:setup` and no probe run.
+`typecheck` · `lint` · **1054 tests** (14 on this module) · `build`.
+No schema change, no probe run, no data touched.
 
-Also corrects the schema docstring, which still claimed reference maxes were
-absent alongside prescriptions — half of that went stale when Order 17 shipped.
+Sources: [Fitness Volt — Tuchscherer chart](https://fitnessvolt.com/rpe-training/guides/tuchscherer-chart-explained/) ·
+[1rmcalculator.org](https://www.1rmcalculator.org/programs/rpe-calculator) ·
+[Ripped Body (Nuzzo et al. 2024)](https://rippedbody.com/rpe/)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
