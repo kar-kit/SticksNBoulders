@@ -1,115 +1,99 @@
-## Order 17 — Reference maxes
+## Order 18 — Prescription model: fixed, percent, RPE, capped, freeform
 
-A percentage prescription is meaningless until something says what it is a
-percentage **of**. This is the table Order 18 writes against.
+The ticket calls this "the central schema decision and the expensive one to
+retrofit". The blueprint calls the load cell "the hardest control in the
+product": one cell accepting five kinds of prescription, **typed** rather than
+picked from a dropdown first. Making Ruairi choose a load type before he can
+type the load is what sends him back to Excel.
 
-### A table with effective dates, not a number on the profile
-
-The ticket is explicit about this and the reason is worth restating: if a
-prescription says 80% and the max is one mutable field, then every block ever
-written silently re-prices itself the moment that field moves. An e1RM ticking
-up in October changes what August's session meant.
-
-So entries are append-only, each carries the date it takes effect from, and
-asking for the current max is asking a question with a date in it. Entries
-dated in the future stay invisible until they arrive — which is what lets a
-coach set next block's numbers in advance without disturbing this week's.
-There is no update path; a new number is a new row, and deleting is the only
-edit.
-
-### Three kinds, two stored
-
-| Kind | Lives in | Meaning |
+| Kind | He types | She sees |
 | --- | --- | --- |
-| `tested` | `reference_maxes` | An actual max attempt |
-| `training` | `reference_maxes` | What percentages are calculated against — routinely not the tested max |
-| `estimated` | `stats_rollups` | Rolling e1RM from logged work |
+| Fixed | `142.5`, `60 kg` | 142.5 kg |
+| Percent | `75%`, `75% of tested` | 135 kg (75%) |
+| RPE | `@8`, `rpe8` | RPE 8 |
+| Capped | `75% @8` | 135 kg (75%), stop at RPE 8 |
+| Freeform | anything else | shown as written |
 
-**Estimated is derived, never stored here.** `best_e1rm_kg` already sits in the
-rollups and the rebuild script regenerates it from raw sets; a second copy would
-leave that script repairing half the data. `STORED_KINDS` has a test asserting
-it holds exactly two values, so a third cannot be added quietly.
+`75% @8` and `@8 75%` are the same prescription. Spellings normalise — `rpe 8`
+formats back as `@8`.
 
-### The permissions took two attempts, and the second is the point
+### Parsing never fails, and that needs a guard
 
-This table inverts the product's usual rule. Everywhere else the athlete writes
-and the coach only reads, because logged work is the athlete's — but a training
-max is programming input, and setting it *is* the coaching. The coach is the
-author.
+Freeform is the escape hatch and it is not optional, so anything the grammar
+does not recognise becomes freeform rather than an error. The risk is the
+opposite direction: parsing *too* eagerly and silently dropping what the coach
+actually said.
 
-That made a client-side write look right. It was built that way, and the
-permission probe refused it: Appwrite will not let a caller stamp a role they
-do not hold, so a coach can never grant the athlete a read.
+The percent and RPE regexes are non-global, so they see only the first match in
+a cell. A whole-cell check is what stops `75% 80%` parsing as a clean 75% and
+putting one of two percentages on the bar with no indication. Twelve ambiguous
+cells checked by hand — `@8 @9`, `3x8 @8`, `5x5 60kg`, `work up to rpe 8`,
+`rperformance 8` — all correctly freeform; the seven that would break first are
+pinned as tests.
 
-Fixing that surfaced the real problem, which no permission shape solves.
-**Appwrite constrains who may read a row. It cannot constrain what a row says.**
-`athlete_id` is data, not a permission, and there is no rule of the form
-"create only rows where this field equals your own id". With any table-level
-create, a signed-in stranger could write a row carrying somebody else's
-`athlete_id`, stamp it with a role everybody holds, and that invented number
-becomes what the athlete's percentages resolve against. A wrong number on a bar.
+A mistyped `75%%` still becomes literal text. The fix is not rejection — it is
+visibility: every spec carries its `kind`, so the editor shows the coach what
+their typing landed as. **Order 19 owes the athlete that indicator.**
 
-It is `invite_codes` again: a code someone can mint for themselves is a code
-they can mint naming somebody else as the coach.
+### Two rules that will look like bugs
 
-So `reference_maxes` is **server-only**. Table permissions `[]`, row
-permissions identical to a rollup, writes through `app/api/reference-max` with
-the API key behind `mayWriteFor` — the athlete, or a coach with an **active row
-in `coach_athlete_links`**. The link row is checked rather than circle
-membership, so a membership left behind by a half-failed revoke is never
-mistaken for an authorisation.
+- **A bare `8` is 8kg, not RPE 8.** The grammar requires `@` or `rpe`, per the
+  blueprint. A coach who means RPE 8 and types `8` gets a very light single.
+- **An out-of-range RPE stays the coach's words.** `@12` becomes freeform rather
+  than a silently clamped RPE 10.
 
-### Probe: 36/36
+### Which max a percentage points at
 
-Six new checks. The ones worth naming:
+"A percentage needs a reference max, which defaults to the training max and can
+be changed per row" — which **kind** of max, resolved against Order 17's table.
 
-- neither the coach **nor the athlete** can create a row from a browser;
-- a stranger cannot forge one carrying another athlete's id and a role everyone holds;
-- nothing can be edited in place;
-- a revoked coach loses **both read and write**, without anything re-stamping a row.
+Deliberately **not** a pointer at another exercise's max. This ticket's own
+notes reject "a single reference max standing in for lifts that move different
+weights", which is exactly what tempo bench at a percentage of competition bench
+would be. Whether Ruairi wants that anyway is **[SME to confirm]** — one
+nullable field if he does, not a reshaped union.
 
-That last one falls out of the circle design for free and is the case nobody
-would think to test.
+### Rounding, which is a product decision — please read
 
-### Two things caught in review, both of which changed what ships
+Resolved percentages round **down** to 2.5kg.
 
-- **Panel order.** `buildMaxRows` sorted heaviest-first. The blueprint reads
-  Squat, Bench, Deadlift — competition order — and the seeded library is
-  already in that order, so rows now pass through in library order. Sorting by
-  weight would have put most lifters' deadlift first and diverged from the spec
-  quietly.
-- **Pagination pointed the wrong way.** The read was `orderAsc("$id")` capped at
-  200. Appwrite ids are time-prefixed, so that kept the *oldest* 200 and
-  discarded the newest: past the cap the panel would freeze on stale numbers
-  with no error, taking every percentage resolved against them with it. Now
-  `orderDesc`.
+Down rather than to nearest, because the directions are not equally wrong:
+prescribing more than the coach asked for is a missed rep, prescribing a shade
+less is a set that was light. Rounding to nearest also made 100% of a 191.5kg
+max resolve to **192.5** — a weight the athlete has never lifted, prescribed as
+if they had. That surfaced as a failing test rather than as a decision, which is
+the only reason it got made deliberately.
 
-### Scope
+Cost: every resolved percentage sits up to 2.4kg under its exact value, ~1% on a
+heavy squat. **Both the increment and the direction are [SME to confirm] with
+Ruairi, and both are one-word changes.**
 
-The panel is **read-only**. The blueprint puts an `[ edit / set training max ]`
-control in it; that belongs with the rest of Athlete View at Order 25, and
-building it now means building it against a screen that does not exist.
+A percentage with no max resolves to **no load**, not to a guess — `prefill.ts`
+already documents exactly that case. A capped prescription keeps its RPE ceiling
+even then, because the ceiling is still a real instruction.
 
-The write path underneath is complete and tested — route, admin module, client
-store — because the panel and Order 18 are both inert without a way to put a
-number in. **No e2e script**: there is no UI to drive, so unit tests on the
-admin module plus the probe is the honest coverage.
+### Scope: no table, on purpose
 
-### [SME to confirm]
+A prescription hangs off a block, a week and a day, and that container is
+**Order 19 — still blocked on Ruairi's question** about whether he writes a block
+up front, week by week, or session by session. `schema.test.ts` still asserts
+`prescriptions` is absent.
 
-A max is held **per exercise, not per base lift** — a tempo bench and a
-competition bench are different numbers. Whether a percentage *on* a variation
-may point at the base lift's max is still open with Ruairi. It is a property of
-a prescription, so it belongs to Order 18 and is deliberately not modelled here.
+`parse` and `format` round-trip exactly for every kind, which is what makes the
+storage question safely deferrable: Order 19 can store the typed text or the
+structured fields and derive the other. Freeform forces the raw text to be kept
+either way.
+
+`toPrefillPrescription` is a typed seam onto the athlete's set row. **Nothing
+calls it yet** — `prefill.ts` does not import it — because the caller is the
+Program Editor. Deliberate, not an oversight, same as Order 17's write path.
 
 ### Verification
 
-`typecheck` · `lint` · **974 tests** · `build` · `appwrite:probe` **36/36** ·
-`perf:check` within budget (interactive 359ms Fast 4G).
+`typecheck` · `lint` · **1028 tests** (54 on this module) · `build`.
+No schema change, so no `appwrite:setup` and no probe run.
 
-Schema **v4**, applied live. Also renames a schema test whose title named the
-phases it covered and had gone stale twice in three tickets, and adds an
-assertion that a server-only table carries no table-level create — the exact
-drift that bit mid-ticket.
+Also corrects the schema docstring, which still claimed reference maxes were
+absent alongside prescriptions — half of that went stale when Order 17 shipped.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
