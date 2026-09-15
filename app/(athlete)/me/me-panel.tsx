@@ -2,16 +2,23 @@
 
 import { useRouter } from "next/navigation";
 import { CoachLink } from "@/components/coach/coach-link";
+import { TrainingSettings } from "@/components/profile/training-settings";
 import { InviteCodePanel } from "@/components/coach/invite-code";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth/session";
 import { useSession } from "@/lib/auth/session-context";
 
 /**
- * Profile & Settings is Order 35. What exists here now is what the shell needs
- * plus Orders 15 and 16: who is signed in, the way out, the switch into coach
- * mode for someone who has athletes, the invite code that gets them their first
- * one, and the coach who can see this athlete's training.
+ * Profile & Settings.
+ *
+ * Order 35 adds TRAINING -- name, sex, units -- to what Orders 15 and 16 had
+ * already put here: who is signed in, the way out, the switch into coach mode,
+ * the invite code, and the coach who can see this athlete's training.
+ *
+ * The blueprint's remaining rows belong elsewhere on purpose. Bodyweight is
+ * Order 36. The load-suggestion toggle is Order 28 and is blocked on Ruairi --
+ * it is a coaching philosophy question, not a product one. CSV export is
+ * Order 39. The coach-side BILLING section waits for something to bill.
  */
 export function MePanel() {
   const router = useRouter();
@@ -26,6 +33,8 @@ export function MePanel() {
         <span className="text-title font-semibold">{state.user.name}</span>
         <span className="text-body text-muted">{state.user.email}</span>
       </div>
+
+      <TrainingSettings />
 
       <CoachLink />
 

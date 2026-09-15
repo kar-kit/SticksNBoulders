@@ -12,6 +12,7 @@ import {
   type Actor,
 } from "@/appwrite/documents";
 import { ensureMyCircle } from "@/lib/auth/circle";
+import { ensureMyProfile } from "@/lib/profile/profile-store";
 import { refreshRollup } from "@/lib/strength/rollup-client";
 import type { QueuedOp } from "./queue";
 
@@ -35,9 +36,20 @@ const asDate = (value: unknown): Date => new Date(asString(value));
  * success, so this costs one promise read -- and without it the first write
  * after a cold load comes back 401, because Appwrite rejects a team permission
  * from someone the team has never heard of.
+ *
+ * The profile is ensured beside it, and is deliberately allowed to fail. It is
+ * not a precondition of writing anything -- it is what makes this athlete have
+ * a NAME, which `fetchAthleteNames` reads for the coach's rail and the Review
+ * Queue. Before Order 35 nothing ever created one, so every athlete showed up
+ * to their coach as "Unnamed athlete". Here because this is the moment an
+ * athlete first writes something a coach will read, and a set arriving from
+ * nobody is the state this prevents.
  */
 export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
   await ensureMyCircle();
+  // Not awaited into the failure path: a profile that cannot be written must
+  // never stop a set from being logged.
+  void ensureMyProfile().catch(() => {});
   const p = op.payload;
 
   switch (op.kind) {
