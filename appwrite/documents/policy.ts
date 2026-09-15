@@ -13,7 +13,11 @@ import { circleTeamId } from "./circle";
  */
 
 export type WritableTable = "profiles" | "exercises" | "sessions" | "sets";
-export type ServerTable = "stats_rollups" | "coach_athlete_links" | "invite_codes";
+export type ServerTable =
+  | "stats_rollups"
+  | "coach_athlete_links"
+  | "invite_codes"
+  | "reference_maxes";
 export type PolicyTable = WritableTable | ServerTable;
 
 /** Appwrite's wire format for permissions. Built here and nowhere else. */
@@ -120,6 +124,36 @@ export function linkPermissions({ coachId, athleteId }: LinkParties): string[] {
 }
 
 /**
+ * A reference max: what a percentage is a percentage OF.
+ *
+ * Read by the athlete and their circle, written by nobody -- the same shape as
+ * a rollup, and for a sharper reason.
+ *
+ * The coach is this table's author, which is the one place the product's usual
+ * rule inverts: everywhere else the athlete writes because logged work is
+ * theirs, but a training max is programming input and setting it is the
+ * coaching. That made a client-side write look right, and it is not.
+ *
+ * Appwrite permissions constrain who may read a row; they cannot constrain
+ * what a row says. With any table-level create, a signed-in stranger could
+ * write a row carrying somebody else's `athlete_id`, stamp it `read("users")`
+ * -- a role everybody holds -- and that forged number would appear in the
+ * athlete's panel as the max their percentages resolve against. It is
+ * `invite_codes` again: a code someone can mint for themselves is a code they
+ * can mint naming somebody else as the coach.
+ *
+ * So writes go through the API key, behind a route that checks the caller is
+ * the athlete or actively coaches them. See reference-max-admin.ts.
+ *
+ * No update permission either, and that one is about history rather than
+ * forgery: the table is append-only, and a max edited in place would take the
+ * record of what August's percentages meant with it.
+ */
+export function referenceMaxPermissions({ athleteId }: RowOwner): string[] {
+  return ownedByAthlete(requireId(athleteId, "athleteId"), false);
+}
+
+/**
  * A coach reads their own code and nobody else reads it at all.
  *
  * Not because the code is a secret from the athlete -- the coach is about to
@@ -145,6 +179,7 @@ export const POLICIES = {
   stats_rollups: rollupPermissions,
   coach_athlete_links: linkPermissions,
   invite_codes: invitePermissions,
+  reference_maxes: referenceMaxPermissions,
 } as const satisfies Record<PolicyTable, (owner: never) => string[]>;
 
 /** Tables a signed-in user may write to at all. */
@@ -159,4 +194,5 @@ export const SERVER_ONLY_TABLES: readonly ServerTable[] = [
   "stats_rollups",
   "coach_athlete_links",
   "invite_codes",
+  "reference_maxes",
 ];

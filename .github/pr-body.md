@@ -1,66 +1,115 @@
-## Appwrite events work on 1.9.6 — correcting the record
+## Order 17 — Reference maxes
 
-Not a feature. Tonight's upgrade fixed something four places in the tree
-described as broken, and a comment explaining why a workaround exists is worse
-than no comment once the thing it works around is gone: the next person reads it
-as a live constraint.
+A percentage prescription is meaningless until something says what it is a
+percentage **of**. This is the table Order 18 writes against.
 
-### The measurement
+### A table with effective dates, not a number on the profile
 
-`probe-events` subscribes to a set being created and does nothing but log that
-it ran. Appwrite records a `trigger` on every execution, so the evidence is its
-own bookkeeping rather than anything the function decided.
+The ticket is explicit about this and the reason is worth restating: if a
+prescription says 80% and the max is one mutable field, then every block ever
+written silently re-prices itself the moment that field moves. An e1RM ticking
+up in October changes what August's session meant.
 
-| trigger | count | first | last |
-|---|---|---|---|
-| `event` | 332 | 22:31Z | 23:51Z |
-| `http` | 1 | 23:51Z | 23:51Z |
+So entries are append-only, each carries the date it takes effect from, and
+asking for the current max is asking a question with a date in it. Entries
+dated in the future stay invisible until they arrive — which is what lets a
+coach set next block's numbers in advance without disturbing this week's.
+There is no update path; a new number is a new row, and deleting is the only
+edit.
 
-The upgrade completed around **22:05Z**. Every event-triggered execution in the
-instance's history falls after it and none before — the same function, the same
-subscriptions, nothing on 1.9.0.
+### Three kinds, two stored
 
-Cause is **[Inference]**, not fact: 1.9.0's installer-generated compose had no
-`appwrite-worker-executions` service, 1.9.5's notes fix exactly that omission,
-and the service exists post-upgrade. The timing and the missing service agree;
-nothing inside Appwrite was instrumented to prove the mechanism.
+| Kind | Lives in | Meaning |
+| --- | --- | --- |
+| `tested` | `reference_maxes` | An actual max attempt |
+| `training` | `reference_maxes` | What percentages are calculated against — routinely not the tested max |
+| `estimated` | `stats_rollups` | Rolling e1RM from logged work |
 
-### The finding worth more than the headline
+**Estimated is derived, never stored here.** `best_e1rm_kg` already sits in the
+rollups and the rebuild script regenerates it from raw sets; a second copy would
+leave that script repairing half the data. `STORED_KINDS` has a test asserting
+it holds exactly two values, so a third cannot be added quietly.
 
-The event that actually fired was the **documents** form, not the tables form,
-for a TablesDB row write:
+### The permissions took two attempts, and the second is the point
 
-```
-databases.sticksnboulders.collections.sets.documents.<rowId>.create
-```
+This table inverts the product's usual rule. Everywhere else the athlete writes
+and the coach only reads, because logged work is the athlete's — but a training
+max is programming input, and setting it *is* the coaching. The coach is the
+author.
 
-The probe carried both subscriptions and this is the one that matched. A
-Function subscribed only to `databases.<db>.tables.<table>.rows.*.create` may
-never fire while looking entirely correct. That is a expensive afternoon for
-whoever hits it, so it is in `docs/appwrite-events.md` in bold.
+That made a client-side write look right. It was built that way, and the
+permission probe refused it: Appwrite will not let a caller stamp a role they
+do not hold, so a coach can never grant the athlete a read.
 
-### What I did not change
+Fixing that surfaced the real problem, which no permission shape solves.
+**Appwrite constrains who may read a row. It cannot constrain what a row says.**
+`athlete_id` is data, not a permission, and there is no rule of the form
+"create only rows where this field equals your own id". With any table-level
+create, a signed-in stranger could write a row carrying somebody else's
+`athlete_id`, stamp it with a role everybody holds, and that invented number
+becomes what the athlete's percentages resolve against. A wrong number on a bar.
 
-**Rollups keep their route.** It was a workaround; it stays by choice. A
-Function would need its own copy of `lib/strength/rollup.ts`, and two
-implementations of an aggregate is precisely how a repair script stops
-repairing — the reason `rollupFrom` is shared with the rebuild script at all.
-What a Function buys is firing on writes that did not come through this app, and
-by policy there are none. Happy to move it if you disagree, but I would not.
+It is `invite_codes` again: a code someone can mint for themselves is a code
+they can mint naming somebody else as the coach.
 
-**Invite redemption keeps its route** too — it never needed events.
+So `reference_maxes` is **server-only**. Table permissions `[]`, row
+permissions identical to a rollup, writes through `app/api/reference-max` with
+the API key behind `mayWriteFor` — the athlete, or a coach with an **active row
+in `coach_athlete_links`**. The link row is checked rather than circle
+membership, so a membership left behind by a half-failed revoke is never
+mistaken for an authorisation.
 
-### Housekeeping
+### Probe: 36/36
 
-The probe is left **disabled**. It fires on every set created: 332 executions in
-ninety minutes of e2e runs, every one failing until it had a deployment. Left
-enabled it would spawn an execution per athlete set forever. Its subscriptions
-are kept as the record of what was tested.
+Six new checks. The ones worth naming:
 
-```
-npm test 923 ✓   npm run typecheck ✓   npm run lint ✓
-```
+- neither the coach **nor the athlete** can create a row from a browser;
+- a stranger cannot forge one carrying another athlete's id and a role everyone holds;
+- nothing can be edited in place;
+- a revoked coach loses **both read and write**, without anything re-stamping a row.
 
-Docs only — no behaviour changed.
+That last one falls out of the circle design for free and is the case nobody
+would think to test.
+
+### Two things caught in review, both of which changed what ships
+
+- **Panel order.** `buildMaxRows` sorted heaviest-first. The blueprint reads
+  Squat, Bench, Deadlift — competition order — and the seeded library is
+  already in that order, so rows now pass through in library order. Sorting by
+  weight would have put most lifters' deadlift first and diverged from the spec
+  quietly.
+- **Pagination pointed the wrong way.** The read was `orderAsc("$id")` capped at
+  200. Appwrite ids are time-prefixed, so that kept the *oldest* 200 and
+  discarded the newest: past the cap the panel would freeze on stale numbers
+  with no error, taking every percentage resolved against them with it. Now
+  `orderDesc`.
+
+### Scope
+
+The panel is **read-only**. The blueprint puts an `[ edit / set training max ]`
+control in it; that belongs with the rest of Athlete View at Order 25, and
+building it now means building it against a screen that does not exist.
+
+The write path underneath is complete and tested — route, admin module, client
+store — because the panel and Order 18 are both inert without a way to put a
+number in. **No e2e script**: there is no UI to drive, so unit tests on the
+admin module plus the probe is the honest coverage.
+
+### [SME to confirm]
+
+A max is held **per exercise, not per base lift** — a tempo bench and a
+competition bench are different numbers. Whether a percentage *on* a variation
+may point at the base lift's max is still open with Ruairi. It is a property of
+a prescription, so it belongs to Order 18 and is deliberately not modelled here.
+
+### Verification
+
+`typecheck` · `lint` · **974 tests** · `build` · `appwrite:probe` **36/36** ·
+`perf:check` within budget (interactive 359ms Fast 4G).
+
+Schema **v4**, applied live. Also renames a schema test whose title named the
+phases it covered and had gone stale twice in three tickets, and adds an
+assertion that a server-only table carries no table-level create — the exact
+drift that bit mid-ticket.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

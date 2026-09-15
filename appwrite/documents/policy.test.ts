@@ -5,6 +5,7 @@ import {
   linkPermissions,
   POLICIES,
   profilePermissions,
+  referenceMaxPermissions,
   rollupPermissions,
   sessionPermissions,
   setPermissions,
@@ -150,6 +151,49 @@ describe("an invite code", () => {
   });
 });
 
+describe("a reference max", () => {
+  it("is readable by the athlete and their circle", () => {
+    const permissions = referenceMaxPermissions({ athleteId: ATHLETE });
+    expect(permissions).toContain(`read("user:${ATHLETE}")`);
+    expect(permissions).toContain(`read("team:${circle}")`);
+  });
+
+  /**
+   * The coach authors this table, and still cannot write it from a browser.
+   * Appwrite constrains who reads a row, not what the row says: `athlete_id`
+   * is data, so a client able to create one could create it carrying somebody
+   * else's id and stamp it with a role everybody holds. The forged number
+   * would then be what that athlete's percentages resolve against.
+   */
+  it("is writable by nobody, coach and athlete included", () => {
+    const permissions = referenceMaxPermissions({ athleteId: ATHLETE }).join(" ");
+    expect(permissions).not.toContain("update(");
+    expect(permissions).not.toContain("delete(");
+    expect(permissions).not.toContain("create(");
+  });
+
+  it("is stamped exactly like a rollup, which is written the same way", () => {
+    expect(referenceMaxPermissions({ athleteId: ATHLETE })).toEqual(
+      rollupPermissions({ athleteId: ATHLETE }),
+    );
+  });
+
+  /**
+   * Free from the circle design: revoking a link removes circle membership, so
+   * a former coach loses sight of these without anything re-stamping the rows.
+   */
+  it("names no coach directly, so revoking a link removes their access", () => {
+    const permissions = referenceMaxPermissions({ athleteId: ATHLETE }).join(" ");
+    expect(permissions).not.toContain(COACH);
+    expect(permissions).not.toContain(STRANGER);
+    expect(permissions).not.toContain('"users"');
+  });
+
+  it("refuses to be stamped without an athlete", () => {
+    expect(() => referenceMaxPermissions({ athleteId: "" })).toThrow(/athleteId/);
+  });
+});
+
 describe("policy hygiene", () => {
   it("covers every table, so one cannot be added without a policy", () => {
     expect(Object.keys(POLICIES).sort()).toEqual([
@@ -157,6 +201,7 @@ describe("policy hygiene", () => {
       "exercises",
       "invite_codes",
       "profiles",
+      "reference_maxes",
       "sessions",
       "sets",
       "stats_rollups",
@@ -171,6 +216,7 @@ describe("policy hygiene", () => {
       ...exercisePermissions({ athleteId: ATHLETE, isGlobal: true }),
       ...linkPermissions({ coachId: COACH, athleteId: ATHLETE }),
       ...invitePermissions({ coachId: COACH }),
+      ...referenceMaxPermissions({ athleteId: ATHLETE }),
     ];
     for (const permission of every) {
       expect(permission).toMatch(/^(read|update|delete)\("(users|user:[\w.-]+|team:[\w.-]+)"\)$/);

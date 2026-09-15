@@ -25,7 +25,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 3,
+  version: 4,
   tables: [
     {
       id: "profiles",
@@ -171,6 +171,55 @@ export const schema: DatabaseSpec = {
           columns: ["athlete_id", "exercise_id", "week_start"],
         },
         { key: "idx_athlete_week", type: "key", columns: ["athlete_id", "week_start"], orders: ["asc", "desc"] },
+      ],
+    },
+
+    {
+      id: "reference_maxes",
+      name: "Reference maxes",
+      purpose:
+        "What a percentage is a percentage OF. Append-only with effective dates, not a number on a profile, so a block written in August still explains itself in October. Only tested and training live here -- estimated is the best e1RM in stats_rollups and is never stored twice.",
+      rowSecurity: true,
+      // No table-level create, like invite_codes: Appwrite can police who
+      // reads a row but not what the row claims, so a client that could create
+      // one could create it carrying somebody else's athlete_id.
+      permissions: [],
+      columns: [
+        { key: "athlete_id", type: "string", size: 36, required: true },
+        // Per exercise, not per base lift: the Order 17 ticket is explicit
+        // that "a variation is its own exercise, so a max is held per
+        // exercise". Whether a percentage ON a variation may point at the base
+        // lift's max is [SME to confirm] with Ruairi, and belongs to the
+        // prescription at Order 18 -- not modelled here.
+        { key: "exercise_id", type: "string", size: 36, required: true },
+        // Deliberately two values, not three. "Estimated" is the best e1RM in
+        // stats_rollups; making it writable here would be a second
+        // implementation of an aggregate, which is how the rebuild script
+        // stops being the repair path.
+        { key: "kind", type: "enum", elements: ["tested", "training"], required: true },
+        { key: "value_kg", type: "float", required: true, min: 0 },
+        // The date it applies from, which is not the date it was typed: a
+        // coach entering Monday's test on Wednesday means Monday.
+        { key: "effective_from", type: "datetime", required: true },
+        // Coach or athlete. Kept because "who decided this number" is the
+        // first question asked when a percentage looks wrong.
+        { key: "recorded_by", type: "string", size: 36, required: true },
+        { key: "created_at", type: "datetime", required: true },
+      ],
+      indexes: [
+        {
+          key: "idx_athlete_exercise_kind",
+          type: "key",
+          columns: ["athlete_id", "exercise_id", "kind"],
+        },
+        // The current max is the newest one that has come into effect, so the
+        // sort is part of the question and belongs in the index.
+        {
+          key: "idx_athlete_effective",
+          type: "key",
+          columns: ["athlete_id", "effective_from"],
+          orders: ["asc", "desc"],
+        },
       ],
     },
 
