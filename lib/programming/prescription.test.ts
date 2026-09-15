@@ -140,6 +140,33 @@ describe("freeform, the escape hatch", () => {
     expect(parse("75% then stretch")).toEqual({ kind: "freeform", text: "75% then stretch" });
     expect(parse("squat 142.5")).toMatchObject({ kind: "freeform" });
   });
+
+  /**
+   * The regexes are non-global, so they see only the first percentage and the
+   * first RPE. Everything here would be a silent drop -- a coach typing two
+   * percentages getting one of them on the bar -- if the whole-cell check were
+   * not there. It is the guard that makes the grammar safe to keep loose, so
+   * these are pinned rather than left to the happy path.
+   */
+  it.each([
+    "75% 80%",
+    "80% 75%",
+    "@8 @9",
+    "75% @8 @9",
+    "75% of tested 75%",
+    "3x8 @8",
+    "5x5 60kg",
+  ])("keeps %s whole instead of parsing the first token and dropping the rest", (text) => {
+    expect(parse(text)).toEqual({ kind: "freeform", text });
+  });
+
+  /** An RPE spelling embedded in a sentence must not escape the sentence. */
+  it.each(["work up to rpe 8", "work up to a heavy single @ 8 sets", "rperformance 8"])(
+    "does not find a prescription inside %s",
+    (text) => {
+      expect(parse(text)).toEqual({ kind: "freeform", text });
+    },
+  );
 });
 
 describe("format and parse are inverses", () => {
