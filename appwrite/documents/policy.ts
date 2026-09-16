@@ -18,7 +18,8 @@ export type WritableTable =
   | "sessions"
   | "sets"
   | "set_reviews"
-  | "set_comments";
+  | "set_comments"
+  | "bodyweight_entries";
 export type ServerTable =
   | "stats_rollups"
   | "coach_athlete_links"
@@ -262,6 +263,20 @@ export function commentPermissions({ athleteId, authorId }: CommentAuthor): stri
   ];
 }
 
+/**
+ * A weigh-in.
+ *
+ * Exactly the shape of a session or a set, and deliberately so: it is the
+ * athlete's own record of their own body, written by them and read by whoever
+ * coaches them. The coach reading it is the entire feature -- Ruairi asked for
+ * this because he currently has to ask -- and the coach not writing it is the
+ * same rule as everywhere else, because a coach who could edit a bodyweight
+ * could edit a DOTS score.
+ */
+export function bodyweightPermissions({ athleteId }: RowOwner): string[] {
+  return ownedByAthlete(requireId(athleteId, "athleteId"), true);
+}
+
 /** Every policy in one place, so a table can never be added without one. */
 export const POLICIES = {
   profiles: profilePermissions,
@@ -270,6 +285,7 @@ export const POLICIES = {
   sets: setPermissions,
   set_reviews: reviewPermissions,
   set_comments: commentPermissions,
+  bodyweight_entries: bodyweightPermissions,
   stats_rollups: rollupPermissions,
   coach_athlete_links: linkPermissions,
   invite_codes: invitePermissions,
@@ -284,6 +300,7 @@ export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
   "sets",
   "set_reviews",
   "set_comments",
+  "bodyweight_entries",
 ];
 
 export const SERVER_ONLY_TABLES: readonly ServerTable[] = [

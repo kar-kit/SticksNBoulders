@@ -20,6 +20,7 @@ describe("schema shape", () => {
   // the old title named the phases and went stale twice in three tickets.
   it("holds every table the build has agreed on, and none it has not", () => {
     expect(schema.tables.map((t) => t.id).sort()).toEqual([
+      "bodyweight_entries",
       "coach_athlete_links",
       "exercises",
       "invite_codes",

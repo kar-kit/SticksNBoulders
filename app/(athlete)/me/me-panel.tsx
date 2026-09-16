@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { CoachLink } from "@/components/coach/coach-link";
 import { TrainingSettings } from "@/components/profile/training-settings";
+import Link from "next/link";
 import { InviteCodePanel } from "@/components/coach/invite-code";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth/session";
@@ -35,6 +36,18 @@ export function MePanel() {
       </div>
 
       <TrainingSettings />
+
+      {/* The blueprint puts bodyweight in TRAINING as a row that opens its own
+          screen, and reaches that screen from here or from Today. It is not a
+          tab: a screen visited once a morning does not earn a permanent
+          quarter of the bottom bar. */}
+      <Link
+        href="/bodyweight"
+        className="flex items-center justify-between rounded-control border border-border px-3 py-2.5"
+      >
+        <span className="text-body">Bodyweight</span>
+        <span className="text-ui text-muted">Log &amp; trend ›</span>
+      </Link>
 
       <CoachLink />
 

@@ -1,5 +1,6 @@
 import { circleTeamId } from "./circle";
 import {
+  bodyweightPermissions,
   exercisePermissions,
   invitePermissions,
   linkPermissions,
@@ -27,6 +28,11 @@ const OWNED = [
   ["sessions", sessionPermissions],
   ["sets", setPermissions],
   ["stats_rollups", rollupPermissions],
+  // A weigh-in is the athlete's own record of their own body. The coach
+  // reading it is the whole feature; the coach not writing it is the same rule
+  // as everywhere else, because a coach who could edit a bodyweight could edit
+  // a DOTS score.
+  ["bodyweight_entries", bodyweightPermissions],
 ] as const;
 
 describe("who can read an athlete's rows", () => {
@@ -273,6 +279,7 @@ describe("a comment on a set", () => {
 describe("policy hygiene", () => {
   it("covers every table, so one cannot be added without a policy", () => {
     expect(Object.keys(POLICIES).sort()).toEqual([
+      "bodyweight_entries",
       "coach_athlete_links",
       "exercises",
       "invite_codes",

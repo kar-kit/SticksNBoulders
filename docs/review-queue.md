@@ -197,3 +197,14 @@ unlinked coach's existing ticket dying immediately.
 | `components/coach/clip-context.tsx` | Everything right of the video |
 | `scripts/e2e-review.mts` | The data path, live |
 | `scripts/e2e-clip.mts` | Playback, live |
+
+## A bound worth writing down
+
+`markSetReviewed` derives its row id as `<coachId>_<setId>`. With Appwrite's
+generated ids that is 20 + 1 + 20 = **41 characters**, and `npm run e2e:review`
+writes one at exactly that length against the live instance on every run. So the
+practical limit is at least 41, not the 36 the docs suggest — proven rather than
+assumed, and worth knowing before anyone derives a longer one.
+
+`bodyweightRowId` at Order 36 guards explicitly rather than relying on it, since
+its athlete id could in principle be a custom one.
