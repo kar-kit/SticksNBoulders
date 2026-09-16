@@ -91,8 +91,9 @@ from.
 
 ## What is not here
 
-**DOTS is Order 37** and is absent rather than stubbed. `computeDots` takes a
-non-nullable `Sex`, and Order 35 just shipped the field it needs.
+**DOTS landed at Order 37**, below the chart. See `docs/dots.md`. It reads the
+latest weigh-in from here and `profiles.sex` from Order 35; `dotsScore` takes a
+non-nullable `Sex`, so a missing answer cannot reach a coefficient set.
 
 **No scale photo, no verification, no anti-cheat.** That mechanism belonged to
 the friend-leaderboard version of this product and was cut entirely. In a

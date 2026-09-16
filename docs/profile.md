@@ -60,9 +60,9 @@ nullable-to-required change as a `manual-column-change` anyway.
 So: **storage permits the absence, the product asks anyway, and nothing
 downstream guesses.** `needsSex` is deliberately not the same predicate as
 `sex === null`; the Me screen shows an unanswered sex as a question with its
-reason attached, and `computeDots` takes a non-nullable `Sex`, so a missing
-answer cannot reach a coefficient set. DOTS renders nothing rather than picking
-one of the two formulas.
+reason attached, and `dotsScore` takes a non-nullable `Sex`, so a missing
+answer cannot reach a coefficient set. DOTS renders a prompt back to this
+screen rather than picking one of the two formulas — see `docs/dots.md`.
 
 **[SME to confirm]** — the blueprint wants this asked during onboarding, not on
 the settings screen. The onboarding flow is its own blueprint page and not this
