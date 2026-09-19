@@ -1,5 +1,6 @@
 import { CurrentMaxes } from "@/components/coach/current-maxes";
 import { AthleteBodyweight } from "@/components/coach/athlete-bodyweight";
+import { DotsBlock } from "@/components/strength/dots-block";
 import { RecentFeedback } from "@/components/coach/recent-feedback";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -16,6 +17,10 @@ export const metadata = { title: "Athlete — Sticks N Boulders" };
  * written in the Review Queue, which is organised around clearing, so a clip
  * leaves it the moment it is dealt with. This is the only place a coach can
  * read back everything they have said to one person.
+ *
+ * DOTS follows at Order 37, next to bodyweight because that is half of what it
+ * is made of. A personal progression number, deliberately not a ranking: there
+ * is no second athlete's score anywhere on this screen.
  *
  * CURRENT MAXES lands early because Order 18's prescriptions need somewhere to
  * point: a percentage is a percentage of one of these numbers, so the panel
@@ -34,6 +39,7 @@ export default async function AthleteViewPage({
     <div className="flex h-full flex-col gap-8 p-8">
       <CurrentMaxes athleteId={athleteId} />
       <AthleteBodyweight athleteId={athleteId} />
+      <DotsBlock athleteId={athleteId} audience="coach" />
       <RecentFeedback athleteId={athleteId} />
       <EmptyState
         title="The rest of this screen is coming"

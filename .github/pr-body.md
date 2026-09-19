@@ -1,97 +1,145 @@
-## Order 36 — Bodyweight log and graph
+## Order 37 — DOTS calculation and display
 
-> "He said he currently has to ask athletes what they weigh."
+A total divided by what a lifter that size is expected to total, so progress at
+a changing bodyweight still reads as progress.
 
-So the job was never to build a weight tracker — it was to make the number land
-on your Athlete View by itself. That sentence decides most of what's below, and
-it's why bodyweight survived when the rest of the competition layer was cut.
+**A personal progression number, not a ranking.** No leaderboard, no groups, no
+percentile, no comparison between two athletes — and deliberately no shape that
+would make one cheap to add later. That layer is the final phase.
 
-### One entry per day, enforced by the id
+### The coefficients are cited, not remembered
 
-`bodyweightRowId(athleteId, measuredOn)` → `<athleteId>_<YYYYMMDD>`. Derived
-rather than generated, so logging again on the same morning **updates** the row
-that's already there. Two weigh-ins on one day would quietly drag the rolling
-average the whole screen is about.
+This is the part of the ticket that was allowed to block, so none of the ten
+numbers are written from memory. They're transcribed from OpenPowerlifting's
+reference implementation — the code that computes the DOTS printed on every
+lifter page on that site — **pinned to a commit rather than to `main`**, because
+a citation that can change underneath you isn't a citation. Tim Konertz wrote
+the formula for the BVDK; there's one published revision. `docs/dots.md` carries
+the URL, the blob hash and the retrieval date.
 
-Guarded at 36 characters like `circleTeamId`. A generated user id is 20 and
-leaves room; a custom one would push it over, and the failure would look like a
-rejected weigh-in rather than a naming problem.
+**Validated against 98 published meet rows, three lifters, both sexes.** Seven
+are in the tests.
 
-### `measured_on` is a day, not a timestamp
+A published DOTS isn't reproducible to the last decimal from a published
+bodyweight, and the reason is worth having rather than papering over with a
+loose tolerance: the site stores bodyweight to two decimals and prints **one**,
+so a row reading `63.4` was lifted somewhere in `[63.4, 63.5)`, and the true
+score sits in a band a few hundredths wide. **96 of the 98 fall inside it.** The
+two that don't are pound-converted high-school totals whose hidden precision is
+its own problem — excluded from the table rather than explained away. The tests
+assert the band, which is tight enough that a transposed digit misses it by
+whole points.
 
-Built from **local** date parts. A weigh-in belongs to a morning, and
-`toISOString` would agree with someone in London and file a Sydney athlete's 7am
-under yesterday. `recorded_at` separately holds when it was typed — they differ
-when somebody catches up on a missed day.
+### The old `lib/dots.ts` is deleted, not reused
 
-### Three decisions about the average, all about where it would lie
+It carried the same ten numbers — and that wasn't evidence of anything. Its test
+recomputed the same polynomial inline and asserted the two agreed, which passes
+for *any* coefficients at all. That's precisely the plausible-numbers-with-a-
+tautological-test trap this ticket was written to avoid, and it sat green in the
+suite the whole time. It was also per-lift and leaderboard-shaped, and returned
+a **negative** score at zero bodyweight.
 
-**A partial window still gives a number.** Four days in, or back after a week
-away. The blueprint asks for no guilt copy on a gap, and a blank where the trend
-should be *is* guilt copy. The count comes with it, so the screen says "from 3"
-rather than implying a week of data that doesn't exist.
+The clamp came with the citation and is part of the formula rather than
+tidiness: **40–210kg for men, 40–150kg for women**, and the ceilings must not be
+shared. The quartic has a negative leading term, so past its fitted range it
+turns over and a heavier lifter would score *higher*.
 
-**The change is window-to-window, not day-to-day.** A single day is mostly water;
-telling someone they gained half a kilo overnight is noise dressed as
-information.
+### Where the total comes from — your call to confirm
 
-**It stops entirely once the last weigh-in falls outside the window.** A
-"7-day average" for someone three weeks off the scales is a lie with a number
-attached — both screens show the last weight and its date instead. This matters
-most on your side: a stale bodyweight read as current is how a weight class gets
-missed.
+This changes the number, so it was decided rather than inherited: **the better
+of the tested max and the best rolling e1RM per competition lift, with training
+maxes excluded.**
 
-The average is computed over the **full history** at every plotted point, not the
-visible range. Otherwise switching 90d → 30d changes the line's shape at its
-left-hand edge, and an average that moves when you zoom is one nobody can trust.
+That diverges from `preferredMax`, which CURRENT MAXES uses, and the divergence
+is the point. A training max is deliberately submaximal — so feeding it in would
+mean **you starting a conservative block lowers your athlete's progression
+number** without the athlete doing anything. The e2e writes one and asserts the
+score doesn't move.
 
-### The chart
+Not e1RM alone either: a meet total you typed in has no set behind it and would
+vanish. Not tested alone: most athletes never enter one and would never see a
+score.
 
-Two series, one scale. **Both map through the same min and max** — that's the one
-bug in a two-series chart that reads as a data problem rather than a rendering
-one: scaled apart, the average drifts off the points it's averaging. The dailies
-are faint and the average isn't, so the eye lands on the trend.
+> **[SME to confirm]** — is Ruairi happy with DOTS built partly on e1RM
+> estimates, or does he want tested maxes only? One line to change. Worth asking,
+> because an athlete who's never tested would then have no DOTS at all.
 
-Its own geometry rather than widening `chartGeometry` — that one's typed to a
-`WeekPoint` and draws a single series, and changing a shipped chart to serve a
-new one costs more than twenty lines of maths.
+### Identifying the three lifts
 
-### A real bug the tests caught
+Needed a concept no field in the schema carries, so it's a constant of three
+normalised names and **no schema change** — three sibling branches are live and
+`appwrite-setup.mts` is where they'd all collide.
 
-**`dayDate` checked the shape of a key, not its validity.** `new Date(2026, 12,
-45)` doesn't throw — it rolls over to a real day in **February 2027**. A corrupt
-`measured_on` would have plotted somewhere plausible and dragged an average with
-no error anywhere. The parsed date is now checked back against the key it came
-from.
+Matched on exact equality and `is_global`, never `includes`. The seeded library
+holds five squat variations, and `seed.ts` is explicit that a variation is its
+own exercise with its own max. The global filter stops an athlete's hand-typed
+"Squat" shadowing the seeded row.
+
+**All three or none.** Two lifts isn't a total — a missing deadlift cuts the
+score by a third and would read as a collapse in form rather than an absent
+number.
+
+### Nothing is stored
+
+The compute-and-store rule is about aggregates Appwrite can't compute on read.
+This is one division over numbers both screens already fetch, so storing it
+would just add a second copy to keep true. One `fetchDots` serves both surfaces
+— you and your athlete seeing different DOTS for the same lifter is a bug found
+in a conversation, not in a test.
+
+### The four ways there's no number
+
+A discriminated result rather than a null, because each needs different words.
+The blueprint asks DOTS to fail with a prompt to complete the profile, which it
+can only do if it knows *which* thing is missing. Refusals are ordered by what
+the athlete can act on — sex is one tap, a weigh-in needs scales, a missing lift
+needs training.
+
+**A stale bodyweight still scores, labelled.** Following the precedent
+`bodyweight.md` set: suppressing it would empty the panel on the screen that
+exists so you stop having to ask, and showing it bare would present a month-old
+weight as this morning's. The window is the bodyweight module's own, so there's
+no second staleness constant to drift.
+
+### One thing about the blueprint
+
+Page 08's wireframe shows `DOTS 341.2` above `from 212.5 / 140 / 200`. Those
+don't reconcile — that lifter scores **374.5**. I read the figures as decorative
+and didn't use them as a test vector. Flagging it in case 341.2 was meant to
+mean something.
 
 ### Not in scope
 
-- **DOTS is Order 37**, absent rather than stubbed. `computeDots` takes a
-  non-nullable `Sex` and Order 35 just shipped the field.
-- **No scale photo, no verification, no anti-cheat** — that belonged to the
-  friend-leaderboard product and was cut. In a coaching product you are the
-  verification.
-- **Not a tab.** Four tabs on the athlete side, and a screen visited once a
-  morning doesn't earn a permanent quarter of the bottom bar. Reached from
-  Profile. The blueprint also mentions a weigh-in prompt on Today — that's
-  Today's screen, and I left it alone rather than adding it unasked. Say if you
-  want it.
-- **The logging `NumberPad` isn't reused** — it carries a warm-up toggle and a
-  next-field flow that mean nothing here. `inputMode="decimal"` gets the phone's
-  own pad, same keys.
+- **No DOTS-over-time chart, no roster DOTS column.** Both are a few lines on
+  top of this, and both are the first step of the competition layer rather than
+  the last step of this ticket. Blueprint 08 shows a single number. Say if you
+  want either.
+- **No lb display.** The figure is unitless and the breakdown is in kg like
+  everything else. `profiles.units` is a preference nothing yet honours — its own
+  ticket.
 
 ### Verification
 
-`typecheck` · `lint` · **1220 tests, 76 files** · `build` · `perf:check` inside
-budget · `appwrite:probe` 42/42 · schema applied at v8.
+`lint` · `typecheck` · **1244 tests, 76 files** · `perf:check` inside budget ·
+`appwrite:probe` **42/42**.
 
-Live: `npm run e2e:bodyweight` — **10/10**, including the two that matter: the
-coach reading their athlete's weigh-ins, and a second weigh-in on the same
-morning being refused rather than appended.
+Live: `npm run e2e:dots` — **12/12**. The arithmetic is unit-tested and needs no
+network; what only the instance proves is the composition, because DOTS is the
+first number in the product assembled from **five tables at once** — `profiles`,
+`bodyweight_entries`, `reference_maxes`, `stats_rollups`, `exercises`. The
+headline check is that a linked coach reads all five through the circle team and
+lands on exactly the number the athlete sees. Five tables is five chances for
+one to be readable by the athlete and not their coach, and that failure wouldn't
+look like a permission error — it'd look like a slightly different score.
 
-Also documented in `docs/review-queue.md`: `markSetReviewed` derives a 41-char
-row id and the e2e proves that length works, so the practical Appwrite limit is
-at least 41 rather than the 36 the docs suggest. Undocumented luck, now
-documented.
+Also proved rather than claimed: a training max doesn't move it, a Pause Squat
+with a 400kg e1RM stays out of the total, a better rolling e1RM raises it, a
+month-old weigh-in still scores and is flagged, a stranger gets nothing, a
+revoked coach loses it.
+
+⚠️ **`npm run build` could not be run in this worktree** — `node_modules` is a
+symlink into the primary checkout and Turbopack rejects it as "out of the
+filesystem root". Pre-existing worktree setup, nothing to do with this diff, but
+worth a build on `dev` after merge.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

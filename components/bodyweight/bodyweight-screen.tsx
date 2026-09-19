@@ -20,6 +20,7 @@ import {
   type Range,
 } from "@/lib/bodyweight/bodyweight";
 import { fetchBodyweight, logBodyweight } from "@/lib/bodyweight/store";
+import { DotsBlock } from "@/components/strength/dots-block";
 import { BodyweightChart } from "./bodyweight-chart";
 
 /**
@@ -36,7 +37,8 @@ import { BodyweightChart } from "./bodyweight-chart";
  * to fit would put logging-screen concepts on a screen that has none.
  * `inputMode="decimal"` gets the phone's own pad, which is the same keys.
  *
- * DOTS is Order 37 and is deliberately absent rather than stubbed.
+ * DOTS arrives at Order 37, below the chart, as a number the athlete reads on
+ * the way past rather than the reason they opened the screen.
  */
 
 type State =
@@ -200,6 +202,10 @@ export function BodyweightScreen() {
           </div>
         </div>
       ) : null}
+
+      {/* Below the chart and above the log field, where the blueprint puts it:
+          a number you read on the way past, not the reason you opened this. */}
+      {athleteId ? <DotsBlock athleteId={athleteId} audience="athlete" /> : null}
 
       <div className="flex flex-col gap-2">
         <label htmlFor="weight" className="text-ui text-muted">
