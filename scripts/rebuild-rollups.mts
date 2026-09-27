@@ -3,6 +3,7 @@
  *
  *   npm run rollups:rebuild              # plans, writes nothing
  *   npm run rollups:rebuild -- --yes     # applies
+ *   npm run rollups:rebuild -- --athlete <id> [--yes]   # one athlete only
  *
  * CLAUDE.md requires this to exist alongside the rollups themselves, and it
  * earns that twice over. Rollups are the only aggregates in the product, every
@@ -29,6 +30,20 @@ import { rollupFrom, rollupMatches, weekStart, type RollupSet } from "../lib/str
 dedupeSdkWarnings();
 
 const confirmed = process.argv.includes("--yes");
+/**
+ * One athlete rather than the whole instance.
+ *
+ * For the e2e and for repairing one person's chart. Without it, an --yes run
+ * on a shared dev instance corrects and removes every other developer's
+ * rollups too -- including fixtures a parallel test run is halfway through
+ * asserting on.
+ */
+const athleteFlag = process.argv.indexOf("--athlete");
+const onlyAthlete = athleteFlag === -1 ? null : process.argv[athleteFlag + 1] ?? null;
+if (athleteFlag !== -1 && !onlyAthlete) {
+  console.error("--athlete needs an id");
+  process.exit(1);
+}
 const config = serverAppwriteConfig();
 const db = new TablesDB(createServerClient(config));
 const PAGE = 100;
@@ -74,8 +89,10 @@ async function allRows(tableId: "sets" | "stats_rollups"): Promise<Record<string
 console.log(`${confirmed ? "Rebuilding" : "Planning rebuild of"} ${config.endpoint}`);
 console.log(`  project ${config.projectId}, database ${config.databaseId}\n`);
 
-const setRows = await allRows("sets");
-const rollupRows = await allRows("stats_rollups");
+const mine = (row: Record<string, unknown>) => onlyAthlete === null || row.athlete_id === onlyAthlete;
+const setRows = (await allRows("sets")).filter(mine);
+const rollupRows = (await allRows("stats_rollups")).filter(mine);
+if (onlyAthlete) console.log(`Only athlete ${onlyAthlete}\n`);
 
 interface Bucket {
   athleteId: string;

@@ -634,11 +634,16 @@ export async function writeRollup(deps: WriteDeps, input: UpsertRollupInput) {
     set_count: input.setCount,
     volume_reps: input.volumeReps,
     tonnage_kg: input.tonnageKg,
-    best_e1rm_kg: input.bestE1rmKg ?? undefined,
-    best_single_kg: input.bestSingleKg ?? undefined,
-    best_single_reps: input.bestSingleReps ?? undefined,
-    best_reps: input.bestReps ?? undefined,
-    best_reps_load_kg: input.bestRepsLoadKg ?? undefined,
+    // Null, never undefined. An update ignores an undefined field, so a week
+    // that lost the only set carrying an e1RM -- deleted, or edited to "Not
+    // sure" -- would keep reporting the estimate of a set that no longer
+    // exists. Lift Detail's best, the estimated reference max and DOTS all
+    // read this column; null is what clears it.
+    best_e1rm_kg: input.bestE1rmKg ?? null,
+    best_single_kg: input.bestSingleKg ?? null,
+    best_single_reps: input.bestSingleReps ?? null,
+    best_reps: input.bestReps ?? null,
+    best_reps_load_kg: input.bestRepsLoadKg ?? null,
     rebuilt_at: iso(deps.now()),
   };
   const permissions = rollupPermissions({ athleteId: input.athleteId });

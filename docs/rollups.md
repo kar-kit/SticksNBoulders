@@ -89,12 +89,27 @@ sees a partial session, and nothing recomputes it again. The week then sits
 frozen at whatever had landed partway through. Caught by `e2e:session`, which is
 why the check happens at drain time instead.
 
+### Clearing what no longer exists
+
+`writeRollup` writes `null`, never `undefined`, for a best that has no set
+behind it. Appwrite's update ignores an undefined field, so a week that lost
+the only set carrying an e1RM (deleted, or edited to "Not sure") used to keep
+reporting that set's estimate forever. The rebuild script could not repair it
+either, because it writes through the same helper. `rollup-admin.test.ts`
+and `e2e:rollups` both prove it clears.
+
 ## Repairing them
 
 ```
 npm run rollups:rebuild              # plans, writes nothing
 npm run rollups:rebuild -- --yes     # applies
+npm run rollups:rebuild -- --athlete <id> [--yes]   # one athlete
 ```
+
+`--athlete` exists because the dev instance is shared. An unscoped `--yes`
+corrects and removes every other developer's rollups too, including fixtures a
+parallel test run is halfway through asserting on. `e2e:rollups` always
+scopes to its own athlete.
 
 Repairs three things: a bucket nothing ever wrote, a bucket that drifted, and a
 rollup whose sets are all gone — which an undo leaves behind and which would
@@ -106,10 +121,25 @@ Run it after `npm run e1rm:backfill`, which changes the `e1rm_kg` that
 `best_e1rm_kg` is drawn from. They are separate scripts because they fix
 different failures and you want to run one without the other.
 
+## After a delete
+
+A deleted set is corrected by the same recompute: the refresh queued behind the
+delete rebuilds the week from what is left. Best single, best e1RM and the rep
+PR all come out of that, and a week left with no working sets loses its row.
+Lift Detail, the estimated reference max and DOTS read the row, so they follow.
+
+Empty bests are written as **null**, never undefined. An update ignores an
+undefined field, so before this a week that lost the only set carrying an e1RM
+kept reporting it -- and the rebuild script could not repair it, because it
+writes through the same helper. Covered in `rollup-admin.test.ts`.
+
 ## Testing
 
 - `npm test` — the arithmetic, the week boundary including the BST case, and the
   queue's supersede rule.
 - `npm run e2e:session` — the live path: log a session, assert the rollup row.
 - `npm run e2e:rollups` — the repair path: missing, drifted, orphaned and
-  already-correct buckets, plus a set logged at 00:30 Monday BST.
+  already-correct buckets, a set logged at 00:30 Monday BST, and a best e1RM
+  whose set is gone.
+- `npm run e2e:session` / `e2e:offline` — a delete in the logger, online and
+  offline, and the rollup recomputed behind it.
