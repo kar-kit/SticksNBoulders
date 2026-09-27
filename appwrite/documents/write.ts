@@ -598,7 +598,50 @@ export async function deleteBodyweight(deps: WriteDeps, actor: Actor, measuredOn
   });
 }
 
-export async function deleteSet(deps: WriteDeps, _actor: Actor, rowId: string) {
+/**
+ * The refusal a delete gets when somebody else has already spoken about the set.
+ *
+ * A string rather than an error class because it has to survive being written
+ * into IndexedDB as a queued op's `permanentError` and read back after a reload.
+ */
+export const SET_HAS_COACH_COMMENTS = "set-has-coach-comments";
+
+export interface DeleteSetGuard {
+  /**
+   * Whether anyone other than the athlete has commented on this set.
+   *
+   * Injected because this file writes and does not read. Omitted only by
+   * callers that are not the athlete -- the e2e teardown, the admin scripts.
+   */
+  othersCommented: () => Promise<boolean>;
+}
+
+/**
+ * Removes a set the athlete logged by mistake.
+ *
+ * Refused when a coach has already commented on it. Those comments are the
+ * coach's record of their own practice, the athlete cannot delete them (the
+ * row grants delete to its author alone), and a thread whose set has gone
+ * shows the coach a correction about nothing -- no load, no reps, no clip.
+ * A wrongly entered number on a commented set is a correction for History,
+ * which keeps the thread attached; see docs/offline.md.
+ *
+ * The check is a read immediately before the delete, not a transaction.
+ * Appwrite has none; the window is one round trip, and a comment written
+ * inside it is left orphaned rather than lost -- comment threading already
+ * promotes an orphan instead of dropping it.
+ *
+ * The caller refreshes the rollup afterwards, as with updateSet.
+ */
+export async function deleteSet(deps: WriteDeps, _actor: Actor, rowId: string, guard?: DeleteSetGuard) {
+  if (guard && (await guard.othersCommented())) {
+    // 412, not 409: a 409 is read by the queue as "already done". This is a
+    // request that will never succeed as long as the thread exists, which the
+    // queue files as permanent and keeps as evidence.
+    const refusal = new Error(SET_HAS_COACH_COMMENTS) as Error & { code: number };
+    refusal.code = 412;
+    throw refusal;
+  }
   return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: "sets", rowId });
 }
 

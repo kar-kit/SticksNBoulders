@@ -1,5 +1,6 @@
 import { ID } from "appwrite";
-import { cancelQueued, enqueue } from "@/lib/offline/client";
+import { enqueue, withdrawSet } from "@/lib/offline/client";
+import { forgetUpload, pendingUploads } from "@/lib/video/pending-store";
 import { weekStart } from "@/lib/strength/rollup";
 import type { UnnamedSet } from "./session-store";
 import type { RpeValue } from "./set";
@@ -92,19 +93,49 @@ export async function editSet(
 }
 
 /**
- * Removes a set. Used by Undo, for the tap that logged the wrong thing.
+ * Removes a set: the wrong tap in the logger, or a set deleted from History.
  *
- * A set undone before its write was ever attempted just leaves the queue, which
- * is both faster and one less row for Appwrite to create and destroy. Once the
- * write has been tried, it may have landed with the response lost on the way
- * back, so the delete is queued properly and runs behind it.
+ * In three steps, each for a knock-on effect of the set going:
+ *
+ * 1. **The queue.** Anything still waiting to write this set leaves. A set
+ *    deleted before its create was ever sent never reaches Appwrite at all --
+ *    faster, and nothing for the coach to glimpse. If the create has been
+ *    tried it may have landed, so it stays and a real delete runs behind it.
+ * 2. **A clip still uploading for it** is forgotten, so it stops occupying the
+ *    phone's quota and retrying on every app start for a set that is gone.
+ *    A clip that already uploaded is left in storage, the same trade
+ *    `detachClipFromSet` makes: reclaiming files no set references is a sweep,
+ *    and a broken player in the coach's queue is worse than a storage bill.
+ * 3. **The rollup.** Queued behind the delete, so the week is recomputed from
+ *    what is left -- volume, tonnage, set count, best e1RM and the best-set PR
+ *    all come out of that one recompute, and a week with no working sets left
+ *    loses its row entirely. Lift Detail's PRs and the estimated max read that
+ *    row, so they follow without being touched.
+ *
+ * Returns whether a delete had to be queued, which is only useful to tests.
  */
-export async function removeSet(clientSetId: string, set?: { exerciseId: string; loggedAt: Date }): Promise<void> {
-  // A set undone before it was ever sent leaves the queue, and the rollup never
-  // heard of it, so there is nothing to recompute.
-  if (await cancelQueued("set.create", clientSetId)) return;
+export async function removeSet(
+  clientSetId: string,
+  set?: { exerciseId: string; loggedAt: Date },
+): Promise<{ queued: boolean }> {
+  const { landed } = await withdrawSet(clientSetId);
+  void forgetUploadsFor(clientSetId);
+  // Never reached the server, so the rollup never counted it. Any refresh the
+  // set's own create queued is still behind it and recomputes harmlessly.
+  if (!landed) return { queued: false };
   await enqueue("set.delete", { setId: clientSetId });
   if (set) await queueRollupRefresh(set.exerciseId, set.loggedAt);
+  return { queued: true };
+}
+
+async function forgetUploadsFor(setId: string): Promise<void> {
+  try {
+    for (const upload of await pendingUploads()) {
+      if (upload.setId === setId) await forgetUpload(upload.fileId);
+    }
+  } catch {
+    // Housekeeping. The set is deleted whether or not a stale blob survives.
+  }
 }
 
 /**
