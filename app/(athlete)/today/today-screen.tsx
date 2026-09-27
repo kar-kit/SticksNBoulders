@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { InstallHint } from "@/components/pwa/install-hint";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { elapsedMs, formatElapsed, lastSessionLabel, sessionDateLabel } from "@/lib/logging/session";
 
@@ -53,6 +54,9 @@ export function TodayScreen() {
         // line he reads. It states the fact and offers the one action.
         <p className="m-0 text-body text-muted">No sessions logged yet.</p>
       ) : null}
+
+      {/* Renders nothing on most visits. See lib/pwa/install.ts for when it does. */}
+      <InstallHint />
 
       {/* Primary action in the thumb zone, per 00 Conventions. */}
       <div className="mt-auto flex flex-col gap-3">
