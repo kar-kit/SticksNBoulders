@@ -3,6 +3,7 @@ import { AthleteBodyweight } from "@/components/coach/athlete-bodyweight";
 import { DotsBlock } from "@/components/strength/dots-block";
 import { RecentFeedback } from "@/components/coach/recent-feedback";
 import { EmptyState } from "@/components/ui/empty-state";
+import { AthleteLinkGate } from "@/components/coach/athlete-link-gate";
 
 export const metadata = { title: "Athlete — Sticks N Boulders" };
 
@@ -35,7 +36,10 @@ export default async function AthleteViewPage({
 }) {
   const { athleteId } = await params;
 
+  // Order 16.6: an ex-athlete's URL is a "no longer linked" screen, not a
+  // wall of permission failures. See components/coach/athlete-link-gate.tsx.
   return (
+    <AthleteLinkGate athleteId={athleteId}>
     <div className="flex h-full flex-col gap-8 p-8">
       <CurrentMaxes athleteId={athleteId} />
       <AthleteBodyweight athleteId={athleteId} />
@@ -46,5 +50,6 @@ export default async function AthleteViewPage({
         body="Their current block, recent sessions and bodyweight will be here once Athlete View is built."
       />
     </div>
+    </AthleteLinkGate>
   );
 }
