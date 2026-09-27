@@ -102,19 +102,24 @@ the coach nor the athlete can create a row client-side, a stranger cannot forge
 one with `read("users")`, nothing can be edited in place, and a revoked coach
 loses both read and write without anything re-stamping a single row.
 
-## What Order 17 does not do
+## The inline editor (Order 25)
 
-The blueprint puts an `[ edit / set training max ]` control in this panel. The
-panel here is **read-only**. Athlete View is Order 25 and the Program Editor is
-Order 19; both are still stubs, so building inline editing now means building
-it against a screen that does not exist and rebuilding it when it does.
+Order 17 shipped the write path with no control; Athlete View (Order 25) adds
+it. CURRENT MAXES now shows all three kinds side by side per lift, marks the
+one a percentage uses when nothing names a kind, and makes tested and training
+editable inline: a weight, a date it takes effect from (today by default), and
+Enter. A later date is next block's number and shows as "next … from …" until
+it takes effect, rather than vanishing from the panel it was typed into.
 
-The write path itself is complete and tested — route, admin module, and client
-store — because the panel and Order 18's prescriptions are both meaningless
-without a way to put a number in. Only the control is deferred.
+Squat, bench and deadlift are always rows, even empty, so a coach's first move
+with a new athlete (setting a training max on a lift nobody has logged) has
+somewhere to go.
 
-No e2e script: there is no UI to drive. Unit tests on the admin module plus the
-permission probe is the honest coverage.
+Undo, straight after a save, deletes the row just written. That is the typo
+case deletion exists for; there is still no update path.
+
+`npm run e2e:athlete-view` drives it in a browser: set, assert the row and its
+`recorded_by`, undo, assert it is gone.
 
 ## Files
 
