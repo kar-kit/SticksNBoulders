@@ -3,6 +3,7 @@ import { AthleteBodyweight } from "@/components/coach/athlete-bodyweight";
 import { DotsBlock } from "@/components/strength/dots-block";
 import { RecentFeedback } from "@/components/coach/recent-feedback";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ExportLog } from "@/components/export/export-log";
 
 export const metadata = { title: "Athlete — Sticks N Boulders" };
 
@@ -41,6 +42,7 @@ export default async function AthleteViewPage({
       <AthleteBodyweight athleteId={athleteId} />
       <DotsBlock athleteId={athleteId} audience="coach" />
       <RecentFeedback athleteId={athleteId} />
+      <ExportLog athleteId={athleteId} audience="coach" />
       <EmptyState
         title="The rest of this screen is coming"
         body="Their current block, recent sessions and bodyweight will be here once Athlete View is built."
