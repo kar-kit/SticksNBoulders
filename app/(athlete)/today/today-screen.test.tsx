@@ -13,6 +13,11 @@ vi.mock("@/lib/logging/session-context", () => ({
   useTrainingSessions: () => training.value,
 }));
 
+const badge = vi.hoisted(() => ({ hasCoach: null as boolean | null, unread: 0 }));
+vi.mock("@/lib/review/feedback-context", () => ({
+  useFeedbackBadge: () => badge,
+}));
+
 const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
   id: "s1",
   clientSessionId: "c1",
@@ -38,7 +43,11 @@ function setup(overrides: Partial<typeof training.value> = {}) {
   return { start, user: userEvent.setup() };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  badge.hasCoach = null;
+  badge.unread = 0;
+});
 
 describe("Today, with no program", () => {
   it("says what day it is and that nothing is prescribed", () => {
@@ -97,5 +106,33 @@ describe("starting and resuming", () => {
     expect(await screen.findByText(/Nothing was lost/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start a session" })).toBeEnabled();
     expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("Today, the way into Coach Feedback", () => {
+  it("is absent for an athlete training solo", () => {
+    badge.hasCoach = false;
+    setup();
+    expect(screen.queryByRole("link", { name: /Coach feedback/ })).not.toBeInTheDocument();
+  });
+
+  it("waits rather than flickering in before the link is known", () => {
+    setup();
+    expect(screen.queryByRole("link", { name: /Coach feedback/ })).not.toBeInTheDocument();
+  });
+
+  it("is there once they have a coach, quiet when nothing is new", () => {
+    badge.hasCoach = true;
+    setup();
+    const link = screen.getByRole("link", { name: /Coach feedback/ });
+    expect(link).toHaveAttribute("href", "/today/feedback");
+    expect(link).toHaveTextContent("Nothing new");
+  });
+
+  it("says how much is new", () => {
+    badge.hasCoach = true;
+    badge.unread = 3;
+    setup();
+    expect(screen.getByRole("link", { name: /Coach feedback/ })).toHaveTextContent("3 new");
   });
 });
