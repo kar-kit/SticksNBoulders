@@ -21,8 +21,9 @@ in memory, in `lib/review/queue.ts`.
   wondering about. Ties break on id, so a queue does not reshuffle between
   renders and lose the coach's place.
 - The coach reads through the circle team, exactly like every other read in the
-  product. There is no branch for who is asking, and the whole screen stops
-  working the moment a link is revoked — see below.
+  product. There is no branch for who is asking, and a revoked athlete's clips
+  stop coming back the moment the link ends. The screen treats that as a state,
+  not a failure: see "When a link ends" in `docs/coach-links.md`.
 
 The in-memory filter is the first thing that stops scaling, and it is chosen
 rather than missed. At beta scale — one coach, a handful of athletes — it is one
