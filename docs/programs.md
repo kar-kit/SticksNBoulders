@@ -135,8 +135,7 @@ built.
 
 ## Seams for what comes next
 
-- **Backoff rules (21):** new nullable columns on `prescriptions`, a field in
-  `lineFields`, and a column after Notes in `COLUMNS` (`lib/programming/editor.ts`).
+- **Backoff rules (21), built:** see below.
 - **Video required (30), built:** see below.
 - **My Program (23) is built**, see below.
 
@@ -156,6 +155,48 @@ without a clip or an explicit skip") is deliberately not implemented: the
 Order 30 brief and constraint 4 (offline is normal, no blocking) outrank it.
 The existing `videoRequired` flag on `LoggableSet` (which does block confirm)
 is left unfed from prescriptions, so the logger never gates.
+
+## Backoff rules (Order 21)
+
+_Source: Inferred. Every formula below is [Inference] until Ruairi confirms._
+
+A line can carry a backoff rule in its **Backoff** cell (after Note). The rule
+is the coach's, executed on the phone against the top set the athlete
+**actually logged** for that line today -- never a prescribed or stored number,
+and never generated. Stored as canonical text in the optional
+`prescriptions.backoff` column (40 chars), validated by `lineFields` and
+normalised by the write helper. Unlike the load cell there is no freeform
+fallback: a rule that does not parse is refused on the cell and by the route.
+
+| Typed | Canonical | Means |
+| --- | --- | --- |
+| `3 x 90%`, `3x-10%`, `90% x 3` | `3 x 90%` | 3 sets at 90% of the top set's load |
+| `-5% until @9` | `-5% until @9` | top set load −5%, repeat until a set is logged at RPE ≥ 9 |
+| `repeat until @9`, `same to rpe 9` | `repeat until @9` | the top set's load again, until RPE ≥ 9 |
+| `... max 4` | `... max 4` | cap the run (default 5) |
+
+- **Top set** = the heaviest non-warm-up set logged against the line's own set
+  slots (tie: the later one). Warm-ups never fill a slot or count.
+- **Load** = `roundToLoadable(top × percent)` or `roundToLoadable(top × (1 − drop))`
+  -- Order 18's round-down-to-2.5kg, not a copy of it. 100% / `repeat` keep the
+  top set's exact load (it is already on the bar).
+- **No top set yet** = no load. The athlete reads "90% of top set"; the row
+  falls back to repeating, as for an unresolved percentage.
+- **Run length**: a percent rule is N slots. A drop rule grows one slot at a
+  time; the set that reaches the stop RPE ends it; a set logged without RPE
+  cannot end it; the cap ends it regardless.
+- In the logger (`targetsFor`), backoff slots follow the line's own sets and
+  carry `backoff: { rule, topSet }`. New rows get the load as the coach's
+  number (prefill rule 1) with the note "backoff from top set 185 × 3";
+  `setTargetFor` keeps them away from the suggestion engine. Rows already on
+  screen are never re-priced -- a row planned with Add set *before* the top
+  set was logged keeps its repeated load.
+- Copies (Order 20) carry the rule: it is text on the line, not a row id.
+- `videoAsk` (Order 30) counts backoff slots as positions.
+
+`scripts/e2e-backoff.mts` proves it against the live instance, including the
+prefill with the phone offline.
+
 
 ## My Program (Order 23)
 

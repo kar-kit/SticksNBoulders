@@ -147,7 +147,8 @@ describe("the Program Editor grid", () => {
     await ready();
     const toggle = screen.getByRole("checkbox", { name: "Video required, line 2" });
     expect(toggle).not.toBeChecked();
-    await user.click(screen.getByRole("textbox", { name: "Note, line 2" }));
+    // Backoff (Order 21) sits between Note and Video.
+    await user.click(screen.getByRole("textbox", { name: "Backoff, line 2" }));
     await user.keyboard("{ArrowRight}");
     expect(toggle).toHaveFocus();
     await user.keyboard(" ");
@@ -157,6 +158,30 @@ describe("the Program Editor grid", () => {
     await waitFor(() => expect(screen.getByRole("checkbox", { name: "Video required, line 2" })).toBeChecked());
     await user.keyboard("{ArrowUp}");
     expect(screen.getByRole("checkbox", { name: "Video required, line 1" })).toHaveFocus();
+  });
+
+  it("saves a backoff rule in its canonical spelling and says what it does (Order 21)", async () => {
+    const user = userEvent.setup();
+    await ready();
+    const cell = screen.getByRole("textbox", { name: "Backoff, line 1" });
+    await user.click(cell);
+    await user.keyboard("-10%x3");
+    await user.tab();
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l1", backoff: "3 x 90%" }),
+    );
+    expect(await screen.findByText("3 sets at 90% of today's top set")).toBeInTheDocument();
+  });
+
+  it("refuses a backoff it cannot execute on the cell, sending nothing", async () => {
+    const user = userEvent.setup();
+    await ready();
+    store.send.mockClear();
+    await user.click(screen.getByRole("textbox", { name: "Backoff, line 1" }));
+    await user.keyboard("drop a bit");
+    await user.tab();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Backoff is like");
+    expect(store.send).not.toHaveBeenCalled();
   });
 
   it("puts a cell back when the server refuses it", async () => {

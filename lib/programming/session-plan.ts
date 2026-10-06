@@ -5,6 +5,15 @@ import { resolvePrefill } from "@/lib/logging/prefill";
 import type { PlannedRow } from "@/lib/logging/plan";
 import { byPosition, type Prescription } from "./program";
 import {
+  backoffDisplay,
+  backoffLoad,
+  backoffRun,
+  readBackoff,
+  topSetOf,
+  type BackoffRule,
+  type TopSet,
+} from "./backoff";
+import {
   parsePrescription,
   resolveExercise,
   sessionMaxFrom,
@@ -80,6 +89,12 @@ export interface SetTarget {
   /** The set the synced weight was derived from, so the athlete can see why. */
   anchor: { loadKg: number; reps: number; rpe: number } | null;
   /**
+   * Set when this set is a backoff executed from the line's rule (Order 21):
+   * the rule, and the top set it was priced off -- null until the athlete has
+   * logged one. Absent on every other set.
+   */
+  backoff?: { rule: BackoffRule; topSet: TopSet | null };
+  /**
    * The target in words, stored on the logged set: "5 reps · 152.5 kg (75%)".
    * This is the half of constraint 5 that lives on the athlete's side -- the
    * set remembers what it was an answer to, whatever the plan says later.
@@ -138,12 +153,24 @@ export function targetsFor(
   maxes: BasisMaxes,
   logged: readonly SetForEstimate[] = [],
 ): SetTarget[] {
-  const slots: Array<{ line: Prescription; spec: PrescriptionSpec | null; setNumber: number }> = [];
+  type Slot =
+    | { line: Prescription; spec: PrescriptionSpec | null; backoff?: undefined }
+    | { line: Prescription; spec: null; backoff: { rule: BackoffRule; topSet: TopSet | null } };
+  // Working sets in the order they were logged: slot n is answered by the nth.
+  // Warm-ups never fill a slot, and never count as a top set.
+  const working = logged.filter((set) => !set.isWarmup);
+  const slots: Slot[] = [];
   for (const line of exercise.lines) {
     const spec = line.load ? parsePrescription(line.load) : null;
-    for (let i = 0; i < line.setCount; i++) {
-      slots.push({ line, spec, setNumber: slots.length + 1 });
-    }
+    const first = slots.length;
+    for (let i = 0; i < line.setCount; i++) slots.push({ line, spec });
+    const rule = readBackoff(line.backoff);
+    if (!rule) continue;
+    // The top set is the heaviest of the sets logged against this line's own
+    // slots -- the athlete's actual weight, never the prescribed one.
+    const topSet = topSetOf(working.slice(first, slots.length));
+    const run = backoffRun(rule, working.slice(slots.length));
+    for (let i = 0; i < run.sets; i++) slots.push({ line, spec: null, backoff: { rule, topSet } });
   }
 
   const specs = slots.map((slot) => slot.spec).filter((spec): spec is PrescriptionSpec => spec !== null);
@@ -151,17 +178,42 @@ export function targetsFor(
   const anchor = topSet(logged);
 
   let next = 0;
-  return slots.map(({ line, spec, setNumber }) => {
-    const r = spec === null ? null : resolved[next++];
-    const display = r?.display ?? "";
-    return {
+  return slots.map((slot, at) => {
+    const { line, spec } = slot;
+    const setNumber = at + 1;
+    const base = {
       prescriptionId: line.id,
       exerciseId: exercise.exerciseId,
       setNumber,
       totalSets: slots.length,
-      loadKg: r?.loadKg ?? null,
       reps: line.reps,
       repMax: line.repMax,
+    };
+    if (slot.backoff) {
+      // The coach's rule, executed: a prescribed number, not an engine
+      // suggestion, so not `synced`. No top set yet means no load -- the
+      // athlete reads the rule and the row falls back to repeating.
+      const { rule, topSet } = slot.backoff;
+      const loadKg = topSet ? backoffLoad(rule, topSet.loadKg) : null;
+      const display = backoffDisplay(rule, loadKg);
+      return {
+        ...base,
+        loadKg,
+        rpe: rule.kind === "drop" ? rule.untilRpe : null,
+        kind: null,
+        display,
+        synced: false,
+        unresolved: loadKg === null,
+        anchor: null,
+        backoff: { rule, topSet },
+        snapshot: snapshotOf(line.reps, line.repMax, display),
+      };
+    }
+    const r = spec === null ? null : resolved[next++];
+    const display = r?.display ?? "";
+    return {
+      ...base,
+      loadKg: r?.loadKg ?? null,
       rpe: r?.rpe ?? null,
       kind: spec?.kind ?? null,
       display,
@@ -212,19 +264,31 @@ export function nextTarget(
  */
 export function lineSummaries(exercise: PlannedExercise, targets: readonly SetTarget[]): string[] {
   return exercise.lines.map((line) => {
-    const first = targets.find((t) => t.prescriptionId === line.id);
+    const first = targets.find((t) => t.prescriptionId === line.id && !t.backoff);
     const reps = repsLabel(line.reps, line.repMax);
     const head = `${line.setCount} × ${reps || "—"}`;
     const load = first?.display ? ` · ${first.display}` : "";
     const why = first?.synced && first.anchor ? " (from today's top set)" : "";
     const note = line.notes ? ` — ${line.notes}` : "";
-    return `${head}${load}${why}${note}`;
+    return `${head}${load}${why}${backoffSummary(line, targets)}${note}`;
   });
+}
+
+/** ", then 3 × 5 · 162.5 kg (90% of top set)" for a line with a backoff rule. */
+function backoffSummary(line: Prescription, targets: readonly SetTarget[]): string {
+  const backoffs = targets.filter((t) => t.prescriptionId === line.id && t.backoff);
+  const first = backoffs[0];
+  if (!first?.backoff) return "";
+  const reps = repsLabel(line.reps, line.repMax) || "—";
+  const count = first.backoff.rule.kind === "percent" ? `${backoffs.length} × ${reps}` : `sets of ${reps}`;
+  return `, then ${count} · ${first.display}`;
 }
 
 /** "Set 2 of 4 · 5 reps · 152.5 kg (75%)" -- the next set, in one line. */
 export function targetLine(target: SetTarget): string {
-  return `Set ${target.setNumber} of ${target.totalSets} · ${target.snapshot}`;
+  // A drop-until-RPE run has no fixed length, so it has no "of".
+  const of = target.backoff?.rule.kind === "drop" ? "" : ` of ${target.totalSets}`;
+  return `Set ${target.setNumber}${of} · ${target.snapshot}`;
 }
 
 /**
@@ -293,15 +357,26 @@ export function prescribeNewRows(
       previousSetThisSession:
         row.loadKg !== null && row.reps !== null ? { loadKg: row.loadKg, reps: row.reps } : null,
     });
+    // A backoff load says which set it was priced off, so the athlete can
+    // see the coach's rule rather than an unexplained number.
+    const fromBackoff = prefill.source === "prescribed" ? backoffNote(target) : null;
     return {
       ...row,
       loadKg: prefill.loadKg,
       reps: prefill.reps,
       // A coach's number replacing an engine suggestion takes its note with
       // it; a load priced off today's top set says where it came from.
-      note: prefill.loadKg === row.loadKg ? (row.note ?? prefill.note) : prefill.note,
+      note: fromBackoff ?? (prefill.loadKg === row.loadKg ? (row.note ?? prefill.note) : prefill.note),
       prescriptionId: target.prescriptionId,
       prescribed: target.snapshot,
     };
   });
+}
+
+/** "backoff from top set 180 × 3": why a backoff row holds the load it does. */
+export function backoffNote(target: SetTarget): string | null {
+  const top = target.backoff?.topSet;
+  if (!top || target.loadKg === null) return null;
+  const kg = Number.isInteger(top.loadKg) ? String(top.loadKg) : String(Number(top.loadKg.toFixed(2)));
+  return `backoff from top set ${kg} × ${top.reps}`;
 }

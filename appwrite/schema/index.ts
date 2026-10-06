@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 10,
+  version: 11,
   tables: [
     {
       id: "profiles",
@@ -451,7 +451,7 @@ export const schema: DatabaseSpec = {
       id: "prescriptions",
       name: "Prescriptions",
       purpose:
-        "One line of a day: an exercise, a set count, reps, and the load cell exactly as the coach typed it. A top set and its backoffs are two lines, as in the spreadsheet. Mutable by design -- logged sets carry their own snapshot, so editing a line never rewrites what an athlete did.",
+        "One line of a day: an exercise, a set count, reps, and the load cell exactly as the coach typed it. A top set and its backoffs are two lines, as in the spreadsheet, or one line carrying a backoff rule (Order 21). Mutable by design -- logged sets carry their own snapshot, so editing a line never rewrites what an athlete did.",
       rowSecurity: true,
       permissions: [],
       columns: [
@@ -482,6 +482,11 @@ export const schema: DatabaseSpec = {
         },
         { key: "rest_seconds", type: "integer", required: false, min: 0, max: 3600 },
         { key: "notes", type: "string", size: 500, required: false },
+        // Order 21. The backoff rule in its canonical spelling ("3 x 90%",
+        // "-5% until @9"), executed on the athlete's phone against the top
+        // set they actually logged. Optional and additive: a line with no
+        // backoff is exactly the row it was before.
+        { key: "backoff", type: "string", size: 40, required: false },
         // Order 30. The coach asks for a clip of this line. Only ever a nudge
         // in the logger -- nothing blocks on it. Null on rows written before.
         { key: "video_required", type: "boolean", required: false, default: false },

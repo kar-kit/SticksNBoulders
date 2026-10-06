@@ -215,6 +215,28 @@ describe("creating a program top down", () => {
     expect(h.row("prescriptions", lineId)).toMatchObject({ load: "75% @8", load_kind: "capped" });
   });
 
+  it("stores a backoff in its canonical spelling, and only when there is one (Order 21)", async () => {
+    const h = harness();
+    const { dayId, lineId } = await skeleton(h);
+    expect(h.row("prescriptions", lineId)).not.toHaveProperty("backoff");
+    const withRule = await h.ok(COACH, { op: "addPrescription", dayId, exerciseId: "ex-Squat", setCount: 1, backoff: "-10%x3" });
+    expect(h.row("prescriptions", withRule)).toMatchObject({ backoff: "3 x 90%" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: withRule, backoff: "same to rpe 9" });
+    expect(h.row("prescriptions", withRule)).toMatchObject({ backoff: "repeat until @9" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: withRule, backoff: "" });
+    expect(h.row("prescriptions", withRule)).toMatchObject({ backoff: null });
+  });
+
+  it("refuses a backoff nobody could execute, and writes nothing", async () => {
+    const h = harness();
+    const { lineId } = await skeleton(h);
+    const before = h.writes.length;
+    expect(await h.run(COACH, { op: "updatePrescription", prescriptionId: lineId, backoff: "3 x 110%" })).toMatchObject({
+      status: "invalid",
+    });
+    expect(h.writes.length).toBe(before);
+  });
+
   it("refuses a line for an exercise that does not exist", async () => {
     const h = harness();
     const { dayId } = await skeleton(h);

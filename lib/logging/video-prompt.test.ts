@@ -43,4 +43,15 @@ describe("videoAsk", () => {
     expect(videoAsk({ lines, loggedWorking: 1, hasClip: false })).toBe("emphasise");
     expect(videoAsk({ lines, loggedWorking: 5, hasClip: false })).toBe("prompt");
   });
+
+  it("counts a backoff rule's sets (Order 21) as positions before a later flagged line", () => {
+    const lines = [{ setCount: 1, backoffSets: 3 }, { setCount: 2, videoRequired: true }];
+    expect(videoAsk({ lines, loggedWorking: 4, hasClip: false })).toBe("emphasise");
+    expect(videoAsk({ lines, loggedWorking: 6, hasClip: false })).toBe("prompt");
+  });
+
+  it("treats a flagged top set with a backoff rule as done after the top set", () => {
+    const lines = [{ setCount: 1, videoRequired: true, backoffSets: 3 }];
+    expect(videoAsk({ lines, loggedWorking: 1, hasClip: false })).toBe("prompt");
+  });
 });

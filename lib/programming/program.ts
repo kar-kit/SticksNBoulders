@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PrescriptionKind } from "./prescription";
+import { BACKOFF_MAX_LENGTH, parseBackoff } from "./backoff";
 
 /**
  * The program model: what a coach writes, as data.
@@ -129,6 +130,13 @@ export interface Prescription {
   restSeconds: number | null;
   notes: string | null;
   /**
+   * The backoff rule, canonical text ("3 x 90%", "-5% until @9"), executed
+   * against the athlete's actual top set (Order 21). Null for none. Optional
+   * only so a line built in code before Order 21 still type-checks; every row
+   * read from Appwrite carries it.
+   */
+  backoff?: string | null;
+  /**
    * The coach asks for a clip of this line. A nudge in the logger, never a
    * gate. Absent means false; optional so a fixture need not spell it out.
    */
@@ -247,6 +255,7 @@ const prescriptionRow = z
     load_kind: z.enum(LOAD_KINDS).nullish().transform((v) => v ?? null),
     rest_seconds: nullableInt,
     notes: nullableString,
+    backoff: nullableString,
     video_required: z.boolean().nullish().transform((v) => v ?? false),
     updated_at: z.string(),
   })
@@ -265,6 +274,7 @@ const prescriptionRow = z
       loadKind: r.load_kind,
       restSeconds: r.rest_seconds,
       notes: r.notes,
+      backoff: r.backoff,
       videoRequired: r.video_required,
       updatedAt: r.updated_at,
     }),
@@ -374,6 +384,16 @@ const lineFields = {
   load: optionalText(120),
   restSeconds: z.number().int().min(0).max(3600).nullable().optional(),
   notes: optionalText(500),
+  /**
+   * The backoff cell as typed. Unlike the load cell it has no freeform
+   * fallback -- a rule that does not parse cannot be executed -- so it is
+   * refused here with the same words the editor shows on the cell.
+   */
+  backoff: optionalText(BACKOFF_MAX_LENGTH + 20).superRefine((value, ctx) => {
+    if (value == null) return;
+    const parsed = parseBackoff(value);
+    if (!parsed.ok) ctx.addIssue({ code: "custom", message: parsed.reason });
+  }),
   videoRequired: z.boolean().optional(),
 };
 
@@ -396,6 +416,7 @@ const updatePrescription = z.object({
   load: lineFields.load,
   restSeconds: lineFields.restSeconds,
   notes: lineFields.notes,
+  backoff: lineFields.backoff,
   videoRequired: lineFields.videoRequired,
 });
 

@@ -1,79 +1,62 @@
-## Order 23 — My Program
+## Order 21 — Backoff rules
 
-Athlete, mobile, P1, source Joey. Page blueprint 06. A read-only view of the
-athlete's current block at `/today/program`, reached from a row on Today that
-exists only when a coach is linked.
+Coach, P2, **Source: Inferred**, Program Editor. A coach attaches a backoff rule to a prescription line; in the logger, once the athlete logs the top set, the backoff sets' targets are computed from **that actual set** and prefilled. Every number stays editable. This is the coach's rule executed on the phone, never generated, and it works with no signal.
 
-### What it does
+### What the coach types (Backoff cell, after Note)
 
-- Weeks collapse, the current one open (the week containing today, else the next,
-  else the last). A day opens to its prescription: the same lines Today shows,
-  percentages already in kilos against the current max, plus the coach's note.
-- Day state: **Done** (links to the logged session), **In progress**, **Today**,
-  **Missed**, or unlabelled for upcoming. A finished block says so with the
-  count logged.
-- **Start** reuses Today's path (`start({ programDayId })`, then `/log`). While a
-  session is already running the button reads Resume, as on Today.
-- Empty states: no coach ("No coach linked", no action, no upsell; Today has no
-  entry at all), linked with nothing published ("No program yet"), and a first
-  load with no signal and nothing cached ("Program not loaded").
-- No new tables, no new write path. Reads reuse `fetchPrograms`, the per-table
-  `listAll`, `session-plan` and the reference-max stores.
+| Typed | Stored | Means |
+| --- | --- | --- |
+| `3 x 90%`, `3x-10%`, `90% x 3` | `3 x 90%` | 3 sets at 90% of the top set's load |
+| `-5% until @9` | `-5% until @9` | top-set load −5%, repeat until a set is logged at RPE ≥ 9 |
+| `repeat until @9` | `repeat until @9` | top-set load again, until RPE ≥ 9 |
+| `… max 4` | `… max 4` | caps a drop run (default 5) |
 
-### Drafts
+The cell shows what the rule does ("3 sets at 90% of today's top set"). A rule that can't be executed (above 100%, a drop of 50% or more, an RPE not on the chart, words) gets refused on the cell and by `/api/program` (400). Unlike the load cell, there's no freeform fallback, because freeform can't be executed. That text belongs in Note.
 
-`fetchMyProgram` reads weeks first and asks for days and lines only for
-**published** weeks, so a draft week's rows never leave Appwrite for this screen.
-`visibleProgram` filters again on the way out, and the cache only ever holds its
-output. [Fact] `e2e:my-program` checks this on the wire (no response body
-contains a draft week's days or lines) and in `localStorage`. The existing caveat
-in `docs/programs.md` stands: an athlete hitting the raw API can read their own
-draft rows, because draft is a filter and not a permission.
+### Formulas, all [Inference]
 
-### Offline
+- **Top set** is the heaviest non-warm-up set logged against the line's own set slots. On a tie, the later set wins. Warm-ups never count, however heavy.
+- **Percent rule:** `load = roundToLoadable(topLoad × p/100)`
+- **Drop rule:** `load = roundToLoadable(topLoad × (1 − d/100))`, the same load for every set in the run
+- Rounding reuses Order 18's `roundToLoadable` (down to 2.5 kg). One exception: 100% / `repeat` keep the top set's exact load, which is already on the bar.
+- **No top set logged yet:** no load. The athlete reads "90% of top set" and the row falls back to repeating. No stored max stands in.
+- **Drop run length:** grows one set at a time. The set that reaches the stop RPE ends the run (that set counts). A set logged without an RPE can't end it. The cap ends it regardless.
+- Freeform and no-load top lines work, because the rule needs only the athlete's logged load.
 
-Stale-while-revalidate over a per-athlete localStorage entry (`snb.my-program`):
-the last program paints immediately, the refresh runs behind it, and a failed
-refresh changes nothing and says nothing. Maxes are cached with it so kilos stay
-kilos. An unpublished program clears the cache.
+### Questions for Ruairi [SME to confirm]
 
-### Decisions worth a look
+1. **Fatigue %: measured on load or on e1RM?** I've implemented it on **load** ("load drop"). RTS also describes stopping when e1RM has fallen X% from the top set. If that's what he uses, it's a third rule kind.
+2. Is "top set" the **heaviest** set of the line, or the **last** one (e.g. a 2 × 3 @8 top line)?
+3. Do backoffs always use the top set's reps? Right now they inherit the line's reps. Different reps means a separate line.
+4. Is the 5-set default cap on drop / repeat runs right? Should runs have a cap at all?
+5. Does a drop rule end at RPE **≥** Y, or only once the athlete hits Y exactly?
+6. Rounding: still down to 2.5 kg (same open question as Order 18)?
 
-- **[Inference]** Done/Missed come from the athlete's recent sessions
-  (`programDayId`, newest 25). Missed is not claimed unless that list loaded and
-  reaches back to the day; otherwise the day is unlabelled. Offline this means no
-  "0 of N" and no wall of Missed.
-- **[Inference]** The no-coach state exists as a screen (the brief asked for one)
-  though the blueprint says the screen is absent. Today never links to it; only a
-  typed URL or a stale tab lands there. Cheap to delete if Joey prefers a 404.
+### Storage
 
-### Left out
+- New optional `prescriptions.backoff` column (string 40), schema v11. **Applied to the live instance** with `npm run appwrite:setup`. Additive only: nothing deleted, existing rows untouched. A line with no backoff writes exactly what it did before.
+- Writes stay server-only: it's a Zod field in `lineFields`, normalised to canonical text in `program-write.ts`.
+- Copies (Order 20) carry the rule. It's text on the line, not a row id, so nothing goes in `LINE_PLACEMENT`. I've added a copy test.
 
-- **"Prescription revised" mark** on a logged day the coach later edited. It needs
-  each logged set's `prescribed` snapshot compared against the current line, which
-  is a new read over `sets`; the brief said no new data paths. A done day shows
-  the line as the coach has it now and says the log is unchanged. History itself is
-  never rewritten.
-- **"Whatever's written next"** on a finished block: nothing in the model says
-  what comes next, so only the completion line is shown.
-- Per-week unpublish-while-editing (still the open question from Order 19).
+### Logger
 
-### Verification
+- `targetsFor` appends backoff slots after the line's own sets, carrying `backoff: { rule, topSet }`.
+- `prescribeNewRows` prefills new rows as the coach's number, with the note "backoff from top set 185 × 3".
+- `setTargetFor` (the set-target seam) returns null for backoff sets, so the suggestion engine never argues with the rule.
+- `lineSummaries`: "1 × 3 · RPE 8, then 3 × 3 · 165 kg (90% of top set)".
+- `videoAsk` (Order 30) counts backoff slots as positions, so a flagged line after a backoff isn't asked for early.
 
-- `npm run typecheck` and `npm run lint` clean.
-- Vitest: **119 files, 1861 tests passing** after merging dev (Order 30). New: 39
-  across `my-program.test.ts` (read rules, draft filtering, day state),
-  `my-program-store.test.ts` (query shapes, draft filter holds even if queries are
-  ignored), `use-my-program.test.ts` (offline, cache scoping, unpublish clears),
-  `program-screen.test.tsx` (each state) and two Today tests.
-- `npm run e2e:my-program` against the live instance: **26/26**. No coach; linked
-  with nothing published; a block with two draft weeks (current week open, drafts
-  absent, Done/Missed, kilos, link to logged session); drafts absent on the wire
-  and in the cache; the coach publishes a draft week and it appears on next load,
-  un-publishes it and it goes; viewing sends no write; offline reload shows the
-  cached program with no error text; Start opens the logger on that day.
-- Regression: `e2e:program` 31/31.
+**Known limit:** rows already on screen are never re-priced (existing rule). A backoff row planned with *Add set* before the top set was logged keeps its repeated load, and the athlete edits it.
 
-Run it: `next dev --webpack -p 3123`, then `E2E_BASE_URL=http://localhost:3123 npm run e2e:my-program`.
+### Also in this PR
+
+- **fix:** `roundToLoadable` lost exactly loadable weights to float error. For example, 70% of 175 came out as 122.49999… and floored to **120 instead of 122.5**. This affected the existing percent resolver and the suggestion engine too. I added a sub-gram slack. The rule itself is unchanged.
+- Merges of `origin/dev` (#41, #42 Order 30, #43 Order 20). Both new columns are kept; COLUMNS is now `… notes, backoff, video`.
+
+### Tests
+
+- tsc, lint and the full vitest suite all pass (**1903 tests, 120 files**).
+- **37** unit tests in `lib/programming/backoff.test.ts`, plus new tests in plates, set-targets, program-admin, program-copy, schema, video-prompt and the editor grid.
+- `npm run e2e:backoff` against the live instance (`next dev --webpack`): **15/15**. It covers the editor cell, canonical storage and the read-only stamp, route 400/403, Today before a top set, an **offline** top set of 185 prefilling 165 on the next row, queued sets landing with the rule's snapshot, and the coach changing the rule without touching logged sets.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
