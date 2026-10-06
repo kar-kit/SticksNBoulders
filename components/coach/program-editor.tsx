@@ -203,7 +203,7 @@ export function ProgramEditor({ programId }: { programId: string }) {
             label="Program name"
             value={tree.name}
             disabled={!editable}
-            className="text-display font-semibold"
+            className="w-[min(48rem,100%)] text-display font-semibold"
             onCommit={(name) => (name ? run({ op: "updateProgram", programId: tree.id, name }) : null)}
           />
           <p className="m-0 text-ui text-muted">
