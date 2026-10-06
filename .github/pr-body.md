@@ -1,59 +1,79 @@
-## Order 20 — Duplicate week and copy program
+## Order 23 — My Program
 
-Coach, P1, **Source: Inferred**, Program Editor. Kept small on purpose: no
-templates library, no bulk percentage shifting. Includes a merge of `dev`
-(#41 flaky-test fixes, #42 Order 30 `video_required`).
+Athlete, mobile, P1, source Joey. Page blueprint 06. A read-only view of the
+athlete's current block at `/today/program`, reached from a row on Today that
+exists only when a coach is linked.
 
-### What's built
+### What it does
 
-- **Duplicate week** — a button beside "+ Week". Appends a **draft** copy of
-  the week on screen to its block: every day and line, days moved a week past
-  the block's last week (+7 when duplicating the last week).
-- **Copy to…** — in the editor header. Type the athlete (linked athletes plus
-  "Yourself"), optionally "Only <this block>", pick a start date (defaults to
-  the source's). Creates a new **draft** program and links to it.
-- Both are ops on `POST /api/program` (`duplicateWeek`, `copyProgram`): verified
-  JWT, no new tables, no client write path.
+- Weeks collapse, the current one open (the week containing today, else the next,
+  else the last). A day opens to its prescription: the same lines Today shows,
+  percentages already in kilos against the current max, plus the coach's note.
+- Day state: **Done** (links to the logged session), **In progress**, **Today**,
+  **Missed**, or unlabelled for upcoming. A finished block says so with the
+  count logged.
+- **Start** reuses Today's path (`start({ programDayId })`, then `/log`). While a
+  session is already running the button reads Resume, as on Today.
+- Empty states: no coach ("No coach linked", no action, no upsell; Today has no
+  entry at all), linked with nothing published ("No program yet"), and a first
+  load with no signal and nothing cached ("Program not loaded").
+- No new tables, no new write path. Reads reuse `fetchPrograms`, the per-table
+  `listAll`, `session-plan` and the reference-max stores.
 
-### Rules the copy follows
+### Drafts
 
-- **Authorisation on both ends** [Fact, unit + e2e]: the caller must be the
-  source program's coach, still actively linked to its athlete, **and** able to
-  program for the target (active link, or themselves). Refusals happen before
-  any row is written.
-- **Percentages stay percentages** [Fact, e2e]: loads are copied as typed, so
-  `75%` on Andrea's copy shows 90 kg on her Today (75% of her 120), not Joey's
-  150.
-- **Exercises re-resolve in the target's library** [Fact, unit + e2e]: global
-  stays global; the source athlete's private variation is found by name in the
-  target's library or created there via the editor's `createExercise` path.
-- **Generic line copy** [Fact, unit + e2e]: every prescription column except
-  Appwrite's and placement columns is copied, so `video_required` (Order 30)
-  and Order 21's future fields carry across untouched. A future column that
-  holds a row id must be added to `LINE_PLACEMENT` and remapped (documented).
-- **Logged work is never touched** [Fact, unit + e2e]: neither op reads or
-  writes `sessions`/`sets`.
+`fetchMyProgram` reads weeks first and asks for days and lines only for
+**published** weeks, so a draft week's rows never leave Appwrite for this screen.
+`visibleProgram` filters again on the way out, and the cache only ever holds its
+output. [Fact] `e2e:my-program` checks this on the wire (no response body
+contains a draft week's days or lines) and in `localStorage`. The existing caveat
+in `docs/programs.md` stands: an athlete hitting the raw API can read their own
+draft rows, because draft is a filter and not a permission.
 
-### Assumptions, each reversible
+### Offline
 
-- **[Inference]** A duplicated earlier week lands after the block's last week
-  (`7 × (weeks − index)` days), not on top of the following week.
-- **[Inference]** The duplicated week's label is not copied (shows "Week N").
-- **[Inference]** Fixed kilos are copied as written across athletes; the copy is
-  a draft so the coach reviews it before publishing.
-- **[Inference]** Copying with no start date keeps the source's dates; a block
-  copy anchors on that block's first dated day.
-- **[SME to confirm]** with Ruairi whether he copies blocks between athletes at
-  all, or whether question 6/7 (templates) is the real need.
+Stale-while-revalidate over a per-athlete localStorage entry (`snb.my-program`):
+the last program paints immediately, the refresh runs behind it, and a failed
+refresh changes nothing and says nothing. Maxes are cached with it so kilos stay
+kilos. An unpublished program clears the cache.
 
-### Tests
+### Decisions worth a look
 
-- `lib/programming/copy.test.ts` — date maths (shift, anchor, DST).
-- `appwrite/documents/program-copy.test.ts` — dates, percent re-targeting,
-  exercise resolution, authorisation, generic column copy incl. `video_required`.
-- `components/coach/copy-program.test.tsx` — the button and the form.
-- `scripts/e2e-copy.mts` (`npm run e2e:copy`) — 20/20 against the live
-  instance; `e2e:program` re-run 31/31.
-- `tsc`, `eslint` clean; full vitest 118 files / 1848 tests.
+- **[Inference]** Done/Missed come from the athlete's recent sessions
+  (`programDayId`, newest 25). Missed is not claimed unless that list loaded and
+  reaches back to the day; otherwise the day is unlabelled. Offline this means no
+  "0 of N" and no wall of Missed.
+- **[Inference]** The no-coach state exists as a screen (the brief asked for one)
+  though the blueprint says the screen is absent. Today never links to it; only a
+  typed URL or a stale tab lands there. Cheap to delete if Joey prefers a 404.
+
+### Left out
+
+- **"Prescription revised" mark** on a logged day the coach later edited. It needs
+  each logged set's `prescribed` snapshot compared against the current line, which
+  is a new read over `sets`; the brief said no new data paths. A done day shows
+  the line as the coach has it now and says the log is unchanged. History itself is
+  never rewritten.
+- **"Whatever's written next"** on a finished block: nothing in the model says
+  what comes next, so only the completion line is shown.
+- Per-week unpublish-while-editing (still the open question from Order 19).
+
+### Verification
+
+- `npm run typecheck` and `npm run lint` clean.
+- Vitest: **119 files, 1861 tests passing** after merging dev (Order 30). New: 39
+  across `my-program.test.ts` (read rules, draft filtering, day state),
+  `my-program-store.test.ts` (query shapes, draft filter holds even if queries are
+  ignored), `use-my-program.test.ts` (offline, cache scoping, unpublish clears),
+  `program-screen.test.tsx` (each state) and two Today tests.
+- `npm run e2e:my-program` against the live instance: **26/26**. No coach; linked
+  with nothing published; a block with two draft weeks (current week open, drafts
+  absent, Done/Missed, kilos, link to logged session); drafts absent on the wire
+  and in the cache; the coach publishes a draft week and it appears on next load,
+  un-publishes it and it goes; viewing sends no write; offline reload shows the
+  cached program with no error text; Start opens the logger on that day.
+- Regression: `e2e:program` 31/31.
+
+Run it: `next dev --webpack -p 3123`, then `E2E_BASE_URL=http://localhost:3123 npm run e2e:my-program`.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
