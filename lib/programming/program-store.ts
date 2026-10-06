@@ -1,6 +1,10 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import {
+  visibleProgram,
+  livePrograms,
+} from "./my-program";
+import {
   assembleProgram,
   byPosition,
   parseBlock,
@@ -82,6 +86,47 @@ export async function fetchPrograms(filter: { athleteId: string } | { coachId: s
     "athleteId" in filter ? Query.equal("athlete_id", filter.athleteId) : Query.equal("coach_id", filter.coachId);
   const rows = parseRows(await listAll("programs", [query]), parseProgram);
   return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/**
+ * The athlete's current block, as the athlete may see it. Order 23.
+ *
+ * The draft rule is enforced here, in the read, and not left to the screen:
+ * weeks are read first and only the published ones' days and lines are asked
+ * for, so a draft week's rows never leave Appwrite for this caller, let alone
+ * reach the cache. `visibleProgram` filters again on the way out, so a change
+ * to the queries cannot quietly start leaking. Raw API access by the athlete
+ * can still see their own drafts -- that is the permission model, see
+ * docs/programs.md -- which is why this is a filter and not a promise.
+ *
+ * Reads only, through the athlete's own session. Null when no published
+ * program with a published week exists. Throws when Appwrite cannot be
+ * reached, so the caller can fall back to its cache.
+ */
+export async function fetchMyProgram(athleteId: string): Promise<ProgramTree | null> {
+  const programs = livePrograms(await fetchPrograms({ athleteId }), athleteId);
+  for (const program of programs) {
+    const byProgram = [Query.equal("program_id", program.id)];
+    const [blocks, weeks] = await Promise.all([
+      listAll("program_blocks", byProgram),
+      listAll("program_weeks", byProgram),
+    ]);
+    const parsedWeeks = parseRows(weeks, parseWeek).filter((w) => w.status === "published");
+    if (parsedWeeks.length === 0) continue;
+    const byWeek = [Query.equal("week_id", parsedWeeks.map((w) => w.id))];
+    const [days, prescriptions] = await Promise.all([
+      listAll("program_days", byWeek),
+      listAll("prescriptions", byWeek),
+    ]);
+    const tree = visibleProgram(program, {
+      blocks: parseRows(blocks, parseBlock),
+      weeks: parsedWeeks,
+      days: parseRows(days, parseDay),
+      prescriptions: parseRows(prescriptions, parsePrescriptionRow),
+    });
+    if (tree) return tree;
+  }
+  return null;
 }
 
 /** A prescribed day with everything the athlete needs to see and start it. */
