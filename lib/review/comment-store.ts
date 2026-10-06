@@ -3,7 +3,7 @@
 import { ID, Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { deleteComment, postComment, type Actor } from "@/appwrite/documents";
+import { authenticRows, deleteComment, postComment, type Actor } from "@/appwrite/documents";
 import { checkComment, type Comment, type CommentRejection } from "./comments";
 
 /**
@@ -61,7 +61,9 @@ export async function fetchCommentsForSets(setIds: readonly string[]): Promise<C
         Query.limit(MAX_COMMENTS),
       ],
     });
-    for (const row of page.rows) {
+    // Only comments their author wrote. `author_id` is a claim; the stamp is
+    // the proof (appwrite/documents/provenance.ts).
+    for (const row of authenticRows("set_comments", page.rows)) {
       const comment = toComment(row as unknown as Record<string, unknown> & { $id: string });
       if (comment) comments.push(comment);
     }
@@ -97,7 +99,7 @@ export async function fetchCommentsForAthlete(
       Query.limit(limit),
     ],
   });
-  return page.rows
+  return authenticRows("set_comments", page.rows)
     .map((row) => toComment(row as unknown as Record<string, unknown> & { $id: string }))
     .filter((comment): comment is Comment => comment !== null);
 }

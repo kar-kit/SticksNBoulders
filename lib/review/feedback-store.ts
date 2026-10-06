@@ -2,6 +2,7 @@
 
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
+import { authenticRows } from "@/appwrite/documents";
 import { fetchCommentsForAthlete, fetchCommentsForSets } from "./comment-store";
 import type { Comment } from "./comments";
 import { setIdsToFetch, type FeedbackSet } from "./feedback";
@@ -71,6 +72,8 @@ export async function fetchSetsByIds(setIds: readonly string[]): Promise<Map<str
         Query.equal("$id", unique.slice(i, i + PAGE)),
         Query.limit(PAGE),
         Query.select([
+          // Selected so the row can prove its athlete wrote it.
+          "athlete_id",
           "session_id",
           "exercise_id",
           "set_index",
@@ -84,7 +87,7 @@ export async function fetchSetsByIds(setIds: readonly string[]): Promise<Map<str
         ]),
       ],
     });
-    for (const row of page.rows) {
+    for (const row of authenticRows("sets", page.rows)) {
       const set = toFeedbackSet(row as unknown as SetRow);
       sets.set(set.id, set);
     }
@@ -137,11 +140,12 @@ export async function fetchUnreadCount(athleteId: string, seenAt: string | null)
     Query.equal("athlete_id", athleteId),
     Query.notEqual("author_id", athleteId),
     Query.limit(10),
-    Query.select(["created_at"]),
+    // author_id is selected so a forged comment cannot light the badge.
+    Query.select(["created_at", "author_id"]),
   ];
   if (seenAt) queries.push(Query.greaterThan("created_at", seenAt));
   const page = await tables.listRows({ databaseId, tableId: "set_comments", queries });
-  return page.rows.length;
+  return authenticRows("set_comments", page.rows).length;
 }
 
 /**

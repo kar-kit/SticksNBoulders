@@ -2,7 +2,7 @@
 
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { createProfile, updateProfile, type Actor } from "@/appwrite/documents";
+import { createProfile, isAuthentic, updateProfile, type Actor } from "@/appwrite/documents";
 import {
   DEFAULT_UNITS,
   fallbackName,
@@ -18,14 +18,13 @@ import {
  *
  * No server route, unlike the circle, and the difference is worth stating. A
  * profile's row id IS the user id and every permission on it names the owner,
- * so an athlete can only ever write their own -- Appwrite refuses a row stamped
- * for somebody else, which is the same rule that made a coach unable to stamp
- * an athlete's read at Order 17. Verified against the instance: an athlete
- * creating a profile under another user's id comes back refused.
- *
- * That is why this is safe where `reference_maxes` was not. There the forgeable
- * field was data the row merely claimed; here the thing being claimed is the
- * row's own id, and Appwrite polices that.
+ * so an athlete can only ever write their own *correctly stamped* profile --
+ * Appwrite refuses a row stamped for somebody else. What it does not refuse is
+ * a row at somebody else's id stamped readable by every signed-in user, a role every session
+ * holds, which is how a stranger could squat a new user's profile before they
+ * onboard (docs/permission-audit.md, 27 Sep 2026). So `fetchProfile` only
+ * trusts a row its own user wrote, and the validate-row Function deletes a
+ * squat within seconds of it landing.
  */
 
 interface ProfileRow {
@@ -53,6 +52,11 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
   const { tables, databaseId } = browserAppwrite();
   try {
     const row = await tables.getRow({ databaseId, tableId: "profiles", rowId: userId });
+    // A row at this id that this user did not write is a squat: somebody
+    // created it, stamped for everyone, before the user onboarded. Read as
+    // absent, so `ensure` writes the real one once the validate-row Function
+    // has removed it (appwrite/documents/provenance.ts).
+    if (!isAuthentic("profiles", row as unknown as Record<string, unknown>)) return null;
     return toProfile(row as unknown as ProfileRow);
   } catch {
     // A missing row is the normal answer for an account that predates this

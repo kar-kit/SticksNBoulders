@@ -24,7 +24,7 @@ import { ID, Query, TablesDB } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
-import { writeRollup, type RowWriter, type WriteDeps } from "../appwrite/documents";
+import { isAuthentic, writeRollup, type RowWriter, type WriteDeps } from "../appwrite/documents";
 import { rollupFrom, rollupMatches, weekStart, type RollupSet } from "../lib/strength/rollup";
 
 dedupeSdkWarnings();
@@ -90,7 +90,12 @@ console.log(`${confirmed ? "Rebuilding" : "Planning rebuild of"} ${config.endpoi
 console.log(`  project ${config.projectId}, database ${config.databaseId}\n`);
 
 const mine = (row: Record<string, unknown>) => onlyAthlete === null || row.athlete_id === onlyAthlete;
-const setRows = (await allRows("sets")).filter(mine);
+// Admin reads see every row, including one a stranger wrote under somebody
+// else's athlete_id. Only sets their athlete stamped count, same as the live
+// path in rollup-admin.ts; the rest are reported, never summed.
+const everySet = (await allRows("sets")).filter(mine);
+const setRows = everySet.filter((row) => isAuthentic("sets", row));
+const forgedSets = everySet.length - setRows.length;
 const rollupRows = (await allRows("stats_rollups")).filter(mine);
 if (onlyAthlete) console.log(`Only athlete ${onlyAthlete}\n`);
 
@@ -175,6 +180,7 @@ const orphans = rollupRows.filter((row) => {
 
 console.log(`${setRows.length} sets in ${buckets.size} athlete/exercise/week buckets`);
 if (skipped) console.log(`  ${skipped} sets skipped as unusable`);
+if (forgedSets) console.log(`  ${forgedSets} sets ignored: not stamped by the athlete they name (forged or relabelled)`);
 console.log(`${rollupRows.length} rollups stored, ${agreed} already correct`);
 console.log(`  ${toCreate.length} to create`);
 console.log(`  ${toUpdate.length} to correct`);

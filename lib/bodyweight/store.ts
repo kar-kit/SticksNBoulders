@@ -3,7 +3,7 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { recordBodyweight, reviseBodyweight, type Actor } from "@/appwrite/documents";
+import { authenticRows, recordBodyweight, reviseBodyweight, type Actor } from "@/appwrite/documents";
 import { checkWeight, type BodyweightEntry, type WeightRejection } from "./bodyweight";
 
 /**
@@ -64,7 +64,9 @@ export async function fetchBodyweight(athleteId: string): Promise<BodyweightEntr
     const page = await tables.listRows({ databaseId, tableId: "bodyweight_entries", queries });
     if (page.rows.length === 0) break;
 
-    for (const row of page.rows) {
+    // Only weigh-ins the athlete wrote: a forged one moves a DOTS score
+    // (appwrite/documents/provenance.ts).
+    for (const row of authenticRows("bodyweight_entries", page.rows)) {
       const entry = toEntry(row as unknown as Record<string, unknown> & { $id: string });
       if (entry) entries.push(entry);
     }

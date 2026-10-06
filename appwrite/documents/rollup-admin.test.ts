@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { setPermissions } from "./policy";
 import { rebuildRollup, type RollupTables } from "./rollup-admin";
 
 /**
@@ -81,6 +82,9 @@ function tables(initialSets: Row[], initialRollups: Row[] = []) {
 
 const set = (id: string, loadKg: number, reps: number, extra: Partial<Row> = {}): Row => ({
   $id: id,
+  // Stamped as the write helper would, because the rebuild only counts sets
+  // their athlete wrote.
+  $permissions: setPermissions({ athleteId: ATHLETE }),
   athlete_id: ATHLETE,
   exercise_id: SQUAT,
   load_kg: loadKg,
