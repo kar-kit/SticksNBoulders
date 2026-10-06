@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { InstallHint } from "@/components/pwa/install-hint";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { useFeedbackBadge } from "@/lib/review/feedback-context";
 import { unreadLabel } from "@/lib/review/feedback";
@@ -78,6 +79,9 @@ export function TodayScreen() {
           )}
         </Link>
       ) : null}
+
+      {/* Renders nothing on most visits. See lib/pwa/install.ts for when it does. */}
+      <InstallHint />
 
       {/* Primary action in the thumb zone, per 00 Conventions. */}
       <div className="mt-auto flex flex-col gap-3">

@@ -76,6 +76,10 @@ in a basement, or the queue would have had nothing to queue:
 All three are localStorage, because losing them costs a round trip. The queue
 gets IndexedDB, because losing it costs someone's training.
 
+And the app itself has to open: the service worker keeps the athlete shell on
+the phone, so a cold start with no signal at all still reaches the queue. See
+[pwa.md](pwa.md).
+
 ## What it is not
 
 Not a CRDT, not a local-first framework, not a read cache for history or
