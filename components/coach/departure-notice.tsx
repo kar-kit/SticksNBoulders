@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchCoachLinks } from "@/lib/coach/coach-links-store";
-import { departureNotice, recentDepartures } from "@/lib/coach/link-status";
+import { departureNotice, recentDepartures, type CoachLinkRecord } from "@/lib/coach/link-status";
 
 /**
  * The Roster's line for athletes who left.
@@ -16,14 +16,20 @@ import { departureNotice, recentDepartures } from "@/lib/coach/link-status";
  *
  * Renders nothing at all when nobody left, and nothing when the read fails --
  * a notice that is sometimes an error box is worse than no notice.
+ *
+ * The Roster already holds a fresh, live read of the coach's links and passes
+ * it in as `records`, so the screen does not read the same table twice. Null
+ * means that read has not landed yet. Omitted, the notice reads for itself.
  */
-export function DepartureNotice() {
+export function DepartureNotice({ records }: { records?: readonly CoachLinkRecord[] | null } = {}) {
   const { state } = useSession();
   const coachId = state.status === "signed-in" ? state.user.id : null;
-  const [text, setText] = useState<string | null>(null);
+  const [fetched, setText] = useState<string | null>(null);
+  const given = records !== undefined;
+  const text = given ? (records ? departureNotice(recentDepartures(records, new Date())) : null) : fetched;
 
   useEffect(() => {
-    if (!coachId) return;
+    if (!coachId || given) return;
     let cancelled = false;
     void fetchCoachLinks(coachId)
       .then((records) => {
@@ -33,7 +39,7 @@ export function DepartureNotice() {
     return () => {
       cancelled = true;
     };
-  }, [coachId]);
+  }, [coachId, given]);
 
   if (!text) return null;
   return (
