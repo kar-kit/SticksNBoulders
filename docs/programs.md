@@ -95,8 +95,25 @@ under the athlete's thumb.
 - **Duplicate week (Order 20):** one more op in `lib/programming/program.ts` +
   `program-admin.ts` (copy a week's days and lines, shifting `scheduled_on` by
   7), and a button beside "+ Week".
-- **Backoff rules (21) / video required (30):** new nullable columns on
-  `prescriptions`, a field in `lineFields`, and a column after Notes in
-  `COLUMNS` (`lib/programming/editor.ts`).
+- **Backoff rules (21):** new nullable columns on `prescriptions`, a field in
+  `lineFields`, and a column after Notes in `COLUMNS` (`lib/programming/editor.ts`).
+- **Video required (30), built:** see below.
 - **My Program (23):** `fetchPrograms({ athleteId })` + `fetchProgramTree`
   already read through the athlete's own session; `targetsFor` resolves kilos.
+
+## Video required (Order 30)
+
+`prescriptions.video_required` (boolean, null on older rows reads as false) is
+a checkbox column on the grid: arrow onto it, Space flips it, and the write is
+the same one-field `updatePrescription` as every other cell, so it is server-
+only like the rest. In Log Session it is a **nudge, never a gate**
+(`lib/logging/video-prompt.ts`): the exercise's camera button is emphasised
+while the flagged line's sets are to do, and one status line appears once they
+are logged with no clip on any set of that exercise. "Not now" only puts the
+line away; nothing is recorded and nothing blocks a set or the session.
+
+[Inference] The Build Plan's section 5 wording ("refuses to quietly complete
+without a clip or an explicit skip") is deliberately not implemented: the
+Order 30 brief and constraint 4 (offline is normal, no blocking) outrank it.
+The existing `videoRequired` flag on `LoggableSet` (which does block confirm)
+is left unfed from prescriptions, so the logger never gates.

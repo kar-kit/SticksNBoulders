@@ -42,9 +42,12 @@ describe("generating a code", () => {
     expect(generateInviteCode(bytesOf(250, 5))).toBe("SNB-77777");
   });
 
-  it("does not repeat itself", () => {
-    const codes = new Set(Array.from({ length: 500 }, () => generateInviteCode()));
-    expect(codes.size).toBe(500);
+  it("is drawn fresh each time rather than fixed", () => {
+    // Not "500 draws never collide": with a 24.3M keyspace that is a birthday
+    // problem failing about one run in 200. Five draws all equal has odds of
+    // (1/24.3M)^4, which is the property that matters -- a stuck source.
+    const codes = new Set(Array.from({ length: 5 }, () => generateInviteCode()));
+    expect(codes.size).toBeGreaterThan(1);
   });
 
   it("has a keyspace worth stating, because Order 16 has to rate limit against it", () => {

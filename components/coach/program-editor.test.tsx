@@ -142,6 +142,23 @@ describe("the Program Editor grid", () => {
     expect(store.send).not.toHaveBeenCalled();
   });
 
+  it("flags a line video-required from the keyboard, sending only that field", async () => {
+    const user = userEvent.setup();
+    await ready();
+    const toggle = screen.getByRole("checkbox", { name: "Video required, line 2" });
+    expect(toggle).not.toBeChecked();
+    await user.click(screen.getByRole("textbox", { name: "Note, line 2" }));
+    await user.keyboard("{ArrowRight}");
+    expect(toggle).toHaveFocus();
+    await user.keyboard(" ");
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l2", videoRequired: true }),
+    );
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Video required, line 2" })).toBeChecked());
+    await user.keyboard("{ArrowUp}");
+    expect(screen.getByRole("checkbox", { name: "Video required, line 1" })).toHaveFocus();
+  });
+
   it("puts a cell back when the server refuses it", async () => {
     store.send.mockRejectedValueOnce(new Error("not-allowed"));
     const user = userEvent.setup();
