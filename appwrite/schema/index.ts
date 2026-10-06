@@ -14,22 +14,22 @@ export const DATABASE_ID = "sticksnboulders";
  * 2. There is no GROUP BY. Aggregates cannot be computed on read, so e1rm_kg
  *    is stored on the set and stats_rollups exists at all.
  *
- * Scope is phase 0, phase 1, the coach link, and reference maxes: the write
- * helper needs coach_athlete_links, the athlete logger needs the rest,
- * invite_codes is how a coach reaches an athlete in the first place, and
- * reference_maxes is what a percentage is a percentage of.
+ * Scope is phase 0, phase 1, the coach link, reference maxes, and the program
+ * data layer: the write helper needs coach_athlete_links, the athlete logger
+ * needs the rest, invite_codes is how a coach reaches an athlete in the first
+ * place, reference_maxes is what a percentage is a percentage of, and the five
+ * program tables are what a prescription hangs off.
  *
- * Programs and prescriptions are still deliberately absent. Order 18 models a
- * prescription as a pure value -- parsed, formatted and resolved in
- * lib/programming/prescription.ts -- but where one is stored depends on
- * whether a block is written up front or session by session, which is still an
- * open question with Ruairi and the one retrofit the build plan calls
- * expensive. The table arrives with the Program Editor at Order 19.
+ * The program tables (Order 19) are deliberately the shape that survives any
+ * answer to Ruairi's open question -- block up front, week by week, or session
+ * by session -- and whether he reuses templates. See docs/programs.md. The
+ * editor screen that writes them is still blocked on that answer; the tables
+ * are not.
  */
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 8,
+  version: 10,
   tables: [
     {
       id: "profiles",
@@ -90,6 +90,11 @@ export const schema: DatabaseSpec = {
         { key: "set_count", type: "integer", required: false, min: 0, default: 0 },
         { key: "tonnage_kg", type: "float", required: false, min: 0, default: 0 },
         { key: "client_session_id", type: "string", size: 64, required: true },
+        // The prescribed day this session was started from, or null for free
+        // logging, which stays first-class. A pointer, never a copy: the
+        // session is the athlete's record, and nothing on the program side
+        // writes back to it.
+        { key: "program_day_id", type: "string", size: 36, required: false },
       ],
       indexes: [
         { key: "idx_athlete_started", type: "key", columns: ["athlete_id", "started_at"], orders: ["asc", "desc"] },
@@ -126,6 +131,16 @@ export const schema: DatabaseSpec = {
         { key: "client_set_id", type: "string", size: 64, required: true },
         { key: "video_file_id", type: "string", size: 64, required: false },
         { key: "notes", type: "string", size: 500, required: false },
+        // The prescription line this set was logged against, or null for a set
+        // nobody prescribed. A pointer for "which line was this", not a
+        // dependency: the coach may edit or delete the line afterwards.
+        { key: "prescription_id", type: "string", size: 36, required: false },
+        // What the target said at the moment the set was logged, e.g.
+        // "5 x 152.5 kg (75%)". A snapshot on purpose -- constraint 5: a coach
+        // editing the block later must never rewrite what this set was an
+        // answer to, and a pointer alone would silently start pointing at the
+        // new plan.
+        { key: "prescribed", type: "string", size: 160, required: false },
       ],
       indexes: [
         { key: "idx_athlete_logged", type: "key", columns: ["athlete_id", "logged_at"], orders: ["asc", "desc"] },
@@ -320,6 +335,162 @@ export const schema: DatabaseSpec = {
       ],
     },
 
+    /* ---------------------------------------------------------------------
+     * Programming (Order 19). Coach-authored, server-written only.
+     *
+     * Every child row carries program_id, coach_id and athlete_id, copied from
+     * the program by the write helper -- the same rule as athlete_id on sets.
+     * Appwrite cannot join, and the permission stamp needs both ids without a
+     * read.
+     * ------------------------------------------------------------------ */
+
+    {
+      id: "programs",
+      name: "Programs",
+      purpose:
+        "The root of a coach's programming. athlete_id null is a template -- the same rows, unassigned -- so reusable skeletons need no second model if Ruairi turns out to reuse them. Written only by the server: Appwrite can police who reads a row but not what it claims, so a client able to create one could put a program on somebody else's Today.",
+      rowSecurity: true,
+      permissions: [],
+      columns: [
+        { key: "coach_id", type: "string", size: 36, required: true },
+        // Null for a template. Assigning one is a copy, never an update, so a
+        // template edited later cannot reach into an athlete's live block.
+        { key: "athlete_id", type: "string", size: 36, required: false },
+        { key: "name", type: "string", size: 120, required: true },
+        // Draft until published, so a half-written block never reaches an
+        // athlete's Today. Archived rather than deleted: sessions point here.
+        { key: "status", type: "enum", elements: ["draft", "published", "archived"], required: true },
+        // YYYY-MM-DD. Informational: the calendar lives on each day, which is
+        // what lets session-by-session writing work without this.
+        { key: "start_on", type: "string", size: 10, required: false },
+        { key: "notes", type: "string", size: 2000, required: false },
+        // The template this was copied from, if any. Lineage only.
+        { key: "template_id", type: "string", size: 36, required: false },
+        { key: "created_at", type: "datetime", required: true },
+        { key: "updated_at", type: "datetime", required: true },
+      ],
+      indexes: [
+        { key: "idx_athlete_status", type: "key", columns: ["athlete_id", "status"] },
+        { key: "idx_coach_updated", type: "key", columns: ["coach_id", "updated_at"], orders: ["asc", "desc"] },
+      ],
+    },
+
+    {
+      id: "program_blocks",
+      name: "Program blocks",
+      purpose:
+        "A training block inside a program (volume, intensity, peak). Ordered by position. Week count is not stored -- it is how many weeks point here, and a stored copy is a number that drifts the first time a week is added.",
+      rowSecurity: true,
+      permissions: [],
+      columns: [
+        { key: "program_id", type: "string", size: 36, required: true },
+        { key: "coach_id", type: "string", size: 36, required: true },
+        { key: "athlete_id", type: "string", size: 36, required: false },
+        { key: "position", type: "integer", required: true, min: 0 },
+        { key: "name", type: "string", size: 80, required: true },
+        { key: "notes", type: "string", size: 2000, required: false },
+      ],
+      indexes: [{ key: "idx_program_position", type: "key", columns: ["program_id", "position"] }],
+    },
+
+    {
+      id: "program_weeks",
+      name: "Program weeks",
+      purpose:
+        "A week is a row, not a number on a day, so it can be written, published and later duplicated on its own. Per-week status is what makes week-by-week writing possible without a migration: publish week 3 while week 4 is still a draft.",
+      rowSecurity: true,
+      permissions: [],
+      columns: [
+        { key: "program_id", type: "string", size: 36, required: true },
+        { key: "block_id", type: "string", size: 36, required: true },
+        { key: "coach_id", type: "string", size: 36, required: true },
+        { key: "athlete_id", type: "string", size: 36, required: false },
+        { key: "position", type: "integer", required: true, min: 0 },
+        { key: "label", type: "string", size: 80, required: false },
+        { key: "status", type: "enum", elements: ["draft", "published"], required: true },
+        { key: "notes", type: "string", size: 2000, required: false },
+      ],
+      indexes: [
+        { key: "idx_program", type: "key", columns: ["program_id"] },
+        { key: "idx_block_position", type: "key", columns: ["block_id", "position"] },
+      ],
+    },
+
+    {
+      id: "program_days",
+      name: "Program days",
+      purpose:
+        "One prescribed session. Carries its own calendar date rather than deriving it from a start date plus offsets, so a block written up front, a week written on Sunday and a session written the night before are all the same row. Null date on a template.",
+      rowSecurity: true,
+      permissions: [],
+      columns: [
+        { key: "program_id", type: "string", size: 36, required: true },
+        { key: "block_id", type: "string", size: 36, required: true },
+        { key: "week_id", type: "string", size: 36, required: true },
+        { key: "coach_id", type: "string", size: 36, required: true },
+        { key: "athlete_id", type: "string", size: 36, required: false },
+        { key: "position", type: "integer", required: true, min: 0 },
+        { key: "label", type: "string", size: 80, required: false },
+        // YYYY-MM-DD, the athlete's own calendar day. A date and not a
+        // timestamp: a session belongs to a day, and Today asks "what is on
+        // 2026-09-27", not "what is between two instants in some timezone".
+        { key: "scheduled_on", type: "string", size: 10, required: false },
+        // The coach's note for the day, shown under the card on Today -- the
+        // closest the app gets to the coach being in the room.
+        { key: "notes", type: "string", size: 2000, required: false },
+      ],
+      indexes: [
+        // Today's one question, as an index.
+        { key: "idx_athlete_scheduled", type: "key", columns: ["athlete_id", "scheduled_on"] },
+        { key: "idx_program", type: "key", columns: ["program_id"] },
+        { key: "idx_week_position", type: "key", columns: ["week_id", "position"] },
+      ],
+    },
+
+    {
+      id: "prescriptions",
+      name: "Prescriptions",
+      purpose:
+        "One line of a day: an exercise, a set count, reps, and the load cell exactly as the coach typed it. A top set and its backoffs are two lines, as in the spreadsheet. Mutable by design -- logged sets carry their own snapshot, so editing a line never rewrites what an athlete did.",
+      rowSecurity: true,
+      permissions: [],
+      columns: [
+        { key: "program_id", type: "string", size: 36, required: true },
+        { key: "week_id", type: "string", size: 36, required: true },
+        { key: "day_id", type: "string", size: 36, required: true },
+        { key: "coach_id", type: "string", size: 36, required: true },
+        { key: "athlete_id", type: "string", size: 36, required: false },
+        { key: "exercise_id", type: "string", size: 36, required: true },
+        { key: "position", type: "integer", required: true, min: 0 },
+        { key: "set_count", type: "integer", required: true, min: 1, max: 50 },
+        // Reps, or the bottom of a range when rep_max is set. Null when the
+        // load cell says it all ("work up to a heavy single").
+        { key: "reps", type: "integer", required: false, min: 1, max: 100 },
+        { key: "rep_max", type: "integer", required: false, min: 1, max: 100 },
+        // The load cell as typed: "75% @8", "142.5", "@8", or freeform. The
+        // text is canonical because freeform has nothing else, and Order 18's
+        // parse and format round-trip, so the structured form is derived.
+        { key: "load", type: "string", size: 120, required: false },
+        // Derived from `load` by the write helper, never by the caller, so it
+        // cannot disagree with the text. Stored for the "what did my typing
+        // land as" indicator Order 18 owes the coach.
+        {
+          key: "load_kind",
+          type: "enum",
+          elements: ["fixed", "percent", "rpe", "capped", "freeform"],
+          required: false,
+        },
+        { key: "rest_seconds", type: "integer", required: false, min: 0, max: 3600 },
+        { key: "notes", type: "string", size: 500, required: false },
+        { key: "updated_at", type: "datetime", required: true },
+      ],
+      indexes: [
+        { key: "idx_day_position", type: "key", columns: ["day_id", "position"] },
+        { key: "idx_program", type: "key", columns: ["program_id"] },
+        { key: "idx_week", type: "key", columns: ["week_id"] },
+      ],
+    },
+
     {
       id: "invite_codes",
       name: "Invite codes",
@@ -354,6 +525,12 @@ export const schema: DatabaseSpec = {
         { key: "status", type: "enum", elements: ["active", "revoked"], required: true },
         { key: "linked_at", type: "datetime", required: true },
         { key: "revoked_at", type: "datetime", required: false },
+        // Order 28: whether this athlete sees next-set load suggestions, or the
+        // coach holds them back. Coach-authored, so it lives on the server-only
+        // link row and is written only through /api/link/suggestions, never
+        // from a browser. Optional with a default so adding it rewrites
+        // nothing: rows linked before Order 28 read as "direct".
+        { key: "suggestions_mode", type: "enum", elements: ["direct", "held"], required: false, default: "direct" },
       ],
       indexes: [
         { key: "idx_pair", type: "unique", columns: ["coach_id", "athlete_id"] },

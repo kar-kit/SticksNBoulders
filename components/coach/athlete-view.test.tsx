@@ -33,6 +33,7 @@ vi.mock("@/components/coach/athlete-videos", () => ({ AthleteVideos: panel("Vide
 vi.mock("@/components/coach/athlete-bodyweight", () => ({ AthleteBodyweight: panel("Bodyweight panel") }));
 vi.mock("@/components/coach/recent-feedback", () => ({ RecentFeedback: panel("Feedback panel") }));
 vi.mock("@/components/strength/dots-block", () => ({ DotsBlock: panel("DOTS panel") }));
+vi.mock("@/components/coach/suggestion-switch", () => ({ SuggestionSwitch: panel("Suggestions panel") }));
 
 const row = (over: Record<string, unknown> = {}) => ({
   coachId: "coach",

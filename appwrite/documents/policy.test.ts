@@ -6,6 +6,8 @@ import {
   linkPermissions,
   LIBRARY_TEAM_ID,
   POLICIES,
+  PROGRAM_TABLES,
+  programPermissions,
   profilePermissions,
   commentPermissions,
   referenceMaxPermissions,
@@ -299,7 +301,12 @@ describe("policy hygiene", () => {
       "coach_athlete_links",
       "exercises",
       "invite_codes",
+      "prescriptions",
       "profiles",
+      "program_blocks",
+      "program_days",
+      "program_weeks",
+      "programs",
       "reference_maxes",
       "sessions",
       "set_comments",
@@ -318,6 +325,8 @@ describe("policy hygiene", () => {
       ...linkPermissions({ coachId: COACH, athleteId: ATHLETE }),
       ...invitePermissions({ coachId: COACH }),
       ...referenceMaxPermissions({ athleteId: ATHLETE }),
+      ...programPermissions({ coachId: COACH, athleteId: ATHLETE }),
+      ...programPermissions({ coachId: COACH, athleteId: null }),
     ];
     for (const permission of every) {
       expect(permission).toMatch(/^(read|update|delete)\("(users|user:[\w.-]+|team:[\w.-]+)"\)$/);
@@ -398,5 +407,58 @@ describe("a video on a set", () => {
 
   it("refuses to be stamped without an athlete", () => {
     expect(() => videoPermissions({ athleteId: "" })).toThrow(/athleteId/);
+  });
+});
+
+describe("a program row", () => {
+  it("is read by the coach who wrote it, the athlete it is for, and their circle", () => {
+    const permissions = programPermissions({ coachId: COACH, athleteId: ATHLETE });
+    expect(permissions).toEqual([
+      `read("user:${COACH}")`,
+      `read("user:${ATHLETE}")`,
+      `read("team:${circle}")`,
+    ]);
+  });
+
+  /**
+   * The table is server-written for the same reason reference_maxes is: a
+   * client that could create a day could create one naming somebody else as
+   * the athlete. So no row grants a write, the coach's included.
+   */
+  it("grants nobody an update or a delete, the coach included", () => {
+    for (const athleteId of [ATHLETE, null]) {
+      const permissions = programPermissions({ coachId: COACH, athleteId }).join(" ");
+      expect(permissions).not.toMatch(/update\(|delete\(/);
+    }
+  });
+
+  it("keeps a template to its coach alone", () => {
+    expect(programPermissions({ coachId: COACH, athleteId: null })).toEqual([`read("user:${COACH}")`]);
+  });
+
+  it("reaches nobody outside the circle", () => {
+    const permissions = programPermissions({ coachId: COACH, athleteId: ATHLETE }).join(" ");
+    expect(permissions).not.toContain(STRANGER);
+    expect(permissions).not.toContain('"users"');
+    expect(permissions).not.toContain('"any"');
+  });
+
+  it("does not repeat a grant for a self-coached athlete", () => {
+    const permissions = programPermissions({ coachId: ATHLETE, athleteId: ATHLETE });
+    expect(new Set(permissions).size).toBe(permissions.length);
+    expect(permissions).toContain(`read("user:${ATHLETE}")`);
+  });
+
+  it("refuses to be stamped without a coach, or with an empty athlete", () => {
+    expect(() => programPermissions({ coachId: "", athleteId: ATHLETE })).toThrow(/coachId/);
+    expect(() => programPermissions({ coachId: COACH, athleteId: "" })).toThrow(/athleteId/);
+  });
+
+  it("covers all five program tables with the same policy, all server-only", () => {
+    for (const table of PROGRAM_TABLES) {
+      expect(POLICIES[table]).toBe(programPermissions);
+      expect(SERVER_ONLY_TABLES).toContain(table);
+      expect(USER_WRITABLE_TABLES).not.toContain(table as never);
+    }
   });
 });

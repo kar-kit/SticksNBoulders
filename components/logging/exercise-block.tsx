@@ -26,6 +26,8 @@ export interface LoggedSet extends LoggableSet {
 
 export interface PlannedSet extends LoggableSet {
   clientSetId: string;
+  /** "suggested from RPE 7 @ 170", when the load came from the RPE engine. */
+  note?: string | null;
 }
 
 export interface ExerciseBlockProps {
@@ -56,6 +58,11 @@ export interface ExerciseBlockProps {
    * explain away.
    */
   camera?: ReactNode;
+  /**
+   * What the coach prescribed, one line each, above the set rows (Order 22).
+   * Absent for an exercise nobody prescribed.
+   */
+  target?: readonly string[] | null;
 }
 
 /**
@@ -85,6 +92,7 @@ export function ExerciseBlock({
   onSelect,
   onDelete,
   camera,
+  target = null,
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const open = planned.length > 0;
@@ -105,6 +113,16 @@ export function ExerciseBlock({
           </button>
         )}
       </header>
+
+      {target && target.length > 0 ? (
+        <ul aria-label={`${name} prescribed`} className="m-0 flex list-none flex-col gap-0.5 p-0">
+          {target.map((line, at) => (
+            <li key={at} className="text-ui text-muted">
+              {line}
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {sets.length > 0 || open ? <SetRowHeader /> : null}
 
@@ -130,6 +148,7 @@ export function ExerciseBlock({
             set={row}
             state={at === 0 ? "active" : "planned"}
             focused={focusedId === row.clientSetId}
+            note={row.note ?? null}
             onPressLoad={() => onFocus?.(row.clientSetId, "load")}
             onPressReps={() => onFocus?.(row.clientSetId, "reps")}
             onPressRpe={() => onFocus?.(row.clientSetId, "rpe")}

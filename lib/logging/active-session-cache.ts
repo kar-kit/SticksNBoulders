@@ -33,6 +33,7 @@ interface Stored {
   clientSessionId: string;
   startedAt: string;
   athleteId: string;
+  programDayId?: string | null;
 }
 
 export function rememberActiveSession(athleteId: string, session: SessionRecord): void {
@@ -41,6 +42,7 @@ export function rememberActiveSession(athleteId: string, session: SessionRecord)
     clientSessionId: session.clientSessionId,
     startedAt: session.startedAt.toISOString(),
     athleteId,
+    programDayId: session.programDayId ?? null,
   } satisfies Stored);
 }
 
@@ -65,5 +67,6 @@ export function recallActiveSession(athleteId: string, now: Date = new Date()): 
     setCount: 0,
     tonnageKg: 0,
     notes: null,
+    programDayId: stored.programDayId ?? null,
   } satisfies SessionRecord;
 }

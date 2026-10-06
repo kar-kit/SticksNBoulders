@@ -1,4 +1,5 @@
 import { estimateOneRepMax } from "@/lib/strength/e1rm";
+import { isSuggestionMode, type SuggestionMode } from "@/lib/coach/suggestion-mode";
 import { circleTeamId } from "./circle";
 import {
   bodyweightPermissions,
@@ -215,6 +216,8 @@ export interface CreateSessionInput {
   clientSessionId: string;
   startedAt?: Date;
   notes?: string;
+  /** The prescribed day this was started from. Absent for free logging. */
+  programDayId?: string | null;
 }
 
 export async function createSession(deps: WriteDeps, actor: Actor, input: CreateSessionInput) {
@@ -231,6 +234,7 @@ export async function createSession(deps: WriteDeps, actor: Actor, input: Create
       set_count: 0,
       tonnage_kg: 0,
       client_session_id: input.clientSessionId,
+      program_day_id: input.programDayId ?? undefined,
     },
     permissions: sessionPermissions({ athleteId: actor.userId }),
   });
@@ -277,6 +281,13 @@ export interface CreateSetInput {
   loggedAt?: Date;
   videoFileId?: string;
   notes?: string;
+  /** The prescription line this set answers, if one was prescribed. */
+  prescriptionId?: string | null;
+  /**
+   * What the target said when the set was logged. A snapshot, so a coach
+   * editing the line afterwards cannot change what this set was an answer to.
+   */
+  prescribed?: string | null;
 }
 
 export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetInput) {
@@ -316,6 +327,10 @@ export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetI
       client_set_id: input.clientSetId,
       video_file_id: input.videoFileId,
       notes: input.notes,
+      prescription_id: input.prescriptionId ?? undefined,
+      // Capped to the column, never rejected: a long freeform target must not
+      // be the reason a set fails to log.
+      prescribed: input.prescribed ? input.prescribed.slice(0, 160) : undefined,
     },
     permissions: setPermissions({ athleteId: actor.userId }),
   });
@@ -895,6 +910,35 @@ export async function revokeCoachLink(
     tableId: "coach_athlete_links",
     rowId: input.rowId,
     data: { status: "revoked", revoked_at: iso(deps.now()) },
+    permissions: linkPermissions(input),
+  });
+}
+
+/**
+ * Order 28: the coach's switch for whether this athlete sees next-set load
+ * suggestions.
+ *
+ * Writes the one column and nothing else, so it can never move a link's status
+ * or dates -- the fields the whole permission model trusts. Permissions are
+ * re-stamped from the policy rather than trusted from the row, as every other
+ * link write does: still read for the two parties, write for nobody.
+ *
+ * Runs with the API key. suggestion-mode-admin.ts is the only caller, and it
+ * has already checked the caller is the coach on an ACTIVE link -- never the
+ * athlete, whose screen this controls.
+ */
+export async function setLinkSuggestionMode(
+  deps: WriteDeps,
+  input: CreateLinkInput & { rowId: string; mode: SuggestionMode },
+) {
+  if (!isSuggestionMode(input.mode)) {
+    throw new Error(`setLinkSuggestionMode: unknown mode ${JSON.stringify(input.mode)}`);
+  }
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "coach_athlete_links",
+    rowId: input.rowId,
+    data: { suggestions_mode: input.mode },
     permissions: linkPermissions(input),
   });
 }

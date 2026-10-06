@@ -19,6 +19,8 @@ export interface CoachLinkRecord {
   status: "active" | "revoked";
   /** ISO 8601. Null only for a malformed row. */
   revokedAt: string | null;
+  /** ISO 8601. Optional: only the Roster needs it, for its new-athlete grace period. */
+  linkedAt?: string | null;
 }
 
 export type AthleteLinkState =

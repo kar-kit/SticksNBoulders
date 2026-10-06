@@ -24,7 +24,16 @@ export type ServerTable =
   | "stats_rollups"
   | "coach_athlete_links"
   | "invite_codes"
-  | "reference_maxes";
+  | "reference_maxes"
+  | ProgramTable;
+
+/** The five tables a program is made of. One policy covers all of them. */
+export type ProgramTable =
+  | "programs"
+  | "program_blocks"
+  | "program_weeks"
+  | "program_days"
+  | "prescriptions";
 export type PolicyTable = WritableTable | ServerTable;
 
 /** Appwrite's wire format for permissions. Built here and nowhere else. */
@@ -74,6 +83,13 @@ export interface CodeOwner {
 export interface ReviewParties {
   athleteId: string;
   coachId: string;
+}
+
+export interface ProgramOwner {
+  /** Who wrote it. Always the coach, including a self-coached athlete. */
+  coachId: string;
+  /** Who it is for, or null for a template nobody is assigned to yet. */
+  athleteId: string | null;
 }
 
 export interface CommentAuthor {
@@ -198,6 +214,45 @@ export function referenceMaxPermissions({ athleteId }: RowOwner): string[] {
 }
 
 /**
+ * Any row of a program: the program itself, a block, a week, a day, or a
+ * prescription line. One policy for all five, because they are one document
+ * split for Appwrite's sake, and a day readable by someone who cannot read its
+ * program is a bug with no upside.
+ *
+ * The coach who wrote it reads it by name. That grant survives a revoked link
+ * on purpose: the block is the coach's own work product, like a comment, and
+ * a coach who loses an athlete does not lose the record of what they wrote.
+ * The athlete it is for reads it, and so does their circle -- a second coach
+ * at the same gym (Ruairi and Louis both coach at Uxbridge) sees the program
+ * the athlete is on.
+ *
+ * A template carries the coach's read and nothing else. Nobody is assigned,
+ * so nobody else has a reason to see it.
+ *
+ * No update or delete for anyone, the coach included. Like reference_maxes,
+ * this is programming input written with the API key behind a route that
+ * checks the caller really coaches this athlete: Appwrite polices who reads a
+ * row, not what a row claims, so a table-level create would let a stranger
+ * write a day carrying somebody else's athlete_id and put it on their Today.
+ *
+ * Draft versus published is deliberately NOT a permission. Hiding a draft
+ * from the athlete would mean re-stamping every row of a block on publish --
+ * hundreds of writes, any of which can fail halfway -- to hide the athlete's
+ * own program from the athlete. The read path filters on status instead. See
+ * docs/programs.md.
+ */
+export function programPermissions({ coachId, athleteId }: ProgramOwner): string[] {
+  const permissions = [read(user(requireId(coachId, "coachId")))];
+  if (athleteId === null) return permissions;
+  const athlete = requireId(athleteId, "athleteId");
+  // A self-coached athlete is both, and Appwrite rejects a duplicate grant no
+  // more than it rejects a single one -- but a clean list is easier to audit.
+  if (athlete !== coachId) permissions.push(read(user(athlete)));
+  permissions.push(read(team(circleTeamId(athlete))));
+  return permissions;
+}
+
+/**
  * A coach reads their own code and nobody else reads it at all.
  *
  * Not because the code is a secret from the athlete -- the coach is about to
@@ -317,6 +372,11 @@ export const POLICIES = {
   coach_athlete_links: linkPermissions,
   invite_codes: invitePermissions,
   reference_maxes: referenceMaxPermissions,
+  programs: programPermissions,
+  program_blocks: programPermissions,
+  program_weeks: programPermissions,
+  program_days: programPermissions,
+  prescriptions: programPermissions,
 } as const satisfies Record<PolicyTable, (owner: never) => string[]>;
 
 /** Tables a signed-in user may write to at all. */
@@ -330,9 +390,18 @@ export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
   "bodyweight_entries",
 ];
 
+export const PROGRAM_TABLES: readonly ProgramTable[] = [
+  "programs",
+  "program_blocks",
+  "program_weeks",
+  "program_days",
+  "prescriptions",
+];
+
 export const SERVER_ONLY_TABLES: readonly ServerTable[] = [
   "stats_rollups",
   "coach_athlete_links",
   "invite_codes",
   "reference_maxes",
+  ...PROGRAM_TABLES,
 ];

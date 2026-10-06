@@ -16,6 +16,7 @@
     "appwrite:backup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-backup.mts",
     "appwrite:restore": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-restore.mts",
     "exercises:seed": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/seed-exercises.mts",
+    "programs:seed": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/seed-program.mts",
     "e1rm:backfill": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/backfill-e1rm.mts",
     "rollups:rebuild": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/rebuild-rollups.mts",
     "appwrite:probe": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-permission-probe.mts",
@@ -44,7 +45,10 @@
     "e2e:shell": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-shell.mts",
     "e2e:export": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-export.mts",
     "e2e:athlete-view": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-athlete-view.mts",
-    "e2e:pwa": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-pwa.mts"
+    "e2e:roster": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-roster.mts",
+    "e2e:pwa": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-pwa.mts",
+    "e2e:suggestions": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-suggestions.mts",
+    "e2e:program": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-program.mts"
   },
   "dependencies": {
     "appwrite": "^26.2.0",

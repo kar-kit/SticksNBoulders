@@ -152,3 +152,29 @@ describe("nextSetIndex", () => {
     expect(nextSetIndex([])).toBe(1);
   });
 });
+
+describe("a suggestion the coach's switch let through (Order 28)", () => {
+  const suggestion = { loadKg: 175, reps: 5, fromRpe: 7, fromLoadKg: 170 };
+  let n = 0;
+  const id = () => `id-${++n}`;
+
+  it("fills the fresh row after a confirm, marked as a suggestion", () => {
+    const rows = [rowAfter("squat", null, id)];
+    const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, suggestion);
+    expect(next).toMatchObject({ loadKg: 175, reps: 5, note: "suggested from RPE 7 @ 170" });
+  });
+
+  it("repeats the set just logged when none was let through, with no note", () => {
+    const rows = [rowAfter("squat", null, id)];
+    const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, null);
+    expect(next).toMatchObject({ loadKg: 170, reps: 5 });
+    expect(next.note ?? null).toBeNull();
+  });
+
+  it("never overwrites a row the athlete already planned", () => {
+    const head = rowAfter("squat", null, id);
+    const planned = { ...rowAfter("squat", null, id, true), loadKg: 150, reps: 8 };
+    const { next } = afterConfirm([head, planned], head.clientSetId, { loadKg: 170, reps: 5 }, id, suggestion);
+    expect(next).toEqual(planned);
+  });
+});

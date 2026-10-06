@@ -37,8 +37,11 @@ interface TrainingValue {
   /** The session to resume, or null. */
   active: SessionRecord | null;
   lastFinished: SessionRecord | null;
-  /** Starts one, or hands back the one already running. */
-  start: () => Promise<SessionRecord>;
+  /**
+   * Starts one, or hands back the one already running. `programDayId` links it
+   * to the prescribed day it was started from (Order 22).
+   */
+  start: (options?: { programDayId?: string | null }) => Promise<SessionRecord>;
   finish: (sessionId: string, totals: { setCount: number; tonnageKg: number }) => Promise<void>;
   reload: () => Promise<void>;
 }
@@ -145,12 +148,12 @@ export function TrainingSessionProvider({
     }
   }, [athleteId, load]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (options?: { programDayId?: string | null }) => {
     if (active) return active;
     if (!athleteId) throw new Error("Cannot start a session without a signed-in athlete");
 
     pendingClientId.current ??= newClientSessionId();
-    const session = await startSession(pendingClientId.current);
+    const session = await startSession(pendingClientId.current, undefined, options?.programDayId ?? null);
     pendingClientId.current = null;
     rememberActiveSession(athleteId, session);
 

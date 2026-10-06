@@ -1,4 +1,4 @@
-import { resolvePrefill } from "./prefill";
+import { resolvePrefill, type Suggestion } from "./prefill";
 import type { RpeValue } from "./set";
 
 /**
@@ -31,6 +31,19 @@ export interface PlannedRow {
    * before and keeps a trail of untouched rows off every exercise.
    */
   planned: boolean;
+  /**
+   * The prescription line this row answers and its target in words, when the
+   * session was started from a prescribed day (Order 22). Stamped once when
+   * the row appears; see `prescribeNewRows` in lib/programming/session-plan.
+   */
+  prescriptionId?: string;
+  prescribed?: string;
+  /**
+   * Why the load is what it is, when the athlete did not type it: "suggested
+   * from RPE 7 @ 170". Only ever set by a suggestion the coach's switch let
+   * through (Order 28), and cleared the moment the athlete edits the load.
+   */
+  note?: string | null;
 }
 
 export interface LoggedValues {
@@ -38,14 +51,22 @@ export interface LoggedValues {
   reps: number;
 }
 
-/** A fresh row, repeating the set before it. Rule 3 of the prefill order. */
+/**
+ * A fresh row: a suggestion when one was let through (rule 2 of the prefill
+ * order), otherwise a repeat of the set before it (rule 3).
+ *
+ * The suggestion arrives already gated -- see suggestion-gate.ts. This never
+ * decides whether the athlete may see one; it only ranks what it is given.
+ */
 export function rowAfter(
   exerciseId: string,
   previous: { loadKg: number | null; reps: number | null } | null,
   newId: () => string,
   planned = false,
+  suggestion: Suggestion | null = null,
 ): PlannedRow {
   const prefill = resolvePrefill({
+    suggestion,
     previousSetThisSession:
       previous && previous.loadKg !== null && previous.reps !== null
         ? { loadKg: previous.loadKg, reps: previous.reps }
@@ -61,6 +82,7 @@ export function rowAfter(
     rpe: null,
     isWarmup: false,
     planned,
+    ...(prefill.source === "suggested" ? { note: prefill.note } : {}),
   };
 }
 
@@ -97,14 +119,17 @@ export function addRow(
  *
  * The confirmed row leaves. If the exercise still has rows waiting, the next
  * one becomes the head and nothing new is added -- the athlete already said
- * what comes next. If it has none, a row repeating the set just logged takes
- * its place, which is the one-tap straight set the logger was built around.
+ * what comes next, and a suggestion never overwrites numbers they typed. If it
+ * has none, a new row takes its place: the suggestion if the coach's switch
+ * let one through, otherwise a repeat of the set just logged, which is the
+ * one-tap straight set the logger was built around.
  */
 export function afterConfirm(
   rows: readonly PlannedRow[],
   confirmedId: string,
   logged: LoggedValues,
   newId: () => string,
+  suggestion: Suggestion | null = null,
 ): { rows: PlannedRow[]; next: PlannedRow } {
   const confirmed = rows.find((row) => row.clientSetId === confirmedId);
   const rest = rows.filter((row) => row.clientSetId !== confirmedId);
@@ -113,7 +138,7 @@ export function afterConfirm(
   }
   const waiting = headOf(rest, confirmed.exerciseId);
   if (waiting) return { rows: rest, next: waiting };
-  const next = rowAfter(confirmed.exerciseId, logged, newId);
+  const next = rowAfter(confirmed.exerciseId, logged, newId, false, suggestion);
   return { rows: [...rest, next], next };
 }
 

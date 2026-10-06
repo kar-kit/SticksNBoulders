@@ -34,7 +34,9 @@ export {
   rollupPermissions,
   sessionPermissions,
   setPermissions,
+  programPermissions,
   POLICIES,
+  PROGRAM_TABLES,
   SERVER_ONLY_TABLES,
   USER_WRITABLE_TABLES,
   LIBRARY_TEAM_ID,
@@ -44,6 +46,8 @@ export {
   type CommentAuthor,
   type ReviewParties,
   type PolicyTable,
+  type ProgramOwner,
+  type ProgramTable,
   type ServerTable,
   type WritableTable,
 } from "./policy";
@@ -106,3 +110,19 @@ export {
   type UpsertRollupInput,
   type WriteDeps,
 } from "./write";
+
+export {
+  createPrescription,
+  createProgram,
+  createProgramBlock,
+  createProgramDay,
+  createProgramWeek,
+  deletePrescription,
+  updatePrescription,
+  updateProgram,
+  updateProgramBlock,
+  updateProgramDay,
+  updateProgramWeek,
+  type CreateProgramInput,
+  type ProgramScope,
+} from "./program-write";
