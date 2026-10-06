@@ -89,7 +89,7 @@ could do.
 
 ### Verification
 
-`lint` · `typecheck` · **1917 tests, 120 files** · `npm run appwrite:audit`
+`lint` · `typecheck` · **2013 tests, 126 files** · `npm run appwrite:audit`
 live: 463/465, the two validator checks failing as above.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
