@@ -31,7 +31,7 @@ import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
 import { addCoachToCircle, ensureCircle } from "../appwrite/documents/circle-admin";
 import { circleTeamId } from "../appwrite/documents/circle";
-import { linkPermissions, profilePermissions, referenceMaxPermissions } from "../appwrite/documents/policy";
+import { linkPermissions, profilePermissions, referenceMaxPermissions, setPermissions } from "../appwrite/documents/policy";
 import { localDay } from "../lib/programming/program";
 
 dedupeSdkWarnings();
@@ -333,6 +333,35 @@ try {
     after?.load_kg === 150 && after?.prescribed === "5 reps · 150 kg (75%)",
     JSON.stringify(after && [after.load_kg, after.prescribed]),
   );
+
+  // --- the Roster reads the program (Order 24's seam) ------------------------
+  console.log("\nThe coach's Roster");
+  const benchLine = lines.find((r) => r.exercise_id !== squatId)!;
+  const maxedId = `prog-max-${stamp}`;
+  await db.createRow({
+    databaseId: D,
+    tableId: "sets",
+    rowId: maxedId,
+    data: {
+      session_id: sessionRow.$id,
+      athlete_id: athlete.$id,
+      exercise_id: benchLine.exercise_id,
+      set_index: 1,
+      load_kg: 100,
+      reps: 6,
+      rpe: 10,
+      is_warmup: false,
+      logged_at: new Date().toISOString(),
+      client_set_id: maxedId,
+      prescription_id: benchLine.$id,
+      prescribed: "6 reps · RPE 8",
+    },
+    permissions: setPermissions({ athleteId: athlete.$id }),
+  });
+  await coachPage.goto(`${BASE}/coach/roster`);
+  check("shows where the athlete is in the block", await visible(coachPage, "Week 1 of 1", 30000));
+  check("and flags an RPE 10 on a line that asked for 8", await visible(coachPage, /at RPE 10 that wasn't prescribed that hard/));
+  await coachPage.screenshot({ path: ".shots/program-roster-1440.png", fullPage: true });
 } catch (error) {
   check("ran without throwing", false, String(error));
 } finally {

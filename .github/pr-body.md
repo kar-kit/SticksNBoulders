@@ -2,8 +2,9 @@
 
 A coach writes a block in a keyboard-first grid; the linked athlete sees that
 day on Today with percentages already in kilos, starts it, and logs against
-targets that prefill the set row. Includes a merge of `dev` (64fa6a9, PRs
-#31–#35, #37) with conflicts resolved by keeping both sides.
+targets that prefill the set row. Includes merges of `dev` (64fa6a9, PRs
+#31–#35, #37; then 1980bc0, PRs #38 Roster and #39 suggestion toggle) with
+conflicts resolved by keeping both sides.
 
 ### The blocked decision, and what this assumes on Ruairi's behalf
 
@@ -62,6 +63,19 @@ Other assumptions made, each reversible:
   never re-priced. Sets store `prescription_id` and a text snapshot; sessions
   store `program_day_id`.
 
+**Seams other orders left, now filled**
+- Order 28: `setTargetFor` (`lib/logging/set-targets.ts`) returns the reps + RPE
+  of the prescribed next set, so next-set load suggestions appear on RPE and
+  capped lines when the coach's switch is `direct`. A fixed or percentage load
+  still wins over a suggestion (prefill rule order), and drops its note.
+- Order 24: `fetchProgramSignals` (`lib/coach/roster-store.ts`, decided in
+  `lib/coach/program-signals.ts`) feeds the Roster's Block column ("Week 2 of
+  3", "Starts 12 Oct", "Block finished"), **missed sessions** ([Inference] past
+  published days this week that no session was *started from* — a free session
+  that day does not count), and **RPE 10 above prescription** (working sets at
+  RPE 10 answering a line whose RPE or cap was below 10; a line with no RPE
+  never fires).
+
 **Server ops added on top of the 27 Sep WIP**: `publishProgram`,
 `removeBlock/Week/Day` (children first), `createExercise` (athlete-owned,
 deduped), and lines refused for an exercise the athlete cannot read.
@@ -107,25 +121,30 @@ server — same stamp as an athlete creating it mid-session.
 
 ### Schema
 
-v9, already applied to the live instance (`npm run appwrite:setup` reports
-"Schema already matches"). It flags one orphan column,
-`coach_athlete_links.suggestions_mode`, which belongs to Order 28's in-progress
-branch — not this PR, left alone.
+v10. The five program tables and `sessions.program_day_id`,
+`sets.prescription_id`, `sets.prescribed` were applied to the live instance on
+27 Sep from the WIP, which is why Order 28's schema run saw them as unknown;
+this branch is the schema-as-code for them. After merging dev,
+`npm run appwrite:setup -- --dry-run` reports **"Schema already matches"** with
+no orphans. Both sides of the merge had bumped to v9 for different changes,
+so this goes to v10.
 
 ### Tests
 
 - `npx tsc --noEmit -p .` clean, `npm run lint` clean.
-- Vitest: **103 files, 1692 tests passing**. New: `lib/programming/editor.test.ts`
+- Vitest: **113 files, 1805 tests passing** (after merging dev). New: `lib/programming/editor.test.ts`
   (25), `components/coach/program-editor.test.tsx` (11),
   `components/coach/program-list.test.tsx` (4), prescribed-row tests in
   `session-plan.test.ts` and `log-screen.test.tsx`, server-op tests in
   `program-admin.test.ts` (35 total).
-- `npm run e2e:program` against the live instance: **29/29**. Coach writes and
+- `npm run e2e:program` against the live instance: **31/31**. Coach writes and
   publishes a day in the editor; an unlinked user cannot list or read it, write
   through the route, forge a program for the athlete, or write a program table
   directly; the athlete sees it on Today in kilos, starts it, logs the
   prefilled set with prescription id and snapshot; a later coach edit leaves the
-  set untouched.
+  set untouched; the Roster shows "Week 1 of 1" and flags an RPE 10 set on a
+  line prescribed @8.
+- Regression: `e2e:roster` 23/23, `e2e:suggestions` 29/29 on this branch.
 - **[Unverified]** `components/coach/review-queue.test.tsx` ("drops an
   athlete's clips live when they unlink") failed once under full-suite load and
   passed on every rerun — timing-sensitive, came in from dev.
