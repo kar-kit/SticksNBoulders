@@ -35,6 +35,9 @@ const db = config.databaseId;
 const stamp = Date.now();
 const appwriteHost = new URL(config.endpoint).host;
 
+/** The logger's undo window, plus room for the delete to be written down. */
+const UNDO_WAIT_MS = 6500;
+
 const results: boolean[] = [];
 const check = (label: string, ok: boolean) => {
   results.push(ok);
@@ -57,6 +60,16 @@ const rowsOf = async (table: "sets" | "sessions" | "exercises", athleteId: strin
       ttl: 0,
     })
   ).rows;
+
+const rollupOf = async (athleteId: string, exerciseId: string) =>
+  (
+    await adminDb.listRows({
+      databaseId: db,
+      tableId: "stats_rollups",
+      queries: [Query.equal("athlete_id", athleteId), Query.equal("exercise_id", exerciseId), Query.limit(5)],
+      ttl: 0,
+    })
+  ).rows[0];
 
 /**
  * Cuts the phone off from Appwrite, leaving the app itself working.
@@ -187,12 +200,32 @@ console.log("\nThrowing the page away, still with no signal");
 await page.reload();
 await page.getByRole("button", { name: "Finish session" }).waitFor({ timeout: 15000 }).catch(() => {});
 check("the session is still running", await page.getByRole("button", { name: "Finish session" }).isVisible());
+// The rows come back when the queue has been read off the disk, a beat after
+// the page itself is up.
+await page.getByRole("group", { name: "Warm-up set" }).waitFor({ timeout: 10000 }).catch(() => {});
 check("the warm-up survived the reload", await page.getByRole("group", { name: "Warm-up set" }).isVisible());
 check("and both working sets", await page.getByRole("group", { name: "Set 2" }).isVisible());
 // It is only in the typeahead's cache, so a name here means both the exercise
 // and its set came back off the disk.
 check("the invented lift came back by name", await page.getByRole("region", { name: invented }).isVisible().catch(() => false));
 check("still queued, still nothing sent", (await rowsOf("sets", athlete.$id)).length === 0);
+
+console.log("\nDeleting a set that never left the phone");
+// Logged and deleted in the basement. It should never reach Appwrite at all --
+// the create leaves the queue rather than a delete being queued behind it.
+// The reload closed every row; tapping the name opens the next one, prefilled.
+await page.getByRole("region", { name: invented }).getByRole("button", { name: invented, exact: true }).click();
+await page.getByRole("region", { name: invented }).getByRole("button", { name: /^Log Set 2$/ }).click();
+await page.getByRole("region", { name: invented }).getByRole("group", { name: "Set 2" }).waitFor({ timeout: 10000 }).catch(() => {});
+await page.getByRole("region", { name: invented }).getByRole("group", { name: "Set 2" }).first().click();
+await page.getByRole("button", { name: "Delete Set 2" }).click();
+check("the undo toast offers it back", await page.getByRole("button", { name: "Undo" }).isVisible());
+await page.waitForTimeout(UNDO_WAIT_MS);
+check("the toast goes once the window passes", (await page.getByRole("button", { name: "Undo" }).count()) === 0);
+check(
+  "and the set is gone from the screen",
+  (await page.getByRole("region", { name: invented }).getByLabel("Logged").count()) === 1,
+);
 
 console.log("\nWalking back out into the signal");
 await goOnline(page);
@@ -245,7 +278,59 @@ await page.waitForTimeout(1500);
 check("the queued marks are gone once it syncs", (await page.getByLabel("Queued, will sync").count()) === 0);
 // The bug this line exists to catch: a list derived from the queue empties the
 // screen at the exact moment the sets succeed.
-check("and the sets are still on the screen", await page.getByRole("group", { name: "Set 2" }).isVisible());
+check(
+  "and the sets are still on the screen",
+  await page.getByRole("region", { name: "Squat" }).getByRole("group", { name: "Set 2" }).isVisible(),
+);
+
+console.log("\nDeleting a set that had synced, with no signal");
+// The other half of offline delete: the row is on the server, so a real delete
+// has to queue, survive a reload, and land -- with the rollup recomputed
+// behind it -- when the signal comes back.
+const inventedBlock = page.getByRole("region", { name: invented });
+await inventedBlock.getByRole("button", { name: /^Log Set 2$/ }).click();
+await until(async () => (await rowsOf("sets", athlete.$id)).length === 5);
+check("a fifth set lands with signal", (await rowsOf("sets", athlete.$id)).length === 5);
+const inventedId = invented_rows[0]?.$id as string;
+await until(async () => (await rollupOf(athlete.$id, inventedId))?.set_count === 2);
+check("and its week's rollup counts it", (await rollupOf(athlete.$id, inventedId))?.set_count === 2);
+
+await goOffline(page);
+await inventedBlock.getByRole("group", { name: "Set 2" }).first().click();
+await page.getByRole("button", { name: "Delete Set 2" }).click();
+await page.waitForTimeout(UNDO_WAIT_MS);
+check("the delete is queued, not sent", (await rowsOf("sets", athlete.$id)).length === 5);
+
+await page.reload();
+await page.getByRole("button", { name: "Finish session" }).waitFor({ timeout: 15000 }).catch(() => {});
+// Synced sets are not cached on the device (docs/offline.md: not a read
+// cache), so with no signal only queued work shows -- and a queued delete is
+// quiet, not a failure.
+check("the queued delete reads as nothing wrong", (await page.getByText(/could not be saved/).count()) === 0);
+check("and the server still has it", (await rowsOf("sets", athlete.$id)).length === 5);
+
+await goOnline(page);
+await until(async () => (await rowsOf("sets", athlete.$id)).length === 4);
+check("back on signal the delete lands", (await rowsOf("sets", athlete.$id)).length === 4);
+// The read that failed in the basement is retried once the queue moves, so
+// the sets that had synced before the reload come back -- and with them the
+// totals the finish is about to write.
+await page
+  .getByRole("region", { name: invented })
+  .getByLabel("Logged")
+  .first()
+  .waitFor({ timeout: 15000 })
+  .catch(() => {});
+check(
+  "and the screen reads the synced sets back, without the deleted one",
+  (await page.getByRole("region", { name: invented }).getByLabel("Logged").count()) === 1 &&
+    (await page.getByRole("region", { name: "Squat" }).getByLabel("Logged").count()) === 3,
+);
+await until(async () => (await rollupOf(athlete.$id, inventedId))?.set_count === 1);
+const correctedRollup = await rollupOf(athlete.$id, inventedId);
+check("the rollup is recomputed without it", correctedRollup?.set_count === 1);
+check("tonnage too", correctedRollup?.tonnage_kg === 640);
+check("nothing reads as an error", (await page.getByText(/could not be saved/).count()) === 0);
 
 console.log("\nFinishing, back on signal");
 await page.getByRole("button", { name: "Finish session" }).click();
@@ -264,6 +349,17 @@ for (const row of await rowsOf("sets", athlete.$id)) {
 }
 for (const row of await rowsOf("sessions", athlete.$id)) {
   await adminDb.deleteRow({ databaseId: db, tableId: "sessions", rowId: row.$id });
+}
+// Rollups this run's athlete caused. Server-only rows, removed with the admin key.
+for (const row of (
+  await adminDb.listRows({
+    databaseId: db,
+    tableId: "stats_rollups",
+    queries: [Query.equal("athlete_id", athlete.$id), Query.limit(25)],
+    ttl: 0,
+  })
+).rows) {
+  await adminDb.deleteRow({ databaseId: db, tableId: "stats_rollups", rowId: row.$id });
 }
 for (const row of await rowsOf("exercises", athlete.$id)) {
   await adminDb.deleteRow({ databaseId: db, tableId: "exercises", rowId: row.$id });

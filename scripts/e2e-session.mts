@@ -29,6 +29,9 @@ const teams = new Teams(admin);
 const db = config.databaseId;
 const stamp = Date.now();
 
+/** The logger's undo window, plus room for the delete to be written down. */
+const UNDO_WAIT_MS = 6500;
+
 const results: boolean[] = [];
 const check = (label: string, ok: boolean) => {
   results.push(ok);
@@ -224,12 +227,87 @@ check("and the rest timer is still counting the same rest", /2:[012]\d/.test(aft
 await page.getByRole("button", { name: "Skip rest" }).click();
 check("skipping it gives the typeahead back", (await page.getByRole("combobox").count()) === 1);
 
+console.log("\nQueueing the next set before confirming this one");
+// The reload closed the row; tapping the exercise opens the next one.
+await page.getByRole("button", { name: "Squat", exact: true }).click();
+await page.getByRole("group", { name: "Set 3" }).waitFor({ timeout: 10000 }).catch(() => {});
+await page.getByRole("button", { name: "Add a set to Squat" }).click();
+check("a second row appears before the first is confirmed", await page.getByRole("group", { name: "Set 4" }).isVisible());
+check("and only the first carries the confirm square", (await page.getByRole("button", { name: "Log Set 4" }).count()) === 0);
+
+// A top single, then a planned back-off at 100.
+await page.getByRole("button", { name: "Set 3 weight in kilograms" }).click();
+await pad("160");
+await page.getByRole("button", { name: "Reps", exact: true }).click();
+await pad("3");
+await page.getByRole("button", { name: "Set 3 RPE" }).click();
+await page.getByRole("button", { name: "9", exact: true }).click();
+await page.getByRole("button", { name: "Set 4 weight in kilograms" }).click();
+await pad("100");
+check("the planned row keeps its own numbers", (await page.getByRole("group", { name: "Set 4" }).innerText()).includes("100"));
+
+await page.getByRole("button", { name: "Log Set 3" }).click();
+await page.getByRole("button", { name: "Log Set 4" }).waitFor({ timeout: 10000 }).catch(() => {});
+check("logging the first makes the planned row the next one-tap confirm", await page.getByRole("button", { name: "Log Set 4" }).isVisible());
+check("rather than a repeat of the set just logged", (await page.getByRole("group", { name: "Set 4" }).innerText()).includes("100"));
+check("and the rest timer started as usual", await page.getByRole("timer", { name: "Rest timer" }).isVisible());
+await page.getByRole("button", { name: "Log Set 4" }).click();
+await until(async () => (await setsOf(athlete.$id)).length === 5);
+check("both reached Appwrite", (await setsOf(athlete.$id)).length === 5);
+const indices = (await setsOf(athlete.$id)).map((r) => Number(r.set_index)).sort((a, b) => a - b);
+check("with distinct set indices", new Set(indices).size === indices.length);
+await until(async () => (await rollupsOf(athlete.$id))[0]?.set_count === 4);
+check("the rollup counts four working sets", (await rollupsOf(athlete.$id))[0]?.set_count === 4);
+check("and the 160 is the week's best single", (await rollupsOf(athlete.$id))[0]?.best_single_kg === 160);
+// 160 x 3 @ RPE 9 is four reps to failure: 160 x 36 / 33.
+check("and its best e1RM", Math.abs(Number((await rollupsOf(athlete.$id))[0]?.best_e1rm_kg) - 174.5) < 0.1);
+
+console.log("\nDeleting a set that is not the last one");
+// The bug Joey logged: only the very last set could be removed.
+await page.getByRole("group", { name: "Set 3" }).click();
+await page.getByRole("button", { name: "Delete Set 3" }).click();
+check("the set leaves the screen at once", !(await page.getByRole("group", { name: "Set 3" }).innerText()).includes("160"));
+check("with an undo toast rather than a confirm dialog", await page.getByRole("button", { name: "Undo" }).isVisible());
+await page.getByRole("button", { name: "Undo" }).click();
+check("Undo puts it back", (await page.getByRole("group", { name: "Set 3" }).innerText()).includes("160"));
+await page.waitForTimeout(UNDO_WAIT_MS);
+check("and nothing was deleted on the server", (await setsOf(athlete.$id)).length === 5);
+
+await page.getByRole("group", { name: "Set 3" }).click();
+await page.getByRole("button", { name: "Delete Set 3" }).click();
+await page.waitForTimeout(UNDO_WAIT_MS);
+await until(async () => (await setsOf(athlete.$id)).length === 4);
+const afterDelete = await setsOf(athlete.$id);
+check("once the toast has gone, the delete lands", afterDelete.length === 4);
+check("and it was the 160 that went", !afterDelete.some((r) => r.load_kg === 160));
+check("the back-off is renumbered to set 3", (await page.getByRole("group", { name: "Set 3" }).innerText()).includes("100"));
+
+// The rollup is what every chart and PR reads. The 160 was the week's best
+// single and best e1RM; both have to be given back.
+await until(async () => (await rollupsOf(athlete.$id))[0]?.set_count === 3);
+const corrected = (await rollupsOf(athlete.$id))[0];
+check("the rollup drops it from the set count", corrected?.set_count === 3);
+check("and from tonnage", corrected?.tonnage_kg === 1900);
+check("the best single goes back to 140", corrected?.best_single_kg === 140);
+check("and the best e1RM to 168", corrected?.best_e1rm_kg === 168);
+
+console.log("\nDeleting the last one too, so the rest of the run sees three sets");
+await page.getByRole("group", { name: "Set 3" }).click();
+await page.getByRole("button", { name: "Delete Set 3" }).click();
+await page.waitForTimeout(UNDO_WAIT_MS);
+await until(async () => (await setsOf(athlete.$id)).length === 3);
+check("three sets again on the server", (await setsOf(athlete.$id)).length === 3);
+await until(async () => (await rollupsOf(athlete.$id))[0]?.set_count === 2);
+check("and the rollup is back where it started", (await rollupsOf(athlete.$id))[0]?.tonnage_kg === 1400);
+
 await page.goto(`${BASE}/today`);
 await page.getByRole("button", { name: "Resume session" }).waitFor({ timeout: 15000 }).catch(() => {});
 check("Today offers Resume rather than Start", await page.getByRole("button", { name: "Resume session" }).isVisible());
 await page.getByRole("button", { name: "Resume session" }).click();
 await page.waitForURL("**/log", { timeout: 20000 }).catch(() => {});
 check("Resume reopens the logger", page.url().endsWith("/log"));
+// Finishing before the sets have been read would report totals without them.
+await page.getByRole("group", { name: "Warm-up set" }).waitFor({ timeout: 15000 }).catch(() => {});
 
 console.log("\nFinishing");
 await page.getByRole("button", { name: "Finish session" }).click();
@@ -242,8 +320,8 @@ const afterFinish = await sessionsOf(athlete.$id);
 check("finished_at is written", afterFinish[0]?.finished_at != null);
 check("still exactly one session", afterFinish.length === 1);
 // The assertion that catches a summary disagreeing with what was logged.
-check("set_count counts working sets only", afterFinish[0]?.set_count === 2);
-check("tonnage excludes the warm-up", afterFinish[0]?.tonnage_kg === 1400);
+check(`set_count counts working sets only (${afterFinish[0]?.set_count})`, afterFinish[0]?.set_count === 2);
+check(`tonnage excludes the warm-up (${afterFinish[0]?.tonnage_kg})`, afterFinish[0]?.tonnage_kg === 1400);
 
 await page.getByRole("button", { name: "Back to Today" }).click();
 await page.waitForURL("**/today", { timeout: 20000 }).catch(() => {});
@@ -261,6 +339,9 @@ for (const row of await sessionsOf(athlete.$id)) {
 }
 // The app created this on the athlete's first write, so the run has to take it
 // away again -- otherwise every e2e leaves a team behind on the instance.
+for (const row of await rollupsOf(athlete.$id)) {
+  await adminDb.deleteRow({ databaseId: db, tableId: "stats_rollups", rowId: row.$id });
+}
 await teams.delete({ teamId: circleTeamId(athlete.$id) }).catch(() => {});
 await users.delete({ userId: athlete.$id });
 

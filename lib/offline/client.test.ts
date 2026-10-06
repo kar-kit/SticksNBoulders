@@ -230,3 +230,59 @@ describe("rollup refreshes", () => {
     resetQueueForTests();
   });
 });
+
+describe("withdrawing a set", () => {
+  it("does not send an op that was withdrawn after the batch was taken", async () => {
+    // A set deleted while an earlier op was on the wire. The drain loop holds
+    // a snapshot; without the check it would send the create anyway.
+    const { store } = recordingStore();
+    resetQueueForTests(store);
+    await attachQueue(ACTOR);
+
+    let release: () => void = () => {};
+    runOp.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
+    await enqueue("session.create", { sessionId: "cs-1" });
+    await enqueue("set.create", { setId: "st-1", sessionId: "cs-1" });
+
+    const { withdrawSet } = await import("./client");
+    const { landed } = await withdrawSet("st-1");
+    release();
+    await flush();
+
+    expect(landed).toBe(false);
+    expect(runOp.mock.calls.map(([, op]) => op.kind)).toEqual(["session.create"]);
+  });
+
+  it("will not withdraw the op whose request is on the wire", async () => {
+    const { store } = recordingStore();
+    resetQueueForTests(store);
+    await attachQueue(ACTOR);
+
+    let release: () => void = () => {};
+    runOp.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
+    await enqueue("set.create", { setId: "st-1", sessionId: "cs-1" });
+    // Let the drain start sending it.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const { withdrawSet } = await import("./client");
+    const { landed } = await withdrawSet("st-1");
+    release();
+    await flush();
+
+    expect(landed).toBe(true);
+  });
+
+  it("dismisses only failed ops", async () => {
+    const { store } = recordingStore([
+      { id: "f", kind: "set.delete", payload: { setId: "a" }, sequence: 0, attempts: 1, nextAttemptAt: 0, permanentError: "x" },
+      { id: "p", kind: "set.delete", payload: { setId: "b" }, sequence: 1, attempts: 0, nextAttemptAt: Date.now() + 60_000 },
+    ]);
+    resetQueueForTests(store);
+    runOp.mockRejectedValue(new TypeError("Failed to fetch"));
+    await attachQueue(ACTOR);
+
+    const { dismissFailed } = await import("./client");
+    await dismissFailed(["f", "p"]);
+    expect((await store.all()).map((op) => op.id)).toEqual(["p"]);
+  });
+});

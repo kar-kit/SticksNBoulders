@@ -14,6 +14,7 @@ import {
 import { ensureMyCircle } from "@/lib/auth/circle";
 import { ensureMyProfile } from "@/lib/profile/profile-store";
 import { refreshRollup } from "@/lib/strength/rollup-client";
+import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import type { QueuedOp } from "./queue";
 
 /**
@@ -28,6 +29,7 @@ import type { QueuedOp } from "./queue";
 const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 const asNumber = (value: unknown): number => (typeof value === "number" ? value : 0);
 const asDate = (value: unknown): Date => new Date(asString(value));
+const isNotFound = (error: unknown): boolean => (error as { code?: unknown })?.code === 404;
 
 /**
  * Runs one op. Throws whatever Appwrite threw, for `classify` to read.
@@ -114,17 +116,41 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
       return;
     }
     case "set.delete": {
-      await deleteSet(browserWriteDeps(() => ""), actor, asString(p.setId));
+      const setId = asString(p.setId);
+      try {
+        await deleteSet(browserWriteDeps(() => ""), actor, setId, {
+          // Checked here, at the last moment before the row goes, rather than
+          // when the athlete tapped: a delete queued in a basement may run an
+          // hour later, after the coach has watched the clip.
+          othersCommented: async () =>
+            (await fetchCommentsForSets([setId])).some((comment) => comment.authorId !== actor.userId),
+        });
+      } catch (error) {
+        // Already gone is what a delete wants. It happens when the athlete
+        // deleted the same set from History on another device, or a first
+        // attempt landed with the response lost.
+        if (isNotFound(error)) return;
+        throw error;
+      }
       return;
     }
     case "set.attachVideo": {
       // The upload already happened; this is the durable record of it. Null is
       // a real value here -- detaching a clip has to clear the id, not leave
       // it pointing at a file that is gone.
-      await attachVideo(browserWriteDeps(() => ""), actor, {
-        rowId: asString(p.setId),
-        videoFileId: typeof p.videoFileId === "string" ? p.videoFileId : null,
-      });
+      try {
+        await attachVideo(browserWriteDeps(() => ""), actor, {
+          rowId: asString(p.setId),
+          videoFileId: typeof p.videoFileId === "string" ? p.videoFileId : null,
+        });
+      } catch (error) {
+        // The set was deleted while its clip was still uploading. There is
+        // nothing to attach to, and a permanent failure here would tell the
+        // athlete a set did not reach their coach when they removed it on
+        // purpose. The file is left for the orphan sweep, like any detach.
+        if (isNotFound(error)) return;
+        throw error;
+      }
       return;
     }
   }
