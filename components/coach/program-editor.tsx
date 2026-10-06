@@ -65,6 +65,7 @@ const COLUMN_LABEL: Record<Column, string> = {
   load: "Load",
   rest: "Rest",
   notes: "Note",
+  video: "Video",
 };
 
 export function ProgramEditor({ programId }: { programId: string }) {
@@ -608,8 +609,23 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
                         "px-1 py-0.5",
                         column === "sets" || column === "reps" || column === "rest" ? "w-20" : "",
                         column === "load" ? "w-56" : "",
+                        column === "video" ? "w-16" : "",
                       )}
                     >
+                      {column === "video" ? (
+                        // A toggle, not a typed cell: Space flips it; arrows and
+                        // Enter walk the grid like every other cell.
+                        <input
+                          type="checkbox"
+                          data-cell={`${row}-${col}`}
+                          aria-label={`Video required, line ${row + 1}`}
+                          disabled={!editable}
+                          checked={line.videoRequired}
+                          onChange={(e) => void commit(line, "video", e.target.checked ? "Yes" : "No")}
+                          onKeyDown={(e) => onKey(e, row, col)}
+                          className="mx-3 mt-2.5 size-4 accent-accent-fill focus:outline-2 focus:outline-accent-line"
+                        />
+                      ) : (
                       <input
                         data-cell={`${row}-${col}`}
                         aria-label={`${COLUMN_LABEL[column]}, line ${row + 1}`}
@@ -624,6 +640,7 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
                           errors[key] ? "border-danger-line" : "border-border focus:border-accent-line",
                         )}
                       />
+                      )}
                       {column === "load" ? (
                         // What the typing landed as. The bare-8 and 75%% cases
                         // are caught here or not at all.

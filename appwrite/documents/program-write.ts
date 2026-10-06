@@ -247,6 +247,7 @@ export interface PrescriptionFields {
   load?: string | null;
   restSeconds?: number | null;
   notes?: string | null;
+  videoRequired?: boolean;
 }
 
 /**
@@ -285,6 +286,7 @@ export async function createPrescription(
       load_kind: loadKindOf(load),
       rest_seconds: input.restSeconds ?? null,
       notes: input.notes ?? null,
+      video_required: input.videoRequired ?? false,
       updated_at: iso(deps.now()),
     },
     permissions,
@@ -318,6 +320,7 @@ export async function updatePrescription(
       load_kind: loadKindOf(load),
       rest_seconds: input.restSeconds,
       notes: input.notes,
+      video_required: input.videoRequired,
       updated_at: iso(deps.now()),
     }),
     permissions,

@@ -78,11 +78,19 @@ export function ReviewQueue() {
   // Order 16.6. Read through refs so the queue can compare what it is about to
   // show with what it showed, and correct the session, without either becoming
   // a dependency that re-runs the load it is part of.
+  //
+  // itemsRef is written where the queue changes, not in an effect after render.
+  // A passive effect runs after the browser can already paint, so a link event
+  // landing in that gap would compare against the previous queue, find nothing
+  // to drop, and empty the screen without saying why.
   const itemsRef = useRef<QueueItem[]>([]);
   const sessionIdsRef = useRef(sessionAthleteIds);
   const refreshSessionRef = useRef(refreshSession);
+  const commitItems = useCallback((next: QueueItem[]) => {
+    itemsRef.current = next;
+    setItems(next);
+  }, []);
   useEffect(() => {
-    itemsRef.current = items;
     sessionIdsRef.current = sessionAthleteIds;
     refreshSessionRef.current = refreshSession;
   });
@@ -123,13 +131,13 @@ export function ReviewQueue() {
     const byId = new Map(athletes.map((athlete) => [athlete.id, athlete.name]));
     const queue = buildQueue(clips, reviewed, { athletes: byId, exercises });
     setAthleteNames(byId);
-    setItems(queue);
+    commitItems(queue);
     // What has already been said about what is waiting. Read with the queue
     // rather than per clip, so a coach who commented last Sunday sees it the
     // moment the clip opens instead of a blank box that invites a repeat.
     setComments(await fetchCommentsForSets(queue.map((item) => item.id)));
     return queue;
-  }, [coachId]);
+  }, [coachId, commitItems]);
 
   useEffect(() => {
     if (!coachId) return;
@@ -226,7 +234,7 @@ export function ReviewQueue() {
       // it. Doing it the other way round shows the coach the clip they just
       // cleared when they clear the last one.
       const following = nextAfter(items, item.id);
-      setItems((queue) => queue.filter((entry) => entry.id !== item.id));
+      commitItems(itemsRef.current.filter((entry) => entry.id !== item.id));
       setCurrentId(following?.id ?? null);
       setLastCleared(item);
       // Optimistic. A failed write leaves the clip cleared on screen and back
@@ -240,7 +248,7 @@ export function ReviewQueue() {
         void refresh().catch(() => {});
       });
     },
-    [coachId, items, refresh],
+    [coachId, items, refresh, commitItems],
   );
 
   const undo = useCallback(() => {
