@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
+import { fetchCoachStatus } from "@/lib/auth/role";
+import { subscribeToLinks } from "@/lib/coach/coach-links-store";
+import { droppedClipsNotice, reconcileDropped, sameAthletes } from "@/lib/coach/link-status";
 import { buildQueue, firstItem, groupByAthlete, nextAfter, type QueueItem } from "@/lib/review/queue";
 import { countBySet, type Comment } from "@/lib/review/comments";
 import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
@@ -57,12 +60,9 @@ interface LoadedDetail {
 type Load = "loading" | "ready" | "failed";
 
 export function ReviewQueue() {
-  const { state } = useSession();
+  const { state, refresh: refreshSession } = useSession();
   const coachId = state.status === "signed-in" ? state.user.id : null;
-  const athleteIds = useMemo(
-    () => (state.status === "signed-in" ? state.coach.athleteIds : []),
-    [state],
-  );
+  const sessionAthleteIds = state.status === "signed-in" ? state.coach.athleteIds : null;
 
   const [load, setLoad] = useState<Load>("loading");
   const [items, setItems] = useState<QueueItem[]>([]);
@@ -73,6 +73,19 @@ export function ReviewQueue() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [posting, setPosting] = useState(false);
   const [athleteNames, setAthleteNames] = useState<Map<string, string>>(new Map());
+  const [dropped, setDropped] = useState<ReadonlyMap<string, string>>(new Map());
+
+  // Order 16.6. Read through refs so the queue can compare what it is about to
+  // show with what it showed, and correct the session, without either becoming
+  // a dependency that re-runs the load it is part of.
+  const itemsRef = useRef<QueueItem[]>([]);
+  const sessionIdsRef = useRef(sessionAthleteIds);
+  const refreshSessionRef = useRef(refreshSession);
+  useEffect(() => {
+    itemsRef.current = items;
+    sessionIdsRef.current = sessionAthleteIds;
+    refreshSessionRef.current = refreshSession;
+  });
 
   const current = useMemo(
     () => items.find((item) => item.id === currentId) ?? firstItem(items),
@@ -81,6 +94,21 @@ export function ReviewQueue() {
 
   const refresh = useCallback(async () => {
     if (!coachId) return;
+    // Who is linked NOW, read fresh rather than taken from the session. The
+    // session was resolved when the app loaded; an athlete who unlinked since
+    // would otherwise stay in the IN filter, their clips on screen, and every
+    // action on them would fail against a circle the coach has left.
+    const { athleteIds } = await fetchCoachStatus(coachId);
+    const active = new Set(athleteIds);
+    // Counted before anything is replaced, so the coach is told why clips
+    // vanished rather than left wondering whether they cleared them.
+    const onScreen = itemsRef.current;
+    setDropped((already) => reconcileDropped(already, onScreen, active));
+    // The rail and the Review badge read the session. Refreshed only when it
+    // actually disagrees, which also catches a re-link without a reload.
+    if (sessionIdsRef.current && !sameAthletes(athleteIds, sessionIdsRef.current)) {
+      void refreshSessionRef.current().catch(() => {});
+    }
     const [clips, reviewed] = await Promise.all([
       fetchClips(athleteIds),
       fetchReviewedSetIds(coachId),
@@ -101,7 +129,7 @@ export function ReviewQueue() {
     // moment the clip opens instead of a blank box that invites a repeat.
     setComments(await fetchCommentsForSets(queue.map((item) => item.id)));
     return queue;
-  }, [athleteIds, coachId]);
+  }, [coachId]);
 
   useEffect(() => {
     if (!coachId) return;
@@ -130,9 +158,20 @@ export function ReviewQueue() {
     if (!coachId) return;
     try {
       const { databaseId } = browserAppwrite();
-      return subscribeToClips(databaseId, () => {
+      const stopClips = subscribeToClips(databaseId, () => {
         void refresh().catch(() => {});
       });
+      // An athlete unlinking reaches this screen live too: their clips leave,
+      // and a half-written comment on one goes with it -- the Build Plan's
+      // "drafts flush on revoke", since the comment box resets per clip. A
+      // re-link brings the clips back the same way.
+      const stopLinks = subscribeToLinks(databaseId, () => {
+        void refresh().catch(() => {});
+      });
+      return () => {
+        stopClips();
+        stopLinks();
+      };
     } catch {
       return;
     }
@@ -193,9 +232,15 @@ export function ReviewQueue() {
       // Optimistic. A failed write leaves the clip cleared on screen and back
       // in the queue on the next load, which is the safe direction: a clip
       // shown twice costs a moment, a clip silently dropped costs a review.
-      void clearClip(coachId, item.athleteId, item.id).catch(() => {});
+      //
+      // A refused write is also how a revoked link shows up between realtime
+      // events -- the review row is stamped with a circle the coach has left --
+      // so it re-reads, which drops that athlete's clips with a reason.
+      void clearClip(coachId, item.athleteId, item.id).catch(() => {
+        void refresh().catch(() => {});
+      });
     },
-    [coachId, items],
+    [coachId, items, refresh],
   );
 
   const undo = useCallback(() => {
@@ -228,7 +273,13 @@ export function ReviewQueue() {
           authorId: coachId,
           body,
         });
-        if (!outcome.ok) return false;
+        if (!outcome.ok) {
+          // Possibly not the network: the athlete may have unlinked since the
+          // queue loaded. Re-reading settles it -- if they did, the clip leaves
+          // and the draft with it, and the notice says why.
+          if (outcome.reason === "failed") void refresh().catch(() => {});
+          return false;
+        }
         setComments((all) => [...all, outcome.comment]);
         clear(item);
         return true;
@@ -236,7 +287,7 @@ export function ReviewQueue() {
         setPosting(false);
       }
     },
-    [clear, coachId],
+    [clear, coachId, refresh],
   );
 
   // Enter clears and advances, the blueprint's "barely touch the mouse". Never
@@ -269,9 +320,16 @@ export function ReviewQueue() {
     );
   }
 
+  const droppedNotice = droppedClipsNotice(dropped.size);
+
   if (!current) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
+        {droppedNotice ? (
+          <p role="status" className="m-0 max-w-[420px] text-center text-ui text-muted">
+            {droppedNotice}
+          </p>
+        ) : null}
         <EmptyState
           title="Nothing to review"
           body="Every clip your athletes have filmed has been watched. New ones land here as they train."
@@ -297,6 +355,11 @@ export function ReviewQueue() {
         <p className="m-0 mb-3 text-ui font-semibold text-muted">
           {items.length} waiting
         </p>
+        {droppedNotice ? (
+          <p role="status" className="m-0 mb-3 text-caption text-muted-2">
+            {droppedNotice}
+          </p>
+        ) : null}
         {groups.map((group) => (
           <div key={group.athleteId} className="mb-4">
             <p className="m-0 mb-1 text-ui font-semibold">{group.athleteName}</p>
