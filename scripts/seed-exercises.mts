@@ -22,6 +22,8 @@ import {
   createGlobalExercise,
   normaliseExerciseName,
   renameGlobalExercise,
+  restampGlobalExercise,
+  writtenByServer,
   type RowWriter,
   type WriteDeps,
 } from "../appwrite/documents";
@@ -51,7 +53,7 @@ console.log(`${confirmed ? "Seeding" : "Planning seed of"} ${config.endpoint}`);
 console.log(`  project ${config.projectId}, database ${config.databaseId}\n`);
 
 /** Every global row, paged. The library outgrows one page at about 25 entries. */
-const existing: Array<{ $id: string; name: string; normalised_name: string }> = [];
+const existing: Array<{ $id: string; name: string; normalised_name: string; $permissions: string[] }> = [];
 let cursor: string | null = null;
 for (;;) {
   const queries = [Query.equal("is_global", true), Query.orderAsc("$id"), Query.limit(100)];
@@ -59,7 +61,7 @@ for (;;) {
   const page = await db.listRows({ databaseId: config.databaseId, tableId: "exercises", queries, ttl: 0 });
   if (page.rows.length === 0) break;
   for (const row of page.rows) {
-    existing.push({ $id: row.$id, name: row.name, normalised_name: row.normalised_name });
+    existing.push({ $id: row.$id, name: row.name, normalised_name: row.normalised_name, $permissions: row.$permissions });
   }
   cursor = page.rows[page.rows.length - 1].$id;
 }
@@ -69,10 +71,16 @@ const seedKeys = new Set(SEED_EXERCISES.map(normaliseExerciseName));
 
 const toCreate = SEED_EXERCISES.filter((name) => !byNormalised.has(normaliseExerciseName(name)));
 const toRename = SEED_EXERCISES.map((name) => ({ name, row: byNormalised.get(normaliseExerciseName(name)) }))
-  .filter((pair): pair is { name: string; row: { $id: string; name: string; normalised_name: string } } =>
+  .filter((pair): pair is { name: string; row: (typeof existing)[number] } =>
     Boolean(pair.row) && pair.row!.name !== pair.name,
   );
 const orphans = existing.filter((row) => !seedKeys.has(row.normalised_name));
+// Rows seeded before the server's mark existed carry the same stamp a forged
+// library row carries, and readers now drop both. Re-stamping is how they come
+// back; renaming does it as a side effect, so only the rest need it.
+const toRestamp = existing.filter(
+  (row) => !row.$permissions.includes(writtenByServer()) && !toRename.some((pair) => pair.row.$id === row.$id),
+);
 
 // A duplicate here means two library rows an athlete must choose between
 // mid-set, with one lift's history split across both.
@@ -83,15 +91,16 @@ const duplicates = existing.filter(
 for (const name of toCreate) console.log(`  create   ${name}`);
 for (const { name, row } of toRename) console.log(`  rename   ${row.name}  ->  ${name}`);
 for (const row of orphans) console.log(`  orphan   ${row.name} (not in the seed list, left alone)`);
+for (const row of toRestamp) console.log(`  restamp  ${row.name} (lacks the server's mark)`);
 for (const row of duplicates) console.log(`  DUPLICATE ${row.name} (${row.$id}) shares a normalised name`);
 
-if (toCreate.length === 0 && toRename.length === 0) {
+if (toCreate.length === 0 && toRename.length === 0 && toRestamp.length === 0) {
   console.log(`  nothing to do: all ${SEED_EXERCISES.length} seed entries are present and correct`);
 }
 
 if (!confirmed) {
   console.log(
-    `\n${toCreate.length} to create, ${toRename.length} to rename, ` +
+    `\n${toCreate.length} to create, ${toRename.length} to rename, ${toRestamp.length} to restamp, ` +
       `${orphans.length} orphan(s), ${existing.length} global row(s) now.`,
   );
   console.log("Nothing written. Re-run with --yes to apply.");
@@ -106,6 +115,10 @@ for (const name of toCreate) {
 for (const { name, row } of toRename) {
   await renameGlobalExercise(deps, { rowId: row.$id, name });
   console.log(`  renamed  ${row.name} -> ${name}`);
+}
+for (const row of toRestamp) {
+  await restampGlobalExercise(deps, { rowId: row.$id });
+  console.log(`  restamped ${row.name}`);
 }
 
 console.log(`\nDone. ${existing.length + toCreate.length} global exercise(s).`);

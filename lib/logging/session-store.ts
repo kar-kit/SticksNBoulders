@@ -1,5 +1,6 @@
 import { ID, Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
+import { authenticRows } from "@/appwrite/documents";
 import { enqueue } from "@/lib/offline/client";
 import type { SessionRecord, SessionSet } from "./session";
 
@@ -77,7 +78,9 @@ export async function fetchRecentSessions(athleteId: string): Promise<SessionRec
       Query.limit(RECENT),
     ],
   });
-  return rows.rows
+  // A session row anyone can read is not a session this athlete logged. See
+  // appwrite/documents/provenance.ts.
+  return authenticRows("sessions", rows.rows)
     .map((row) => toSession(row as unknown as SessionRow))
     .filter((session): session is SessionRecord => session !== null);
 }
@@ -110,7 +113,7 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
     queries: [Query.equal("session_id", sessionId), Query.limit(200)],
   });
 
-  return rows.rows
+  return authenticRows("sets", rows.rows)
     .map((raw) => {
       const row = raw as unknown as SetRow;
       const loggedAt = asDate(row.logged_at);

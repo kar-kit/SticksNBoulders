@@ -10,9 +10,10 @@
  *
  * Creates throwaway users, a circle team and a handful of rows, then removes
  * them all. Point it at dev, never at anything with real athletes on it.
- * This is the permission audit script at Order 38 in embryo.
+ * Superseded as the pre-ship gate by `npm run appwrite:audit` (Order 38),
+ * which also writes through user sessions. See docs/permission-audit.md.
  */
-import { Client, ID, Storage, TablesDB, Teams, Users, type Models } from "node-appwrite";
+import { Client, ID, Query, Storage, TablesDB, Teams, Users, type Models } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
@@ -347,10 +348,15 @@ await adminDb.deleteRow({ databaseId: db, tableId: "invite_codes", rowId: invite
 for (const row of [coachMax, athleteMax]) {
   await adminDb.deleteRow({ databaseId: db, tableId: "reference_maxes", rowId: row.$id });
 }
-for (const links of [await adminDb.listRows({ databaseId: db, tableId: "coach_athlete_links" })]) {
-  for (const row of links.rows) {
-    await adminDb.deleteRow({ databaseId: db, tableId: "coach_athlete_links", rowId: row.$id });
-  }
+// Only the probe's own links. Unscoped, this deleted every coach link on the
+// instance -- every real athlete's coach, on a shared dev instance.
+const probeLinks = await adminDb.listRows({
+  databaseId: db,
+  tableId: "coach_athlete_links",
+  queries: [Query.equal("athlete_id", [joey.$id, sam.$id])],
+});
+for (const row of probeLinks.rows) {
+  await adminDb.deleteRow({ databaseId: db, tableId: "coach_athlete_links", rowId: row.$id });
 }
 for (const team of [joeyCircle, samCircle]) await teams.delete({ teamId: team.$id });
 for (const u of [joey, ruairi, sam, louis]) await users.delete({ userId: u.$id });

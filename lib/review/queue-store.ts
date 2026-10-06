@@ -3,7 +3,7 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { markSetReviewed, unmarkSetReviewed, type Actor } from "@/appwrite/documents";
+import { authenticRows, markSetReviewed, unmarkSetReviewed, type Actor } from "@/appwrite/documents";
 import type { ClipSet } from "./queue";
 
 /**
@@ -101,7 +101,9 @@ export async function fetchClips(athleteIds: readonly string[]): Promise<ClipSet
     const page = await tables.listRows({ databaseId, tableId: "sets", queries });
     if (page.rows.length === 0) break;
 
-    for (const row of page.rows) {
+    // Only sets their athlete wrote. A forged set with a clip would otherwise
+    // sit in the queue as the athlete's (appwrite/documents/provenance.ts).
+    for (const row of authenticRows("sets", page.rows)) {
       const clip = toClip(row as unknown as SetRow);
       if (clip) clips.push(clip);
     }
@@ -131,14 +133,16 @@ export async function fetchReviewedSetIds(coachId: string): Promise<Set<string>>
       Query.equal("coach_id", coachId),
       Query.orderDesc("$id"),
       Query.limit(PAGE),
-      Query.select(["set_id"]),
+      // coach_id is selected so the row can prove the coach wrote it. A review
+      // anyone could write would clear a clip from this coach's queue.
+      Query.select(["set_id", "coach_id"]),
     ];
     if (cursor) queries.push(Query.cursorAfter(cursor));
 
     const page = await tables.listRows({ databaseId, tableId: "set_reviews", queries });
     if (page.rows.length === 0) break;
 
-    for (const row of page.rows) {
+    for (const row of authenticRows("set_reviews", page.rows)) {
       const setId = str((row as unknown as { set_id?: unknown }).set_id);
       if (setId) reviewed.add(setId);
     }
@@ -159,9 +163,13 @@ export async function fetchSessionSets(
   const page = await tables.listRows({
     databaseId,
     tableId: "sets",
-    queries: [Query.equal("session_id", sessionId), Query.limit(PAGE), Query.select(["exercise_id", "set_index"])],
+    queries: [
+      Query.equal("session_id", sessionId),
+      Query.limit(PAGE),
+      Query.select(["exercise_id", "set_index", "athlete_id"]),
+    ],
   });
-  return page.rows.map((row) => {
+  return authenticRows("sets", page.rows).map((row) => {
     const raw = row as unknown as { exercise_id?: unknown; set_index?: unknown };
     return { exerciseId: str(raw.exercise_id), setIndex: num(raw.set_index) };
   });
@@ -203,7 +211,7 @@ export async function fetchRecentSets(
       Query.limit(limit),
     ],
   });
-  return page.rows.map((row) => {
+  return authenticRows("sets", page.rows).map((row) => {
     const raw = row as unknown as SetRow;
     return {
       loggedAt: str(raw.logged_at),

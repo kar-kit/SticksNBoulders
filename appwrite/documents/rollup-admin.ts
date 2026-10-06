@@ -1,5 +1,6 @@
 import { ID, Query, TablesDB, type Client } from "node-appwrite";
 import { rollupFrom, weekStart, type Rollup, type RollupSet } from "@/lib/strength/rollup";
+import { isAuthentic } from "./provenance";
 import { writeRollup } from "./write";
 import type { RowWriter } from "./row-writer";
 
@@ -106,6 +107,11 @@ export async function rebuildRollup(
   });
 
   const sets: RollupSet[] = page.rows
+    // This runs with the API key, which reads every row -- including one a
+    // stranger wrote carrying this athlete's id, which is how a forged 400kg
+    // set became an athlete's best e1RM (docs/permission-audit.md). Only sets
+    // the athlete's own session stamped count.
+    .filter((row) => isAuthentic("sets", row))
     .filter((row) => {
       const at = new Date(String(row.logged_at));
       return !Number.isNaN(at.getTime()) && weekStart(at).getTime() === week.getTime();

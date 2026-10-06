@@ -34,12 +34,17 @@ Every other owned table either goes through a route (`reference_maxes`,
 **The row id IS the user id, and every permission on it names the owner.** So
 Appwrite refuses a profile stamped for somebody else — the same stamping rule
 that stopped a coach granting an athlete's read at Order 17, working in our
-favour. The forgery that forced reference maxes onto the server does not apply,
-because there the forgeable part was a field the row merely *claimed*, and here
-it is the row's own identity, which Appwrite polices.
+favour.
+
+What it does not refuse is a row at somebody else's id stamped `read("users")`,
+a role every session holds: a stranger can squat a new user's profile before
+they onboard (docs/permission-audit.md, 27 Sep 2026). So `fetchProfile` only
+trusts a row carrying `update("user:<user_id>")` at its own user's id, reads a
+squat as absent, and the `validate-row` Function deletes it within seconds, after
+which `ensureMyProfile` writes the real one. The audit asserts both.
 
 Asserted rather than assumed: `npm run e2e:profile` tries to create a profile
-under another user's id and expects to be refused.
+under another user's id, correctly stamped, and expects to be refused.
 
 ## Sex: required by the blueprint, nullable in the schema
 

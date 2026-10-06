@@ -190,6 +190,23 @@ export async function renameGlobalExercise(
   });
 }
 
+/**
+ * Re-stamps a library row with today's policy, touching no data.
+ *
+ * Exists for one migration: library rows seeded before 6 Oct 2026 carried
+ * `read("users")` alone, the same stamp a forged one carries. The seed script
+ * re-stamps them with the server's mark so readers can tell them apart.
+ * Harmless to run on a row already stamped correctly.
+ */
+export async function restampGlobalExercise(deps: WriteDeps, input: { rowId: string }) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: input.rowId,
+    permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
+  });
+}
+
 /* -------------------------------------------------------------------------
  * Sessions
  * ---------------------------------------------------------------------- */

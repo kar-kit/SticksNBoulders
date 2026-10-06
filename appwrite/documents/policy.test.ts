@@ -4,6 +4,7 @@ import {
   exercisePermissions,
   invitePermissions,
   linkPermissions,
+  LIBRARY_TEAM_ID,
   POLICIES,
   PROGRAM_TABLES,
   programPermissions,
@@ -17,6 +18,8 @@ import {
   setPermissions,
   SERVER_ONLY_TABLES,
   USER_WRITABLE_TABLES,
+  writtenByServer,
+  writtenByUser,
 } from "./policy";
 
 const ATHLETE = "athlete_joey";
@@ -101,12 +104,25 @@ describe("who can write an athlete's rows", () => {
 
 describe("exercises", () => {
   it("makes the shared library readable by anyone signed in", () => {
-    expect(exercisePermissions({ athleteId: ATHLETE, isGlobal: true })).toEqual(['read("users")']);
+    expect(exercisePermissions({ athleteId: ATHLETE, isGlobal: true })).toContain('read("users")');
   });
 
-  it("lets nobody edit the shared library", () => {
+  it("lets nobody who holds a session edit the shared library", () => {
     const permissions = exercisePermissions({ athleteId: ATHLETE, isGlobal: true });
-    expect(permissions.some((p) => p.startsWith("update(") || p.startsWith("delete("))).toBe(false);
+    // The only write grant names a team with no members: it is the server's
+    // mark, not an edit right. See provenance.ts.
+    expect(permissions.filter((p) => p.startsWith("update(") || p.startsWith("delete("))).toEqual([
+      `update("team:${LIBRARY_TEAM_ID}")`,
+    ]);
+    expect(permissions).not.toContain(`update("user:${ATHLETE}")`);
+  });
+
+  it("marks a library row with a role no session can stamp, so a forged one cannot pass for it", () => {
+    // read("users") alone was the old stamp, and every session can make it.
+    expect(exercisePermissions({ athleteId: ATHLETE, isGlobal: true })).not.toEqual(['read("users")']);
+    expect(writtenByServer()).toBe(`update("team:${LIBRARY_TEAM_ID}")`);
+    expect(writtenByUser(ATHLETE)).toBe(`update("user:${ATHLETE}")`);
+    expect(() => writtenByUser("")).toThrow();
   });
 
   it("keeps an exercise typed mid-session private to its author and their coaches", () => {

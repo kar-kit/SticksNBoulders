@@ -42,13 +42,15 @@ itself. Order 17 learned that the expensive way; this is the first thing in the
 product a coach writes from their own session, so it is the first time the rule
 applies to them rather than to the athlete.
 
-Client-writable, where `reference_maxes` is server-only, and the difference is
-worth stating. The forgery that forced reference maxes onto the server does not
-bite here: a stranger could create a row naming somebody else's coach and set,
-but they can only stamp roles they hold, so the row is unreadable by the real
-coach and filters nothing out of the real queue. It is litter, not a lie — and a
-training max is a number on a bar, where this is only whether a video has been
-watched.
+Client-writable, where `reference_maxes` is server-only. This section used to
+say the forgery that forced reference maxes onto the server does not bite
+here, because a stranger can only stamp roles they hold. That was wrong:
+`users` is a role everyone holds, so a row naming the real coach stamped
+`read("users")` *is* readable by the coach, and the audit showed it clearing a
+clip from the queue (docs/permission-audit.md, 27 Sep 2026). What makes it
+safe now is that `fetchReviewedSetIds` only trusts a review carrying
+`update("user:<coach_id>")`, which only that coach can stamp, and the
+`validate-row` Function deletes anything that lacks it.
 
 The id is `<coachId>_<setId>` rather than random, so clearing the same clip
 twice — a double tap, a replayed request — is one row and not a duplicate.

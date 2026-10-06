@@ -1,5 +1,6 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
+import { authenticRows } from "@/appwrite/documents";
 import type { WeekPoint } from "./lift";
 
 /**
@@ -89,7 +90,7 @@ export async function fetchRecentSetsFor(athleteId: string, exerciseId: string):
     ],
   });
 
-  return rows.rows
+  return authenticRows("sets", rows.rows)
     .map((row) => {
       const loggedAt = new Date(String(row.logged_at));
       if (Number.isNaN(loggedAt.getTime())) return null;

@@ -1,3 +1,4 @@
+import { sessionPermissions, setPermissions } from "@/appwrite/documents/policy";
 import { fetchTrainingLog, type RowReader } from "./training-log-store";
 
 type Row = { $id: string } & Record<string, unknown>;
@@ -37,6 +38,8 @@ const pad = (i: number) => String(i).padStart(5, "0");
 function seed(athleteId: string, setCount: number): Row[] {
   return Array.from({ length: setCount }, (_, i) => ({
     $id: `${athleteId}-set-${pad(i)}`,
+    // Stamped as the write helper would. The export trusts nothing else.
+    $permissions: setPermissions({ athleteId }),
     athlete_id: athleteId,
     session_id: `${athleteId}-sess-${Math.floor(i / 20)}`,
     exercise_id: i % 2 ? "sq" : "bp",
@@ -56,6 +59,7 @@ describe("fetchTrainingLog", () => {
     const sets = seed("ath", 1234);
     const sessions = Array.from({ length: 62 }, (_, i) => ({
       $id: `ath-sess-${i}`,
+      $permissions: sessionPermissions({ athleteId: "ath" }),
       athlete_id: "ath",
       started_at: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
       notes: null,
@@ -94,6 +98,7 @@ describe("fetchTrainingLog", () => {
       sets: [
         {
           $id: "x",
+          $permissions: setPermissions({ athleteId: "ath" }),
           athlete_id: "ath",
           session_id: "s",
           exercise_id: "sq",
@@ -107,7 +112,15 @@ describe("fetchTrainingLog", () => {
           notes: "",
         },
       ],
-      sessions: [{ $id: "s", athlete_id: "ath", started_at: "2026-09-14T17:30:00.000+00:00", notes: "PB day" }],
+      sessions: [
+        {
+          $id: "s",
+          $permissions: sessionPermissions({ athleteId: "ath" }),
+          athlete_id: "ath",
+          started_at: "2026-09-14T17:30:00.000+00:00",
+          notes: "PB day",
+        },
+      ],
     });
     const log = await fetchTrainingLog(reader, "db", "ath");
     expect(log.sets[0]).toEqual({
@@ -129,8 +142,10 @@ describe("fetchTrainingLog", () => {
   it("counts unreadable rows instead of dropping them silently", async () => {
     const good = seed("ath", 2);
     const { reader } = fakeReader({
-      sets: [...good, { $id: "ath-bad", athlete_id: "ath", logged_at: "not a date" }],
-      sessions: [{ $id: "s", athlete_id: "ath", started_at: "nope" }],
+      sets: [...good, { ...good[0], $id: "ath-bad", logged_at: "not a date" }],
+      sessions: [
+        { $id: "s", $permissions: sessionPermissions({ athleteId: "ath" }), athlete_id: "ath", started_at: "nope" },
+      ],
     });
     const log = await fetchTrainingLog(reader, "db", "ath");
     expect(log.sets).toHaveLength(2);
@@ -156,5 +171,18 @@ describe("fetchTrainingLog", () => {
     const { reader } = fakeReader({ sets: [], sessions: [] });
     const log = await fetchTrainingLog(reader, "db", "ath");
     expect(log).toEqual({ sessions: [], sets: [], exerciseNames: new Map(), skipped: 0 });
+  });
+
+  it("leaves out a set carrying the athlete's id that the athlete did not write", async () => {
+    // The 27 Sep forgery: a stranger's row under this athlete's id, stamped
+    // read("users"). It would otherwise land in the CSV as their lift.
+    const sets = seed("ath", 3);
+    const forged = { ...sets[0], $id: "forged", load_kg: 400, $permissions: ['read("users")'] };
+    const { reader } = fakeReader({ sets: [...sets, forged], sessions: [], exercises: [] });
+
+    const log = await fetchTrainingLog(reader, "db", "ath");
+    expect(log.sets.map((s) => s.id)).not.toContain("forged");
+    expect(log.sets).toHaveLength(3);
+    expect(log.skipped).toBe(0);
   });
 });

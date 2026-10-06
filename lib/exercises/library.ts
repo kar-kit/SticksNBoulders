@@ -1,6 +1,6 @@
 import { ID, Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
-import { normaliseExerciseName, type Actor } from "@/appwrite/documents";
+import { authenticRows, normaliseExerciseName, type Actor } from "@/appwrite/documents";
 import { enqueue } from "@/lib/offline/client";
 import { findByName, type Exercise } from "./match";
 
@@ -72,7 +72,10 @@ export async function fetchExerciseLibrary(userId: string): Promise<Exercise[]> 
     const page = await tables.listRows({ databaseId, tableId: "exercises", queries });
     if (page.rows.length === 0) break;
 
-    for (const row of page.rows) {
+    // Only rows their owner wrote: a stranger can write `is_global: true` or
+    // `owner_id: <you>` into this table, and either would land in the
+    // typeahead on the strength of a stamp every session can make.
+    for (const row of authenticRows("exercises", page.rows)) {
       const exercise = toExercise(row as unknown as ExerciseRow);
       if (exercise) exercises.push(exercise);
     }

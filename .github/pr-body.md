@@ -1,62 +1,95 @@
-## Order 21 — Backoff rules
+## Order 38 — Permission audit + fix row forgery
 
-Coach, P2, **Source: Inferred**, Program Editor. A coach attaches a backoff rule to a prescription line; in the logger, once the athlete logs the top set, the backoff sets' targets are computed from **that actual set** and prefilled. Every number stays editable. This is the coach's rule executed on the phone, never generated, and it works with no signal.
+The audit (first half of this PR) found a sev-1: any signed-in user could
+write a row into anybody's data. Every table with `create("users")` accepted a
+row carrying somebody else's `athlete_id`, `owner_id`, `coach_id` or
+`author_id`, stamped `read("users")` — a role every session holds — and every
+read filtered on those columns. Proven on the live instance: a forged 400kg
+set became A's best e1RM through `/api/rollup`, forged coach comments, forged
+"reviewed" marks clearing clips, a forged `is_global` exercise in everyone's
+typeahead. The second half of this PR fixes it, defence in depth, and the
+audit now asserts every one of those is neutralised.
 
-### What the coach types (Backoff cell, after Note)
+### The fix
 
-| Typed | Stored | Means |
-| --- | --- | --- |
-| `3 x 90%`, `3x-10%`, `90% x 3` | `3 x 90%` | 3 sets at 90% of the top set's load |
-| `-5% until @9` | `-5% until @9` | top-set load −5%, repeat until a set is logged at RPE ≥ 9 |
-| `repeat until @9` | `repeat until @9` | top-set load again, until RPE ≥ 9 |
-| `… max 4` | `… max 4` | caps a drop run (default 5) |
+**A row's stamp proves who wrote it.** A session cannot stamp a role it does
+not hold, so `update("user:<athlete_id>")` on a set is proof that athlete
+wrote it; `update("user:<author_id>")` on a comment, `update("user:<coach_id>")`
+on a review. `appwrite/documents/provenance.ts` is that check in one place —
+`ownerProof`, `isAuthentic`, `authenticRows`, `verdictFor` — with
+`expectedStamp` moved in beside it so the readers, the audit and the Function
+share one definition. Tested against every forgery in the finding.
 
-The cell shows what the rule does ("3 sets at 90% of today's top set"). A rule that can't be executed (above 100%, a drop of 50% or more, an RPE not on the chart, words) gets refused on the cell and by `/api/program` (400). Unlike the load cell, there's no freeform fallback, because freeform can't be executed. That text belongs in Note.
+**Readers only trust what the owner stamped.** Every store reading a
+client-writable table filters through `authenticRows`; `rebuildRollup` (route
+and repair script) and `e1rm:backfill` skip sets the athlete did not stamp;
+`fetchProfile` reads a squatted row as absent. Selects now carry the owner
+column (`Query.select` keeps `$permissions` but not data columns). Logged sets
+still write locally first and sync through the queue — nothing moved
+server-side.
 
-### Formulas, all [Inference]
+**The library carries the server's mark.** A forged `is_global: true` row had
+exactly the stamp a seeded one did. Library rows now also carry
+`update("team:library")`: a team `appwrite:setup` creates with the API key and
+that has no members, so no session can stamp it and nobody can create it
+first. `exercises:seed` re-stamps (56 rows re-stamped live on 6 Oct). Simpler
+than splitting the table; typeahead and create-on-the-fly unchanged.
 
-- **Top set** is the heaviest non-warm-up set logged against the line's own set slots. On a tie, the later set wins. Warm-ups never count, however heavy.
-- **Percent rule:** `load = roundToLoadable(topLoad × p/100)`
-- **Drop rule:** `load = roundToLoadable(topLoad × (1 − d/100))`, the same load for every set in the run
-- Rounding reuses Order 18's `roundToLoadable` (down to 2.5 kg). One exception: 100% / `repeat` keep the top set's exact load, which is already on the bar.
-- **No top set logged yet:** no load. The athlete reads "90% of top set" and the row falls back to repeating. No stored max stands in.
-- **Drop run length:** grows one set at a time. The set that reaches the stop RPE ends the run (that set counts). A set logged without an RPE can't end it. The cap ends it regardless.
-- Freeform and no-load top lines work, because the rule needs only the athlete's logged load.
+**A Function deletes what lands.** `functions/validate-row`, declared in
+`appwrite/functions/index.ts`, deployed by `npm run appwrite:functions`
+(esbuild bundles provenance.ts in — one definition, not a copy). Fires on row
+create *and* update; deletes a row in a client-writable table that names an
+owner and lacks that owner's proof. Delete rather than revert on update: the
+event carries no previous state, and a relabelled row is a false claim whatever
+it said before. Scoped so a bug cannot mass-delete: one row per event, writable
+tables only, never a row without an owner, never for a stale *read* stamp.
+`VALIDATOR_DRY_RUN=true` is the kill switch.
 
-### Questions for Ruairi [SME to confirm]
+**Relabelling and squatting**, the two the finding had not asserted, are
+covered by the same two layers and now asserted by the audit.
 
-1. **Fatigue %: measured on load or on e1RM?** I've implemented it on **load** ("load drop"). RTS also describes stopping when e1RM has fallen X% from the top set. If that's what he uses, it's a third rule kind.
-2. Is "top set" the **heaviest** set of the line, or the **last** one (e.g. a 2 × 3 @8 top line)?
-3. Do backoffs always use the top set's reps? Right now they inherit the line's reps. Different reps means a separate line.
-4. Is the 5-set default cap on drop / repeat runs right? Should runs have a cap at all?
-5. Does a drop rule end at RPE **≥** Y, or only once the athlete hits Y exactly?
-6. Rounding: still down to 2.5 kg (same open question as Order 18)?
+### The audit, extended
 
-### Storage
+- A forgery Appwrite accepts shows as `landed*` and counts as refused only if
+  no reader trusts it. 23 land; none is trusted.
+- "What a forged row does once it lands": rollup, coach's queue, review mark,
+  comment thread, typeahead, relabel, squat — all proven inert on the live
+  instance.
+- The validator: every landed row must be deleted within 45s, polled by id;
+  fails outright when the Function is not deployed.
+- Orders 19/22/28/43 from `dev`: rules for the five program tables
+  (server-only; read by coach, athlete, circle), `/api/program` — including
+  `duplicateWeek` and `copyProgram`, with a copy onto an athlete the coach
+  does not link to refused — and `/api/link/suggestions`, exercised with real
+  JWTs for every role, before and after revocation. The
+  stamp scan also checks `isAuthentic` on every row, `suggestions_mode`'s
+  values, and that program children name their program's coach and athlete.
+- Discovery asserts the `library` team exists with no members and the
+  Function is deployed, enabled and subscribed.
 
-- New optional `prescriptions.backoff` column (string 40), schema v11. **Applied to the live instance** with `npm run appwrite:setup`. Additive only: nothing deleted, existing rows untouched. A line with no backoff writes exactly what it did before.
-- Writes stay server-only: it's a Zod field in `lineFields`, normalised to canonical text in `program-write.ts`.
-- Copies (Order 20) carry the rule. It's text on the line, not a row id, so nothing goes in `LINE_PLACEMENT`. I've added a copy test.
+### What is not done, and why
 
-### Logger
+**The Function is not live.** [Fact] The instance's builder answers every
+deployment with `Internal server error` within 3 seconds — including a
+redeploy of the probe's own archive that built on 14 Sep — and only `node-22`
+is enabled in `_APP_FUNCTIONS_RUNTIMES`. The host is not reachable from the
+MacBook. On the host: `docker ps | grep -E 'executor|worker-builds'`,
+`docker logs appwrite-worker-builds --tail 100`, `docker logs
+appwrite-executor --tail 100` (or `openruntimes-executor`), `df -h`, then
+`npm run appwrite:functions`. Until then the audit reports exactly two
+failures, both "validate-row is not live"; everything else passes (463/465 on
+6 Oct). Readers already hide every forged row, so the live product is
+protected; the Function is the second layer.
 
-- `targetsFor` appends backoff slots after the line's own sets, carrying `backoff: { rule, topSet }`.
-- `prescribeNewRows` prefills new rows as the coach's number, with the note "backoff from top set 185 × 3".
-- `setTargetFor` (the set-target seam) returns null for backoff sets, so the suggestion engine never argues with the rule.
-- `lineSummaries`: "1 × 3 · RPE 8, then 3 × 3 · 165 kg (90% of top set)".
-- `videoAsk` (Order 30) counts backoff slots as positions, so a flagged line after a backoff isn't asked for early.
+**Sign-ups stay open.** The API key cannot reach `/projects/*` (console
+scope), and Appwrite 1.9 has no invite-only mode — the only control is Auth →
+Security → Users limit, which would stop athletes registering to redeem a
+code. [Inference] Left unchanged; the fix removes what a stranger's account
+could do.
 
-**Known limit:** rows already on screen are never re-priced (existing rule). A backoff row planned with *Add set* before the top set was logged keeps its repeated load, and the athlete edits it.
+### Verification
 
-### Also in this PR
-
-- **fix:** `roundToLoadable` lost exactly loadable weights to float error. For example, 70% of 175 came out as 122.49999… and floored to **120 instead of 122.5**. This affected the existing percent resolver and the suggestion engine too. I added a sub-gram slack. The rule itself is unchanged.
-- Merges of `origin/dev` (#41, #42 Order 30, #43 Order 20). Both new columns are kept; COLUMNS is now `… notes, backoff, video`.
-
-### Tests
-
-- tsc, lint and the full vitest suite all pass (**1903 tests, 120 files**).
-- **37** unit tests in `lib/programming/backoff.test.ts`, plus new tests in plates, set-targets, program-admin, program-copy, schema, video-prompt and the editor grid.
-- `npm run e2e:backoff` against the live instance (`next dev --webpack`): **15/15**. It covers the editor cell, canonical storage and the read-only stamp, route 400/403, Today before a top set, an **offline** top set of 185 prefilling 165 on the next row, queued sets landing with the rule's snapshot, and the coach changing the rule without touching logged sets.
+`lint` · `typecheck` · **2013 tests, 126 files** · `npm run appwrite:audit`
+live: 463/465, the two validator checks failing as above.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

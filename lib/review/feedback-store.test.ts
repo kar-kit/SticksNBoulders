@@ -1,3 +1,4 @@
+import { commentPermissions, setPermissions } from "@/appwrite/documents/policy";
 import { fetchFeedback, fetchHasCoach, fetchUnreadCount } from "./feedback-store";
 
 /**
@@ -25,6 +26,24 @@ vi.mock("@/appwrite/browser-client", () => ({
   }),
 }));
 
+/** Stamped as the write helper would have. The store trusts nothing else. */
+const coachComment = (id: string, setId: string) => ({
+  $id: id,
+  set_id: setId,
+  athlete_id: "joey",
+  author_id: "ruairi",
+  body: "Brace harder.",
+  created_at: "2026-09-20T10:00:00.000Z",
+  $permissions: commentPermissions({ athleteId: "joey", authorId: "ruairi" }),
+});
+const joeySet = (id: string) => ({
+  $id: id,
+  athlete_id: "joey",
+  session_id: "x",
+  exercise_id: "squat",
+  $permissions: setPermissions({ athleteId: "joey" }),
+});
+
 const has = (call: Call, method: string, attribute?: string) =>
   call.queries.some((q) => {
     const parsed = JSON.parse(q) as { method: string; attribute?: string };
@@ -38,18 +57,9 @@ beforeEach(() => {
 
 describe("fetchFeedback", () => {
   it("costs three queries however many comments there are", async () => {
-    const recent = Array.from({ length: 40 }, (_, i) => ({
-      $id: `c${i}`,
-      set_id: `s${i % 12}`,
-      athlete_id: "joey",
-      author_id: "ruairi",
-      body: "Brace harder.",
-      created_at: "2026-09-20T10:00:00.000Z",
-    }));
+    const recent = Array.from({ length: 40 }, (_, i) => coachComment(`c${i}`, `s${i % 12}`));
     rowsFor.fn = ({ tableId }) =>
-      tableId === "set_comments"
-        ? recent
-        : Array.from({ length: 12 }, (_, i) => ({ $id: `s${i}`, session_id: "x", exercise_id: "squat" }));
+      tableId === "set_comments" ? recent : Array.from({ length: 12 }, (_, i) => joeySet(`s${i}`));
 
     const { comments, sets } = await fetchFeedback("joey", ["uploading"]);
 
@@ -59,6 +69,27 @@ describe("fetchFeedback", () => {
     const setRead = calls.find((c) => c.tableId === "sets")!;
     // The uploading set rides on the same read.
     expect(setRead.queries.some((q) => q.includes("uploading"))).toBe(true);
+  });
+
+  it("drops a comment claiming to be the coach's that the coach did not stamp", async () => {
+    // The forgery from the 27 Sep finding: author_id says Ruairi, the stamp
+    // says anyone. Readable by all, trusted by nobody.
+    const forged = { ...coachComment("f", "s1"), $permissions: ['read("users")'] };
+    rowsFor.fn = ({ tableId }) =>
+      tableId === "set_comments" ? [coachComment("real", "s1"), forged] : [joeySet("s1")];
+
+    const { comments } = await fetchFeedback("joey");
+    expect(comments.map((c) => c.id)).toEqual(["real"]);
+  });
+
+  it("drops a set under the athlete's id that the athlete did not write", async () => {
+    rowsFor.fn = ({ tableId }) =>
+      tableId === "set_comments"
+        ? [coachComment("c", "s1"), coachComment("d", "forged")]
+        : [joeySet("s1"), { ...joeySet("forged"), $permissions: ['read("users")'] }];
+
+    const { sets } = await fetchFeedback("joey");
+    expect([...sets.keys()]).toEqual(["s1"]);
   });
 
   it("stops after one query for an athlete nobody has spoken to", async () => {
@@ -71,7 +102,12 @@ describe("fetchFeedback", () => {
 
 describe("fetchUnreadCount", () => {
   it("asks only for other people's comments after the watermark", async () => {
-    rowsFor.fn = () => [{ $id: "a" }, { $id: "b" }];
+    rowsFor.fn = () => [
+      coachComment("a", "s1"),
+      coachComment("b", "s1"),
+      // A forged comment must not light the badge.
+      { ...coachComment("f", "s1"), $permissions: ['read("users")'] },
+    ];
     expect(await fetchUnreadCount("joey", "2026-09-20T10:00:00.000Z")).toBe(2);
     const [call] = calls;
     expect(call.tableId).toBe("set_comments");

@@ -1,5 +1,6 @@
 import { Query } from "appwrite";
 import { z } from "zod";
+import { authenticRows } from "@/appwrite/documents";
 import { chunk, fetchAllPages } from "./paginate";
 import type { ExportSession, ExportSet } from "./training-log";
 
@@ -33,7 +34,11 @@ const PAGE = 500;
 /** Ids per IN query. Each id is 36 chars and a query string caps at 4096. */
 const IDS_PER_QUERY = 100;
 
+// athlete_id is selected on both so each row can prove its athlete wrote it;
+// the query already filters on it, but a filter is a claim and the stamp is
+// the proof (appwrite/documents/provenance.ts).
 const SET_COLUMNS = [
+  "athlete_id",
   "session_id",
   "exercise_id",
   "set_index",
@@ -45,7 +50,7 @@ const SET_COLUMNS = [
   "logged_at",
   "notes",
 ];
-const SESSION_COLUMNS = ["started_at", "notes"];
+const SESSION_COLUMNS = ["athlete_id", "started_at", "notes"];
 
 const date = z
   .string()
@@ -121,7 +126,7 @@ export async function fetchTrainingLog(
 
   let skipped = 0;
   const sessions: ExportSession[] = [];
-  for (const raw of sessionRows) {
+  for (const raw of authenticRows("sessions", sessionRows as Record<string, unknown>[])) {
     const parsed = SessionRow.safeParse(raw);
     if (!parsed.success) {
       skipped++;
@@ -131,7 +136,7 @@ export async function fetchTrainingLog(
   }
 
   const sets: ExportSet[] = [];
-  for (const raw of setRows) {
+  for (const raw of authenticRows("sets", setRows as Record<string, unknown>[])) {
     const parsed = SetRow.safeParse(raw);
     if (!parsed.success) {
       skipped++;

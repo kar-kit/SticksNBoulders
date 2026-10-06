@@ -23,6 +23,7 @@ import { Query, TablesDB } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { isAuthentic } from "../appwrite/documents";
 import { estimateOneRepMax } from "../lib/strength/e1rm";
 
 dedupeSdkWarnings();
@@ -62,7 +63,11 @@ for (;;) {
   if (cursor) queries.push(Query.cursorAfter(cursor));
   const page = await db.listRows({ databaseId: config.databaseId, tableId: "sets", queries, ttl: 0 });
   if (page.rows.length === 0) break;
-  for (const row of page.rows) rows.push(row as unknown as SetRow);
+  // Only sets their athlete stamped. A forged set is not this athlete's log
+  // and gets no estimate written onto it; the validate-row Function removes it.
+  for (const row of page.rows) {
+    if (isAuthentic("sets", row as unknown as Record<string, unknown>)) rows.push(row as unknown as SetRow);
+  }
   cursor = page.rows[page.rows.length - 1].$id;
 }
 

@@ -42,6 +42,14 @@ Function subscribed only to `databases.<db>.tables.<table>.rows.*.create` may
 never fire even though it looks like the right name for a TablesDB write.
 Subscribe to both, or verify which one your version emits before trusting it.
 
+## Who subscribes now
+
+`validate-row` (appwrite/functions/index.ts) subscribes to both spellings of
+row create and update across the database, and filters by table itself. It is
+the first Function this product depends on for correctness: a forged row is
+deleted within seconds of landing. If it stops firing, readers still hide the
+row (appwrite/documents/provenance.ts) and the audit says so.
+
 ## What this does and does not change
 
 **Rollups stay in a route.** `app/api/rollup/route.ts` was written as a

@@ -75,6 +75,11 @@ the Appwrite part is `appwrite/documents/rollup-admin.ts` and the arithmetic is
 shared with the rebuild script.
 
 The athlete id comes from the caller's JWT and never from the request body.
+And the rebuild only counts sets the athlete's own session stamped
+(`isAuthentic` in appwrite/documents/provenance.ts): it reads with the API key,
+which sees every row, including one a stranger wrote carrying this athlete's id
+— that is how a forged 400kg set once became an athlete's best e1RM
+(docs/permission-audit.md, 27 Sep 2026).
 
 ### Why an op and not a fire-and-forget call
 

@@ -1,5 +1,6 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
+import { authenticRows } from "@/appwrite/documents";
 import type { UnnamedSet } from "./session-store";
 
 /**
@@ -78,7 +79,7 @@ export async function fetchSetsForSessions(sessionIds: readonly string[]): Promi
     queries: [Query.equal("session_id", [...sessionIds]), Query.limit(MAX_SETS)],
   });
 
-  return rows.rows
+  return authenticRows("sets", rows.rows)
     .map((row) => toSet(row as unknown as SetRow))
     .filter((set): set is HistorySet => set !== null);
 }

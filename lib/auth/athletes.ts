@@ -1,5 +1,6 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
+import { authenticRows } from "@/appwrite/documents";
 import type { CoachAthlete } from "@/components/shell/coach-shell";
 
 /**
@@ -24,7 +25,9 @@ export async function fetchAthleteNames(athleteIds: readonly string[]): Promise<
     ],
   });
 
-  return rows.rows
+  // Only profiles their user wrote, so a stranger cannot rename an athlete
+  // in the coach's rail (appwrite/documents/provenance.ts).
+  return authenticRows("profiles", rows.rows)
     .map((row) => row as unknown as { user_id?: string; display_name?: string })
     .filter((row): row is { user_id: string; display_name: string } =>
       Boolean(row.user_id && row.display_name),
