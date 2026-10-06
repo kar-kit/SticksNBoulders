@@ -270,10 +270,29 @@ could do. `[Inference]` from the API's scope error and the console's options.
 
 **What the audit says now.** Every forgery in the finding, plus relabelling
 and squatting, is `landed*` (Appwrite accepts it, no reader trusts it) or
-refused; the consequence checks pass against the live instance (463/465). The remaining
-`FAIL`s on 6 Oct are the two validator checks: the instance's Function builder
-answers every deployment with `Internal server error` within 3 seconds, the
-probe's own archive included, so `validate-row` has no active deployment yet.
-Fix the builder on the host, run `npm run appwrite:functions`, and the audit
-should exit 0.
+refused, and `validate-row` deletes each one within the 45s bound: 488/488
+against the live instance on 6 Oct, exit 0.
+
+Getting there took three fixes, recorded because each one hid the next:
+
+1. **The builder.** forge's `openruntimes/node:v5-22` image had zero-byte
+   helper scripts (corrupt local layers); every build failed in 3 seconds.
+   Re-pulled on the host.
+2. **The route.** The Function called `DELETE /databases/{db}/tables/...`,
+   which is not a route on 1.9.6 (TablesDB is `/tablesdb/{db}/tables/...`).
+   The 404 was `general_route_not_found`, and the Function read every 404 as
+   "already deleted" -- so its log said `deleted` for every forgery and every
+   forgery stayed. It now calls `/tablesdb/` and accepts only `row_not_found`
+   / `document_not_found` as already gone; anything else is a 500 and an
+   error in the log. `appwrite/functions/validate-row.test.ts` pins both.
+3. **The probe.** See docs/appwrite-events.md: a disabled Function still
+   receives events, and its failures abort the event for every Function after
+   it. Its subscriptions were cleared on 6 Oct.
+
+With the Function working, two audit checks met a race they had never seen:
+the relabelled set and the squatted profile can be gone before the audit reads
+them. Both now treat "already deleted" as the pass it is. And the late joiner's
+onboarding check creates his circle first, as the app does -- the profile's
+read stamp names the circle team, and Appwrite refuses a stamp for a team the
+writer is not in.
 
