@@ -199,6 +199,8 @@ export interface CreateSessionInput {
   clientSessionId: string;
   startedAt?: Date;
   notes?: string;
+  /** The prescribed day this was started from. Absent for free logging. */
+  programDayId?: string | null;
 }
 
 export async function createSession(deps: WriteDeps, actor: Actor, input: CreateSessionInput) {
@@ -215,6 +217,7 @@ export async function createSession(deps: WriteDeps, actor: Actor, input: Create
       set_count: 0,
       tonnage_kg: 0,
       client_session_id: input.clientSessionId,
+      program_day_id: input.programDayId ?? undefined,
     },
     permissions: sessionPermissions({ athleteId: actor.userId }),
   });
@@ -261,6 +264,13 @@ export interface CreateSetInput {
   loggedAt?: Date;
   videoFileId?: string;
   notes?: string;
+  /** The prescription line this set answers, if one was prescribed. */
+  prescriptionId?: string | null;
+  /**
+   * What the target said when the set was logged. A snapshot, so a coach
+   * editing the line afterwards cannot change what this set was an answer to.
+   */
+  prescribed?: string | null;
 }
 
 export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetInput) {
@@ -300,6 +310,10 @@ export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetI
       client_set_id: input.clientSetId,
       video_file_id: input.videoFileId,
       notes: input.notes,
+      prescription_id: input.prescriptionId ?? undefined,
+      // Capped to the column, never rejected: a long freeform target must not
+      // be the reason a set fails to log.
+      prescribed: input.prescribed ? input.prescribed.slice(0, 160) : undefined,
     },
     permissions: setPermissions({ athleteId: actor.userId }),
   });

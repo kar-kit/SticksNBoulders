@@ -32,6 +32,13 @@ export interface PlannedRow {
    */
   planned: boolean;
   /**
+   * The prescription line this row answers and its target in words, when the
+   * session was started from a prescribed day (Order 22). Stamped once when
+   * the row appears; see `prescribeNewRows` in lib/programming/session-plan.
+   */
+  prescriptionId?: string;
+  prescribed?: string;
+  /**
    * Why the load is what it is, when the athlete did not type it: "suggested
    * from RPE 7 @ 170". Only ever set by a suggestion the coach's switch let
    * through (Order 28), and cleared the moment the athlete edits the load.

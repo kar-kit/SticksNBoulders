@@ -15,6 +15,8 @@ export interface SessionRecord {
   setCount: number;
   tonnageKg: number;
   notes?: string | null;
+  /** The prescribed day this was started from. Absent or null for free logging. */
+  programDayId?: string | null;
 }
 
 export interface SessionSet {

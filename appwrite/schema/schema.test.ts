@@ -24,7 +24,12 @@ describe("schema shape", () => {
       "coach_athlete_links",
       "exercises",
       "invite_codes",
+      "prescriptions",
       "profiles",
+      "program_blocks",
+      "program_days",
+      "program_weeks",
+      "programs",
       "reference_maxes",
       "sessions",
       "set_comments",
@@ -32,11 +37,9 @@ describe("schema shape", () => {
       "sets",
       "stats_rollups",
     ]);
-    // Programs and prescriptions are absent on purpose: the Program Editor's
-    // shape is unconfirmed with Ruairi and the build plan calls guessing it
-    // the expensive retrofit.
-    expect(schema.tables.map((t) => t.id)).not.toContain("programs");
-    expect(schema.tables.map((t) => t.id)).not.toContain("prescriptions");
+    // Templates are programs with no athlete, not a table of their own. A
+    // second model for "the same block, unassigned" is the retrofit to avoid.
+    expect(schema.tables.map((t) => t.id)).not.toContain("workout_templates");
   });
 
   /**
@@ -295,5 +298,63 @@ describe("the video bucket", () => {
 
   it("does not waste CPU compressing already-compressed video", () => {
     expect(bucket.compression).toBe("none");
+  });
+});
+
+describe("the program tables (Order 19)", () => {
+  const PROGRAM_TABLES = ["programs", "program_blocks", "program_weeks", "program_days", "prescriptions"];
+
+  it("are written only with the API key", () => {
+    // Appwrite polices who reads a row, not what a row claims: a client-side
+    // create would let anyone put a day on anyone's Today.
+    for (const id of PROGRAM_TABLES) expect(table(id).permissions, id).toEqual([]);
+  });
+
+  it("denormalise the program, coach and athlete onto every row", () => {
+    for (const id of PROGRAM_TABLES.slice(1)) {
+      expect(columnKeys(id), id).toEqual(expect.arrayContaining(["program_id", "coach_id", "athlete_id"]));
+    }
+  });
+
+  it("let athlete_id be null, so a template is a program nobody is assigned to", () => {
+    for (const id of PROGRAM_TABLES) {
+      expect(table(id).columns.find((c) => c.key === "athlete_id")?.required, id).toBe(false);
+    }
+  });
+
+  it("order every child by an explicit position", () => {
+    for (const id of PROGRAM_TABLES.slice(1)) {
+      expect(table(id).columns.find((c) => c.key === "position"), id).toMatchObject({ type: "integer", required: true });
+    }
+  });
+
+  it("give each week its own status, so a week can be published on its own", () => {
+    expect(table("program_weeks").columns.find((c) => c.key === "status")).toMatchObject({
+      type: "enum",
+      elements: ["draft", "published"],
+    });
+  });
+
+  it("put the calendar on the day, and index Today's question", () => {
+    expect(table("program_days").columns.find((c) => c.key === "scheduled_on")?.required).toBe(false);
+    const index = table("program_days").indexes.find((i) => i.key === "idx_athlete_scheduled");
+    expect(index?.columns).toEqual(["athlete_id", "scheduled_on"]);
+  });
+
+  it("keep the load cell as typed, with its kind derived beside it", () => {
+    expect(columnKeys("prescriptions")).toEqual(expect.arrayContaining(["load", "load_kind"]));
+  });
+
+  it("add only optional columns to the tables athletes already write", () => {
+    // Additive, and never required: a required column on sets would reject
+    // every queued write from a phone still running last week's build.
+    const added = [
+      ["sessions", "program_day_id"],
+      ["sets", "prescription_id"],
+      ["sets", "prescribed"],
+    ] as const;
+    for (const [tableId, key] of added) {
+      expect(table(tableId).columns.find((c) => c.key === key)?.required, `${tableId}.${key}`).toBe(false);
+    }
   });
 });

@@ -180,10 +180,10 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
 }
 
 /**
- * THIS BLOCK, from the blueprint. Depends on the Program Editor (Order 19),
- * which is blocked on Ruairi's block-shape question and has no tables yet.
- * A placeholder that says so, rather than progress inferred from what was
- * lifted -- a number nobody prescribed is worse than no number.
+ * THIS BLOCK, from the blueprint. The block itself is written in the Program
+ * Editor (Order 19); how the athlete is tracking against it is not built yet.
+ * A pointer there rather than progress inferred from what was lifted -- a
+ * number nobody prescribed is worse than no number.
  */
 function ProgramPlaceholder() {
   return (
@@ -193,7 +193,7 @@ function ProgramPlaceholder() {
       </h2>
       <EmptyState
         title="No program yet"
-        body="Their current block, and how they’re tracking against it, will sit here once you can write one in the Program Editor."
+        body="Write their block under Programs. How they’re tracking against it will sit here later."
       />
     </section>
   );

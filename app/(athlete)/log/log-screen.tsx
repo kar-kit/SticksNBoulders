@@ -53,6 +53,18 @@ import {
   type SessionSet,
 } from "@/lib/logging/session";
 import { formatNumber } from "@/lib/logging/prefill";
+import { usePrescribedSession } from "@/lib/programming/use-prescribed";
+import {
+  basisMaxesFor,
+  lineSummaries,
+  nextTarget,
+  planDay,
+  prescribeNewRows,
+  targetLine,
+  targetsFor,
+  type LoggedForTarget,
+  type SetTarget,
+} from "@/lib/programming/session-plan";
 import { nextSetSuggestion } from "@/lib/logging/suggestion-gate";
 import { setTargetFor } from "@/lib/logging/set-targets";
 import { useSuggestionMode } from "@/lib/coach/use-suggestion-mode";
@@ -178,6 +190,26 @@ export function LogScreen() {
   }, [library.exercises]);
 
   const sessionId = active?.id ?? null;
+
+  /**
+   * The prescribed day this session was started from, if any (Order 22).
+   *
+   * Read-only input to the rows: targets and prefill. Nothing the athlete logs
+   * is derived from it after the fact, so a coach editing the program mid-
+   * session changes the next target on the next load and never a logged set.
+   */
+  const prescribed = usePrescribedSession(active?.programDayId, athleteId);
+  const plan = useMemo(() => (prescribed.status === "ready" ? planDay(prescribed.day.prescriptions) : []), [prescribed]);
+  const targetsOf = useCallback(
+    (exerciseId: string, logged: readonly LoggedForTarget[]): SetTarget[] | null => {
+      const planned = plan.find((p) => p.exerciseId === exerciseId);
+      if (!planned) return null;
+      const maxes = basisMaxesFor(exerciseId, prescribed.maxes.entries, prescribed.maxes.estimated, new Date());
+      return targetsFor(planned, maxes, logged.map((s) => ({ ...s, rpe: s.rpe ?? null })));
+    },
+    [plan, prescribed.maxes],
+  );
+
   const readSession = useRef<string | null>(null);
   /** A read on the wire. Retries wait for it rather than racing it. */
   const reading = useRef<string | null>(null);
@@ -290,6 +322,22 @@ export function LogScreen() {
     [setsOf],
   );
 
+  /**
+   * Rows that just appeared, given the coach's target for the set they will
+   * be (rule 1 of the prefill order, and rule 2 for a weight priced off
+   * today's top set). Rows already on screen keep whatever the athlete typed.
+   * `justLogged` is the set the confirm path has not seen land in state yet.
+   */
+  const prescribe = useCallback(
+    (before: readonly PlannedRow[], after: PlannedRow[], justLogged?: LoggedForTarget & { exerciseId: string }) =>
+      prescribeNewRows(before, after, (exerciseId) => {
+        const logged: LoggedForTarget[] = setsOf(exerciseId);
+        if (justLogged?.exerciseId === exerciseId) logged.push(justLogged);
+        return { logged, targets: targetsOf(exerciseId, logged) };
+      }),
+    [setsOf, targetsOf],
+  );
+
   const focused = plans.find((row) => row.clientSetId === focusId) ?? null;
 
   /** One place that changes the rest timer, so the stored copy cannot drift. */
@@ -312,14 +360,14 @@ export function LogScreen() {
    */
   const activate = useCallback(
     (exerciseId: string) => {
-      const { rows, head } = focusExercise(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId);
-      setPlans(rows);
+      const { rows: moved, head } = focusExercise(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId);
+      setPlans(prescribe(plans, moved));
       setFocusId(head.clientSetId);
       setSelectedId(null);
       setPad(null);
       setRpeOpen(false);
     },
-    [plans, lastLoggedOf],
+    [plans, lastLoggedOf, prescribe],
   );
 
   const addExercise = useCallback(
@@ -348,7 +396,7 @@ export function LogScreen() {
    */
   const addSet = (exerciseId: string) => {
     setSelectedId(null);
-    const next = addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId);
+    const next = prescribe(plans, addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId));
     setPlans(next);
     // Nothing was being entered anywhere, so the new row's exercise is now
     // the one in hand.
@@ -419,10 +467,17 @@ export function LogScreen() {
     // reading it back would give an empty row where the one-tap repeat goes.
     // The coach's switch is applied here, at the one place a suggestion can
     // enter: held means none, whatever the engine would say.
+    // The target is the prescribed set the next row will be (Order 22),
+    // counted with the set just logged.
+    const loggedNow: LoggedForTarget[] = [...setsOf(row.exerciseId), optimistic];
+    const prescribedNext = (() => {
+      const targets = targetsOf(row.exerciseId, loggedNow);
+      return targets ? nextTarget(targets, loggedNow) : null;
+    })();
     const suggestion = nextSetSuggestion(
       suggestionMode,
       { loadKg: optimistic.loadKg, reps: optimistic.reps, rpe: row.rpe, isWarmup: row.isWarmup },
-      setTargetFor(row.exerciseId),
+      setTargetFor(prescribedNext),
     );
     const { rows, next } = afterConfirm(
       plans,
@@ -431,7 +486,7 @@ export function LogScreen() {
       newClientSetId,
       suggestion,
     );
-    setPlans(rows);
+    setPlans(prescribe(plans, rows, optimistic));
     setFocusId(next.clientSetId);
     closeSheets();
     // Warm-ups start it too. Anything else is a rule an athlete has to learn,
@@ -449,6 +504,10 @@ export function LogScreen() {
         rpe: row.rpe,
         isWarmup: row.isWarmup,
         clientSetId: row.clientSetId,
+        // Warm-ups answer no prescription: targets count working sets only.
+        ...(row.prescriptionId && !row.isWarmup
+          ? { prescriptionId: row.prescriptionId, prescribed: row.prescribed }
+          : {}),
       });
     } catch {
       // Only reachable if the device cannot write to its own storage at all.
@@ -557,6 +616,20 @@ export function LogScreen() {
     if (pending.restBefore) changeRest(pending.restBefore);
   };
 
+  // A prescribed session opens on its first exercise, ready to log, so the
+  // athlete's first tap is a set rather than finding the squat in a list.
+  const firstPlanned = plan[0]?.exerciseId ?? null;
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (!firstPlanned || !sessionId || opened.current === sessionId) return;
+    opened.current = sessionId;
+    if (plans.length > 0 || all.length > 0) return;
+    void (async () => {
+      await Promise.resolve();
+      activate(firstPlanned);
+    })();
+  }, [firstPlanned, sessionId, plans.length, all.length, activate]);
+
   const startHere = async () => {
     setBusy(true);
     try {
@@ -603,11 +676,21 @@ export function LogScreen() {
     );
   }
 
-  // Exercises with sets, then ones added or planned but not logged into yet.
-  // Planned counts: deleting the only set of an exercise must not take the
-  // rows the athlete was about to log with it.
-  const blocks: { id: string; name: string }[] = groups.map((g) => ({ id: g.exerciseId, name: g.exerciseName }));
+  // Prescribed exercises lead, in the coach's order, whether or not anything
+  // is logged yet. Then exercises with sets, then ones added or planned but
+  // not logged into yet. Planned counts: deleting the only set of an exercise
+  // must not take the rows the athlete was about to log with it.
+  const blocks: { id: string; name: string }[] = plan.map((p) => ({
+    id: p.exerciseId,
+    name: nameFor(p.exerciseId) ?? "Prescribed exercise",
+  }));
   const shown = new Set(blocks.map((b) => b.id));
+  for (const group of groups) {
+    if (!shown.has(group.exerciseId)) {
+      blocks.push({ id: group.exerciseId, name: group.exerciseName });
+      shown.add(group.exerciseId);
+    }
+  }
   for (const exercise of added) {
     if (!shown.has(exercise.id)) {
       blocks.push({ id: exercise.id, name: exercise.name });
@@ -628,6 +711,16 @@ export function LogScreen() {
     const index = plannedIndex(working, mine, mine.findIndex((r) => r.clientSetId === focused.clientSetId));
     return index === "W" ? working + 1 : index;
   })();
+
+  /** The coach's lines, then the next set's target, for one exercise block. */
+  const targetFor = (exerciseId: string): string[] | null => {
+    const logged = setsOf(exerciseId);
+    const targets = targetsOf(exerciseId, logged);
+    const planned = plan.find((p) => p.exerciseId === exerciseId);
+    if (!targets || !planned) return null;
+    const next = nextTarget(targets, logged);
+    return [...lineSummaries(planned, targets), ...(next ? [`Next: ${targetLine(next)}`] : [])];
+  };
 
   /**
    * What gets the bottom of the screen. Exactly one thing does.
@@ -682,6 +775,7 @@ export function LogScreen() {
               }))}
               planned={rowsOf(plans, block.id)}
               focusedId={pad !== null || rpeOpen ? focusId : null}
+              target={targetFor(block.id)}
               onFocus={focusField}
               onConfirm={(id) => void confirmSet(id)}
               onDiscard={discardPlanned}

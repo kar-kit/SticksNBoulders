@@ -1,22 +1,18 @@
 import type { SetTarget } from "@/lib/strength/suggestion";
+import type { SetTarget as PrescribedTarget } from "@/lib/programming/session-plan";
 
 /**
  * Where the next set of an exercise is meant to land: the reps and RPE a
- * prescription asks for.
+ * prescription asks for. The seam Order 28 left for Order 22.
  *
- * Always null today, and that is correct rather than unfinished. Prescriptions
- * reach the logger at Order 22, and the program table they live in arrives
- * with the Program Editor (Order 19), which is blocked on Ruairi's block-shape
- * question. The suggestion engine has no default target on purpose -- an
- * athlete with no prescription has nothing to suggest toward, and repeating
- * the previous set is already the right prefill (docs/suggestions.md).
- *
- * This is the seam Order 22 fills. Everything downstream of it -- the coach's
- * switch, the engine, the prefill note -- is wired and tested now, so when a
- * target exists the suggestion appears for athletes whose coach allows it and
- * not for the rest, with nothing else to change.
+ * Takes the prescribed target for the set about to be planned (see
+ * `nextTarget` in lib/programming/session-plan) and keeps only what the
+ * suggestion engine works from. Null when nothing is prescribed, when the line
+ * names no RPE (a fixed weight or a bare percentage has nothing to autoregulate
+ * toward), or names no rep count. The engine deliberately has no default
+ * target (docs/suggestions.md): no prescription, no suggestion.
  */
-export function setTargetFor(exerciseId: string): SetTarget | null {
-  void exerciseId;
-  return null;
+export function setTargetFor(target: PrescribedTarget | null): SetTarget | null {
+  if (!target || target.rpe === null || target.reps === null) return null;
+  return { reps: target.reps, rpe: target.rpe };
 }

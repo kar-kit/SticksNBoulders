@@ -62,6 +62,15 @@ vi.mock("@/lib/logging/session-context", () => ({
   useTrainingSessions: () => training.value,
 }));
 
+// Free sessions read no prescription. The describe at the bottom swaps in a day.
+const prescribed = vi.hoisted(() => ({ value: null as unknown }));
+vi.mock("@/lib/programming/use-prescribed", () => ({
+  usePrescribedSession: (dayId: string | null | undefined) =>
+    dayId && prescribed.value
+      ? prescribed.value
+      : { status: "idle", day: null, maxes: { entries: [], estimated: new Map() } },
+}));
+
 // Order 28. The target a prescription would supply (none exist yet -- Order
 // 22), and the link row the athlete reads the coach's switch from.
 const targets = vi.hoisted(() => ({ value: null as { reps: number; rpe: number } | null }));
@@ -127,6 +136,7 @@ beforeEach(() => {
   storedSets.fail = 0;
   comments.value = [];
   clientIds = 0;
+  prescribed.value = null;
   targets.value = null;
   linkRead.rows = [];
   linkRead.offline = false;
@@ -859,6 +869,70 @@ describe("queueing the next set before confirming this one", () => {
     await user.click(screen.getByRole("button", { name: "Log Set 3" }));
     await waitFor(() => expect(logSet).toHaveBeenCalled());
     expect(logSet.mock.calls[0][0]).toMatchObject({ setIndex: 4 });
+  });
+});
+
+describe("a session started from a prescribed day (Order 22)", () => {
+  const line = (over: Record<string, unknown>) => ({
+    programId: "p1",
+    weekId: "w1",
+    dayId: "d1",
+    repMax: null,
+    restSeconds: null,
+    notes: null,
+    loadKind: null,
+    updatedAt: "2026-10-01T00:00:00Z",
+    ...over,
+  });
+
+  beforeEach(() => {
+    library.exercises = [squat, { id: "bench", name: "Bench Press", normalisedName: "bench press", isGlobal: true }];
+    prescribed.value = {
+      status: "ready",
+      day: {
+        program: { id: "p1" },
+        week: { id: "w1" },
+        day: { id: "d1", label: "Day 1", notes: null },
+        prescriptions: [
+          line({ id: "sq", exerciseId: "squat", position: 0, setCount: 2, reps: 5, load: "75%" }),
+          line({ id: "bp", exerciseId: "bench", position: 1, setCount: 3, reps: 8, load: "80" }),
+        ],
+      },
+      maxes: {
+        entries: [
+          { id: "m1", exerciseId: "squat", kind: "training", valueKg: 200, effectiveFrom: "2026-01-01T00:00:00Z", recordedBy: "coach" },
+        ],
+        estimated: new Map(),
+      },
+    };
+  });
+
+  it("lists the prescribed exercises in the coach's order before anything is logged", async () => {
+    setup({ active: session({ programDayId: "d1" }) });
+    const blocks = await screen.findAllByRole("region");
+    expect(blocks.map((b) => b.getAttribute("aria-label"))).toEqual(["Squat", "Bench Press"]);
+    expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent("2 × 5 · 150 kg (75%)");
+  });
+
+  it("opens on the first exercise with the target already in the row, so the first tap logs it", async () => {
+    const { user } = setup({ active: session({ programDayId: "d1" }) });
+    const row = await screen.findByRole("group", { name: "Set 1" });
+    expect(row).toHaveTextContent("150");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({
+      exerciseId: "squat",
+      loadKg: 150,
+      reps: 5,
+      prescriptionId: "sq",
+      prescribed: "5 reps · 150 kg (75%)",
+    });
+  });
+
+  it("gives a free session no targets at all", async () => {
+    setup({ active: session() });
+    expect(await screen.findByText("Nothing logged yet")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /prescribed/ })).not.toBeInTheDocument();
   });
 });
 
