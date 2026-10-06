@@ -17,12 +17,14 @@ import {
   type ReorderLevel,
 } from "@/lib/programming/program";
 import {
+  createExerciseFor,
   createPrescription,
   createProgram,
   createProgramBlock,
   createProgramDay,
   createProgramWeek,
   deletePrescription,
+  deleteProgramRow,
   updatePrescription,
   updateProgram,
   updateProgramBlock,
@@ -30,7 +32,7 @@ import {
   updateProgramWeek,
   type ProgramScope,
 } from "./program-write";
-import type { WriteDeps } from "./write";
+import { normaliseExerciseName, type WriteDeps } from "./write";
 import type { ProgramTable } from "./policy";
 import type { RowWriter } from "./row-writer";
 
@@ -300,7 +302,7 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
     }
     case "addPrescription": {
       const { row: day, scope } = await childOf(ctx, "program_days", op.dayId, parseDay);
-      await requireExercise(ctx, op.exerciseId);
+      await requireExercise(ctx, scope, op.exerciseId);
       const position = nextPosition(await siblings(ctx, "prescriptions", "day_id", day.id));
       const row = await createPrescription(ctx.deps, scope, {
         ...op,
@@ -312,7 +314,7 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
     }
     case "updatePrescription": {
       const { row: line, scope } = await childOf(ctx, "prescriptions", op.prescriptionId, parsePrescriptionRow);
-      if (op.exerciseId) await requireExercise(ctx, op.exerciseId);
+      if (op.exerciseId) await requireExercise(ctx, scope, op.exerciseId);
       // The range is checked against what the row will hold afterwards, not
       // just the fields in this request: changing reps alone can invert it.
       const reps = op.reps === undefined ? line.reps : op.reps;
@@ -330,7 +332,92 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
     }
     case "reorder":
       return reorderOp(ctx, op);
+    case "publishProgram":
+      return publishOp(ctx, op.programId);
+    case "removeBlock": {
+      const { row: block } = await childOf(ctx, "program_blocks", op.blockId, parseBlock);
+      for (const week of await listAll(ctx.tables, ctx.databaseId, "program_weeks", "block_id", block.id)) {
+        await removeWeek(ctx, String(week.$id));
+      }
+      await deleteProgramRow(ctx.deps, "program_blocks", block.id);
+      return block.id;
+    }
+    case "removeWeek": {
+      await childOf(ctx, "program_weeks", op.weekId, parseWeek);
+      await removeWeek(ctx, op.weekId);
+      return op.weekId;
+    }
+    case "removeDay": {
+      await childOf(ctx, "program_days", op.dayId, parseDay);
+      await removeDay(ctx, op.dayId);
+      return op.dayId;
+    }
+    case "createExercise":
+      return createExerciseOp(ctx, op);
   }
+}
+
+/**
+ * Publishes a program and every week in it -- the block-up-front button.
+ *
+ * The program goes last. Until it is published nothing reaches Today however
+ * many weeks are, so a publish that fails partway leaves the athlete seeing
+ * nothing new rather than half a block; pressing it again finishes the job.
+ */
+async function publishOp(ctx: Ctx, programId: string): Promise<string> {
+  const scope = await scopeOf(ctx, programId);
+  if (scope.athleteId === null) {
+    return refuse({ status: "invalid", reason: "programId: a template is never published; assign it first" });
+  }
+  const weeks = parseRows(
+    await listAll(ctx.tables, ctx.databaseId, "program_weeks", "program_id", programId),
+    parseWeek,
+  );
+  for (const week of weeks) {
+    if (week.status !== "published") await updateProgramWeek(ctx.deps, scope, week.id, { status: "published" });
+  }
+  await updateProgram(ctx.deps, scope, { status: "published" });
+  return programId;
+}
+
+/** Children first, so a failure halfway leaves orphans the tree drops, never a dangling parent. */
+async function removeDay(ctx: Ctx, dayId: string) {
+  for (const line of await listAll(ctx.tables, ctx.databaseId, "prescriptions", "day_id", dayId)) {
+    await deletePrescription(ctx.deps, String(line.$id));
+  }
+  await deleteProgramRow(ctx.deps, "program_days", dayId);
+}
+
+async function removeWeek(ctx: Ctx, weekId: string) {
+  for (const day of await listAll(ctx.tables, ctx.databaseId, "program_days", "week_id", weekId)) {
+    await removeDay(ctx, String(day.$id));
+  }
+  await deleteProgramRow(ctx.deps, "program_weeks", weekId);
+}
+
+/** Whose library an exercise on this program has to live in to be readable by the person doing it. */
+const libraryOwner = (scope: ProgramScope) => scope.athleteId ?? scope.coachId;
+
+/**
+ * Creates a variation in the athlete's library, or hands back the one already
+ * there under the same name -- global first, then theirs -- so typing "Paused
+ * Bench" twice does not make two.
+ */
+async function createExerciseOp(ctx: Ctx, op: ProgramOpOf<"createExercise">): Promise<string> {
+  const scope = await scopeOf(ctx, op.programId);
+  const owner = libraryOwner(scope);
+  const normalised = normaliseExerciseName(op.name);
+  if (!normalised) return refuse({ status: "invalid", reason: "name: needs a letter or number in it" });
+  const same = await ctx.tables.listRows({
+    databaseId: ctx.databaseId,
+    tableId: "exercises",
+    queries: [Query.equal("normalised_name", normalised), Query.limit(25)],
+  });
+  const existing =
+    same.rows.find((row) => row.is_global === true) ?? same.rows.find((row) => row.owner_id === owner);
+  if (existing) return String(existing.$id);
+  const row = await createExerciseFor(ctx.deps, owner, op.name);
+  return row.$id;
 }
 
 async function createProgramOp(ctx: Ctx, op: ProgramOpOf<"createProgram">): Promise<string> {
@@ -357,9 +444,17 @@ function requireCalendarFits(scope: ProgramScope, scheduledOn: string | null | u
   }
 }
 
-async function requireExercise(ctx: Ctx, exerciseId: string) {
-  if (!(await rowOf(ctx, "exercises", exerciseId))) {
-    refuse({ status: "invalid", reason: "exerciseId: no such exercise" });
+/**
+ * The exercise exists AND the person doing the program can read it: a global
+ * row, or one in their own library. A coach's private custom exercise would
+ * reach the athlete's Today as a line with no name -- they cannot read it --
+ * so it is refused here and `createExercise` puts it where it belongs.
+ */
+async function requireExercise(ctx: Ctx, scope: ProgramScope, exerciseId: string) {
+  const row = await rowOf(ctx, "exercises", exerciseId);
+  if (!row) return refuse({ status: "invalid", reason: "exerciseId: no such exercise" });
+  if (row.is_global !== true && row.owner_id !== libraryOwner(scope)) {
+    refuse({ status: "invalid", reason: "exerciseId: not in the athlete's library" });
   }
 }
 

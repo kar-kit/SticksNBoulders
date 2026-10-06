@@ -392,6 +392,40 @@ const updatePrescription = z.object({
 
 const removePrescription = z.object({ op: z.literal("removePrescription"), prescriptionId: rowId });
 
+/**
+ * Puts a program on the athlete's Today: the program and every week in it go
+ * to published in one request. This is the block-up-front button. Week-by-week
+ * writing publishes a single week with `updateWeek` instead -- both are the
+ * same two status columns, so neither shape needs the other's migration.
+ */
+const publishProgram = z.object({ op: z.literal("publishProgram"), programId: rowId });
+
+/**
+ * Structural removals. Each cascades to the rows beneath it, children first,
+ * so a removal that fails halfway leaves orphans `assembleProgram` already
+ * drops rather than a parent pointing at nothing. None of them can reach a
+ * logged set: a session started from a removed day keeps its sets and their
+ * snapshots, and simply stops resolving its day.
+ */
+const removeBlock = z.object({ op: z.literal("removeBlock"), blockId: rowId });
+const removeWeek = z.object({ op: z.literal("removeWeek"), weekId: rowId });
+const removeDay = z.object({ op: z.literal("removeDay"), dayId: rowId });
+
+/**
+ * A variation the library does not hold yet, typed into the editor.
+ *
+ * Created in the ATHLETE's library, not the coach's: a variation is its own
+ * exercise with its own reference max (Order 18), and the athlete has to be
+ * able to read it, log it and see its maxes. A coach-owned row would show up
+ * on their Today as an exercise they cannot name. On a template it belongs to
+ * the coach, who is the only reader.
+ */
+const createExercise = z.object({
+  op: z.literal("createExercise"),
+  programId: rowId,
+  name: z.string().trim().min(1, "is required").max(64),
+});
+
 export const REORDER_LEVELS = ["blocks", "weeks", "days", "prescriptions"] as const;
 export type ReorderLevel = (typeof REORDER_LEVELS)[number];
 
@@ -421,6 +455,11 @@ export const programOp = z.discriminatedUnion("op", [
   updatePrescription,
   removePrescription,
   reorder,
+  publishProgram,
+  removeBlock,
+  removeWeek,
+  removeDay,
+  createExercise,
 ]);
 
 /** What a caller writes -- before defaults and trimming. */

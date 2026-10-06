@@ -1,6 +1,6 @@
 import { parsePrescription } from "@/lib/programming/prescription";
-import { programPermissions } from "./policy";
-import type { Actor, WriteDeps } from "./write";
+import { programPermissions, type ProgramTable } from "./policy";
+import { createExercise, type Actor, type WriteDeps } from "./write";
 
 /**
  * The write helper's program half. Part of the helper, not beside it: it lives
@@ -330,4 +330,28 @@ export async function updatePrescription(
  */
 export async function deletePrescription(deps: WriteDeps, rowId: string) {
   return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: "prescriptions", rowId });
+}
+
+/**
+ * Removes a block, week or day row. The cascade -- which children go first --
+ * is program-admin's job; this only deletes the one row it is given, from a
+ * program table and nowhere else.
+ */
+export async function deleteProgramRow(
+  deps: WriteDeps,
+  tableId: Exclude<ProgramTable, "programs" | "prescriptions">,
+  rowId: string,
+) {
+  return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId, rowId });
+}
+
+/**
+ * A variation typed into the editor, created in the library of the person who
+ * will log it. Same row, same permission stamp as an athlete creating it
+ * mid-session -- `createExercise` with the owner as actor -- so nothing
+ * downstream can tell the two apart. Only program-admin calls this, after it
+ * has checked the caller coaches `ownerId`.
+ */
+export async function createExerciseFor(deps: WriteDeps, ownerId: string, name: string) {
+  return createExercise(deps, { userId: ownerId }, { name });
 }

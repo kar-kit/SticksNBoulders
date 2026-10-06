@@ -32,7 +32,9 @@ function harness() {
     athlete_id: ATHLETE,
     status: "active",
   });
-  for (const name of SAMPLE_EXERCISES) tableOf("exercises").set(ex(name), { $id: ex(name), name });
+  for (const name of SAMPLE_EXERCISES) {
+    tableOf("exercises").set(ex(name), { $id: ex(name), name, normalised_name: name.toLowerCase(), is_global: true });
+  }
 
   const tables: ProgramTables = {
     async listRows({ tableId, queries }) {
@@ -306,6 +308,102 @@ describe("editing", () => {
     expect(
       await h.run(COACH, { op: "reorder", level: "prescriptions", parentId: dayId, orderedIds: [lineId, "foreign"] }),
     ).toMatchObject({ status: "invalid" });
+  });
+});
+
+describe("publishing", () => {
+  it("puts the program and every week in it live in one request, program last", async () => {
+    const h = harness();
+    const { programId, blockId, weekId } = await skeleton(h);
+    const second = await h.ok(COACH, { op: "addWeek", blockId });
+    h.writes.length = 0;
+    await h.ok(COACH, { op: "publishProgram", programId });
+    expect(h.row("program_weeks", weekId)!.status).toBe("published");
+    expect(h.row("program_weeks", second)!.status).toBe("published");
+    expect(h.row("programs", programId)!.status).toBe("published");
+    expect(h.writes.at(-1)).toMatchObject({ tableId: "programs", rowId: programId });
+  });
+
+  it("refuses a template, and anyone but the program's coach", async () => {
+    const h = harness();
+    const template = await skeleton(h, null);
+    expect(await h.run(COACH, { op: "publishProgram", programId: template.programId })).toMatchObject({
+      status: "invalid",
+    });
+    const { programId } = await skeleton(h);
+    expect(await h.run(STRANGER, { op: "publishProgram", programId })).toEqual({ status: "not-allowed" });
+  });
+});
+
+describe("removing structure", () => {
+  it("removes a day with its lines, children first", async () => {
+    const h = harness();
+    const { dayId, lineId } = await skeleton(h);
+    h.writes.length = 0;
+    await h.ok(COACH, { op: "removeDay", dayId });
+    expect(h.row("program_days", dayId)).toBeUndefined();
+    expect(h.row("prescriptions", lineId)).toBeUndefined();
+    expect(h.writes.map((w) => w.tableId)).toEqual(["prescriptions", "program_days"]);
+  });
+
+  it("removes a week or a block with everything beneath it", async () => {
+    const h = harness();
+    const { programId, blockId, weekId, dayId, lineId } = await skeleton(h);
+    await h.ok(COACH, { op: "removeWeek", weekId });
+    expect([h.row("program_weeks", weekId), h.row("program_days", dayId), h.row("prescriptions", lineId)]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    const again = await h.ok(COACH, { op: "addWeek", blockId });
+    await h.ok(COACH, { op: "removeBlock", blockId });
+    expect(h.row("program_blocks", blockId)).toBeUndefined();
+    expect(h.row("program_weeks", again)).toBeUndefined();
+    expect(h.row("programs", programId)).toBeDefined();
+  });
+
+  it("refuses a stranger and touches nothing", async () => {
+    const h = harness();
+    const { dayId } = await skeleton(h);
+    h.writes.length = 0;
+    expect(await h.run(STRANGER, { op: "removeDay", dayId })).toEqual({ status: "not-allowed" });
+    expect(h.writes).toEqual([]);
+  });
+});
+
+describe("variations typed into the editor", () => {
+  it("are created in the athlete's library, so the athlete can read and log them", async () => {
+    const h = harness();
+    const { programId } = await skeleton(h);
+    const id = await h.ok(COACH, { op: "createExercise", programId, name: "3-0-0 Tempo Bench" });
+    const row = h.row("exercises", id)!;
+    expect(row).toMatchObject({ owner_id: ATHLETE, is_global: false, normalised_name: "3 0 0 tempo bench" });
+    expect(row.$permissions).toContain(`read("user:${ATHLETE}")`);
+  });
+
+  it("hand back the row already there rather than making a second", async () => {
+    const h = harness();
+    const { programId } = await skeleton(h);
+    expect(await h.ok(COACH, { op: "createExercise", programId, name: "squat" })).toBe("ex-Squat");
+    const first = await h.ok(COACH, { op: "createExercise", programId, name: "Pin Squat" });
+    expect(await h.ok(COACH, { op: "createExercise", programId, name: "pin  squat" })).toBe(first);
+  });
+
+  it("refuses a line naming an exercise the athlete cannot read", async () => {
+    const h = harness();
+    const { dayId } = await skeleton(h);
+    h.tableOf("exercises").set("ex-coach-only", { $id: "ex-coach-only", name: "Secret", is_global: false, owner_id: COACH });
+    expect(
+      await h.run(COACH, { op: "addPrescription", dayId, exerciseId: "ex-coach-only", setCount: 1 }),
+    ).toMatchObject({ status: "invalid", reason: expect.stringContaining("athlete's library") });
+  });
+
+  it("refuses a stranger", async () => {
+    const h = harness();
+    const { programId } = await skeleton(h);
+    expect(await h.run(STRANGER, { op: "createExercise", programId, name: "Pin Squat" })).toEqual({
+      status: "not-allowed",
+    });
   });
 });
 
