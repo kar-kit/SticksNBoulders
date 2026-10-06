@@ -23,7 +23,9 @@ import { verdictFor, type Row } from "../../../appwrite/documents/provenance";
  * not grounds (see verdictFor). And VALIDATOR_DRY_RUN=true makes it a logger.
  *
  * No SDK. The one call it makes is a DELETE with the per-execution key, and
- * bundling node-appwrite to make it would be most of the deployment.
+ * bundling node-appwrite to make it would be most of the deployment. The cost
+ * of no SDK is a hand-written route, which is how this shipped calling one
+ * that does not exist (6 Oct 2026): keep it on `/tablesdb/`.
  */
 
 interface Context {
@@ -84,15 +86,34 @@ export default async function main({ req, res, log, error }: Context) {
     return res.json({ ...verdict, tableId, rowId, deleted: false }, 500);
   }
 
+  // The TablesDB route. `/databases/{db}/tables/...` is not a route on 1.9.6:
+  // it 404s as general_route_not_found, and until 6 Oct 2026 that 404 was read
+  // as "already deleted", so every forgery was logged deleted and kept.
   const response = await fetch(
-    `${endpoint}/databases/${encodeURIComponent(databaseId)}/tables/${encodeURIComponent(tableId)}/rows/${encodeURIComponent(rowId)}`,
+    `${endpoint}/tablesdb/${encodeURIComponent(databaseId)}/tables/${encodeURIComponent(tableId)}/rows/${encodeURIComponent(rowId)}`,
     { method: "DELETE", headers: { "x-appwrite-project": project, "x-appwrite-key": key } },
   );
-  // 404: a second execution (both event spellings fired) got there first.
-  if (response.ok || response.status === 404) {
+  if (response.ok) {
     log(`deleted ${summary}`);
     return res.json({ ...verdict, tableId, rowId, deleted: true });
   }
-  error(`delete failed ${response.status} for ${summary}: ${await response.text()}`);
+  const body = await response.text();
+  // A second execution (both event spellings fired) got there first. Only the
+  // row's own not-found counts; any other 404 means the request missed.
+  if (response.status === 404 && isRowNotFound(body)) {
+    log(`already gone ${summary}`);
+    return res.json({ ...verdict, tableId, rowId, deleted: true });
+  }
+  error(`delete failed ${response.status} for ${summary}: ${body.slice(0, 300)}`);
   return res.json({ ...verdict, tableId, rowId, deleted: false }, 500);
+}
+
+/** Appwrite's error type for a missing row, under either API's name. */
+export function isRowNotFound(body: string): boolean {
+  try {
+    const type = (JSON.parse(body) as { type?: unknown }).type;
+    return type === "row_not_found" || type === "document_not_found";
+  } catch {
+    return false;
+  }
 }

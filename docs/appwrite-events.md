@@ -63,10 +63,30 @@ come through this app, and by policy there are none.
 a code and taps a button. FTP1-12 flagged Order 16 as the ticket with no clean
 fallback if events stayed broken; that was wrong on both counts.
 
-**The probe is disabled.** It fired on every set row created — 332 executions in
-ninety minutes of e2e runs, all failing until it had a deployment. Its
-subscriptions are kept as the record of what was tested. Re-enable it to
-re-measure; do not leave it enabled, or every athlete's set spawns an execution.
+**The probe has no subscriptions.** It was marked disabled on 14 Sep with its
+subscriptions kept as a record, and that turned out not to be off: on 1.9.6
+the functions worker matches events against every Function's `events` and
+never checks `enabled` (`src/Appwrite/Platform/Workers/Functions.php` in the
+`appwrite-worker-functions` container, read 6 Oct). So the disabled probe kept
+executing on every set create -- 75 failures on 6 Oct alone, each
+`Timed out waiting for runtime`.
+
+That is worse than noise. The worker runs the matching Functions for one event
+in a loop, in creation order, and a failed execution re-throws out of the loop.
+The probe was created before `validate-row`, so whenever the probe's runtime
+timed out, `validate-row` never ran for that set. **[Fact]** from the worker
+source; observed as set creates that reached the probe's log and not the
+validator's.
+
+Its events were cleared on 6 Oct; the function and its deployment are kept.
+What it subscribed to, for the record:
+`databases.sticksnboulders.tables.sets.rows.*.create` and
+`databases.sticksnboulders.collections.sets.documents.*.create`.
+
+The rule that follows: **to switch a Function off, clear its events, not just
+`enabled`.** And any event-triggered Function that fails takes every
+later-created Function on the same event down with it, so a flaky one is
+everyone's problem.
 
 ## If you are on 1.9.0 again
 

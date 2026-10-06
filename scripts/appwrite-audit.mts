@@ -764,6 +764,16 @@ try {
     check("a forged is_global exercise reaches nobody's typeahead; the seeded library does", forgedLibrary.every((id) => !library.includes(id)) && library.includes(targets["exercises:library"]), `typeahead: ${library.length} library rows`);
   }
 
+  /** A row as the admin sees it, or null once validate-row has deleted it. */
+  const rowOrNull = async (tableId: string, rowId: string): Promise<Record<string, unknown> | null> => {
+    try {
+      return (await adminDb.getRow({ databaseId: D, tableId, rowId })) as unknown as Record<string, unknown>;
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === 404) return null;
+      throw error;
+    }
+  };
+
   // Not asserted before 6 Oct: A relabelling his own set with B's id. Appwrite
   // allows the update -- A holds update on his own row -- so the row is now
   // stamped by A and claims to be B's.
@@ -773,13 +783,15 @@ try {
   );
   if (relabel.kind === "allowed") {
     landed.push({ table: "sets", id: set3, what: "A's set relabelled as B's" });
-    const relabelled = (await adminDb.getRow({ databaseId: D, tableId: "sets", rowId: set3 })) as unknown as Record<string, unknown>;
+    // validate-row may already have deleted it; absent is as good as untrusted.
+    const relabelled = await rowOrNull("sets", set3);
+    const authentic = relabelled !== null && isAuthentic("sets", relabelled);
     const bRollup = await rollupFor(B, targets.exercises);
     check(
       "A relabels his own set as B's: no reader takes it as B's, and B's rollup ignores it",
       // B's own 100x5 set is in the same week; the relabelled 300x5 would push his best past 300.
-      !isAuthentic("sets", relabelled) && bRollup.bestE1rm < 300,
-      `authentic=${isAuthentic("sets", relabelled)} B's rollup ${bRollup.status} best ${bRollup.bestE1rm}`,
+      !authentic && bRollup.bestE1rm < 300,
+      `authentic=${authentic}${relabelled === null ? " (already deleted)" : ""} B's rollup ${bRollup.status} best ${bRollup.bestE1rm}`,
     );
   } else {
     check("A cannot relabel his own set as B's", relabel.kind === "denied", relabel.kind === "error" ? relabel.message : relabel.kind);
@@ -800,7 +812,14 @@ try {
     landed.push({ table: "profiles", id: L.id, what: "B's squat on L's profile" });
     squatted = true;
     const seen = await attempt(async () => {
-      const row = (await L.tables.getRow({ databaseId: D, tableId: "profiles", rowId: L.id })) as unknown as Record<string, unknown>;
+      let row: Record<string, unknown>;
+      try {
+        row = (await L.tables.getRow({ databaseId: D, tableId: "profiles", rowId: L.id })) as unknown as Record<string, unknown>;
+      } catch (error) {
+        // validate-row got there first: L reads no profile, which is the point.
+        if ((error as { code?: unknown })?.code === 404) return;
+        throw error;
+      }
       if (isAuthentic("profiles", row)) throw new Error("L's app would show B's profile as L's");
     });
     check("B squats L's profile before L onboards: L's app reads it as absent", seen.kind === "allowed", seen.kind === "error" ? seen.message : seen.kind);
@@ -833,8 +852,16 @@ try {
       check(`deleted: ${l.what}`, !remaining.has(`${l.table}/${l.id}`), `${l.table}/${l.id} still present after ${VALIDATOR_WAIT_MS / 1000}s`);
     }
     if (squatted && !remaining.has(`profiles/${L.id}`)) {
+      // Circle first, as the app does: the profile's read stamp names L's circle
+      // team, and Appwrite refuses a stamp for a team the writer is not in.
+      const { jwt } = await users.createJWT({ userId: L.id, sessionId: lateSession.$id, duration: 600 });
+      const circle = await callRoute(circleRoute as Handler, "/api/circle", { ...anon, actor: "athlete", id: L.id, jwt });
       const own = await attempt(() => createProfile(depsFor(L.tables), { userId: L.id }, { displayName: "Audit Late Joiner" }));
-      check("and L then onboards with his own profile", own.kind === "allowed", own.kind === "error" ? own.message : own.kind);
+      check(
+        "and L then onboards with his own profile",
+        circle.status === 200 && own.kind === "allowed",
+        `circle ${circle.status}; profile ${own.kind === "error" ? own.message : own.kind === "denied" ? `denied ${own.code}` : own.kind}`,
+      );
     }
   }
 
