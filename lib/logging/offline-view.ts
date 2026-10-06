@@ -1,5 +1,6 @@
 import type { QueuedOp } from "@/lib/offline/queue";
-import { pendingOps } from "@/lib/offline/queue";
+import { failedOps, pendingOps } from "@/lib/offline/queue";
+import { SET_HAS_COACH_COMMENTS } from "@/appwrite/documents/write";
 import type { SessionRecord } from "./session";
 import type { UnnamedSet } from "./session-store";
 
@@ -73,6 +74,7 @@ export function queuedSets(ops: readonly QueuedOp[], sessionId: string): Unnamed
       return {
         exerciseId: str(op.payload.exerciseId),
         clientSetId,
+        setIndex: num(op.payload.setIndex) || undefined,
         loadKg: num(op.payload.loadKg),
         reps: num(op.payload.reps),
         rpe: typeof op.payload.rpe === "number" ? op.payload.rpe : null,
@@ -80,7 +82,7 @@ export function queuedSets(ops: readonly QueuedOp[], sessionId: string): Unnamed
         loggedAt,
       } satisfies UnnamedSet;
     })
-    .filter((set): set is UnnamedSet => set !== null);
+    .filter((set) => set !== null);
 }
 
 /** Sets undone on the device whose delete has not reached Appwrite yet. */
@@ -111,4 +113,29 @@ export function unsyncedIds(ops: readonly QueuedOp[]): Set<string> {
 export function mergeById<T>(fromServer: T[], fromQueue: T[], idOf: (row: T) => string): T[] {
   const seen = new Set(fromServer.map(idOf));
   return [...fromServer, ...fromQueue.filter((row) => !seen.has(idOf(row)))];
+}
+
+/**
+ * Deletes the server refused because a coach had already commented on the set.
+ *
+ * Keyed by set id, valued by op id so the notice can be dismissed. These are
+ * failed ops but not lost work -- the set is still there, which is the point --
+ * so the screen tells them apart from the failures that mean a set did not
+ * reach the coach.
+ */
+export function refusedDeletes(ops: readonly QueuedOp[]): Map<string, string> {
+  const refused = new Map<string, string>();
+  for (const op of failedOps(ops)) {
+    if (op.kind === "set.delete" && op.permanentError === SET_HAS_COACH_COMMENTS) {
+      refused.set(str(op.payload.setId), op.id);
+    }
+  }
+  return refused;
+}
+
+/** Failed ops that do mean something did not reach the coach. */
+export function lostOps(ops: readonly QueuedOp[]): QueuedOp[] {
+  return failedOps(ops).filter(
+    (op) => !(op.kind === "set.delete" && op.permanentError === SET_HAS_COACH_COMMENTS),
+  );
 }

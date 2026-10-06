@@ -27,6 +27,7 @@
     "e2e:lift": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-lift.mts",
     "e2e:invite": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-invite.mts",
     "e2e:link": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-link.mts",
+    "e2e:unlink": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-unlink.mts",
     "e2e:prune": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/prune-e2e-fixtures.mts",
     "e2e:offline": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-offline.mts",
     "e2e:e1rm": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-e1rm.mts",
@@ -36,9 +37,13 @@
     "e2e:dots": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-dots.mts",
     "e2e:profile": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-profile.mts",
     "e2e:review": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-review.mts",
+    "e2e:feedback": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-feedback.mts",
     "e2e:rollups": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-rollups.mts",
     "e2e:backup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-backup.mts",
     "e2e:shell": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-shell.mts",
+    "e2e:export": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-export.mts",
+    "e2e:athlete-view": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-athlete-view.mts",
+    "e2e:pwa": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-pwa.mts",
     "e2e:program": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-program.mts"
   },
   "dependencies": {

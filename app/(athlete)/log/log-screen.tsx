@@ -9,6 +9,7 @@ import { ExerciseBlock, type LoggedSet } from "@/components/logging/exercise-blo
 import { NumberPad } from "@/components/logging/number-pad";
 import { RestBar } from "@/components/logging/rest-bar";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
+import { UndoToast } from "@/components/ui/undo-toast";
 import { useSession } from "@/lib/auth/session-context";
 import { AttachVideo } from "@/components/logging/attach-video";
 import { setForNewClip } from "@/lib/video/clip";
@@ -18,11 +19,29 @@ import type { Exercise } from "@/lib/exercises/match";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSessionSets, type UnnamedSet } from "@/lib/logging/session-store";
 import { logSet, newClientSetId, removeSet } from "@/lib/logging/set-store";
-import { deletedIds, mergeById, queuedSets, unsyncedIds } from "@/lib/logging/offline-view";
-import { subscribeToQueue } from "@/lib/offline/client";
-import { failedOps, type QueuedOp } from "@/lib/offline/queue";
+import {
+  deletedIds,
+  lostOps,
+  mergeById,
+  queuedSets,
+  refusedDeletes,
+  unsyncedIds,
+} from "@/lib/logging/offline-view";
+import { dismissFailed, subscribeToQueue } from "@/lib/offline/client";
+import type { QueuedOp } from "@/lib/offline/queue";
+import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import { beginEdit, padValue, rpeAfterWarmupChange, type PadState } from "@/lib/logging/number-pad";
-import { resolvePrefill } from "@/lib/logging/prefill";
+import {
+  addRow,
+  afterConfirm,
+  discardRow,
+  focusExercise,
+  headOf,
+  nextSetIndex,
+  plannedIndex,
+  rowsOf,
+  type PlannedRow,
+} from "@/lib/logging/plan";
 import { extendRest, startRest, type RestTimer } from "@/lib/logging/rest-timer";
 import { forgetRest, recallRest, rememberRest } from "@/lib/logging/rest-store";
 import { canComplete, type RpeValue } from "@/lib/logging/set";
@@ -40,9 +59,10 @@ import {
   lineSummaries,
   nextTarget,
   planDay,
-  prefillFrom,
+  prescribeNewRows,
   targetLine,
   targetsFor,
+  type LoggedForTarget,
   type SetTarget,
 } from "@/lib/programming/session-plan";
 
@@ -52,25 +72,29 @@ import {
  * An athlete touches the set row twenty to forty times a session, one-handed,
  * breathing hard. Everything here bends to that: no keyboard ever appears, the
  * common case of repeating the previous set is one tap on the confirm square,
- * and the row that is being entered is the only one that can be.
+ * and exactly one row on the screen carries that square.
  */
 type Phase = "logging" | "confirming" | "finished";
 
-/** The row being entered, plus the id that makes writing it idempotent. */
-interface Draft {
-  exerciseId: string;
-  clientSetId: string;
-  loadKg: number | null;
-  reps: number | null;
-  rpe: RpeValue | null;
-  isWarmup: boolean;
-  /** The prescription line this row answers, and its target in words (Order 22). */
-  prescriptionId?: string;
-  prescribed?: string;
+/**
+ * How long a deleted set can be brought back.
+ *
+ * Five seconds: long enough to notice the wrong row went, short enough that
+ * the toast is gone before the next set. The delete itself waits for it, so
+ * Undo never has to reverse a write.
+ */
+export const UNDO_MS = 5_000;
+
+/** A set taken off the screen whose delete has not been written yet. */
+interface PendingDelete {
+  set: UnnamedSet;
+  label: string;
+  /** The rest it cleared, so Undo can put it back. */
+  restBefore: RestTimer | null;
 }
 
-/** The fields prescription targets are computed from. */
-type LoggedForTarget = { loadKg: number; reps: number; rpe?: number | null; isWarmup?: boolean };
+const COACH_COMMENTED =
+  "Your coach has commented on this set, so it stays. Correct it from History if the numbers are wrong.";
 
 export function LogScreen() {
   const router = useRouter();
@@ -93,17 +117,47 @@ export function LogScreen() {
    */
   const [local, setLocal] = useState<UnnamedSet[]>([]);
   const [added, setAdded] = useState<Exercise[]>([]);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  /** Rows not logged yet, across every exercise. See lib/logging/plan.ts. */
+  const [plans, setPlans] = useState<PlannedRow[]>([]);
+  /** The planned row the pad and the RPE sheet write into. */
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [pad, setPad] = useState<PadState | null>(null);
   const [rpeOpen, setRpeOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
   const [ops, setOps] = useState<QueuedOp[]>([]);
   const [rest, setRest] = useState<RestTimer | null>(null);
+  /** The logged set whose Delete is showing. */
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  /** Deleted on this page, whether or not the delete has reached Appwrite. */
+  const [deleted, setDeleted] = useState<ReadonlySet<string>>(() => new Set());
+  /** Who has commented on which of this session's sets. */
+  const [commentAuthors, setCommentAuthors] = useState<{ setId: string; authorId: string }[]>([]);
+
+  /**
+   * Whether the server's copy of this session has been read since the page
+   * opened. Until it has, every announcement from the queue is a cue to try
+   * again -- the queue moving is the best signal there is that Appwrite can
+   * be reached.
+   *
+   * Without the retry, a page reloaded with no signal never read the sets that
+   * had already synced: they were missing from the screen, and -- worse -- from
+   * the totals the finish wrote, long after the signal came back.
+   */
+  const storedRead = useRef(false);
+  const [readAttempt, setReadAttempt] = useState(0);
 
   // The queue is attached by the provider; this only watches it, so a set that
   // is still on its way keeps its mark and a reload gets its sets back.
-  useEffect(() => subscribeToQueue(setOps), []);
+  useEffect(
+    () =>
+      subscribeToQueue((next) => {
+        setOps(next);
+        if (!storedRead.current) setReadAttempt((n) => n + 1);
+      }),
+    [],
+  );
 
   // A rest that was running when the page went away. It is stored as a
   // timestamp, so what comes back is the real remaining time.
@@ -148,25 +202,52 @@ export function LogScreen() {
     [plan, prescribed.maxes],
   );
 
+  const readSession = useRef<string | null>(null);
+  /** A read on the wire. Retries wait for it rather than racing it. */
+  const reading = useRef<string | null>(null);
   useEffect(() => {
-    let cancelled = false;
     void (async () => {
       // A failed read is the normal case in a basement, not an error worth
       // showing: the queue below holds everything this session has logged.
-      const loaded = sessionId
-        ? await fetchSessionSets(sessionId).catch(() => [] as UnnamedSet[])
-        : [];
-      if (!cancelled) setStored(loaded);
+      if (readSession.current !== sessionId) {
+        readSession.current = sessionId;
+        storedRead.current = false;
+      }
+      if (storedRead.current || (sessionId && reading.current === sessionId)) return;
+      let loaded: UnnamedSet[] = [];
+      if (sessionId) {
+        reading.current = sessionId;
+        try {
+          loaded = await fetchSessionSets(sessionId);
+        } catch {
+          return;
+        } finally {
+          if (reading.current === sessionId) reading.current = null;
+        }
+      }
+      // Moved to another session while this was in flight: not this list.
+      if (readSession.current !== sessionId) return;
+      storedRead.current = true;
+      setStored(loaded);
+      // Which of those a coach has already spoken about, so Delete can say no
+      // before it is tapped rather than after. Best effort: with no signal
+      // the answer comes from the queue instead, when the delete is refused.
+      const comments = await fetchCommentsForSets(loaded.map((set) => set.clientSetId)).catch(() => []);
+      if (readSession.current === sessionId) setCommentAuthors(comments);
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId]);
+  }, [sessionId, readAttempt]);
+
+  /** Sets somebody other than the athlete has commented on. */
+  const commented = useMemo(
+    () => new Set(commentAuthors.filter((c) => c.authorId !== athleteId).map((c) => c.setId)),
+    [commentAuthors, athleteId],
+  );
 
   const queued = useMemo(() => (sessionId ? queuedSets(ops, sessionId) : []), [ops, sessionId]);
   const unsynced = useMemo(() => unsyncedIds(ops), [ops]);
   const removed = useMemo(() => deletedIds(ops), [ops]);
-  const failed = useMemo(() => failedOps(ops), [ops]);
+  const refused = useMemo(() => refusedDeletes(ops), [ops]);
+  const failed = useMemo(() => lostOps(ops), [ops]);
 
   /**
    * Picks up sets the queue is carrying that this page has not seen.
@@ -196,13 +277,20 @@ export function LogScreen() {
     })();
   }, [sessionId, queued]);
 
+  /** Every set this page knows of, deleted or not. What set_index counts from. */
+  const everything = useMemo(() => mergeById(stored, local, (s) => s.clientSetId), [stored, local]);
+
   /** Everything logged this session, whether Appwrite has heard of it or not. */
   const all = useMemo(
     () =>
-      mergeById(stored, local, (s) => s.clientSetId)
+      everything
         .filter((s) => !removed.has(s.clientSetId))
+        // A delete the server refused brings its set back: the set is still
+        // there, and hiding it would be the screen disagreeing with the coach.
+        .filter((s) => !deleted.has(s.clientSetId) || refused.has(s.clientSetId))
+        .filter((s) => s.clientSetId !== pendingDelete?.set.clientSetId)
         .sort((a, b) => a.loggedAt.getTime() - b.loggedAt.getTime()),
-    [stored, local, removed],
+    [everything, removed, deleted, refused, pendingDelete],
   );
 
   /** An exercise the library does not know is shown by its id, never hidden. */
@@ -218,46 +306,31 @@ export function LogScreen() {
     [all],
   );
 
-  /**
-   * A new row for an exercise, prefilled from the previous set of it.
-   *
-   * Rule 3 of the blueprint's prefill order, and the one it calls the most
-   * important: straight sets are the norm, so repeating the previous set has to
-   * cost one tap. Rules 1, 2 and 4 need a prescription, the RPE engine and a
-   * query into the last session -- Orders 22, 27 and 13.
-   */
-  const draftFor = useCallback(
-    (exerciseId: string, after?: LoggedForTarget): Draft => {
-      // `after` is passed by the confirm path with the set that was just
-      // logged. Reading it from state there would read a stale array -- the
-      // optimistic append has not landed yet -- and the new row would come up
-      // empty, which is exactly the one tap this rule exists to save.
-      const previous = after ?? setsOf(exerciseId).at(-1) ?? null;
-      // Rule 1 (and 2, for a weight priced off today's top set): the
-      // prescription for the next working set, when the session has one.
-      const logged = after ? [...setsOf(exerciseId), after] : setsOf(exerciseId);
-      const targets = targetsOf(exerciseId, logged);
-      const target = targets ? nextTarget(targets, logged) : null;
-      const prefill = resolvePrefill({
-        ...prefillFrom(target),
-        previousSetThisSession: previous ? { loadKg: previous.loadKg, reps: previous.reps } : null,
-      });
-      return {
-        exerciseId,
-        clientSetId: newClientSetId(),
-        loadKg: prefill.loadKg,
-        reps: prefill.reps,
-        // RPE is about how the next set felt, so it is never carried forward.
-        rpe: null,
-        // Nor is the warm-up flag. A missed flag counts a warm-up toward
-        // tonnage; a stuck one hides real work from PRs and the rollups, and
-        // that is the failure nobody notices.
-        isWarmup: false,
-        ...(target ? { prescriptionId: target.prescriptionId, prescribed: target.snapshot } : {}),
-      };
+  const lastLoggedOf = useCallback(
+    (exerciseId: string) => {
+      const last = setsOf(exerciseId).at(-1);
+      return last ? { loadKg: last.loadKg, reps: last.reps } : null;
     },
+    [setsOf],
+  );
+
+  /**
+   * Rows that just appeared, given the coach's target for the set they will
+   * be (rule 1 of the prefill order, and rule 2 for a weight priced off
+   * today's top set). Rows already on screen keep whatever the athlete typed.
+   * `justLogged` is the set the confirm path has not seen land in state yet.
+   */
+  const prescribe = useCallback(
+    (before: readonly PlannedRow[], after: PlannedRow[], justLogged?: LoggedForTarget & { exerciseId: string }) =>
+      prescribeNewRows(before, after, (exerciseId) => {
+        const logged: LoggedForTarget[] = setsOf(exerciseId);
+        if (justLogged?.exerciseId === exerciseId) logged.push(justLogged);
+        return { logged, targets: targetsOf(exerciseId, logged) };
+      }),
     [setsOf, targetsOf],
   );
+
+  const focused = plans.find((row) => row.clientSetId === focusId) ?? null;
 
   /** One place that changes the rest timer, so the stored copy cannot drift. */
   const changeRest = useCallback((next: RestTimer | null) => {
@@ -266,13 +339,27 @@ export function LogScreen() {
     else forgetRest();
   }, []);
 
+  const closeSheets = () => {
+    setPad(null);
+    setRpeOpen(false);
+  };
+
+  /**
+   * Moves to an exercise. Rule 3 of the blueprint's prefill order supplies the
+   * row if it has none: straight sets are the norm, so repeating the previous
+   * set has to cost one tap. Rules 1, 2 and 4 need a prescription, the RPE
+   * engine and a query into the last session -- Orders 22, 27 and 13.
+   */
   const activate = useCallback(
     (exerciseId: string) => {
-      setDraft(draftFor(exerciseId));
+      const { rows: moved, head } = focusExercise(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId);
+      setPlans(prescribe(plans, moved));
+      setFocusId(head.clientSetId);
+      setSelectedId(null);
       setPad(null);
       setRpeOpen(false);
     },
-    [draftFor],
+    [plans, lastLoggedOf, prescribe],
   );
 
   const addExercise = useCallback(
@@ -292,35 +379,60 @@ export function LogScreen() {
     addExercise(exercise);
   };
 
-  const focusField = (field: "load" | "reps" | "rpe") => {
-    if (!draft) return;
+  /**
+   * Writes down another set for later.
+   *
+   * It does not move the pad: the row being entered stays the row being
+   * entered, so an athlete mid-set who plans the back-off loses nothing. The
+   * new row's numbers are one tap away if they need changing.
+   */
+  const addSet = (exerciseId: string) => {
+    setSelectedId(null);
+    const next = prescribe(plans, addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId));
+    setPlans(next);
+    // Nothing was being entered anywhere, so the new row's exercise is now
+    // the one in hand.
+    if (!focused) setFocusId(headOf(next, exerciseId)?.clientSetId ?? null);
+  };
+
+  const focusField = (rowId: string | null, field: "load" | "reps" | "rpe") => {
+    const row = plans.find((each) => each.clientSetId === rowId);
+    if (!row) return;
+    setFocusId(row.clientSetId);
+    setSelectedId(null);
     if (field === "rpe") {
-      if (draft.isWarmup) return; // Warm-ups never ask.
+      if (row.isWarmup) return; // Warm-ups never ask.
       setPad(null);
       setRpeOpen(true);
       return;
     }
     setRpeOpen(false);
-    setPad(beginEdit(field, field === "load" ? draft.loadKg : draft.reps));
+    setPad(beginEdit(field, field === "load" ? row.loadKg : row.reps));
+  };
+
+  const updateFocused = (change: (row: PlannedRow) => PlannedRow) => {
+    setPlans((prev) => prev.map((row) => (row.clientSetId === focusId ? change(row) : row)));
   };
 
   const applyPad = (next: PadState) => {
     setPad(next);
     const value = padValue(next);
-    setDraft((prev) =>
-      prev ? { ...prev, [next.field === "load" ? "loadKg" : "reps"]: value } : prev,
-    );
+    updateFocused((row) => ({ ...row, [next.field === "load" ? "loadKg" : "reps"]: value }));
   };
 
   const toggleWarmup = (isWarmup: boolean) => {
-    setDraft((prev) => (prev ? { ...prev, isWarmup, rpe: rpeAfterWarmupChange(isWarmup, prev.rpe) } : prev));
+    updateFocused((row) => ({ ...row, isWarmup, rpe: rpeAfterWarmupChange(isWarmup, row.rpe) }));
     if (isWarmup) setRpeOpen(false);
   };
 
-  const confirmSet = async () => {
-    if (!draft || !active || !athleteId || !canComplete(draft)) return;
-    const row = draft;
+  const confirmSet = async (rowId: string) => {
+    const row = plans.find((each) => each.clientSetId === rowId);
+    if (!row || !active || !athleteId || !canComplete(row)) return;
+    // Only the head of an exercise's plan is ever offered a confirm square;
+    // this makes the rule hold even if a stale handler fires.
+    if (headOf(plans, row.exerciseId)?.clientSetId !== rowId) return;
     setBusy(true);
+    setSelectedId(null);
     // The row appears logged immediately because it *is* logged: logSet writes
     // it to the durable queue, and nothing here waits for Appwrite. There is no
     // rollback path any more, and that is the point -- a set the athlete saw
@@ -328,6 +440,7 @@ export function LogScreen() {
     const optimistic: UnnamedSet = {
       exerciseId: row.exerciseId,
       clientSetId: row.clientSetId,
+      setIndex: nextSetIndex(everything.filter((s) => s.exerciseId === row.exerciseId)),
       loadKg: row.loadKg as number,
       reps: row.reps as number,
       rpe: row.rpe,
@@ -335,9 +448,19 @@ export function LogScreen() {
       loggedAt: new Date(),
     };
     setLocal((prev) => [...prev, optimistic]);
-    setDraft(draftFor(row.exerciseId, optimistic));
-    setPad(null);
-    setRpeOpen(false);
+    // The next row is either the one the athlete already planned, or -- with
+    // nothing planned -- a repeat of this one. Built from the set just logged
+    // rather than from state: the optimistic append has not landed yet, and
+    // reading it back would give an empty row where the one-tap repeat goes.
+    const { rows, next } = afterConfirm(
+      plans,
+      rowId,
+      { loadKg: optimistic.loadKg, reps: optimistic.reps },
+      newClientSetId,
+    );
+    setPlans(prescribe(plans, rows, optimistic));
+    setFocusId(next.clientSetId);
+    closeSheets();
     // Warm-ups start it too. Anything else is a rule an athlete has to learn,
     // and the feature list is explicit that this is the part Strong keeps
     // simple on purpose.
@@ -347,9 +470,9 @@ export function LogScreen() {
       await logSet({
         sessionId: active.id,
         exerciseId: row.exerciseId,
-        setIndex: setsOf(row.exerciseId).length + 1,
-        loadKg: row.loadKg as number,
-        reps: row.reps as number,
+        setIndex: optimistic.setIndex as number,
+        loadKg: optimistic.loadKg,
+        reps: optimistic.reps,
         rpe: row.rpe,
         isWarmup: row.isWarmup,
         clientSetId: row.clientSetId,
@@ -367,19 +490,117 @@ export function LogScreen() {
     }
   };
 
-  const undoLast = async (exerciseId: string) => {
-    const last = setsOf(exerciseId).at(-1);
-    if (!last || !athleteId) return;
-    setLocal((prev) => prev.filter((s) => s.clientSetId !== last.clientSetId));
-    setStored((prev) => prev.filter((s) => s.clientSetId !== last.clientSetId));
-    // The set that started the rest is gone, so the rest is gone.
-    changeRest(null);
-    setDraft((prev) => (prev?.exerciseId === exerciseId ? draftFor(exerciseId) : prev));
-    await removeSet(last.clientSetId, {
-      exerciseId: last.exerciseId,
-      loggedAt: last.loggedAt,
-    }).catch(() => {});
+  const discardPlanned = (rowId: string) => {
+    const row = plans.find((each) => each.clientSetId === rowId);
+    const rest = discardRow(plans, rowId);
+    setPlans(rest);
+    if (row && focusId === rowId) {
+      setFocusId(headOf(rest, row.exerciseId)?.clientSetId ?? null);
+      closeSheets();
+    }
   };
+
+  /* --- Deleting a logged set ------------------------------------------- */
+
+  const pendingRef = useRef<PendingDelete | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Writes the delete that the toast was holding.
+   *
+   * Runs when the toast times out, when another set is deleted, when the page
+   * is hidden or left, and before a finish. A phone locked inside the five
+   * seconds therefore still deletes; a tab killed outright inside them keeps
+   * the set, which is the right way round for a log whose worst failure is a
+   * lost set.
+   */
+  const commitDelete = useCallback(() => {
+    const pending = pendingRef.current;
+    if (!pending) return;
+    pendingRef.current = null;
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = null;
+    const id = pending.set.clientSetId;
+    setDeleted((prev) => new Set(prev).add(id));
+    setPendingDelete(null);
+    void removeSet(id, { exerciseId: pending.set.exerciseId, loggedAt: pending.set.loggedAt }).catch(() => {
+      // The device could not write to its own storage, so the delete does not
+      // exist anywhere. The set comes back rather than looking deleted.
+      setDeleted((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") commitDelete();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", commitDelete);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", commitDelete);
+      // Leaving the screen for Today or History is not an undo.
+      commitDelete();
+    };
+  }, [commitDelete]);
+
+  const selectSet = (clientSetId: string) => {
+    closeSheets();
+    setSelectedId((prev) => (prev === clientSetId ? null : clientSetId));
+  };
+
+  const deleteLogged = (clientSetId: string) => {
+    const set = all.find((s) => s.clientSetId === clientSetId);
+    if (!set || commented.has(clientSetId)) return;
+    // One toast at a time. The previous delete stops being undoable the
+    // moment a second one starts, rather than stacking toasts over the pad.
+    commitDelete();
+
+    const mine = setsOf(set.exerciseId);
+    const at = mine.findIndex((s) => s.clientSetId === clientSetId);
+    const number = set.isWarmup ? null : mine.slice(0, at + 1).filter((s) => !s.isWarmup).length;
+    const name = nameFor(set.exerciseId) ?? "Set";
+    const label = number === null ? `${name} warm-up deleted` : `${name} set ${number} deleted`;
+
+    // The rest belongs to the most recent set. Deleting that one means the
+    // rest was for a set that did not happen; deleting an older one leaves it.
+    const latest = all.at(-1)?.clientSetId === clientSetId;
+    const pending: PendingDelete = { set, label, restBefore: latest ? rest : null };
+    if (latest && rest) changeRest(null);
+
+    pendingRef.current = pending;
+    setPendingDelete(pending);
+    setSelectedId(null);
+    undoTimer.current = setTimeout(commitDelete, UNDO_MS);
+  };
+
+  const undoDelete = () => {
+    const pending = pendingRef.current;
+    if (!pending) return;
+    pendingRef.current = null;
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = null;
+    setPendingDelete(null);
+    if (pending.restBefore) changeRest(pending.restBefore);
+  };
+
+  // A prescribed session opens on its first exercise, ready to log, so the
+  // athlete's first tap is a set rather than finding the squat in a list.
+  const firstPlanned = plan[0]?.exerciseId ?? null;
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (!firstPlanned || !sessionId || opened.current === sessionId) return;
+    opened.current = sessionId;
+    if (plans.length > 0 || all.length > 0) return;
+    void (async () => {
+      await Promise.resolve();
+      activate(firstPlanned);
+    })();
+  }, [firstPlanned, sessionId, plans.length, all.length, activate]);
 
   const startHere = async () => {
     setBusy(true);
@@ -393,6 +614,9 @@ export function LogScreen() {
 
   const finishHere = async () => {
     if (!active) return;
+    // A set in the toast is already out of the totals; its delete has to be
+    // queued before the finish that reports those totals.
+    commitDelete();
     setBusy(true);
     try {
       await finish(active.id, { setCount: summary.setCount, tonnageKg: summary.tonnageKg });
@@ -402,20 +626,6 @@ export function LogScreen() {
       setBusy(false);
     }
   };
-
-  // A prescribed session opens on its first exercise, ready to log, so the
-  // athlete's first tap is a set rather than finding the squat in a list.
-  const firstPlanned = plan[0]?.exerciseId ?? null;
-  const opened = useRef<string | null>(null);
-  useEffect(() => {
-    if (!firstPlanned || !sessionId || opened.current === sessionId) return;
-    opened.current = sessionId;
-    if (draft || all.length > 0) return;
-    void (async () => {
-      await Promise.resolve();
-      activate(firstPlanned);
-    })();
-  }, [firstPlanned, sessionId, draft, all.length, activate]);
 
   if (phase === "finished") {
     return <FinishedSummary summary={summary} onDone={() => router.push("/today")} />;
@@ -438,17 +648,41 @@ export function LogScreen() {
     );
   }
 
-  const withSets = new Set(groups.map((g) => g.exerciseId));
-  // Prescribed exercises lead, in the coach's order, whether or not anything is
-  // logged yet; whatever the athlete added on top follows.
-  const planned = new Set(plan.map((p) => p.exerciseId));
-  const blocks = [
-    ...plan.map((p) => ({ id: p.exerciseId, name: nameFor(p.exerciseId) ?? "Prescribed exercise" })),
-    ...groups.filter((g) => !planned.has(g.exerciseId)).map((g) => ({ id: g.exerciseId, name: g.exerciseName })),
-    ...added
-      .filter((e) => !withSets.has(e.id) && !planned.has(e.id))
-      .map((e) => ({ id: e.id, name: e.name })),
-  ];
+  // Prescribed exercises lead, in the coach's order, whether or not anything
+  // is logged yet. Then exercises with sets, then ones added or planned but
+  // not logged into yet. Planned counts: deleting the only set of an exercise
+  // must not take the rows the athlete was about to log with it.
+  const blocks: { id: string; name: string }[] = plan.map((p) => ({
+    id: p.exerciseId,
+    name: nameFor(p.exerciseId) ?? "Prescribed exercise",
+  }));
+  const shown = new Set(blocks.map((b) => b.id));
+  for (const group of groups) {
+    if (!shown.has(group.exerciseId)) {
+      blocks.push({ id: group.exerciseId, name: group.exerciseName });
+      shown.add(group.exerciseId);
+    }
+  }
+  for (const exercise of added) {
+    if (!shown.has(exercise.id)) {
+      blocks.push({ id: exercise.id, name: exercise.name });
+      shown.add(exercise.id);
+    }
+  }
+  for (const row of plans) {
+    if (!shown.has(row.exerciseId)) {
+      blocks.push({ id: row.exerciseId, name: nameFor(row.exerciseId) ?? row.exerciseId });
+      shown.add(row.exerciseId);
+    }
+  }
+
+  const focusedNumber = (() => {
+    if (!focused) return 1;
+    const mine = rowsOf(plans, focused.exerciseId);
+    const working = setsOf(focused.exerciseId).filter((s) => !s.isWarmup).length;
+    const index = plannedIndex(working, mine, mine.findIndex((r) => r.clientSetId === focused.clientSetId));
+    return index === "W" ? working + 1 : index;
+  })();
 
   /** The coach's lines, then the next set's target, for one exercise block. */
   const targetFor = (exerciseId: string): string[] | null => {
@@ -468,6 +702,10 @@ export function LogScreen() {
    * exercise -- and the last two are the collision worth naming, because a set
    * being logged is the same instant the timer starts and the typeahead comes
    * back. Stacking them would push both out of the thumb zone.
+   *
+   * The undo toast is the one thing allowed to sit above whichever it is: it
+   * lasts five seconds, and hiding the rest timer to show it would cost more
+   * than it saves.
    */
   const bottom: "pad" | "rpe" | "confirm" | "rest" | "add" =
     pad !== null ? "pad" : rpeOpen ? "rpe" : phase === "confirming" ? "confirm" : rest ? "rest" : "add";
@@ -504,13 +742,20 @@ export function LogScreen() {
                 reps: s.reps,
                 rpe: (s.rpe as RpeValue | null) ?? null,
                 isWarmup: s.isWarmup,
+                deleteBlocked:
+                  commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,
               }))}
-              draft={draft?.exerciseId === block.id ? draft : null}
+              planned={rowsOf(plans, block.id)}
+              focusedId={pad !== null || rpeOpen ? focusId : null}
               target={targetFor(block.id)}
               onFocus={focusField}
-              onConfirm={confirmSet}
+              onConfirm={(id) => void confirmSet(id)}
+              onDiscard={discardPlanned}
+              onAddSet={() => addSet(block.id)}
               onActivate={() => activate(block.id)}
-              onUndo={() => void undoLast(block.id)}
+              selectedId={selectedId}
+              onSelect={selectSet}
+              onDelete={deleteLogged}
               camera={(() => {
                 // Attaches to the most recently logged set of this exercise,
                 // per the Set Row spec. Absent until there is one, so the
@@ -552,6 +797,25 @@ export function LogScreen() {
           </p>
         ) : null}
 
+        {/*
+          A delete that reached Appwrite after the coach had commented. Nothing
+          was lost -- the set is back where it was -- so this can be dismissed,
+          unlike the notice above.
+        */}
+        {refused.size > 0 ? (
+          <div className="flex items-center justify-between gap-3 rounded-card border border-border bg-surface p-3">
+            <p role="status" className="m-0 text-caption text-muted">
+              {refused.size === 1 ? "A set you deleted was" : `${refused.size} sets you deleted were`} kept:
+              your coach had already commented.
+            </p>
+            <Button variant="ghost" size="sm" onClick={() => void dismissFailed([...refused.values()])}>
+              OK
+            </Button>
+          </div>
+        ) : null}
+
+        {pendingDelete ? <UndoToast message={pendingDelete.label} onUndo={undoDelete} /> : null}
+
         {bottom === "confirm" ? (
           <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
             <p className="m-0 text-body">
@@ -569,24 +833,24 @@ export function LogScreen() {
         ) : null}
 
         {/* One sheet at a time, and only where a thumb already is. */}
-        {bottom === "pad" && pad !== null && draft ? (
+        {bottom === "pad" && pad !== null && focused ? (
           <NumberPad
             state={pad}
             onChange={applyPad}
-            onNext={() => (pad.field === "load" ? focusField("reps") : focusField("rpe"))}
-            nextLabel={pad.field === "load" ? "Reps" : draft.isWarmup ? "Done" : "RPE"}
-            isWarmup={draft.isWarmup}
+            onNext={() => (pad.field === "load" ? focusField(focusId, "reps") : focusField(focusId, "rpe"))}
+            nextLabel={pad.field === "load" ? "Reps" : focused.isWarmup ? "Done" : "RPE"}
+            isWarmup={focused.isWarmup}
             onToggleWarmup={toggleWarmup}
             onDismiss={() => setPad(null)}
           />
         ) : null}
 
-        {bottom === "rpe" && draft ? (
+        {bottom === "rpe" && focused ? (
           <RpeSheet
-            setIndex={setsOf(draft.exerciseId).filter((s) => !s.isWarmup).length + 1}
-            value={draft.rpe}
+            setIndex={focusedNumber}
+            value={focused.rpe}
             onSelect={(value) => {
-              setDraft((prev) => (prev ? { ...prev, rpe: value } : prev));
+              updateFocused((row) => ({ ...row, rpe: value }));
               setRpeOpen(false);
             }}
           />

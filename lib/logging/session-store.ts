@@ -9,7 +9,11 @@ import type { SessionRecord, SessionSet } from "./session";
  * clientSetId travels with it so Undo can find the row again after a reload,
  * without the screen having to hold Appwrite ids it otherwise never needs.
  */
-export type UnnamedSet = Omit<SessionSet, "exerciseName"> & { clientSetId: string };
+export type UnnamedSet = Omit<SessionSet, "exerciseName"> & {
+  clientSetId: string;
+  /** The stored ordinal. Optional because a set logged on this page has not been given one yet. */
+  setIndex?: number | undefined;
+};
 
 /**
  * Reading and writing training sessions from the browser.
@@ -80,6 +84,7 @@ interface SetRow {
   $id: string;
   exercise_id?: unknown;
   client_set_id?: unknown;
+  set_index?: unknown;
   rpe?: unknown;
   load_kg?: unknown;
   reps?: unknown;
@@ -111,6 +116,7 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
       return {
         exerciseId,
         clientSetId: typeof row.client_set_id === "string" ? row.client_set_id : "",
+        setIndex: asNumber(row.set_index) || undefined,
         loadKg: asNumber(row.load_kg),
         reps: asNumber(row.reps),
         rpe: typeof row.rpe === "number" ? row.rpe : null,
@@ -118,7 +124,7 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
         loggedAt,
       } satisfies UnnamedSet;
     })
-    .filter((set): set is UnnamedSet => set !== null);
+    .filter((set) => set !== null);
 }
 
 /**

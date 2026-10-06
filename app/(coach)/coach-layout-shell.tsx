@@ -73,8 +73,15 @@ export function CoachLayoutShell({ children }: { children: React.ReactNode }) {
     }
   }, [athleteIds, coachId]);
 
+  // Order 16.6: filtered against the session rather than trusted. Both effects
+  // above return early at zero athletes, so without this the last athlete to
+  // unlink would stay in the rail, badge and all, until a reload.
+  const linkedNow = new Set(athleteIds ?? []);
+  const rail = athletes.filter((athlete) => linkedNow.has(athlete.id));
+  const badge = linkedNow.size > 0 ? reviewCount : 0;
+
   return (
-    <CoachShell athletes={athletes} reviewCount={reviewCount}>
+    <CoachShell athletes={rail} reviewCount={badge}>
       {children}
     </CoachShell>
   );

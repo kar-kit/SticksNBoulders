@@ -100,7 +100,7 @@ The blueprint's Profile page lists five features. **15** (invite code) and **16*
 (redeem) already shipped. **Bodyweight** is Order 36's row. **The load-suggestion
 toggle is Order 28 and is blocked** — the blueprint marks it `[SME to confirm]`
 because it is a coaching philosophy question, not a product decision. **CSV
-export** is Order 39. The coach-side **BILLING** section waits for something to
+export** shipped at Order 39 — see `csv-export.md`. The coach-side **BILLING** section waits for something to
 bill.
 
 ## Still yours to do

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newOp, type QueuedOp } from "@/lib/offline/queue";
-import { mergeById, queuedSessions, queuedSets, unsyncedIds } from "./offline-view";
+import { lostOps, mergeById, queuedSessions, queuedSets, refusedDeletes, unsyncedIds } from "./offline-view";
 import type { SessionRecord } from "./session";
 
 let sequence = 0;
@@ -79,5 +79,27 @@ describe("mergeById", () => {
 describe("unsyncedIds", () => {
   it("names the rows that should carry a pending mark", () => {
     expect([...unsyncedIds([op("set.create", { setId: "st-7", sessionId: "cs-1" })])]).toEqual(["st-7"]);
+  });
+});
+
+describe("refused deletes", () => {
+  const failedDelete = (id: string, setId: string, permanentError: string): QueuedOp => ({
+    id,
+    kind: "set.delete",
+    payload: { setId },
+    sequence: 1,
+    attempts: 1,
+    nextAttemptAt: 0,
+    permanentError,
+  });
+
+  it("picks out deletes refused because a coach commented, by set", () => {
+    const ops = [failedDelete("op-1", "st-a", "set-has-coach-comments"), failedDelete("op-2", "st-b", "rejected")];
+    expect([...refusedDeletes(ops)]).toEqual([["st-a", "op-1"]]);
+  });
+
+  it("does not count them as lost work", () => {
+    const ops = [failedDelete("op-1", "st-a", "set-has-coach-comments"), failedDelete("op-2", "st-b", "rejected")];
+    expect(lostOps(ops).map((op) => op.id)).toEqual(["op-2"]);
   });
 });

@@ -8,6 +8,7 @@ import {
   classify,
   collapsibleCreate,
   newOp,
+  opsDroppedByDelete,
   readyPrefix,
   supersededRefresh,
   type OpKind,
@@ -38,6 +39,8 @@ let cache: QueuedOp[] = [];
 let sequence = 0;
 let actor: Actor | null = null;
 let draining: Promise<void> | null = null;
+/** The op whose request is on the wire right now, so nothing drops it mid-send. */
+let inFlight: string | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 const listeners = new Set<Listener>();
 
@@ -125,11 +128,49 @@ export async function enqueue(kind: OpKind, payload: Record<string, unknown>): P
 export async function cancelQueued(kind: OpKind, rowId: string): Promise<boolean> {
   const open = await ready();
   const op = collapsibleCreate(cache, kind, rowId);
-  if (!op) return false;
+  // Mid-send counts as attempted: the request may land after this returns.
+  if (!op || op.id === inFlight) return false;
   await open.remove(op.id);
   cache = cache.filter((each) => each.id !== op.id);
   announce();
   return true;
+}
+
+/**
+ * Takes a set out of the queue ahead of deleting it.
+ *
+ * Returns whether the set may already exist on the server -- if so the caller
+ * queues a real delete. See `opsDroppedByDelete` for which ops go.
+ */
+export async function withdrawSet(setId: string): Promise<{ landed: boolean }> {
+  const open = await ready();
+  const { drop, landed } = opsDroppedByDelete(cache, setId, inFlight);
+  for (const op of drop) await open.remove(op.id);
+  const gone = new Set(drop.map((op) => op.id));
+  if (gone.size > 0) {
+    cache = cache.filter((each) => !gone.has(each.id));
+    announce();
+  }
+  return { landed };
+}
+
+/**
+ * Lets go of ops that failed permanently and carry nothing worth keeping.
+ *
+ * Failed ops are normally kept forever, because each is a set that did not
+ * reach the coach. A delete the server refused is the opposite: the set is
+ * still there, nothing was lost, and once the athlete has read why, the
+ * notice has done its job.
+ */
+export async function dismissFailed(ids: readonly string[]): Promise<void> {
+  const open = await ready();
+  const targets = new Set(ids);
+  const removable = cache.filter((op) => targets.has(op.id) && op.permanentError);
+  for (const op of removable) await open.remove(op.id);
+  if (removable.length === 0) return;
+  const gone = new Set(removable.map((op) => op.id));
+  cache = cache.filter((each) => !gone.has(each.id));
+  announce();
 }
 
 /** Drains the queue head-first. One at a time: order is the guarantee. */
@@ -152,6 +193,9 @@ async function drain(force: boolean): Promise<void> {
     if (batch.length === 0) return;
 
     for (const op of batch) {
+      // The batch is a snapshot. An op withdrawn since it was taken -- a set
+      // deleted while an earlier op was sending -- must not be sent anyway.
+      if (!cache.some((each) => each.id === op.id)) continue;
       try {
         // A rollup refresh with a later one behind it would recompute a week
         // that is about to be recomputed again. Dropped rather than run, and
@@ -160,7 +204,12 @@ async function drain(force: boolean): Promise<void> {
           await settle(open, op);
           continue;
         }
-        await runOp(actor, op);
+        inFlight = op.id;
+        try {
+          await runOp(actor, op);
+        } finally {
+          inFlight = null;
+        }
         await settle(open, op);
       } catch (error) {
         const outcome = classify(error);
@@ -203,6 +252,7 @@ export function resetQueueForTests(next: QueueStore | null = null) {
   sequence = 0;
   actor = null;
   draining = null;
+  inFlight = null;
   if (timer) clearInterval(timer);
   timer = null;
   listeners.clear();

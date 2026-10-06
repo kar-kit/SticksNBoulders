@@ -4,6 +4,15 @@ import { TabBar } from "./tab-bar";
 const pathname = vi.hoisted(() => ({ current: "/today" }));
 vi.mock("next/navigation", () => ({ usePathname: () => pathname.current }));
 
+const badge = vi.hoisted(() => ({ unread: 0 }));
+vi.mock("@/lib/review/feedback-context", () => ({
+  useFeedbackBadge: () => ({ unread: badge.unread }),
+}));
+
+beforeEach(() => {
+  badge.unread = 0;
+});
+
 describe("TabBar", () => {
   it("offers exactly four tabs", () => {
     // Four, no more. A fifth means something else is wrong.
@@ -34,5 +43,18 @@ describe("TabBar", () => {
     pathname.current = "/logbook";
     render(<TabBar />);
     expect(screen.getByRole("link", { name: "Log" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("dots Today when the coach has said something new, since Coach Feedback lives under it", () => {
+    pathname.current = "/log";
+    badge.unread = 2;
+    render(<TabBar />);
+    expect(screen.getAllByTestId("feedback-dot")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /Today.*new coach feedback/ })).toHaveAttribute("href", "/today");
+  });
+
+  it("shows no dot when there is nothing new", () => {
+    render(<TabBar />);
+    expect(screen.queryByTestId("feedback-dot")).not.toBeInTheDocument();
   });
 });

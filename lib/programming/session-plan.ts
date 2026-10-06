@@ -1,6 +1,8 @@
 import type { SetForEstimate } from "@/lib/strength/e1rm";
 import { resolveMaxes, type EstimatedInput, type ReferenceMaxEntry } from "@/lib/strength/reference-max";
 import type { RpeValue } from "@/lib/logging/set";
+import { resolvePrefill } from "@/lib/logging/prefill";
+import type { PlannedRow } from "@/lib/logging/plan";
 import { byPosition, type Prescription } from "./program";
 import {
   parsePrescription,
@@ -246,4 +248,57 @@ export function prefillFrom(target: SetTarget | null) {
     };
   }
   return { prescription: { loadKg: target.loadKg, reps: target.reps }, suggestion: null };
+}
+
+/** The fields prescription targets are computed from. */
+export type LoggedForTarget = { loadKg: number; reps: number; rpe?: number | null; isWarmup?: boolean };
+
+/**
+ * Gives rows that have just appeared in the logger's plan the coach's target
+ * for the set each one will be.
+ *
+ * Only new rows -- ones absent from `before` -- are touched. A row already on
+ * screen holds whatever the athlete typed into it, and re-pricing it under
+ * their thumb would be the app arguing with them. A new row's position is
+ * counted in working sets: those logged, plus the working rows planned ahead
+ * of it, so the third row of a 3 x 5 gets set 3's target.
+ *
+ * Load and reps fall back independently through the prefill order: an RPE
+ * line with no weight keeps the repeated load, and an extra set beyond the
+ * prescription is left exactly as `lib/logging/plan` built it.
+ */
+export function prescribeNewRows(
+  before: readonly PlannedRow[],
+  after: readonly PlannedRow[],
+  context: (exerciseId: string) => { logged: readonly LoggedForTarget[]; targets: readonly SetTarget[] | null },
+): PlannedRow[] {
+  const seen = new Set(before.map((row) => row.clientSetId));
+  if (after.every((row) => seen.has(row.clientSetId))) return [...after];
+  const cache = new Map<string, ReturnType<typeof context>>();
+  const of = (exerciseId: string) => {
+    let hit = cache.get(exerciseId);
+    if (!hit) cache.set(exerciseId, (hit = context(exerciseId)));
+    return hit;
+  };
+  return after.map((row, at) => {
+    if (seen.has(row.clientSetId) || row.isWarmup) return row;
+    const { logged, targets } = of(row.exerciseId);
+    if (!targets) return row;
+    const ahead = after.slice(0, at).filter((r) => r.exerciseId === row.exerciseId && !r.isWarmup).length;
+    const done = logged.filter((set) => !set.isWarmup).length;
+    const target = targets[done + ahead] ?? null;
+    if (!target) return row;
+    const prefill = resolvePrefill({
+      ...prefillFrom(target),
+      previousSetThisSession:
+        row.loadKg !== null && row.reps !== null ? { loadKg: row.loadKg, reps: row.reps } : null,
+    });
+    return {
+      ...row,
+      loadKg: prefill.loadKg,
+      reps: prefill.reps,
+      prescriptionId: target.prescriptionId,
+      prescribed: target.snapshot,
+    };
+  });
 }

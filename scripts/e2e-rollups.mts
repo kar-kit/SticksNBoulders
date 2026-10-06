@@ -110,8 +110,27 @@ await db.createRow({
   permissions: rollupPermissions({ athleteId: athlete.$id }),
 });
 
+// A stale best e1RM: the rollup still carries the estimate of a set that was
+// deleted, and the only set left was logged without an RPE. What a delete in
+// the logger leaves behind if the rollup is written with undefined for "no
+// estimate" -- an update ignores undefined, so the old number never cleared.
+await seed({ exercise_id: "ohp", load_kg: 60, reps: 5, logged_at: new Date("2026-09-16T10:00:00Z") });
+const staleE1rmId = `ru-e1rm-${stamp}`;
+await db.createRow({
+  databaseId: D, tableId: "stats_rollups", rowId: staleE1rmId,
+  data: {
+    athlete_id: athlete.$id, exercise_id: "ohp", week_start: MONDAY.toISOString(),
+    set_count: 1, volume_reps: 5, tonnage_kg: 300, best_e1rm_kg: 90,
+    best_single_kg: 60, best_single_reps: 5, best_reps: 5, best_reps_load_kg: 60,
+    rebuilt_at: new Date().toISOString(),
+  },
+  permissions: rollupPermissions({ athleteId: athlete.$id }),
+});
+
+// Scoped to this run's athlete. The instance is shared, and an unscoped --yes
+// corrects and removes everybody else's rollups too.
 const run = (...args: string[]) =>
-  execFileSync("npm", ["run", "rollups:rebuild", ...args], { encoding: "utf8" });
+  execFileSync("npm", ["run", "rollups:rebuild", "--", "--athlete", athlete.$id, ...args], { encoding: "utf8" });
 
 const rollupsOf = async () =>
   (
@@ -130,10 +149,10 @@ const counted = (label: string) => new RegExp(`([1-9]\\d*) to ${label}`).test(pl
 check("finds the bucket nothing has written", counted("create"));
 check("finds the rollup that drifted from its sets", counted("correct"));
 check("finds the rollup whose sets are gone", counted("remove"));
-check("writes nothing while planning", (await rollupsOf()).length === 2);
+check("writes nothing while planning", (await rollupsOf()).length === 3);
 
 console.log("\nApplying");
-run("--", "--yes");
+run("--yes");
 const rows = await rollupsOf();
 const squat = rows.find((r) => r.exercise_id === "squat");
 const bench = rows.find((r) => r.exercise_id === "bench");
@@ -158,7 +177,9 @@ check(
 check("the drifted rollup is corrected", bench?.set_count === 1 && bench?.tonnage_kg === 500);
 check("and keeps its row rather than being replaced", bench?.$id === staleId);
 check("the orphan is removed", rows.every((r) => r.exercise_id !== "deadlift"));
-check("nothing else is left behind for this athlete", rows.length === 2);
+const ohp = rows.find((r) => r.exercise_id === "ohp");
+check("a best e1RM with no set behind it is cleared, not kept", ohp?.$id === staleE1rmId && ohp?.best_e1rm_kg == null);
+check("nothing else is left behind for this athlete", rows.length === 3);
 
 console.log("\nRe-running");
 check("is safe to run forever: the second pass has nothing to do", /Nothing to do/.test(run()));

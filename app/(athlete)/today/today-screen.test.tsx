@@ -42,6 +42,11 @@ vi.mock("@/lib/programming/use-prescribed", () => ({
   usePrescribedToday: () => prescribed.value,
 }));
 
+const badge = vi.hoisted(() => ({ hasCoach: null as boolean | null, unread: 0 }));
+vi.mock("@/lib/review/feedback-context", () => ({
+  useFeedbackBadge: () => badge,
+}));
+
 const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
   id: "s1",
   clientSessionId: "c1",
@@ -70,6 +75,8 @@ function setup(overrides: Partial<typeof training.value> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   prescribed.value = NONE;
+  badge.hasCoach = null;
+  badge.unread = 0;
 });
 
 describe("Today, with no program", () => {
@@ -239,5 +246,33 @@ describe("Today, with a prescribed day", () => {
     setup({ active: session() });
     expect(screen.getByRole("button", { name: "Resume session" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start today's session" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Today, the way into Coach Feedback", () => {
+  it("is absent for an athlete training solo", () => {
+    badge.hasCoach = false;
+    setup();
+    expect(screen.queryByRole("link", { name: /Coach feedback/ })).not.toBeInTheDocument();
+  });
+
+  it("waits rather than flickering in before the link is known", () => {
+    setup();
+    expect(screen.queryByRole("link", { name: /Coach feedback/ })).not.toBeInTheDocument();
+  });
+
+  it("is there once they have a coach, quiet when nothing is new", () => {
+    badge.hasCoach = true;
+    setup();
+    const link = screen.getByRole("link", { name: /Coach feedback/ });
+    expect(link).toHaveAttribute("href", "/today/feedback");
+    expect(link).toHaveTextContent("Nothing new");
+  });
+
+  it("says how much is new", () => {
+    badge.hasCoach = true;
+    badge.unread = 3;
+    setup();
+    expect(screen.getByRole("link", { name: /Coach feedback/ })).toHaveTextContent("3 new");
   });
 });

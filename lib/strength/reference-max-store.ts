@@ -142,11 +142,7 @@ export interface SetMaxRequest {
  * client able to create one could create it carrying another athlete's id.
  * The route checks the caller is the athlete or actively coaches them.
  *
- * No UI calls this yet -- the blueprint's "edit / set training max" control
- * belongs with the rest of Athlete View at Order 25. It exists now because the
- * panel and Order 18's prescriptions are meaningless without a way to put a
- * number in, and because the boundary is worth having tested before a screen
- * leans on it.
+ * Called from the inline editor in CURRENT MAXES on Athlete View (Order 25).
  */
 export async function setReferenceMax(input: SetMaxRequest): Promise<string> {
   const { account } = browserAppwrite();

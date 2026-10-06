@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { LogScreen } from "./log-screen";
+import { LogScreen, UNDO_MS } from "./log-screen";
 import type { SessionRecord } from "@/lib/logging/session";
 import type { Exercise } from "@/lib/exercises/match";
 import { createMemoryStore } from "@/lib/offline/memory-store";
-import { enqueue, resetQueueForTests } from "@/lib/offline/client";
+import { rememberRest } from "@/lib/logging/rest-store";
+import { attachQueue, enqueue, resetQueueForTests } from "@/lib/offline/client";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -28,19 +29,32 @@ vi.mock("@/lib/exercises/library-context", () => ({
 const resolveOrCreateExercise = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/exercises/library", () => ({ resolveOrCreateExercise }));
 
-const storedSets = vi.hoisted(() => ({ value: [] as unknown[] }));
+const storedSets = vi.hoisted(() => ({ value: [] as unknown[], fail: 0 }));
 vi.mock("@/lib/logging/session-store", () => ({
-  fetchSessionSets: async () => storedSets.value,
+  fetchSessionSets: async () => {
+    if (storedSets.fail > 0) {
+      storedSets.fail -= 1;
+      throw new TypeError("Failed to fetch");
+    }
+    return storedSets.value;
+  },
 }));
 
 // Typed so the argument assertions below are checked rather than assumed.
 const logSet = vi.hoisted(() => vi.fn<(input: Record<string, unknown>) => Promise<void>>());
-const removeSet = vi.hoisted(() => vi.fn<(clientSetId: string) => Promise<void>>());
+const removeSet = vi.hoisted(() =>
+  vi.fn<(clientSetId: string, set?: { exerciseId: string; loggedAt: Date }) => Promise<{ queued: boolean }>>(),
+);
 let clientIds = 0;
 vi.mock("@/lib/logging/set-store", () => ({
   logSet,
   removeSet,
   newClientSetId: () => `cs-${++clientIds}`,
+}));
+
+const comments = vi.hoisted(() => ({ value: [] as { setId: string; authorId: string }[] }));
+vi.mock("@/lib/review/comment-store", () => ({
+  fetchCommentsForSets: async () => comments.value,
 }));
 
 const training = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
@@ -60,7 +74,7 @@ const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
 
 const squat: Exercise = { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true };
 
-function setup(overrides: Record<string, unknown> = {}) {
+function setup(overrides: Record<string, unknown> = {}, userOptions: Parameters<typeof userEvent.setup>[0] = {}) {
   const start = vi.fn(async () => session());
   const finish = vi.fn(async () => {});
   training.value = {
@@ -73,7 +87,7 @@ function setup(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   const { unmount } = render(<LogScreen />);
-  return { start, finish, unmount, user: userEvent.setup() };
+  return { start, finish, unmount, user: userEvent.setup(userOptions) };
 }
 
 beforeEach(() => {
@@ -86,9 +100,11 @@ beforeEach(() => {
   // mock that returns undefined is not a stand-in for one that returns a
   // promise -- the screen awaits both.
   logSet.mockResolvedValue(undefined);
-  removeSet.mockResolvedValue(undefined);
+  removeSet.mockResolvedValue({ queued: true });
   library.exercises = [squat];
   storedSets.value = [];
+  storedSets.fail = 0;
+  comments.value = [];
   clientIds = 0;
 });
 
@@ -295,19 +311,6 @@ describe("logging a set", () => {
     expect(logSet.mock.calls[0][0]).toMatchObject({ rpe: null });
   });
 
-  it("undoes the set that was just logged", async () => {
-    const { user } = setup({ active: session() });
-    await addSquat(user);
-    await enterSet(user, "140", "5");
-    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
-    await screen.findByRole("group", { name: "Set 2" });
-
-    await user.click(screen.getByRole("button", { name: "Undo last set" }));
-
-    await waitFor(() => expect(removeSet).toHaveBeenCalled());
-    expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
-  });
-
   it("takes the row back off when the write fails, rather than leaving a lie", async () => {
     // Order 9 turns this into a queue that survives. Until then, a set that did
     // not reach Appwrite must not sit there looking logged.
@@ -398,6 +401,33 @@ describe("when the gym has no signal", () => {
   });
 });
 
+describe("a reload with no signal", () => {
+  it("reads the synced sets again once the queue moves, so the totals include them", async () => {
+    // The read fails in the basement. Before, it was never retried: sets that
+    // had synced before the reload stayed missing, and the finish wrote
+    // totals without them.
+    storedSets.value = [logged("a", 140, 30)];
+    storedSets.fail = 1;
+    resetQueueForTests(createMemoryStore());
+    const { user, finish } = setup({ active: session() });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("group", { name: "Set 1" })).not.toBeInTheDocument();
+
+    // Signal back: the queue announces as it drains.
+    await act(async () => {
+      await enqueue("rollup.refresh", { exerciseId: "squat", loggedAt: new Date().toISOString(), weekKey: "w" });
+    });
+    expect(await screen.findByRole("group", { name: "Set 1" })).toHaveTextContent("140");
+
+    await user.click(screen.getByRole("button", { name: "Finish session" }));
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+    expect(finish).toHaveBeenCalledWith("s1", { setCount: 1, tonnageKg: 700 });
+    resetQueueForTests();
+  });
+});
+
 describe("the rest timer", () => {
   const addAndLog = async (user: ReturnType<typeof userEvent.setup>) => {
     await user.click(screen.getByRole("combobox", { name: "Add exercise" }));
@@ -458,13 +488,17 @@ describe("the rest timer", () => {
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
   });
 
-  it("goes away when the set that started it is undone", async () => {
+  it("goes away when the set that started it is deleted, and comes back on Undo", async () => {
     const { user } = setup({ active: session() });
     await addAndLog(user);
     expect(await screen.findByRole("timer")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Undo last set" }));
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 1" }));
     await waitFor(() => expect(screen.queryByRole("timer")).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
   });
 
   it("is still running after the page is thrown away", async () => {
@@ -480,5 +514,326 @@ describe("the rest timer", () => {
     // -- which is exactly the proof wanted. A counter that restarted would read
     // 2:00, and one that reset its extension would too.
     expect(await screen.findByRole("timer")).toHaveTextContent(/2:2[0-9]|2:30/);
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+const logged = (id: string, loadKg: number, minutesAgo: number, extra: Record<string, unknown> = {}) => ({
+  exerciseId: "squat",
+  clientSetId: id,
+  loadKg,
+  reps: 5,
+  rpe: null,
+  isWarmup: false,
+  loggedAt: new Date(Date.now() - minutesAgo * 60_000),
+  ...extra,
+});
+
+describe("deleting a set", () => {
+  const threeSets = () => {
+    storedSets.value = [logged("a", 140, 30, { setIndex: 1 }), logged("b", 150, 20, { setIndex: 2 }), logged("c", 145, 10, { setIndex: 3 })];
+  };
+
+  it("deletes any set, not just the last one, and renumbers what is left", async () => {
+    threeSets();
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+
+    await user.click(screen.getByRole("group", { name: "Set 2" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 2" }));
+
+    // Gone from the screen straight away; the old set 3 is now set 2.
+    expect(screen.queryByRole("group", { name: "Set 3" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("145");
+    expect(screen.getByRole("status")).toHaveTextContent("Squat set 2 deleted");
+  });
+
+  it("does not write the delete until the undo window has passed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      threeSets();
+      const { user } = setup({ active: session() }, { advanceTimers: vi.advanceTimersByTime });
+      await screen.findByRole("group", { name: "Set 3" });
+      await user.click(screen.getByRole("group", { name: "Set 2" }));
+      await user.click(screen.getByRole("button", { name: "Delete Set 2" }));
+      expect(removeSet).not.toHaveBeenCalled();
+
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_MS + 10);
+      });
+      expect(removeSet).toHaveBeenCalledTimes(1);
+      // With the set's exercise and time, so the rollup for that week is rebuilt.
+      expect(removeSet.mock.calls[0][0]).toBe("b");
+      expect(removeSet.mock.calls[0][1]).toMatchObject({ exerciseId: "squat" });
+      expect(screen.queryByText("Squat set 2 deleted")).not.toBeInTheDocument();
+      // And it stays gone after the toast.
+      expect(screen.queryByRole("group", { name: "Set 3" })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("puts the set back on Undo and writes nothing", async () => {
+    threeSets();
+    const { user, unmount } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+    await user.click(screen.getByRole("group", { name: "Set 2" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 2" }));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+
+    expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("150");
+    expect(screen.getByRole("group", { name: "Set 3" })).toBeInTheDocument();
+    unmount();
+    expect(removeSet).not.toHaveBeenCalled();
+  });
+
+  it("writes the pending delete when the screen is left, rather than dropping it", async () => {
+    threeSets();
+    const { user, unmount } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 1" }));
+    unmount();
+    expect(removeSet).toHaveBeenCalledWith("a", expect.objectContaining({ exerciseId: "squat" }));
+  });
+
+  it("writes the first delete when a second one starts, so only one toast shows", async () => {
+    threeSets();
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 1" }));
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 1" }));
+
+    expect(removeSet).toHaveBeenCalledTimes(1);
+    expect(removeSet.mock.calls[0][0]).toBe("a");
+    expect(screen.getAllByRole("button", { name: "Undo" })).toHaveLength(1);
+  });
+
+  it("commits the delete before finishing, and the totals leave the set out", async () => {
+    threeSets();
+    const { user, finish } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+    await user.click(screen.getByRole("group", { name: "Set 2" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 2" }));
+
+    await user.click(screen.getByRole("button", { name: "Finish session" }));
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+    expect(removeSet).toHaveBeenCalledWith("b", expect.anything());
+    expect(finish).toHaveBeenCalledWith("s1", { setCount: 2, tonnageKg: 1425 });
+  });
+
+  it("keeps the rest running when an older set is deleted", async () => {
+    // The rest belongs to the set just done. Removing a mistake from earlier
+    // in the session says nothing about it.
+    threeSets();
+    rememberRest({ startedAt: new Date(), restMs: 120_000 });
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 1" }));
+    expect(screen.getByRole("timer")).toBeInTheDocument();
+  });
+
+  it("refuses to delete a set the coach has commented on, and says why", async () => {
+    threeSets();
+    comments.value = [{ setId: "b", authorId: "coach_ruairi" }];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+
+    await user.click(screen.getByRole("group", { name: "Set 2" }));
+    expect(await screen.findByText(/Your coach has commented on this set/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Set 2" })).not.toBeInTheDocument();
+  });
+
+  it("still lets the athlete delete a set only they have commented on", async () => {
+    threeSets();
+    comments.value = [{ setId: "b", authorId: "joey" }];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+    await user.click(screen.getByRole("group", { name: "Set 2" }));
+    expect(await screen.findByRole("button", { name: "Delete Set 2" })).toBeInTheDocument();
+  });
+
+  it("closes the actions on Keep", async () => {
+    threeSets();
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 3" });
+    await user.click(screen.getByRole("group", { name: "Set 2" }));
+    await user.click(screen.getByRole("button", { name: "Keep" }));
+    expect(screen.queryByRole("button", { name: "Delete Set 2" })).not.toBeInTheDocument();
+  });
+
+  it("deletes on a swipe left, with the same undo", async () => {
+    threeSets();
+    setup({ active: session() });
+    const row = await screen.findByRole("group", { name: "Set 1" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 250, clientY: 12 });
+    fireEvent.pointerMove(row, { clientX: 150, clientY: 12 });
+    fireEvent.pointerUp(row, { clientX: 150, clientY: 12 });
+
+    expect(await screen.findByText("Squat set 1 deleted")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("150");
+  });
+
+  it("ignores a short or mostly vertical drag", async () => {
+    threeSets();
+    setup({ active: session() });
+    const row = await screen.findByRole("group", { name: "Set 1" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 280, clientY: 90 });
+    fireEvent.pointerUp(row, { clientX: 280, clientY: 90 });
+    expect(screen.queryByText(/deleted/)).not.toBeInTheDocument();
+  });
+
+  it("brings a set back when the server refused its delete, with a note that can be dismissed", async () => {
+    // The coach commented while the delete sat in the queue. Their thread
+    // keeps its set; the athlete is told, once, and nothing reads as lost.
+    const store = createMemoryStore();
+    resetQueueForTests(store);
+    storedSets.value = [logged("a", 140, 30), logged("b", 150, 10)];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 1" }));
+    // Starting a second delete writes the first; undoing the second keeps it.
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(removeSet).toHaveBeenCalledWith("a", expect.anything());
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("150");
+
+    await store.put({
+      id: "op-refused",
+      kind: "set.delete",
+      payload: { setId: "a" },
+      sequence: 1,
+      attempts: 1,
+      nextAttemptAt: 0,
+      permanentError: "set-has-coach-comments",
+    });
+    await act(async () => {
+      await attachQueue({ userId: "joey" });
+    });
+
+    expect(await screen.findByRole("group", { name: "Set 2" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
+    expect(screen.getByText(/your coach had already commented/)).toBeInTheDocument();
+    // Not counted as lost work: nothing was lost.
+    expect(screen.queryByText(/could not be saved/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(screen.queryByText(/your coach had already commented/)).not.toBeInTheDocument());
+    expect(await store.all()).toHaveLength(0);
+    resetQueueForTests();
+  });
+});
+
+describe("queueing the next set before confirming this one", () => {
+  const addSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+  };
+  const type = async (user: ReturnType<typeof userEvent.setup>, digits: string) => {
+    for (const key of [...digits]) {
+      await user.click(screen.getByRole("button", { name: key === "." ? "Decimal point" : key }));
+    }
+  };
+
+  it("adds a second row prefilled from the first, without moving off the first", async () => {
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+    await type(user, "140");
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await type(user, "5");
+
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+
+    const second = screen.getByRole("group", { name: "Set 2" });
+    expect(second).toHaveTextContent("140");
+    expect(second).toHaveTextContent("5");
+    // Only the first row carries the confirm square; the second can be removed.
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Log Set 2" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove planned Set 2" })).toBeInTheDocument();
+  });
+
+  it("edits the planned row on its own, for a back-off", async () => {
+    storedSets.value = [logged("a", 180, 5)];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 1" });
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+
+    await user.click(screen.getByRole("button", { name: "Set 3 weight in kilograms" }));
+    await type(user, "160");
+
+    expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("180");
+    expect(screen.getByRole("group", { name: "Set 3" })).toHaveTextContent("160");
+  });
+
+  it("logs the head, then the planned row becomes the next one-tap confirm", async () => {
+    storedSets.value = [logged("a", 180, 5, { setIndex: 1 })];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 1" });
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Set 3 weight in kilograms" }));
+    await type(user, "160");
+
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ loadKg: 180, setIndex: 2 });
+
+    // The planned back-off is next -- not a fresh repeat of 180.
+    const next = screen.getByRole("group", { name: "Set 3" });
+    expect(next).toHaveTextContent("160");
+    expect(screen.queryByRole("group", { name: "Set 4" })).not.toBeInTheDocument();
+    // And the rest timer started exactly as it always does.
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Log Set 3" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+    expect(logSet.mock.calls[1][0]).toMatchObject({ loadKg: 160, setIndex: 3 });
+    // Nothing planned any more, so the usual repeat row follows.
+    expect(screen.getByRole("group", { name: "Set 4" })).toHaveTextContent("160");
+  });
+
+  it("drops a planned row with its remove button", async () => {
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Remove planned Set 2" }));
+    expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Set 1" })).toBeInTheDocument();
+  });
+
+  it("keeps planned rows when the athlete looks at another exercise", async () => {
+    const bench: Exercise = { id: "bench", name: "Bench Press", normalisedName: "bench press", isGlobal: true };
+    library.exercises = [squat, bench];
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+
+    await user.type(screen.getByRole("combobox"), "bench");
+    await user.click(screen.getByRole("option", { name: "Bench Press" }));
+
+    const squatBlock = screen.getByRole("region", { name: "Squat" });
+    expect(within(squatBlock).getByRole("group", { name: "Set 2" })).toBeInTheDocument();
+  });
+
+  it("gives set_index one past the highest used, so a deleted set's number is never reused", async () => {
+    storedSets.value = [logged("a", 140, 30, { setIndex: 1 }), logged("c", 140, 10, { setIndex: 3 })];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+    await user.click(screen.getByRole("button", { name: "Squat" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 3" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalled());
+    expect(logSet.mock.calls[0][0]).toMatchObject({ setIndex: 4 });
   });
 });
