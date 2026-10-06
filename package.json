@@ -38,7 +38,8 @@
     "e2e:review": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-review.mts",
     "e2e:rollups": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-rollups.mts",
     "e2e:backup": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-backup.mts",
-    "e2e:shell": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-shell.mts"
+    "e2e:shell": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-shell.mts",
+    "e2e:athlete-view": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-athlete-view.mts"
   },
   "dependencies": {
     "appwrite": "^26.2.0",

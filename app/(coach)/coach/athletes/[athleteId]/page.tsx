@@ -1,33 +1,21 @@
-import { CurrentMaxes } from "@/components/coach/current-maxes";
-import { AthleteBodyweight } from "@/components/coach/athlete-bodyweight";
-import { DotsBlock } from "@/components/strength/dots-block";
-import { RecentFeedback } from "@/components/coach/recent-feedback";
-import { EmptyState } from "@/components/ui/empty-state";
+import { AthleteView } from "@/components/coach/athlete-view";
 import { AthleteLinkGate } from "@/components/coach/athlete-link-gate";
 
 export const metadata = { title: "Athlete — Sticks N Boulders" };
 
 /**
- * Athlete View is Order 25, and this page is still mostly its placeholder.
+ * Athlete View, Order 25. Everything about one person on one screen: current
+ * maxes (editable inline), per-lift e1RM and records, recent sessions,
+ * bodyweight, DOTS, their videos and the feedback they have had.
  *
- * BODYWEIGHT arrives at Order 36 and is the clearest case of all: Ruairi asked
- * for bodyweight because he currently has to ask athletes what they weigh, so
- * this panel is not a view of the feature, it IS the feature.
+ * The screen is a client component because every read goes through the
+ * coach's own Appwrite session -- the circle team is the permission, so a
+ * server render with the API key would be reading past it. What it shows is
+ * gated on `coach_athlete_links`; see components/coach/athlete-view.tsx.
  *
- * RECENT FEEDBACK joins it at Order 33 for the same reason: the comments are
- * written in the Review Queue, which is organised around clearing, so a clip
- * leaves it the moment it is dealt with. This is the only place a coach can
- * read back everything they have said to one person.
- *
- * DOTS follows at Order 37, next to bodyweight because that is half of what it
- * is made of. A personal progression number, deliberately not a ranking: there
- * is no second athlete's score anywhere on this screen.
- *
- * CURRENT MAXES lands early because Order 18's prescriptions need somewhere to
- * point: a percentage is a percentage of one of these numbers, so the panel
- * has to exist before a coach can write one. The rest of the screen -- the
- * block, recent sessions, bodyweight, and the inline editing this panel will
- * grow -- stays deferred rather than half-built.
+ * Still absent, on purpose: the current block (Order 19, blocked on Ruairi's
+ * block-shape question -- a placeholder says so), the personal RPE curve (no
+ * `personal_rpe_curves` yet), and the attempt board (February, not the MVP).
  */
 export default async function AthleteViewPage({
   params,
@@ -36,20 +24,11 @@ export default async function AthleteViewPage({
 }) {
   const { athleteId } = await params;
 
-  // Order 16.6: an ex-athlete's URL is a "no longer linked" screen, not a
-  // wall of permission failures. See components/coach/athlete-link-gate.tsx.
+  // Order 16.6: the gate watches the link live, so a revoke mid-visit swaps to
+  // the same "no longer linked" screen the rest of the coach side uses.
   return (
     <AthleteLinkGate athleteId={athleteId}>
-    <div className="flex h-full flex-col gap-8 p-8">
-      <CurrentMaxes athleteId={athleteId} />
-      <AthleteBodyweight athleteId={athleteId} />
-      <DotsBlock athleteId={athleteId} audience="coach" />
-      <RecentFeedback athleteId={athleteId} />
-      <EmptyState
-        title="The rest of this screen is coming"
-        body="Their current block, recent sessions and bodyweight will be here once Athlete View is built."
-      />
-    </div>
+      <AthleteView athleteId={athleteId} />
     </AthleteLinkGate>
   );
 }
