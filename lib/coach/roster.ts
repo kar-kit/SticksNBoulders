@@ -208,7 +208,8 @@ export function sortRows(rows: readonly RosterRow[], sort: Sort): RosterRow[] {
 
 export function weekLabel(row: RosterRow): string {
   const sessions = `${row.sessionsThisWeek} session${row.sessionsThisWeek === 1 ? "" : "s"}`;
-  return row.setsThisWeek > 0 ? `${sessions} · ${row.setsThisWeek} sets` : sessions;
+  if (row.setsThisWeek === 0) return sessions;
+  return `${sessions} · ${row.setsThisWeek} set${row.setsThisWeek === 1 ? "" : "s"}`;
 }
 
 /** "+0.4" / "−0.6" / "±0.0", with a real minus sign. */

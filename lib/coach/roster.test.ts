@@ -196,6 +196,7 @@ describe("labels", () => {
   it("says sessions, and sets when there are any", () => {
     expect(weekLabel(row({ sessionsThisWeek: 0 }))).toBe("0 sessions");
     expect(weekLabel(row({ sessionsThisWeek: 1, setsThisWeek: 14 }))).toBe("1 session · 14 sets");
+    expect(weekLabel(row({ sessionsThisWeek: 1, setsThisWeek: 1 }))).toBe("1 session · 1 set");
   });
 
   it("signs a change with a real minus", () => {
