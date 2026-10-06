@@ -162,7 +162,7 @@ try {
   const dayId = await op({ op: "addDay", weekId, scheduledOn: today, label: "Heavy" });
   const pausedId = await op({ op: "createExercise", programId, name: VARIATION });
   const squatLine = await op({ op: "addPrescription", dayId, exerciseId: squatId, setCount: 3, reps: 5, load: "75%" });
-  await op({ op: "addPrescription", dayId, exerciseId: pausedId, setCount: 4, reps: 4, load: "80% @8", notes: "2s pause" });
+  await op({ op: "addPrescription", dayId, exerciseId: pausedId, setCount: 4, reps: 4, load: "80% @8", notes: "2s pause", videoRequired: true });
   await op({ op: "publishProgram", programId });
   const pausedRow = await db.getRow({ databaseId: D, tableId: "exercises", rowId: pausedId });
   check("the variation sits in Joey's library", pausedRow.owner_id === joey.$id && pausedRow.is_global === false);
@@ -214,7 +214,7 @@ try {
     JSON.stringify(copyDays.map((d) => [d.scheduled_on, d.label])),
   );
   const copiedLines = copyWeek ? await poll(() => rowsOf("prescriptions", "week_id", copyWeek.$id), (r) => r.length === 2) : [];
-  const shape = (r: Row) => [r.exercise_id, r.set_count, r.reps, r.load, r.load_kind, r.notes].join("|");
+  const shape = (r: Row) => [r.exercise_id, r.set_count, r.reps, r.load, r.load_kind, r.notes, r.video_required].join("|");
   const sourceLines = await rowsOf("prescriptions", "week_id", weekId);
   check(
     "and its lines say exactly what week 1's do",
@@ -269,7 +269,8 @@ try {
       new Set(herPaused.map((r) => r.exercise_id)).size === 1 &&
       herVariation?.owner_id === andrea.$id &&
       herVariation?.name === VARIATION &&
-      herPaused.every((r) => r.load === "80% @8" && r.notes === "2s pause"),
+      herPaused.every((r) => r.load === "80% @8" && r.notes === "2s pause" && r.video_required === true) &&
+      herSquat.every((r) => r.video_required === false),
     JSON.stringify(herVariation && [herVariation.owner_id === andrea.$id, herVariation.name]),
   );
 

@@ -119,7 +119,7 @@ async function joeysProgram(h: ReturnType<typeof harness>) {
     notes: "Belt",
   });
   await h.ok(COACH, { op: "addPrescription", dayId: monday, exerciseId: "ex-joey-pin", setCount: 2, reps: 3, load: "140" });
-  await h.ok(COACH, { op: "addPrescription", dayId: thursday, exerciseId: "ex-joey-paused", setCount: 4, reps: 4, repMax: 6, load: "80%" });
+  await h.ok(COACH, { op: "addPrescription", dayId: thursday, exerciseId: "ex-joey-paused", setCount: 4, reps: 4, repMax: 6, load: "80%", videoRequired: true });
   await h.ok(COACH, { op: "addDay", weekId: week2, scheduledOn: "2026-10-12" });
   const block2 = await h.ok(COACH, { op: "addBlock", programId, name: "Peak" });
   const peakWeek = await h.ok(COACH, { op: "addWeek", blockId: block2 });
@@ -303,6 +303,18 @@ describe("copyProgram", () => {
 });
 
 describe("a copied line carries every column, including ones added later", () => {
+  it("carries Order 30's video_required through both copies", async () => {
+    const h = harness();
+    const p = await joeysProgram(h);
+    const copyId = await h.ok(COACH, { op: "copyProgram", programId: p.programId, athleteId: ANDREA });
+    const weekId = await h.ok(COACH, { op: "duplicateWeek", weekId: p.week1 });
+    const flagged = (rows: Row[]) => rows.filter((r) => r.load === "80%").map((r) => r.video_required);
+    const all = [...h.tableOf("prescriptions").values()];
+    expect(flagged(all.filter((r) => r.program_id === copyId))).toEqual([true]);
+    expect(flagged(all.filter((r) => r.week_id === weekId))).toEqual([true]);
+    expect(all.filter((r) => r.program_id === copyId && r.load !== "80%").every((r) => r.video_required === false)).toBe(true);
+  });
+
   it("copies an unknown column (say, Order 21's backoff rule) without being told about it", async () => {
     const h = harness();
     const p = await joeysProgram(h);
