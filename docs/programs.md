@@ -98,8 +98,7 @@ under the athlete's thumb.
 - **Backoff rules (21):** new nullable columns on `prescriptions`, a field in
   `lineFields`, and a column after Notes in `COLUMNS` (`lib/programming/editor.ts`).
 - **Video required (30), built:** see below.
-- **My Program (23):** `fetchPrograms({ athleteId })` + `fetchProgramTree`
-  already read through the athlete's own session; `targetsFor` resolves kilos.
+- **My Program (23) is built**, see below.
 
 ## Video required (Order 30)
 
@@ -117,3 +116,34 @@ without a clip or an explicit skip") is deliberately not implemented: the
 Order 30 brief and constraint 4 (offline is normal, no blocking) outrank it.
 The existing `videoRequired` flag on `LoggableSet` (which does block confirm)
 is left unfed from prescriptions, so the logger never gates.
+
+## My Program (Order 23)
+
+`/today/program`, linked from a row on Today that exists only when the athlete
+has an active coach link. Read-only: weeks collapse with the current one open,
+a day opens to its lines (the same `planDay` / `targetsFor` / `lineSummaries`
+Today uses, so 75% is already kilos), and Start goes through `start({
+programDayId })` like Today's. A done day links to its logged session instead.
+
+- **Read path.** `fetchMyProgram` (`program-store.ts`) reads the athlete's
+  published programs, then their weeks, and asks for days and lines only for
+  the **published** weeks (`week_id IN`, covered by existing indexes). Draft
+  rows never leave Appwrite for this caller. `visibleProgram`
+  (`my-program.ts`) filters again on the way out, so a changed query cannot
+  start leaking. [Fact] `e2e:my-program` asserts on the wire that no response
+  contains a draft week's days or lines, and that the device cache holds none.
+  The limit from above still stands: an athlete calling the raw API sees their
+  own drafts. This is a filter, not a permission.
+- **Day state** is derived from the athlete's sessions (`programDayId` on a
+  finished session = done). Missed is only claimed when the loaded sessions
+  (newest 25) reach back to that date and the list actually loaded; otherwise
+  the day carries no label. [Inference] Better silent than wrong offline.
+- **Offline.** The last tree and the athlete's maxes sit in localStorage
+  (`snb.my-program`, scoped to the athlete). Cache paints first, the network
+  refreshes behind it, a failed refresh changes nothing, and an unpublished
+  program clears it. First-ever load with no signal says "Program not loaded".
+- **No coach.** Today has no entry. A typed URL shows "No coach linked", with
+  no action.
+- **Not built:** the "prescription revised" mark on a logged day the coach has
+  since edited, and "whatever's written next" on a finished block. A done day
+  shows the line as the coach has it now and says the log is unchanged.
