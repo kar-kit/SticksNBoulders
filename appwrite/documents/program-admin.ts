@@ -607,7 +607,7 @@ async function duplicateWeekOp(ctx: Ctx, weekId: string): Promise<string> {
  * so the coach reads it before it is published.
  */
 async function copyProgramOp(ctx: Ctx, op: ProgramOpOf<"copyProgram">): Promise<string> {
-  const scope = await scopeOf(ctx, op.programId);
+  await scopeOf(ctx, op.programId);
   if (!(await mayProgramFor(ctx.tables, ctx.databaseId, ctx.callerId, op.athleteId))) {
     return refuse({ status: "not-allowed" });
   }
