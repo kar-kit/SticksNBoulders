@@ -106,6 +106,20 @@ describe("Today, with no program", () => {
   });
 });
 
+describe("the My program entry", () => {
+  it("is absent without a coach, and not shown while that is still unknown", () => {
+    badge.hasCoach = false;
+    setup();
+    expect(screen.queryByRole("link", { name: /My program/ })).not.toBeInTheDocument();
+  });
+
+  it("links to the program when a coach is linked", () => {
+    badge.hasCoach = true;
+    setup();
+    expect(screen.getByRole("link", { name: /My program/ })).toHaveAttribute("href", "/today/program");
+  });
+});
+
 describe("starting and resuming", () => {
   it("starts a session and goes to the logger", async () => {
     const { user, start } = setup();
