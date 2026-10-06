@@ -31,7 +31,7 @@ import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
 import { addCoachToCircle, ensureCircle } from "../appwrite/documents/circle-admin";
 import { circleTeamId } from "../appwrite/documents/circle";
-import { linkPermissions, profilePermissions } from "../appwrite/documents/policy";
+import { invitePermissions, linkPermissions, profilePermissions } from "../appwrite/documents/policy";
 
 dedupeSdkWarnings();
 
@@ -173,7 +173,7 @@ try {
   check(
     "and still readable by exactly the two of them, writable by nobody",
     JSON.stringify([...after.$permissions].sort()) ===
-      JSON.stringify([`read("user:${athlete.$id}")`, `read("user:${coach.$id}")`].sort()),
+      JSON.stringify(linkPermissions({ coachId: coach.$id, athleteId: athlete.$id }).sort()),
     JSON.stringify(after.$permissions),
   );
   check("the revoked coach's row was not touched", (await modeOf(formerId)) === "direct");
@@ -203,7 +203,10 @@ try {
         tableId: T,
         rowId: ID.unique(),
         data: { coach_id: stranger.$id, athlete_id: athlete.$id, status: "active", linked_at: new Date().toISOString(), suggestions_mode: "direct" },
-        permissions: [`read("user:${stranger.$id}")`],
+        // Only a role the stranger holds -- read for themselves, built by the
+        // policy -- so a refusal is the table saying no, not Appwrite refusing
+        // to let them stamp somebody else's role.
+        permissions: invitePermissions({ coachId: stranger.$id }),
       });
     }),
   );
