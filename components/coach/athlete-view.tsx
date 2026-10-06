@@ -8,6 +8,7 @@ import { AthleteSessions } from "@/components/coach/athlete-sessions";
 import { AthleteVideos } from "@/components/coach/athlete-videos";
 import { CurrentMaxes } from "@/components/coach/current-maxes";
 import { RecentFeedback } from "@/components/coach/recent-feedback";
+import { SuggestionSwitch } from "@/components/coach/suggestion-switch";
 import { DotsBlock } from "@/components/strength/dots-block";
 import { ExportLog } from "@/components/export/export-log";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -166,6 +167,7 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
         </div>
         <div className="flex min-w-0 flex-col gap-10">
           <ProgramPlaceholder />
+          <SuggestionSwitch athleteId={athleteId} />
           <AthleteBodyweight athleteId={athleteId} />
           <DotsBlock athleteId={athleteId} audience="coach" />
           <AthleteVideos athleteId={athleteId} />

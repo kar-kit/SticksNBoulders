@@ -1,116 +1,68 @@
-## Order 24 — Coach roster dashboard
+## Order 28 — Coach toggle for next-set suggestions
 
-Ruairi's landing page, blueprint 10. A coach should walk in cold and know
-within five seconds who needs attention. So there's a computed **Needs you**
-list first, a dense sortable table under it (athlete / this week / videos /
-bodyweight / block), and no charts. Clicking a row opens Athlete View.
+The coach decides, per athlete, whether the logger suggests the next load from the athlete's own RPE or holds suggestions back. The Build Plan calls this a coaching philosophy question, so the product leaves the answer to the coach. This is not an AI coach. The switch exists so the coach stays in control.
 
-**Source: Inferred, and blueprint 10 is a BLOCKED decision.** The triggers come
-from Ruairi's complaints, not from watching him work. They all live in one
-small module, `lib/coach/roster-triggers.ts`, as one function each, with every
-threshold in `TRIGGER_RULES`. When he answers, the change is an edit there and
-a test run.
+**Source: Inferred.** Treated as a proposal, so the interpretation below is labelled and kept as small as it can be.
 
-### The triggers, all [Inference]
+### What "held" means
 
-| Trigger | Rule as built | Live now? |
-| --- | --- | --- |
-| Unprompted RPE 10 | an RPE 10 where the prescription asked for less, in the last **7 days** | **no**, needs Order 19/22 |
-| Missed sessions | **≥1** prescribed session this week whose day passed with nothing logged | **no**, needs Order 19 |
-| Unreviewed videos | **≥1** clip this coach hasn't cleared, **any age**; links to the Review Queue | yes |
-| No bodyweight | last weigh-in **>7 days** ago; an athlete who has **never** logged one fires once linked **>7 days** | yes |
-| Weight-class drift near a meet | in the blueprint | **not built** |
+**[Inference]** The Profile blueprint offers *"Athletes see them directly"* vs *"Hold for my approval"*. Nothing specifies an approval queue (who approves, when, on which screen), and an athlete resting two minutes between sets can't wait on one. So:
 
-On-screen order is unprompted max → missed sessions → videos → bodyweight,
-then by name. The unprompted max goes first because it's the one Ruairi named.
-An athlete whose circle the coach can't see yet fires nothing, because an empty
-read there says nothing about the athlete.
+- **direct**: the logger shows the Order 27 engine's suggestion, ranked second in prefill and marked *suggested from RPE 7 @ 170*. It stays editable, and the note drops as soon as the athlete types a load.
+- **held**: the logger shows no suggestion. The next row repeats the last set (prefill rule 3), which is how the logger behaved before Order 27.
 
-### Questions for Ruairi
+**[Inference]** The switch is **per linked athlete**, not one per coach. A coach may trust a veteran's RPE and not a novice's. It lives on the **Athlete View**. **Profile & Settings** tells the athlete when their coach holds suggestions and tells a coach where the switch is.
 
-1. **Your review day, in order:** what do you check first, and is this list in
-   the right order? (Blueprint question 2.)
-2. **Videos:** does one unreviewed clip count as "needs you", or only clips
-   that have waited a while (a day? two?)?
-3. **Bodyweight:** is 7 days without a weigh-in the right gap? Should an
-   athlete who has never weighed in be flagged, and after how long?
-4. **RPE 10:** before programs exist in the app, should *any* RPE 10 be
-   flagged, or only one that beats a prescription? How long should it stay up?
-5. **Missed sessions:** is one missed session in a week worth a line, or only
-   two or more?
-6. **Next comp / weight class:** the blueprint wants a next-comp column and a
-   drift-near-a-meet trigger. Neither has data until comp planning (Feb 2027).
-   Do you need them at handover?
+**Default: direct**, as instructed for this ticket. **[SME to confirm]** The blueprint says to ask Ruairi rather than ship a default. Changing it only means changing `DEFAULT_SUGGESTION_MODE`.
 
-### The Order 19 seam
+### No athlete sees a suggestion yet
 
-Order 19 is being built in parallel, so nothing here touches program tables.
-`fetchProgramSignals` in `lib/coach/roster-store.ts` returns an empty map. The
-two program triggers and the **Block** column already consume its
-`ProgramSignals` shape (block label, missed sessions, recent unprompted RPE 10
-sets), and both rules are unit-tested against it. Wiring Order 19 in means
-filling in that one function, through the coach's session.
+The engine has no default target on purpose (docs/suggestions.md). Targets come from prescriptions, and prescriptions reach the logger at Order 22. `lib/logging/set-targets.ts` is that seam and returns null for now. Everything downstream of it is wired and tested: the switch, the gate, the engine and the prefill note. The Athlete View says so in one line, so the coach isn't left wondering why nothing shows.
 
-### Reads, permissions, rollups
+### Storage and who can write it
 
-- **Every read uses the coach's own session** through the athletes' circle
-  teams. No server-key reads, no new tables, no writes. Nothing for the
-  forged-owner audit to cover.
-- **Sets this week come from `stats_rollups`**, never raw sets.
-  **Sessions completed** are `sessions` rows (finished, this London week): one
-  row per session, a count rather than a GROUP BY, and rollups don't carry it.
-  The week boundary is `weekStart` from the rollups, so a 00:30 Monday BST
-  session lands in the same week on both. Tested.
-- **One query per table for every athlete** (`equal()` takes an array). The
-  only per-athlete calls are the circle check and a "newest weigh-in ever"
-  lookup for anyone with none in 21 days.
-- **Reuses:** the Review Queue's clip/review reads, `canSeeCircle`,
-  `fetchCoachLinks` + `subscribeToLinks`, `sameAthletes`, the bodyweight
-  `trend`, `InviteCodePanel`, `DepartureNotice`.
+- `suggestions_mode` (`direct` | `held`, optional, default `direct`) is a column on **`coach_athlete_links`**. That row is already unique per pair and readable by exactly the coach and the athlete, and nobody can write it from a client. Re-linking reuses the row, so the coach's choice survives an unlink and re-link.
+- Writes only go through **`POST /api/link/suggestions`**. The caller comes from the Appwrite JWT and never from the body. Only the coach on an **active** link qualifies. The route refuses the athlete (even for their own link), a stranger, and a revoked coach. It checks the link record rather than circle membership, the same rule `/api/reference-max` follows. Authorisation runs before validation, so a stranger gets 403 even for a malformed mode.
+- The write helper `setLinkSuggestionMode` writes only that one column. It never touches status or dates, and it re-stamps link permissions from the policy.
+- This avoids the forged-owner-field problem the parallel integrity fix is addressing, because no client-created row is involved.
 
-### States
+### Audit rule this storage needs
 
-- **Empty account** (Ruairi's first session): "No athletes yet" with the invite
-  code as its one action. No data reads fire.
-- **Loading**, **couldn't load**, **linked athletes**, and **linked but not
-  visible yet** each have their own state.
-- **A revoked athlete** leaves the table and Needs you **live** via the link
-  subscription. The session refreshes so the rail catches up, and the existing
-  departure notice says someone left, without a name. `DepartureNotice` now
-  takes the roster's link read as an optional prop instead of reading the table
-  a second time.
+`rules.ts` is on unmerged PR #36, so the rule is described here. For `coach_athlete_links`:
 
-### Small changes outside the screen
+1. **Table permissions are `[]`**, so no client may create a row.
+2. **Every row's permissions are exactly `[read("user:<athlete_id>"), read("user:<coach_id>")]`**, matching that row's own `athlete_id` and `coach_id`. No `update`, no `delete`, no team or `users` read.
+3. **`suggestions_mode` is null, `direct` or `held`.**
 
-- `CoachLinkRecord` gets an optional `linkedAt`, used for the never-weighed-in
-  grace period. `fetchCoachLinks` selects `linked_at`.
-- `e2e:shell` scopes its "rail names the athlete" check to the rail, because
-  the Roster table now names the athlete too and Playwright's strict mode saw
-  two matches.
+Rules 1 and 2 are what make the route the only way to change the switch. `e2e:suggestions` checks both on the live instance.
 
-### Not in scope
+### Offline
 
-- **No rail attention dot.** `CoachShell` has a `needsAttention` prop that
-  nothing sets. Wiring it would mean running the roster reads on every coach
-  screen. Easy to add if you want it.
-- **No Next comp column, no weight-class trigger** (see question 6).
-- **No coach-side "remove athlete".** Still [SME to confirm] from Order 16.5.
+The athlete's logger reads its active link rows straight from Appwrite and caches the answer on the device (`snb.suggestion-mode`, keyed by athlete id). It re-reads on load, on `online`, and when the app comes back to the foreground. A failed read never changes the cached value.
 
-### Verification
+**[Inference]** A device that has never read its link row (a fresh install opened with no signal) assumes **held**. Showing a suggestion the coach switched off is the failure this toggle exists to prevent. Withholding one costs the athlete one number typed, and the first read with signal corrects it. In that case Profile doesn't claim the coach held anything.
 
-`lint` · `typecheck` · **1585 tests, 99 files** (38 new unit tests for triggers,
-rows and sorting; 12 screen-state tests; 2 for `DepartureNotice` taking records).
+### Schema
 
-Live: `npm run e2e:roster` **23/23**. It covers the empty account with its
-invite code, two linked athletes read entirely through the coach's session,
-the week from the rollup, both live triggers, sorting, no horizontal scroll at
-1280, a row opening Athlete View, a live unlink leaving the table with an
-unnamed notice, and a stranger coach seeing nothing. Regressions re-run green:
-`e2e:shell` 15/15, `e2e:unlink` 27/27, `e2e:invite` 17/17.
+v9 adds one optional column. I applied it to the live instance with `npm run appwrite:setup` ("Applied 1 change(s)"). No data was rewritten or deleted.
 
-⚠️ **`npm run build` and Turbopack `next dev` can't run in this worktree**
-because the symlinked `node_modules` points outside the filesystem root. The
-e2e ran against `next dev --webpack -p 3124`. Worth a build on `dev` after
-merge.
+The setup script also reports orphans that predate this branch: `programs`, `program_blocks`, `program_weeks`, `program_days` and `prescriptions` tables, plus `sessions.program_day_id`, `sets.prescription_id` and `sets.prescribed`. They're presumably from the Order 19 work. I left them untouched, as the script always does.
+
+### Tests
+
+- **vitest: 1584 passed** (1533 on `dev`, +51). New coverage:
+  - Route authorisation, 14 tests. These run the real admin module through the real route, with the JWT check and tables faked at the edges: no token, a bad token, the athlete, a stranger, a revoked coach, another coach, a coach id smuggled in the body, a bad mode, malformed bodies, and Appwrite down.
+  - Logger gating, 9 tests in `log-screen.test.tsx`: direct suggests 175 from 170×5 @ 7, held repeats 170, a pre-Order-28 link reads as direct, typing a load drops the note, a held cache keeps working offline, so does a direct cache, another user's cache is ignored, a never-told device suggests nothing and still logs, and no target means no suggestion.
+  - The gate, plan, write helper, schema, Athlete View switch and Profile note.
+- **tsc** (`npm run typecheck`) and **eslint** are clean. The write-helper guard test passes.
+- **`npm run e2e:suggestions`: 29/29 against the live instance.** It covers the default, route authorisation, client-side writes refused for the athlete, the coach and a stranger, read access for exactly the two parties, the coach changing the switch on the Athlete View, the athlete's Profile note, the logger caching the mode, the cache surviving an offline re-read, and the device picking up a change when the signal returns.
+
+Flaky test: `review-queue.test.tsx > shows the reason on the empty screen when the last athlete leaves` failed once in about seven runs and passed on every rerun. That file isn't touched by this branch.
+
+### Not done, on purpose
+
+- No approval queue. If Ruairi wants one, it's a separate ticket that can reuse "held" as its starting point.
+- No coach-wide "apply to all athletes" switch.
+- No prescription targets. That's Order 22.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

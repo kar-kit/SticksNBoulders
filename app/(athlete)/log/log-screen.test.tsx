@@ -62,6 +62,27 @@ vi.mock("@/lib/logging/session-context", () => ({
   useTrainingSessions: () => training.value,
 }));
 
+// Order 28. The target a prescription would supply (none exist yet -- Order
+// 22), and the link row the athlete reads the coach's switch from.
+const targets = vi.hoisted(() => ({ value: null as { reps: number; rpe: number } | null }));
+vi.mock("@/lib/logging/set-targets", () => ({ setTargetFor: () => targets.value }));
+
+const linkRead = vi.hoisted(() => ({
+  rows: [] as Array<Record<string, unknown>>,
+  offline: false,
+}));
+vi.mock("@/appwrite/browser-client", () => ({
+  browserAppwrite: () => ({
+    databaseId: "sticksnboulders",
+    tables: {
+      listRows: async () => {
+        if (linkRead.offline) throw new TypeError("Failed to fetch");
+        return { rows: linkRead.rows };
+      },
+    },
+  }),
+}));
+
 const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
   id: "s1",
   clientSessionId: "c1",
@@ -106,6 +127,9 @@ beforeEach(() => {
   storedSets.fail = 0;
   comments.value = [];
   clientIds = 0;
+  targets.value = null;
+  linkRead.rows = [];
+  linkRead.offline = false;
 });
 
 describe("with no session running", () => {
@@ -835,5 +859,140 @@ describe("queueing the next set before confirming this one", () => {
     await user.click(screen.getByRole("button", { name: "Log Set 3" }));
     await waitFor(() => expect(logSet).toHaveBeenCalled());
     expect(logSet.mock.calls[0][0]).toMatchObject({ setIndex: 4 });
+  });
+});
+
+describe("next-set load suggestions, behind the coach's switch (Order 28)", () => {
+  // 170 x 5 @ RPE 7 toward a target of 5 @ RPE 8 suggests 175 -- the worked
+  // example in docs/suggestions.md.
+  const addSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+  };
+  const logTopSet = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    for (const key of ["1", "7", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "5" }));
+    await user.click(screen.getByRole("button", { name: "Set 1 RPE" }));
+    await user.click(screen.getByRole("button", { name: "7" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+  };
+  const coachChose = (mode: "direct" | "held" | null) => {
+    linkRead.rows = [{ suggestions_mode: mode }];
+  };
+
+  beforeEach(() => {
+    targets.value = { reps: 5, rpe: 8 };
+  });
+
+  it("suggests the next load, marked as a suggestion, when the coach lets them through", async () => {
+    coachChose("direct");
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"direct"'));
+    await addSquat(user);
+    await logTopSet(user);
+
+    const next = await screen.findByRole("group", { name: "Set 2" });
+    expect(next).toHaveTextContent("175");
+    expect(screen.getByText("suggested from RPE 7 @ 170")).toBeInTheDocument();
+  });
+
+  it("treats a link from before Order 28, with no stored choice, as direct", async () => {
+    coachChose(null);
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"direct"'));
+    await addSquat(user);
+    await logTopSet(user);
+    expect(await screen.findByText("suggested from RPE 7 @ 170")).toBeInTheDocument();
+  });
+
+  it("shows no suggestion when the coach holds them, and repeats the set instead", async () => {
+    coachChose("held");
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"held"'));
+    await addSquat(user);
+    await logTopSet(user);
+
+    const next = await screen.findByRole("group", { name: "Set 2" });
+    expect(next).toHaveTextContent("170");
+    expect(next).not.toHaveTextContent("175");
+    expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
+  });
+
+  it("drops the note once the athlete types their own load", async () => {
+    coachChose("direct");
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"direct"'));
+    await addSquat(user);
+    await logTopSet(user);
+    await screen.findByText("suggested from RPE 7 @ 170");
+
+    await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
+    await user.click(screen.getByRole("button", { name: "1" }));
+    expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
+  });
+
+  describe("with no signal", () => {
+    it("keeps obeying a held switch it read earlier", async () => {
+      localStorage.setItem(
+        "snb.suggestion-mode",
+        JSON.stringify({ athleteId: "joey", mode: "held", readAt: new Date().toISOString() }),
+      );
+      linkRead.offline = true;
+      const { user } = setup({ active: session() });
+      await addSquat(user);
+      await logTopSet(user);
+
+      expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("170");
+      expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
+    });
+
+    it("keeps suggesting under a direct switch it read earlier", async () => {
+      localStorage.setItem(
+        "snb.suggestion-mode",
+        JSON.stringify({ athleteId: "joey", mode: "direct", readAt: new Date().toISOString() }),
+      );
+      linkRead.offline = true;
+      const { user } = setup({ active: session() });
+      await addSquat(user);
+      await logTopSet(user);
+      expect(await screen.findByText("suggested from RPE 7 @ 170")).toBeInTheDocument();
+    });
+
+    it("ignores a cached switch that belongs to somebody else who used this phone", async () => {
+      localStorage.setItem(
+        "snb.suggestion-mode",
+        JSON.stringify({ athleteId: "someone-else", mode: "direct", readAt: new Date().toISOString() }),
+      );
+      linkRead.offline = true;
+      const { user } = setup({ active: session() });
+      await addSquat(user);
+      await logTopSet(user);
+      expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("170");
+      expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
+    });
+
+    it("suggests nothing on a device that has never been told, and still logs", async () => {
+      linkRead.offline = true;
+      const { user } = setup({ active: session() });
+      await addSquat(user);
+      await logTopSet(user);
+
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+      expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("170");
+      expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
+    });
+  });
+
+  it("suggests nothing without a prescribed target, even when the coach allows it", async () => {
+    coachChose("direct");
+    targets.value = null;
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"direct"'));
+    await addSquat(user);
+    await logTopSet(user);
+    expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("170");
+    expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
   });
 });

@@ -12,6 +12,7 @@ import {
   SET_HAS_COACH_COMMENTS,
   normaliseExerciseName,
   revokeCoachLink,
+  setLinkSuggestionMode,
   updateSet,
   writeRollup,
   type WriteDeps,
@@ -337,6 +338,34 @@ describe("server-only writes", () => {
     await revokeCoachLink(h.deps, { rowId: "link1", coachId: COACH, athleteId: ATHLETE });
     expect(h.last().op).toBe("update");
     expect(h.last().data).toMatchObject({ status: "revoked", revoked_at: NOW.toISOString() });
+  });
+});
+
+describe("the coach's suggestion switch", () => {
+  it("writes the one column, and never the status or dates the permission model trusts", async () => {
+    const h = harness();
+    await setLinkSuggestionMode(h.deps, { rowId: "link1", coachId: COACH, athleteId: ATHLETE, mode: "held" });
+    expect(h.last()).toMatchObject({ op: "update", tableId: "coach_athlete_links", rowId: "link1" });
+    expect(h.last().data).toEqual({ suggestions_mode: "held" });
+  });
+
+  it("re-stamps read for the two parties and write for nobody", async () => {
+    const h = harness();
+    await setLinkSuggestionMode(h.deps, { rowId: "link1", coachId: COACH, athleteId: ATHLETE, mode: "direct" });
+    expect(h.last().permissions).toEqual([`read("user:${ATHLETE}")`, `read("user:${COACH}")`]);
+  });
+
+  it("refuses a mode it does not know rather than storing it", async () => {
+    const h = harness();
+    await expect(
+      setLinkSuggestionMode(h.deps, {
+        rowId: "link1",
+        coachId: COACH,
+        athleteId: ATHLETE,
+        mode: "approve" as never,
+      }),
+    ).rejects.toThrow(/unknown mode/);
+    expect(h.calls).toEqual([]);
   });
 });
 

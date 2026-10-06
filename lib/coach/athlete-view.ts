@@ -11,6 +11,7 @@
  * session row. See docs/rollups.md for why.
  */
 
+import type { SuggestionMode } from "./suggestion-mode";
 import { COMPETITION_LIFTS } from "@/lib/strength/dots";
 import type { Exercise } from "@/lib/exercises/match";
 import type { WeekPoint } from "@/lib/strength/lift";
@@ -36,6 +37,8 @@ export interface CoachLinkRow {
   /** ISO 8601. */
   linkedAt: string | null;
   revokedAt: string | null;
+  /** Order 28: whether this athlete sees next-set load suggestions. */
+  suggestionsMode?: SuggestionMode;
 }
 
 export type AthleteAccess =
