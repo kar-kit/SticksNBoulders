@@ -128,6 +128,11 @@ export interface Prescription {
   loadKind: PrescriptionKind | null;
   restSeconds: number | null;
   notes: string | null;
+  /**
+   * The coach asks for a clip of this line. A nudge in the logger, never a
+   * gate. Absent means false; optional so a fixture need not spell it out.
+   */
+  videoRequired?: boolean;
   updatedAt: string;
 }
 
@@ -242,6 +247,7 @@ const prescriptionRow = z
     load_kind: z.enum(LOAD_KINDS).nullish().transform((v) => v ?? null),
     rest_seconds: nullableInt,
     notes: nullableString,
+    video_required: z.boolean().nullish().transform((v) => v ?? false),
     updated_at: z.string(),
   })
   .transform(
@@ -259,6 +265,7 @@ const prescriptionRow = z
       loadKind: r.load_kind,
       restSeconds: r.rest_seconds,
       notes: r.notes,
+      videoRequired: r.video_required,
       updatedAt: r.updated_at,
     }),
   );
@@ -367,6 +374,7 @@ const lineFields = {
   load: optionalText(120),
   restSeconds: z.number().int().min(0).max(3600).nullable().optional(),
   notes: optionalText(500),
+  videoRequired: z.boolean().optional(),
 };
 
 /** A range must run upwards. "8-6 reps" is a typo, not a prescription. */
@@ -388,6 +396,7 @@ const updatePrescription = z.object({
   load: lineFields.load,
   restSeconds: lineFields.restSeconds,
   notes: lineFields.notes,
+  videoRequired: lineFields.videoRequired,
 });
 
 const removePrescription = z.object({ op: z.literal("removePrescription"), prescriptionId: rowId });

@@ -112,6 +112,17 @@ describe("committing a cell", () => {
     if ("op" in result) expect(applyLineOp(line(), result.op)).toMatchObject({ load: null, loadKind: null });
   });
 
+  it("toggles video required with a one-field write, and shows it before the server answers", () => {
+    expect(cellText(line(), "video")).toBe("No");
+    expect(cellText(line({ videoRequired: true }), "video")).toBe("Yes");
+    const on = commitCell(line(), "video", "Yes");
+    expect(on).toEqual({ op: { op: "updatePrescription", prescriptionId: "l1", videoRequired: true } });
+    if ("op" in on) expect(applyLineOp(line(), on.op)).toMatchObject({ videoRequired: true, load: "75%" });
+    const off = commitCell(line({ videoRequired: true }), "video", "No");
+    expect(off).toEqual({ op: { op: "updatePrescription", prescriptionId: "l1", videoRequired: false } });
+    expect(commitCell(line(), "video", "No")).toEqual({ unchanged: true });
+  });
+
   it("shows the saved line before the server answers, with its kind re-derived", () => {
     const after = applyLineOp(line(), { op: "updatePrescription", prescriptionId: "l1", load: "@8", setCount: 1 });
     expect(after).toMatchObject({ load: "@8", loadKind: "rpe", setCount: 1, reps: 5, restSeconds: 180 });
