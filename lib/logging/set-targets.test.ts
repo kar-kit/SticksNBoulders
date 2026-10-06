@@ -31,3 +31,13 @@ describe("the target a next-set suggestion works toward", () => {
     expect(setTargetFor(target({ reps: null }))).toBeNull();
   });
 });
+
+describe("a backoff set (Order 21)", () => {
+  it("never feeds the suggestion engine, even when its rule names an RPE", () => {
+    const backoff = {
+      rule: { kind: "drop" as const, dropPercent: 5, untilRpe: 9 as const, maxSets: null },
+      topSet: { loadKg: 180, reps: 3, rpe: 8 },
+    };
+    expect(setTargetFor(target({ kind: null, rpe: 9, loadKg: 170, backoff }))).toBeNull();
+  });
+});
