@@ -89,9 +89,19 @@ function ProgramBody({ program, maxes }: { program: ProgramTree; maxes: AthleteM
   const names = useMemo(() => new Map(library.exercises.map((e) => [e.id, e.name])), [library.exercises]);
 
   const today = localDay();
+  // Until the session list has actually loaded, nothing is claimed about what
+  // was or was not done: offline, an empty list would call every past day
+  // missed and every count zero, which is the app saying something false.
+  const known = state.status === "ready";
   const states = useMemo(
-    () => dayStates(program, state.sessions, today, sessionsCoverFrom(state.sessions, SESSION_WINDOW, localDay)),
-    [program, state.sessions, today],
+    () =>
+      dayStates(
+        program,
+        state.sessions,
+        today,
+        known ? sessionsCoverFrom(state.sessions, SESSION_WINDOW, localDay) : "9999-12-31",
+      ),
+    [program, state.sessions, today, known],
   );
   const progress = blockProgress(program, states, today);
   const weeks = allWeeks(program);
@@ -127,13 +137,13 @@ function ProgramBody({ program, maxes }: { program: ProgramTree; maxes: AthleteM
     <div className="flex flex-col gap-4">
       {progress.finished ? (
         <p className="m-0 text-body" role="status">
-          Block finished · {progress.done} of {progress.total} sessions logged
+          Block finished{known ? ` · ${progress.done} of ${progress.total} sessions logged` : ""}
         </p>
-      ) : (
+      ) : known ? (
         <p className="m-0 text-body text-muted">
           {progress.done} of {progress.total} sessions logged
         </p>
-      )}
+      ) : null}
       {program.notes ? (
         <p className="m-0 text-ui" aria-label="Coach's note on the program">
           {program.notes}

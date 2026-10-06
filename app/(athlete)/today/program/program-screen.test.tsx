@@ -264,6 +264,15 @@ describe("My Program, with a block", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
+  it("claims nothing about done or missed while the session list is unavailable", async () => {
+    loaded.value = ready(block());
+    const { user } = setup({ state: { status: "failed", sessions: [] } });
+    await user.click(screen.getByRole("button", { name: /^Week 1$/ }));
+    expect(screen.queryByText("Missed")).not.toBeInTheDocument();
+    expect(screen.queryByText(/sessions logged/)).not.toBeInTheDocument();
+    expect(screen.getByText("Heavy squat")).toBeInTheDocument();
+  });
+
   it("shows completion for a finished block", () => {
     vi.setSystemTime(new Date("2026-11-01T12:00:00"));
     loaded.value = ready(block());
