@@ -1,15 +1,12 @@
-import { EmptyState } from "@/components/ui/empty-state";
+import { ProgramList } from "@/components/coach/program-list";
 
 export const metadata = { title: "Programs — Sticks N Boulders" };
 
-/** The Program Editor is Order 19, and its shape is still open with Ruairi. */
+/**
+ * Programs, Order 19. A client component underneath: every read goes through
+ * the coach's own Appwrite session, so the permissions stamped on each program
+ * row decide what is listed.
+ */
 export default function ProgramsPage() {
-  return (
-    <div className="flex h-full flex-col items-center justify-center p-8">
-      <EmptyState
-        title="No programs yet"
-        body="Blocks you write for your athletes live here. Building this screen is waiting on how you actually write a block."
-      />
-    </div>
-  );
+  return <ProgramList />;
 }
