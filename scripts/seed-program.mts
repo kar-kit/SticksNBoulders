@@ -6,9 +6,9 @@
  *   npm run programs:seed -- --coach <id> --athlete <id>     # an existing, already-linked pair
  *   npm run programs:seed -- --template                      # an unassigned template instead
  *
- * Exists because there is no Program Editor to write one with: the editor is
- * blocked on how Ruairi writes a block. The program goes in through the same
- * validated, authorised ops the editor will send (lib/programming/program.ts
+ * A shortcut past the Program Editor for dev and demos: a whole four-week
+ * block in one command. The program goes in through the same validated,
+ * authorised ops the editor sends (lib/programming/program.ts
  * and appwrite/documents/program-admin.ts), so it is exactly as valid as an
  * edited one -- this is not a back door.
  *
