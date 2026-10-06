@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 8,
+  version: 9,
   tables: [
     {
       id: "profiles",
@@ -354,6 +354,12 @@ export const schema: DatabaseSpec = {
         { key: "status", type: "enum", elements: ["active", "revoked"], required: true },
         { key: "linked_at", type: "datetime", required: true },
         { key: "revoked_at", type: "datetime", required: false },
+        // Order 28: whether this athlete sees next-set load suggestions, or the
+        // coach holds them back. Coach-authored, so it lives on the server-only
+        // link row and is written only through /api/link/suggestions, never
+        // from a browser. Optional with a default so adding it rewrites
+        // nothing: rows linked before Order 28 read as "direct".
+        { key: "suggestions_mode", type: "enum", elements: ["direct", "held"], required: false, default: "direct" },
       ],
       indexes: [
         { key: "idx_pair", type: "unique", columns: ["coach_id", "athlete_id"] },
