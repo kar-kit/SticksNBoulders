@@ -435,6 +435,31 @@ const createExercise = z.object({
   name: z.string().trim().min(1, "is required").max(64),
 });
 
+/**
+ * Order 20. Appends a copy of a week to its own block, as a draft: every day
+ * and line, days moved to the week after the block's last (see
+ * `duplicateShift`). Logged work is not copied -- there is none on a week.
+ */
+const duplicateWeek = z.object({ op: z.literal("duplicateWeek"), weekId: rowId });
+
+/**
+ * Order 20. Copies a program -- or one block of it -- to an athlete the caller
+ * coaches, or to themselves, as a new DRAFT program. Lines are copied as typed,
+ * so a percentage stays a percentage of the TARGET athlete's maxes; exercises
+ * outside the target's reach are found or created in their library.
+ */
+const copyProgram = z.object({
+  op: z.literal("copyProgram"),
+  programId: rowId,
+  /** Who the copy is for. Never null: copying to a template is not offered. */
+  athleteId: rowId,
+  /** Copy only this block of the program. */
+  blockId: rowId.optional(),
+  name: name(120).optional(),
+  /** Where the copy starts. Omitted keeps the source's dates. */
+  startOn: calendarDay.nullable().optional(),
+});
+
 export const REORDER_LEVELS = ["blocks", "weeks", "days", "prescriptions"] as const;
 export type ReorderLevel = (typeof REORDER_LEVELS)[number];
 
@@ -469,6 +494,8 @@ export const programOp = z.discriminatedUnion("op", [
   removeWeek,
   removeDay,
   createExercise,
+  duplicateWeek,
+  copyProgram,
 ]);
 
 /** What a caller writes -- before defaults and trimming. */
