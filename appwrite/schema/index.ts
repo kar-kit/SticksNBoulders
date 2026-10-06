@@ -482,6 +482,9 @@ export const schema: DatabaseSpec = {
         },
         { key: "rest_seconds", type: "integer", required: false, min: 0, max: 3600 },
         { key: "notes", type: "string", size: 500, required: false },
+        // Order 30. The coach asks for a clip of this line. Only ever a nudge
+        // in the logger -- nothing blocks on it. Null on rows written before.
+        { key: "video_required", type: "boolean", required: false, default: false },
         { key: "updated_at", type: "datetime", required: true },
       ],
       indexes: [

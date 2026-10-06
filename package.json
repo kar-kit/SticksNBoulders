@@ -48,7 +48,9 @@
     "e2e:roster": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-roster.mts",
     "e2e:pwa": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-pwa.mts",
     "e2e:suggestions": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-suggestions.mts",
-    "e2e:program": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-program.mts"
+    "e2e:program": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-program.mts",
+    "e2e:copy": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-copy.mts",
+    "e2e:video-required": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-video-required.mts"
   },
   "dependencies": {
     "appwrite": "^26.2.0",

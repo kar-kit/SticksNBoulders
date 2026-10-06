@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { attachClipToSet } from "@/lib/video/upload";
+import type { VideoAsk } from "@/lib/logging/video-prompt";
 
 /**
  * The camera, one per exercise.
@@ -29,11 +30,20 @@ export interface AttachVideoProps {
   athleteId: string;
   /** Attaching again replaces what is there. */
   hasVideo?: boolean;
+  /**
+   * The coach asked for a clip of this exercise (Order 30). "emphasise" makes
+   * the button stand out; "prompt" adds one line saying so. Neither blocks
+   * anything, and "Not now" is not recorded -- it only puts the line away.
+   */
+  ask?: VideoAsk;
+  /** A clip is on its way (queued counts, as it does everywhere else). */
+  onAttached?: () => void;
 }
 
-export function AttachVideo({ setId, athleteId, hasVideo = false }: AttachVideoProps) {
+export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", onAttached }: AttachVideoProps) {
   const input = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<State>({ status: "idle" });
+  const [putAway, setPutAway] = useState(false);
 
   const pick = async (file: File | undefined) => {
     if (!file) return;
@@ -46,13 +56,28 @@ export function AttachVideo({ setId, athleteId, hasVideo = false }: AttachVideoP
     // The message comes from the check that refused it -- "that clip is 48MB,
     // film a shorter one" is actionable on a gym floor; "upload failed" is not.
     setState(result.ok ? { status: "done" } : { status: "failed", message: result.message });
+    if (result.ok) onAttached?.();
     if (input.current) input.current.value = "";
   };
 
   const label = state.status === "done" || hasVideo ? "Replace video" : "Add video";
 
+  const prompting = ask === "prompt" && !putAway && state.status === "idle";
+
   return (
     <div className="flex flex-col items-end gap-1">
+      {prompting ? (
+        <p role="status" className="m-0 flex items-center gap-2 text-right text-caption text-muted">
+          Your coach asked for a clip of this one.
+          <button
+            type="button"
+            onClick={() => setPutAway(true)}
+            className="min-h-11 whitespace-nowrap px-2 text-caption text-muted-2 underline"
+          >
+            Not now
+          </button>
+        </p>
+      ) : null}
       <input
         ref={input}
         type="file"
@@ -64,8 +89,10 @@ export function AttachVideo({ setId, athleteId, hasVideo = false }: AttachVideoP
         onChange={(event) => void pick(event.target.files?.[0])}
       />
       <Button
-        variant="ghost"
+        variant={prompting ? "primary" : ask === "emphasise" ? "secondary" : "ghost"}
         size="sm"
+        className={ask === "emphasise" ? "border-accent-line text-foreground" : undefined}
+        data-video-ask={ask === "none" ? undefined : ask}
         disabled={state.status === "uploading"}
         onClick={() => input.current?.click()}
       >

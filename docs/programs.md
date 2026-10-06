@@ -90,13 +90,70 @@ today's top set once it is logged (as a suggestion, not the coach's number).
 will be, counted in working sets; rows already on screen are never re-priced
 under the athlete's thumb.
 
+## Duplicate week and copy program (Order 20)
+
+_Source: Inferred. P1._ Two ops on `POST /api/program`, both server-only:
+
+- **`duplicateWeek {weekId}`** appends a copy of the week to its own block as
+  a **draft**: every day (label, notes) and every line. Days move to the week
+  after the block's last week -- `7 × (weeks in block − source index)` days,
+  which is 7 when the last week is duplicated. [Inference] Duplicating week 1
+  of 4 lands the copy a week after week 4, not on top of week 2. The label is
+  not copied (two tabs called "Heavy" read worse than "Week 5"). [Inference]
+- **`copyProgram {programId, athleteId, blockId?, name?, startOn?}`** copies
+  a whole program, or one block, to a linked athlete or to the coach
+  themselves as a new **draft** program, every week a draft. Omitting
+  `startOn` keeps the source's dates; giving one moves every day by the gap
+  from the source's start (whole program) or the block's first dated day.
+
+**Authorisation.** The caller must be able to edit the source (its coach,
+still actively linked to its athlete) **and** program for the target (an
+active link, or themselves). A refusal is found before any row is written.
+
+**Percentages stay percentages.** Lines are copied as typed: `75%` on a copy is
+75% of the *target's* max for that exercise, resolved when they log it. Fixed
+kilos (`142.5`) are copied as written -- the coach typed them, for someone
+else; the copy is a draft so they read it before publishing. [Inference]
+
+**Exercises are re-resolved in the target's library.** Global stays global; a
+variation in the source athlete's library is found by name in the target's
+(global first, then theirs) or created there through the same
+`createExercise` path the editor uses. A line whose exercise no longer exists
+refuses the copy rather than dropping the line.
+
+**Lines are copied generically.** `copyPrescription` copies every stored column
+except Appwrite's (`$…`) and placement (scope, parents, exercise, position,
+derived `load_kind`, `updated_at`) -- see `lineContent` in `program-write.ts`.
+Order 30's `video_required`, and whatever Order 21 adds, travel without
+changes. **A new column holding a row id must be added to `LINE_PLACEMENT` and
+remapped**, or the copy points at the source's rows.
+
+Neither op reads or writes `sessions` or `sets`. A copy that fails halfway
+leaves a draft week, or a draft program only the coach sees -- never half a
+block on Today. Templates and bulk percentage shifting are deliberately not
+built.
+
 ## Seams for what comes next
 
-- **Duplicate week (Order 20):** one more op in `lib/programming/program.ts` +
-  `program-admin.ts` (copy a week's days and lines, shifting `scheduled_on` by
-  7), and a button beside "+ Week".
-- **Backoff rules (21) / video required (30):** new nullable columns on
-  `prescriptions`, a field in `lineFields`, and a column after Notes in
-  `COLUMNS` (`lib/programming/editor.ts`).
+- **Backoff rules (21):** new nullable columns on `prescriptions`, a field in
+  `lineFields`, and a column after Notes in `COLUMNS` (`lib/programming/editor.ts`).
+- **Video required (30), built:** see below.
 - **My Program (23):** `fetchPrograms({ athleteId })` + `fetchProgramTree`
   already read through the athlete's own session; `targetsFor` resolves kilos.
+
+## Video required (Order 30)
+
+`prescriptions.video_required` (boolean, null on older rows reads as false) is
+a checkbox column on the grid: arrow onto it, Space flips it, and the write is
+the same one-field `updatePrescription` as every other cell, so it is server-
+only like the rest. In Log Session it is a **nudge, never a gate**
+(`lib/logging/video-prompt.ts`): the exercise's camera button is emphasised
+while the flagged line's sets are to do, and one status line appears once they
+are logged with no clip on any set of that exercise. "Not now" only puts the
+line away; nothing is recorded and nothing blocks a set or the session.
+
+[Inference] The Build Plan's section 5 wording ("refuses to quietly complete
+without a clip or an explicit skip") is deliberately not implemented: the
+Order 30 brief and constraint 4 (offline is normal, no blocking) outrank it.
+The existing `videoRequired` flag on `LoggableSet` (which does block confirm)
+is left unfed from prescriptions, so the logger never gates.

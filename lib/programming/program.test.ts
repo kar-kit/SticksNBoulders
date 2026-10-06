@@ -133,6 +133,9 @@ describe("reading rows", () => {
       updated_at: "2026-09-20T00:00:00.000Z",
     };
     expect(parsePrescriptionRow(base)).toMatchObject({ setCount: 3, load: null, loadKind: null });
+    expect(parsePrescriptionRow(base)).toMatchObject({ videoRequired: false });
+    expect(parsePrescriptionRow({ ...base, video_required: null })).toMatchObject({ videoRequired: false });
+    expect(parsePrescriptionRow({ ...base, video_required: true })).toMatchObject({ videoRequired: true });
     expect(parsePrescriptionRow({ ...base, set_count: undefined })).toBeNull();
     expect(parsePrescriptionRow({ ...base, load_kind: "vibes" })).toBeNull();
   });

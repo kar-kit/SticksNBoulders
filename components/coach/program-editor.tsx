@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
+import { CopyProgram } from "@/components/coach/copy-program";
 import { cn } from "@/lib/cn";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { useSession } from "@/lib/auth/session-context";
@@ -46,9 +47,9 @@ import { fetchProgramTree, sendProgramOp } from "@/lib/programming/program-store
  * program are live on save -- see docs/programs.md for why there is no second
  * draft layer yet.
  *
- * Out of scope here, with seams left: duplicate week (Order 20) is one more op
- * plus a button by "+ Week"; backoff rules (21) and video-required (30) are
- * columns after Notes.
+ * Duplicate week and Copy to… are Order 20 (copies are drafts, written by the
+ * server). Seams left: backoff rules (21) and video-required (30) are columns
+ * after Notes.
  */
 
 type Load =
@@ -64,6 +65,7 @@ const COLUMN_LABEL: Record<Column, string> = {
   load: "Load",
   rest: "Rest",
   notes: "Note",
+  video: "Video",
 };
 
 export function ProgramEditor({ programId }: { programId: string }) {
@@ -216,7 +218,8 @@ export function ProgramEditor({ programId }: { programId: string }) {
               : ""}
           </p>
         </div>
-        <div className="flex items-end gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          {editable ? <CopyProgram tree={tree} blockId={block?.id ?? null} disabled={busy} /> : null}
           <label className="flex flex-col gap-1 text-label uppercase text-muted-2">
             Starts
             <input
@@ -318,6 +321,20 @@ export function ProgramEditor({ programId }: { programId: string }) {
                   }}
                 >
                   + Week
+                </Button>
+              ) : null}
+              {editable && week ? (
+                // Order 20: most blocks are one week repeated with load changes.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={async () => {
+                    const id = await run({ op: "duplicateWeek", weekId: week.id });
+                    if (id) setWeekId(id);
+                  }}
+                >
+                  Duplicate {week.label ?? `week ${weekNumber(week.id)}`}
                 </Button>
               ) : null}
             </div>
@@ -592,8 +609,23 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
                         "px-1 py-0.5",
                         column === "sets" || column === "reps" || column === "rest" ? "w-20" : "",
                         column === "load" ? "w-56" : "",
+                        column === "video" ? "w-16" : "",
                       )}
                     >
+                      {column === "video" ? (
+                        // A toggle, not a typed cell: Space flips it; arrows and
+                        // Enter walk the grid like every other cell.
+                        <input
+                          type="checkbox"
+                          data-cell={`${row}-${col}`}
+                          aria-label={`Video required, line ${row + 1}`}
+                          disabled={!editable}
+                          checked={line.videoRequired}
+                          onChange={(e) => void commit(line, "video", e.target.checked ? "Yes" : "No")}
+                          onKeyDown={(e) => onKey(e, row, col)}
+                          className="mx-3 mt-2.5 size-4 accent-accent-fill focus:outline-2 focus:outline-accent-line"
+                        />
+                      ) : (
                       <input
                         data-cell={`${row}-${col}`}
                         aria-label={`${COLUMN_LABEL[column]}, line ${row + 1}`}
@@ -608,6 +640,7 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
                           errors[key] ? "border-danger-line" : "border-border focus:border-accent-line",
                         )}
                       />
+                      )}
                       {column === "load" ? (
                         // What the typing landed as. The bare-8 and 75%% cases
                         // are caught here or not at all.

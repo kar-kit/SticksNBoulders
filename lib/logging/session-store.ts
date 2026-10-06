@@ -14,6 +14,8 @@ export type UnnamedSet = Omit<SessionSet, "exerciseName"> & {
   clientSetId: string;
   /** The stored ordinal. Optional because a set logged on this page has not been given one yet. */
   setIndex?: number | undefined;
+  /** A clip is attached. Read at load; a clip attached on this page is tracked by the screen. */
+  hasVideo?: boolean;
 };
 
 /**
@@ -93,6 +95,7 @@ interface SetRow {
   reps?: unknown;
   is_warmup?: unknown;
   logged_at?: unknown;
+  video_file_id?: unknown;
 }
 
 /**
@@ -125,6 +128,7 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
         rpe: typeof row.rpe === "number" ? row.rpe : null,
         isWarmup: row.is_warmup === true,
         loggedAt,
+        hasVideo: typeof row.video_file_id === "string" && row.video_file_id !== "",
       } satisfies UnnamedSet;
     })
     .filter((set) => set !== null);
