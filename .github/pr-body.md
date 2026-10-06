@@ -1,45 +1,59 @@
-## Order 30 — Video-required prompt
+## Order 20 — Duplicate week and copy program
 
-Shared, P2, Source: Inferred. A coach can mark a prescription line "video
-required"; the athlete is nudged, once, to film it. Never blocking.
+Coach, P1, **Source: Inferred**, Program Editor. Kept small on purpose: no
+templates library, no bulk percentage shifting. Includes a merge of `dev`
+(#41 flaky-test fixes, #42 Order 30 `video_required`).
 
-### Behaviour
+### What's built
 
-- **Program Editor:** a `Video` checkbox column after Note. It is in the arrow-key
-  grid (arrow onto it, Space flips it) and saves as a one-field
-  `updatePrescription`, like every other cell.
-- **Storage:** `prescriptions.video_required`, boolean, in schema-as-code
-  (additive; applied to the live instance with `npm run appwrite:setup`, one
-  column created, nothing deleted). Writes stay server-only via `/api/program`.
-- **Log Session:** while the flagged line's sets are still to do, that
-  exercise's camera button is emphasised. Once they are logged with no clip on
-  any set of the exercise, one `role="status"` line appears ("Your coach asked
-  for a clip of this one.", with "Not now"). Attaching a clip, or "Not now",
-  puts it away. No toast, no alert, no disabled confirm, Finish stays available.
-- Logic is pure and tested in `lib/logging/video-prompt.ts`; sets read from
-  Appwrite now carry `hasVideo` so a reload does not re-ask.
+- **Duplicate week** — a button beside "+ Week". Appends a **draft** copy of
+  the week on screen to its block: every day and line, days moved a week past
+  the block's last week (+7 when duplicating the last week).
+- **Copy to…** — in the editor header. Type the athlete (linked athletes plus
+  "Yourself"), optionally "Only <this block>", pick a start date (defaults to
+  the source's). Creates a new **draft** program and links to it.
+- Both are ops on `POST /api/program` (`duplicateWeek`, `copyProgram`): verified
+  JWT, no new tables, no client write path.
 
-### Assumptions
+### Rules the copy follows
 
-- **[Inference]** "The line's sets" are counted positionally across the
-  exercise's working sets (the way `targetsFor` already prices them), so a
-  flagged top set is "done" after set 1 even if unflagged backoffs follow.
-- **[Inference]** A clip on any set of the exercise satisfies the request,
-  since the camera attaches to the most recent set.
-- **[Inference]** Build Plan §5 / Set Row say a flagged set "won't tick
-  complete" without a clip or a recorded skip. The Order 30 brief and
-  constraint 4 say never block, so this does not. The older `videoRequired`
-  gate on `LoggableSet` is untouched and unfed.
-- **[Inference]** `Prescription.videoRequired` is optional in the type so
-  concurrent Orders 20/21 fixtures do not conflict; the row parser always
-  yields a boolean.
+- **Authorisation on both ends** [Fact, unit + e2e]: the caller must be the
+  source program's coach, still actively linked to its athlete, **and** able to
+  program for the target (active link, or themselves). Refusals happen before
+  any row is written.
+- **Percentages stay percentages** [Fact, e2e]: loads are copied as typed, so
+  `75%` on Andrea's copy shows 90 kg on her Today (75% of her 120), not Joey's
+  150.
+- **Exercises re-resolve in the target's library** [Fact, unit + e2e]: global
+  stays global; the source athlete's private variation is found by name in the
+  target's library or created there via the editor's `createExercise` path.
+- **Generic line copy** [Fact, unit + e2e]: every prescription column except
+  Appwrite's and placement columns is copied, so `video_required` (Order 30)
+  and Order 21's future fields carry across untouched. A future column that
+  holds a row id must be added to `LINE_PLACEMENT` and remapped (documented).
+- **Logged work is never touched** [Fact, unit + e2e]: neither op reads or
+  writes `sessions`/`sets`.
 
-### Verification
+### Assumptions, each reversible
 
-- `npm run typecheck`, `npx eslint`, `npx vitest run`: all pass (115 files, 1820 tests, 15 new).
-- `npm run e2e:video-required` against the live instance (`next dev --webpack`): 17/17.
-  Covers keyboard toggle, stored boolean, reload, stranger 403, direct client
-  writes refused (stranger and coach), emphasised camera, single status nudge,
-  clip attach clearing it, Finish still enabled.
+- **[Inference]** A duplicated earlier week lands after the block's last week
+  (`7 × (weeks − index)` days), not on top of the following week.
+- **[Inference]** The duplicated week's label is not copied (shows "Week N").
+- **[Inference]** Fixed kilos are copied as written across athletes; the copy is
+  a draft so the coach reviews it before publishing.
+- **[Inference]** Copying with no start date keeps the source's dates; a block
+  copy anchors on that block's first dated day.
+- **[SME to confirm]** with Ruairi whether he copies blocks between athletes at
+  all, or whether question 6/7 (templates) is the real need.
+
+### Tests
+
+- `lib/programming/copy.test.ts` — date maths (shift, anchor, DST).
+- `appwrite/documents/program-copy.test.ts` — dates, percent re-targeting,
+  exercise resolution, authorisation, generic column copy incl. `video_required`.
+- `components/coach/copy-program.test.tsx` — the button and the form.
+- `scripts/e2e-copy.mts` (`npm run e2e:copy`) — 20/20 against the live
+  instance; `e2e:program` re-run 31/31.
+- `tsc`, `eslint` clean; full vitest 118 files / 1848 tests.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
