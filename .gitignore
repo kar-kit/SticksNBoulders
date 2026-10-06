@@ -48,3 +48,8 @@ next-env.d.ts
 
 # local dumps taken before a reset
 .appwrite-backup/
+
+# bundled Appwrite Functions, rebuilt by appwrite:functions
+functions/*/dist/
+
+functions/*/dist.tar.gz

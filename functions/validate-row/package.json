@@ -1,0 +1,6 @@
+{
+  "name": "validate-row",
+  "private": true,
+  "description": "Source for the validate-row Appwrite Function. Bundled by scripts/appwrite-functions.mts; the bundle is what gets deployed.",
+  "type": "module"
+}

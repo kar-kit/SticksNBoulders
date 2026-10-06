@@ -50,6 +50,8 @@ export {
 
 export type { RowWriter } from "./row-writer";
 
+export { ensureLibraryTeam, libraryTeamMembers } from "./library-admin";
+
 export {
   authenticRows,
   expectedStamp,
@@ -82,6 +84,7 @@ export {
   reviseBodyweight,
   reactivateCoachLink,
   renameGlobalExercise,
+  restampGlobalExercise,
   revokeCoachLink,
   unmarkSetReviewed,
   updateProfile,
