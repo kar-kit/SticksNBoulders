@@ -13,8 +13,8 @@ import type { MaxKind } from "@/lib/strength/reference-max";
  * Pure. No client, no network, no clock of its own.
  */
 
-/** The grid's editable columns, left to right. Video-required (Order 30) slots in after notes. */
-export const COLUMNS = ["exercise", "sets", "reps", "load", "rest", "notes"] as const;
+/** The grid's editable columns, left to right. `video` (Order 30) is a toggle, not a typed cell. */
+export const COLUMNS = ["exercise", "sets", "reps", "load", "rest", "notes", "video"] as const;
 export type Column = (typeof COLUMNS)[number];
 
 /* -------------------------------------------------------------------------
@@ -119,6 +119,8 @@ export function cellText(line: Prescription, column: Exclude<Column, "exercise">
       return formatRestCell(line.restSeconds);
     case "notes":
       return line.notes ?? "";
+    case "video":
+      return line.videoRequired ? "Yes" : "No";
   }
 }
 
@@ -156,6 +158,8 @@ export function commitCell(
     }
     case "notes":
       return text.length > 500 ? { error: "A note is 500 characters at most" } : { op: { ...base, notes: text } };
+    case "video":
+      return { op: { ...base, videoRequired: /^(yes|y|true|1)$/i.test(text.trim()) } };
   }
 }
 
@@ -173,6 +177,7 @@ export function applyLineOp(line: Prescription, op: ProgramOpInput): Prescriptio
     loadKind: op.load === undefined ? line.loadKind : load ? (parsePrescription(load)?.kind ?? null) : null,
     restSeconds: op.restSeconds === undefined ? line.restSeconds : op.restSeconds,
     notes: op.notes === undefined ? line.notes : op.notes?.trim() || null,
+    videoRequired: op.videoRequired ?? line.videoRequired ?? false,
   };
 }
 
