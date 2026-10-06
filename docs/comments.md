@@ -119,12 +119,14 @@ December is tight."*
 If it does come back, the shape is the same bucket pattern as clips and the same
 ticket route for playback, so nothing here blocks it.
 
-## What is not here
+## The athlete's side
 
-**The athlete's reply box.** Order 34 owns the Coach Feedback screen, including
-the unread badge and tapping through to the set in its session. The table, the
-policy and `submitComment` already take a `parentId`, so that ticket is a screen
-rather than a model.
+Order 34 built the reply box on the Coach Feedback screen (`/today/feedback`),
+with the unread dot on the Today tab. It needed no new table, policy or route:
+replies go through `submitComment` with a `parentId`, exactly as predicted
+above. The unread watermark is kept on the device rather than on a row, because
+anything stamped for the circle would hand the coach a read receipt. See
+`lib/review/feedback-seen.ts`.
 
 ## Verified against the instance
 
