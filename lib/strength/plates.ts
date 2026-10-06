@@ -34,4 +34,12 @@ export const LOADABLE_INCREMENT_KG = 2.5;
  * if Ruairi wants nearest, it is one word here.
  */
 export const roundToLoadable = (kg: number): number =>
-  Math.floor(kg / LOADABLE_INCREMENT_KG) * LOADABLE_INCREMENT_KG;
+  Math.floor(kg / LOADABLE_INCREMENT_KG + FLOAT_SLACK) * LOADABLE_INCREMENT_KG;
+
+/**
+ * Binary floating point cannot hold 0.7 exactly, so 70% of 175 arrives here as
+ * 122.49999999999999 and a bare floor turns an exactly loadable 122.5 into
+ * 120. The slack is far below a gram: it rescues a weight that IS loadable
+ * from representation error and moves nothing else.
+ */
+const FLOAT_SLACK = 1e-9;
