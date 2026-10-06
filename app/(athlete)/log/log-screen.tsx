@@ -65,6 +65,9 @@ import {
   type LoggedForTarget,
   type SetTarget,
 } from "@/lib/programming/session-plan";
+import { nextSetSuggestion } from "@/lib/logging/suggestion-gate";
+import { setTargetFor } from "@/lib/logging/set-targets";
+import { useSuggestionMode } from "@/lib/coach/use-suggestion-mode";
 
 /**
  * Log Session. The screen this product lives or dies on.
@@ -103,6 +106,11 @@ export function LogScreen() {
   const { active, start, finish } = useTrainingSessions();
 
   const athleteId = sessionState.status === "signed-in" ? sessionState.user.id : null;
+  /**
+   * Whether this athlete's coach lets next-set load suggestions through
+   * (Order 28). Cached on the device, so it still applies with no signal.
+   */
+  const { mode: suggestionMode } = useSuggestionMode(athleteId);
   const [phase, setPhase] = useState<Phase>("logging");
   /** What Appwrite returned for this session. Replaced whenever it is read. */
   const [stored, setStored] = useState<UnnamedSet[]>([]);
@@ -417,7 +425,12 @@ export function LogScreen() {
   const applyPad = (next: PadState) => {
     setPad(next);
     const value = padValue(next);
-    updateFocused((row) => ({ ...row, [next.field === "load" ? "loadKg" : "reps"]: value }));
+    updateFocused((row) => ({
+      ...row,
+      [next.field === "load" ? "loadKg" : "reps"]: value,
+      // Once the athlete types a load it is theirs, not the suggestion's.
+      ...(next.field === "load" ? { note: null } : {}),
+    }));
   };
 
   const toggleWarmup = (isWarmup: boolean) => {
@@ -452,11 +465,26 @@ export function LogScreen() {
     // nothing planned -- a repeat of this one. Built from the set just logged
     // rather than from state: the optimistic append has not landed yet, and
     // reading it back would give an empty row where the one-tap repeat goes.
+    // The coach's switch is applied here, at the one place a suggestion can
+    // enter: held means none, whatever the engine would say.
+    // The target is the prescribed set the next row will be (Order 22),
+    // counted with the set just logged.
+    const loggedNow: LoggedForTarget[] = [...setsOf(row.exerciseId), optimistic];
+    const prescribedNext = (() => {
+      const targets = targetsOf(row.exerciseId, loggedNow);
+      return targets ? nextTarget(targets, loggedNow) : null;
+    })();
+    const suggestion = nextSetSuggestion(
+      suggestionMode,
+      { loadKg: optimistic.loadKg, reps: optimistic.reps, rpe: row.rpe, isWarmup: row.isWarmup },
+      setTargetFor(prescribedNext),
+    );
     const { rows, next } = afterConfirm(
       plans,
       rowId,
       { loadKg: optimistic.loadKg, reps: optimistic.reps },
       newClientSetId,
+      suggestion,
     );
     setPlans(prescribe(plans, rows, optimistic));
     setFocusId(next.clientSetId);

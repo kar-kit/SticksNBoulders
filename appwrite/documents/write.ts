@@ -1,4 +1,5 @@
 import { estimateOneRepMax } from "@/lib/strength/e1rm";
+import { isSuggestionMode, type SuggestionMode } from "@/lib/coach/suggestion-mode";
 import { circleTeamId } from "./circle";
 import {
   bodyweightPermissions,
@@ -892,6 +893,35 @@ export async function revokeCoachLink(
     tableId: "coach_athlete_links",
     rowId: input.rowId,
     data: { status: "revoked", revoked_at: iso(deps.now()) },
+    permissions: linkPermissions(input),
+  });
+}
+
+/**
+ * Order 28: the coach's switch for whether this athlete sees next-set load
+ * suggestions.
+ *
+ * Writes the one column and nothing else, so it can never move a link's status
+ * or dates -- the fields the whole permission model trusts. Permissions are
+ * re-stamped from the policy rather than trusted from the row, as every other
+ * link write does: still read for the two parties, write for nobody.
+ *
+ * Runs with the API key. suggestion-mode-admin.ts is the only caller, and it
+ * has already checked the caller is the coach on an ACTIVE link -- never the
+ * athlete, whose screen this controls.
+ */
+export async function setLinkSuggestionMode(
+  deps: WriteDeps,
+  input: CreateLinkInput & { rowId: string; mode: SuggestionMode },
+) {
+  if (!isSuggestionMode(input.mode)) {
+    throw new Error(`setLinkSuggestionMode: unknown mode ${JSON.stringify(input.mode)}`);
+  }
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "coach_athlete_links",
+    rowId: input.rowId,
+    data: { suggestions_mode: input.mode },
     permissions: linkPermissions(input),
   });
 }

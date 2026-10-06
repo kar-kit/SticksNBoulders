@@ -297,6 +297,9 @@ export function prescribeNewRows(
       ...row,
       loadKg: prefill.loadKg,
       reps: prefill.reps,
+      // A coach's number replacing an engine suggestion takes its note with
+      // it; a load priced off today's top set says where it came from.
+      note: prefill.loadKg === row.loadKg ? (row.note ?? prefill.note) : prefill.note,
       prescriptionId: target.prescriptionId,
       prescribed: target.snapshot,
     };

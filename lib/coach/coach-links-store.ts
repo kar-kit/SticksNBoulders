@@ -26,13 +26,13 @@ export async function fetchCoachLinks(coachId: string): Promise<CoachLinkRecord[
     queries: [
       Query.equal("coach_id", coachId),
       Query.limit(100),
-      Query.select(["athlete_id", "status", "revoked_at"]),
+      Query.select(["athlete_id", "status", "revoked_at", "linked_at"]),
     ],
     ttl: 0,
   });
 
   return page.rows.flatMap((row) => {
-    const raw = row as unknown as { athlete_id?: unknown; status?: unknown; revoked_at?: unknown };
+    const raw = row as unknown as { athlete_id?: unknown; status?: unknown; revoked_at?: unknown; linked_at?: unknown };
     const athleteId = typeof raw.athlete_id === "string" ? raw.athlete_id : "";
     if (!athleteId) return [];
     return [
@@ -43,6 +43,7 @@ export async function fetchCoachLinks(coachId: string): Promise<CoachLinkRecord[
         // access, not more.
         status: raw.status === "active" ? "active" : "revoked",
         revokedAt: typeof raw.revoked_at === "string" ? raw.revoked_at : null,
+        linkedAt: typeof raw.linked_at === "string" ? raw.linked_at : null,
       } satisfies CoachLinkRecord,
     ];
   });

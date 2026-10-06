@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { CoachLink } from "@/components/coach/coach-link";
 import { TrainingSettings } from "@/components/profile/training-settings";
+import { SuggestionModeNote } from "@/components/profile/suggestion-mode-note";
 import Link from "next/link";
 import { InviteCodePanel } from "@/components/coach/invite-code";
 import { ExportLog } from "@/components/export/export-log";
@@ -19,10 +20,12 @@ import { useSession } from "@/lib/auth/session-context";
  *
  * Order 39 adds DATA: the training log as a CSV.
  *
+ * Order 28's load-suggestion switch is per athlete and lives on the Athlete
+ * View; LOAD SUGGESTIONS here tells an athlete when their coach holds them,
+ * and tells a coach where the switch is.
+ *
  * The blueprint's remaining rows belong elsewhere on purpose. Bodyweight is
- * Order 36. The load-suggestion toggle is Order 28 and is blocked on Ruairi --
- * it is a coaching philosophy question, not a product one. The coach-side
- * BILLING section waits for something to bill.
+ * Order 36. The coach-side BILLING section waits for something to bill.
  */
 export function MePanel() {
   const router = useRouter();
@@ -53,6 +56,8 @@ export function MePanel() {
       </Link>
 
       <CoachLink />
+
+      <SuggestionModeNote athleteId={state.user.id} isCoach={state.coach.isCoach} />
 
       <InviteCodePanel />
 

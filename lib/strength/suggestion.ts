@@ -32,14 +32,13 @@ import type { RpeValue } from "@/lib/logging/set";
  * answer, and it is noted rather than gated, because working up to a top
  * single is exactly what a powerlifter does.
  *
- * ## Nothing is wired to it
+ * ## Wired behind the coach's switch
  *
- * `lib/logging/prefill.ts` already accepts a `Suggestion` and ranks it second,
- * so unlike Order 18 a caller does exist. It stays unwired anyway: Order 28
- * asks whether load suggestions reach athletes directly or wait behind coach
- * approval, and calls that "a coaching philosophy question, not ours -- ask
- * Ruairi". Wiring the live path would answer it by default, in the direction
- * of straight through.
+ * Order 27 left this unwired, because Order 28 asks whether load suggestions
+ * reach athletes directly or wait behind the coach, and wiring it would have
+ * answered that by default. Order 28 added the switch, so the logger now calls
+ * this through `lib/logging/suggestion-gate.ts` and only when the athlete's
+ * coach allows it. See docs/suggestions.md.
  *
  * Pure. No client, no network, no clock.
  */

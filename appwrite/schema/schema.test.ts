@@ -144,6 +144,15 @@ describe("permission invariants", () => {
     expect(table("invite_codes").permissions).toEqual([]);
   });
 
+  it("keeps the coach's suggestion switch on the server-only link row, defaulting to direct", () => {
+    // Order 28. Coach-authored and it decides what an athlete sees, so it must
+    // not live anywhere a browser can create or update. Optional with a
+    // default, so adding it to rows linked before Order 28 rewrites nothing.
+    const column = table("coach_athlete_links").columns.find((c) => c.key === "suggestions_mode");
+    expect(column).toMatchObject({ type: "enum", elements: ["direct", "held"], required: false, default: "direct" });
+    expect(table("coach_athlete_links").permissions).toEqual([]);
+  });
+
   it("lets a signed-in user create their own logging rows", () => {
     for (const id of ["profiles", "exercises", "sessions", "sets"]) {
       expect(table(id).permissions, id).toContain('create("users")');

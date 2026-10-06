@@ -1,6 +1,7 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import type { CoachLinkRow, RollupWeek } from "./athlete-view";
+import { parseSuggestionMode } from "./suggestion-mode";
 
 /**
  * The reads Athlete View adds. Nothing here writes.
@@ -38,6 +39,7 @@ export async function fetchLinkRows(coachId: string, athleteId: string): Promise
       status: row.status === "active" ? "active" : "revoked",
       linkedAt: str(row.linked_at),
       revokedAt: str(row.revoked_at),
+      suggestionsMode: parseSuggestionMode(row.suggestions_mode),
     } satisfies CoachLinkRow;
   });
 }

@@ -1,27 +1,16 @@
-import { InviteCodePanel } from "@/components/coach/invite-code";
-import { EmptyState } from "@/components/ui/empty-state";
-import { DepartureNotice } from "@/components/coach/departure-notice";
+import { Roster } from "@/components/coach/roster";
 
 export const metadata = { title: "Roster — Sticks N Boulders" };
 
+/**
+ * Order 24, blueprint 10: the coach's landing page. A client component, like
+ * the rest of the coach side, because every read goes through the coach's own
+ * Appwrite session -- the circle team is the permission, and a server render
+ * with the API key would read past it.
+ *
+ * The screen owns its empty, loading, failed and linked states. The empty one
+ * (no athletes, the invite code as its action) is Ruairi's first session.
+ */
 export default function RosterPage() {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
-      {/* The real Roster is Order 24 and is blocked on Ruairi's review-day
-          sequence. This is its empty state, which is genuinely the first thing
-          he will see: an account with no athletes on it.
-
-          The code is the empty state's action rather than a section under it:
-          the body already tells him to share one, and sending him to a settings
-          tab to find the thing this screen just asked for is the kind of errand
-          that makes a product feel slow. */}
-      <EmptyState
-        title="No athletes yet"
-        body="Share your invite code and they'll appear here as they join, with whatever needs your attention first."
-        action={<InviteCodePanel labelled={false} />}
-      />
-      {/* Order 16.6: who left, quietly. Nothing renders when nobody did. */}
-      <DepartureNotice />
-    </div>
-  );
+  return <Roster />;
 }
