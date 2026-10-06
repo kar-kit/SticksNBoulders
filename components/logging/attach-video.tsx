@@ -72,7 +72,7 @@ export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", 
           <button
             type="button"
             onClick={() => setPutAway(true)}
-            className="min-h-11 px-2 text-caption text-muted-2 underline"
+            className="min-h-11 whitespace-nowrap px-2 text-caption text-muted-2 underline"
           >
             Not now
           </button>
