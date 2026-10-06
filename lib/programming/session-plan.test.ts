@@ -2,12 +2,14 @@ import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import { resolvePrefill } from "@/lib/logging/prefill";
 import type { ReferenceMaxEntry } from "@/lib/strength/reference-max";
 import type { Prescription } from "./program";
+import type { PlannedRow } from "@/lib/logging/plan";
 import {
   basisMaxesFor,
   lineSummaries,
   nextTarget,
   planDay,
   prefillFrom,
+  prescribeNewRows,
   repsLabel,
   targetLine,
   targetsFor,
@@ -228,5 +230,60 @@ describe("the maxes a percentage resolves against", () => {
 
   it("is empty for an exercise with no maxes", () => {
     expect(basisMaxesFor("row", [], new Map(), new Date())).toEqual({ training: null, tested: null, estimated: null });
+  });
+});
+
+describe("stamping the logger's new rows with their targets", () => {
+  // Squat: 3 x 5 at a fixed 140, then 1 x 3 at RPE 8.
+  const squat = () =>
+    planDay([
+      line({ id: "work", setCount: 3, reps: 5, load: "140" }),
+      line({ id: "top", setCount: 1, reps: 3, load: "@8" }),
+    ])[0];
+  const row = (clientSetId: string, over: Partial<PlannedRow> = {}): PlannedRow => ({
+    exerciseId: "squat",
+    clientSetId,
+    loadKg: null,
+    reps: null,
+    rpe: null,
+    isWarmup: false,
+    planned: false,
+    ...over,
+  });
+  const context = (logged: ReturnType<typeof set>[]) => (exerciseId: string) =>
+    exerciseId === "squat"
+      ? { logged, targets: targetsFor(squat(), {}, logged) }
+      : { logged: [], targets: null };
+
+  it("prefills a fresh row with the first prescribed set and remembers what it answers", () => {
+    const [stamped] = prescribeNewRows([], [row("r1")], context([]));
+    expect(stamped).toMatchObject({ loadKg: 140, reps: 5, prescriptionId: "work" });
+    expect(stamped.prescribed).toBe("5 reps · 140 kg");
+  });
+
+  it("counts logged working sets and the rows ahead, so a third row gets set 3 and a fourth the top set", () => {
+    const logged = [set(60, 5, null, true), set(140, 5, 8)];
+    const before = [row("r2", { loadKg: 140, reps: 5 })];
+    const after = prescribeNewRows(before, [...before, row("r3"), row("r4", { loadKg: 140, reps: 5 })], context(logged));
+    expect(after[1]).toMatchObject({ prescriptionId: "work", loadKg: 140, reps: 5 });
+    // An RPE line names no weight, so the repeated load stays and the reps change.
+    expect(after[2]).toMatchObject({ prescriptionId: "top", loadKg: 140, reps: 3 });
+  });
+
+  it("never touches a row already on screen, whatever the athlete typed into it", () => {
+    const typed = row("r1", { loadKg: 150, reps: 4 });
+    expect(prescribeNewRows([typed], [typed], context([]))[0]).toEqual(typed);
+  });
+
+  it("leaves extra sets beyond the prescription, warm-ups and unprescribed exercises alone", () => {
+    const logged = [set(140, 5, 7), set(140, 5, 7), set(140, 5, 7), set(150, 3, 8)];
+    const [extra, warmup, bench] = prescribeNewRows(
+      [],
+      [row("x", { loadKg: 150, reps: 3 }), row("w", { isWarmup: true }), row("b", { exerciseId: "bench" })],
+      context(logged),
+    );
+    expect(extra).toEqual(row("x", { loadKg: 150, reps: 3 }));
+    expect(warmup.prescriptionId).toBeUndefined();
+    expect(bench.prescriptionId).toBeUndefined();
   });
 });
