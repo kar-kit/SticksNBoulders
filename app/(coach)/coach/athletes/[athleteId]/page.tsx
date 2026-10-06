@@ -1,4 +1,5 @@
 import { AthleteView } from "@/components/coach/athlete-view";
+import { AthleteLinkGate } from "@/components/coach/athlete-link-gate";
 
 export const metadata = { title: "Athlete — Sticks N Boulders" };
 
@@ -22,5 +23,12 @@ export default async function AthleteViewPage({
   params: Promise<{ athleteId: string }>;
 }) {
   const { athleteId } = await params;
-  return <AthleteView athleteId={athleteId} />;
+
+  // Order 16.6: the gate watches the link live, so a revoke mid-visit swaps to
+  // the same "no longer linked" screen the rest of the coach side uses.
+  return (
+    <AthleteLinkGate athleteId={athleteId}>
+      <AthleteView athleteId={athleteId} />
+    </AthleteLinkGate>
+  );
 }
