@@ -153,6 +153,17 @@ describe("duplicateWeek", () => {
     expect(copied.every((l) => l.weekId === newWeek && !source.some((s) => s.id === l.id))).toBe(true);
   });
 
+  it("carries a backoff rule with its line (Order 21) -- it is text on the line, not a row id to remap", async () => {
+    const h = harness();
+    const p = await joeysProgram(h);
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: p.squat, backoff: "-10% x 3" });
+    const newWeek = await h.ok(COACH, { op: "duplicateWeek", weekId: p.week1 });
+    const copy = (await h.tree(p.programId))!.blocks[0].weeks.find((w) => w.id === newWeek)!;
+    const lines = copy.days.flatMap((d) => d.prescriptions);
+    expect(lines.find((l) => l.exerciseId === "ex-squat")?.backoff).toBe("3 x 90%");
+    expect(lines.filter((l) => l.exerciseId !== "ex-squat").every((l) => !l.backoff)).toBe(true);
+  });
+
   it("moves the last week's copy by exactly seven days", async () => {
     const h = harness();
     const p = await joeysProgram(h);
