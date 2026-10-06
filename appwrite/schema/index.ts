@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 9,
+  version: 10,
   tables: [
     {
       id: "profiles",

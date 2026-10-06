@@ -9,6 +9,8 @@ import { weekStart } from "@/lib/strength/rollup";
 import { canSeeCircle } from "./coach-links-store";
 import type { RosterInputs, WeekRollup, WeekSession } from "./roster";
 import type { ProgramSignals } from "./roster-triggers";
+import { computeProgramSignals } from "./program-signals";
+import { localDay, parseDay, parseProgram, parseRows, parseWeek } from "@/lib/programming/program";
 
 /**
  * The Roster's reads. Nothing here writes, and nothing uses the server key:
@@ -123,15 +125,62 @@ export async function fetchRosterBodyweight(athleteIds: readonly string[], now: 
 }
 
 /**
- * Order 19 seam. The program-dependent triggers (missed sessions, an RPE 10
- * nobody prescribed) and the Block column read this, and it reads nothing
- * yet: there are no program tables on this branch, and the Program Editor is
- * being built in parallel. When it lands, this is the one function to fill in
- * -- through the coach's session, like everything else in this file.
+ * Order 19's half of the Roster: the Block column, missed sessions, and RPE 10
+ * nobody prescribed. Read through the coach's session like everything else
+ * here -- program rows grant read to the athlete's circle -- and decided in
+ * lib/coach/program-signals.ts. Five queries for every athlete at once.
  */
-export async function fetchProgramSignals(athleteIds: readonly string[]): Promise<Map<string, ProgramSignals>> {
-  void athleteIds;
-  return new Map();
+export async function fetchProgramSignals(
+  athleteIds: readonly string[],
+  now: Date = new Date(),
+): Promise<Map<string, ProgramSignals>> {
+  if (athleteIds.length === 0) return new Map();
+  const ids = [...athleteIds];
+  const today = localDay(now);
+  // Two weeks of sets: the trigger's window is a week, with room for its rule to move.
+  const since = new Date(now.getTime() - 14 * 86_400_000).toISOString();
+  const [programRows, maxedRows, sessionRows] = await Promise.all([
+    listAll("programs", [Query.equal("athlete_id", ids), Query.equal("status", "published")]),
+    listAll("sets", [
+      Query.equal("athlete_id", ids),
+      Query.equal("rpe", 10),
+      Query.equal("is_warmup", false),
+      Query.greaterThanEqual("logged_at", since),
+      Query.isNotNull("prescription_id"),
+      Query.select(["$id", "athlete_id", "logged_at", "prescription_id"]),
+    ]),
+    listAll("sessions", [
+      Query.equal("athlete_id", ids),
+      Query.greaterThanEqual("started_at", new Date(now.getTime() - 8 * 86_400_000).toISOString()),
+      Query.isNotNull("program_day_id"),
+      Query.select(["athlete_id", "program_day_id"]),
+    ]),
+  ]);
+  const programs = parseRows(programRows, parseProgram);
+  const programIds = programs.map((p) => p.id);
+  const lineIds = [...new Set(maxedRows.map((row) => str(row.prescription_id)).filter(Boolean))];
+  const [weekRows, dayRows, lineRows] = await Promise.all([
+    programIds.length ? listAll("program_weeks", [Query.equal("program_id", programIds)]) : [],
+    programIds.length ? listAll("program_days", [Query.equal("program_id", programIds)]) : [],
+    lineIds.length ? listAll("prescriptions", [Query.equal("$id", lineIds), Query.select(["$id", "load"])]) : [],
+  ]);
+  return computeProgramSignals(
+    ids,
+    {
+      programs,
+      weeks: parseRows(weekRows, parseWeek),
+      days: parseRows(dayRows, parseDay),
+      sessions: sessionRows.map((row) => ({ athleteId: str(row.athlete_id), programDayId: str(row.program_day_id) || null })),
+      maxedSets: maxedRows.map((row) => ({
+        id: str(row.$id),
+        athleteId: str(row.athlete_id),
+        loggedAt: str(row.logged_at),
+        prescriptionId: str(row.prescription_id),
+      })),
+      lineLoads: new Map(lineRows.map((row) => [str(row.$id), str(row.load) || null])),
+    },
+    today,
+  );
 }
 
 /** Everything the Roster renders except the links themselves, in parallel. */
@@ -149,7 +198,7 @@ export async function fetchRoster(
     fetchClips(ids),
     fetchReviewedSetIds(coachId),
     fetchRosterBodyweight(ids, now),
-    fetchProgramSignals(ids),
+    fetchProgramSignals(ids, now),
   ]);
   return {
     names: new Map(names.map((a) => [a.id, a.name])),
