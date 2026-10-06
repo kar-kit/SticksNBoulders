@@ -1,152 +1,93 @@
-## Orders 19 + 22 — Program editor and prescribed sessions
+## Order 38 — Permission audit + fix row forgery
 
-A coach writes a block in a keyboard-first grid; the linked athlete sees that
-day on Today with percentages already in kilos, starts it, and logs against
-targets that prefill the set row. Includes merges of `dev` (64fa6a9, PRs
-#31–#35, #37; then 1980bc0, PRs #38 Roster and #39 suggestion toggle) with
-conflicts resolved by keeping both sides.
+The audit (first half of this PR) found a sev-1: any signed-in user could
+write a row into anybody's data. Every table with `create("users")` accepted a
+row carrying somebody else's `athlete_id`, `owner_id`, `coach_id` or
+`author_id`, stamped `read("users")` — a role every session holds — and every
+read filtered on those columns. Proven on the live instance: a forged 400kg
+set became A's best e1RM through `/api/rollup`, forged coach comments, forged
+"reviewed" marks clearing clips, a forged `is_global` exercise in everyone's
+typeahead. The second half of this PR fixes it, defence in depth, and the
+audit now asserts every one of those is neutralised.
 
-### The blocked decision, and what this assumes on Ruairi's behalf
+### The fix
 
-**[SME to confirm] question 1 — block up front, week by week, or session by
-session.** The editor UI follows the blueprint's block-up-front layout (week
-tabs across, days down, one Publish for the block). **The data model does not
-hard-code it** [Fact, see `docs/programs.md`]:
+**A row's stamp proves who wrote it.** A session cannot stamp a role it does
+not hold, so `update("user:<athlete_id>")` on a set is proof that athlete
+wrote it; `update("user:<author_id>")` on a comment, `update("user:<coach_id>")`
+on a review. `appwrite/documents/provenance.ts` is that check in one place —
+`ownerProof`, `isAuthentic`, `authenticRows`, `verdictFor` — with
+`expectedStamp` moved in beside it so the readers, the audit and the Function
+share one definition. Tested against every forgery in the finding.
 
-- weeks and days are added one at a time; nothing requires a complete block;
-- every day carries its own date, so a block written in October, a week written
-  on Sunday and a session written the night before are the same row;
-- every week carries its own draft/published status: `publishProgram` publishes
-  the lot, `updateWeek` publishes one week.
+**Readers only trust what the owner stamped.** Every store reading a
+client-writable table filters through `authenticRows`; `rebuildRollup` (route
+and repair script) and `e1rm:backfill` skip sets the athlete did not stamp;
+`fetchProfile` reads a squatted row as absent. Selects now carry the owner
+column (`Query.select` keeps `$permissions` but not data columns). Logged sets
+still write locally first and sync through the queue — nothing moved
+server-side.
 
-If Ruairi writes week by week, the change is UI (a per-week Publish), not a
-migration. Templates exist in the tables (program with no athlete) but are not
-exposed — question 6/7 is still open.
+**The library carries the server's mark.** A forged `is_global: true` row had
+exactly the stamp a seeded one did. Library rows now also carry
+`update("team:library")`: a team `appwrite:setup` creates with the API key and
+that has no members, so no session can stamp it and nobody can create it
+first. `exercises:seed` re-stamps (56 rows re-stamped live on 6 Oct). Simpler
+than splitting the table; typeahead and create-on-the-fly unchanged.
 
-Other assumptions made, each reversible:
+**A Function deletes what lands.** `functions/validate-row`, declared in
+`appwrite/functions/index.ts`, deployed by `npm run appwrite:functions`
+(esbuild bundles provenance.ts in — one definition, not a copy). Fires on row
+create *and* update; deletes a row in a client-writable table that names an
+owner and lacks that owner's proof. Delete rather than revert on update: the
+event carries no previous state, and a relabelled row is a false claim whatever
+it said before. Scoped so a bug cannot mass-delete: one row per event, writable
+tables only, never a row without an owner, never for a stale *read* stamp.
+`VALIDATOR_DRY_RUN=true` is the kill switch.
 
-- **[Inference]** New lines start at 1 set, no reps, no load — no invented
-  defaults in somebody's training.
-- **[Inference]** Edits to a published program are live on save; there is no
-  second draft layer for edits. Logged work is safe regardless (snapshots), but
-  a coach mid-edit can briefly show a half-changed day.
-- **[Inference]** New days default to the day after the week's last dated day,
-  or the start date + 7 per week. Always editable.
-- **[Inference]** A coach can program themselves ("Yourself" in Programs).
+**Relabelling and squatting**, the two the finding had not asserted, are
+covered by the same two layers and now asserted by the audit.
 
-### What's built
+### The audit, extended
 
-**Order 19 — Program Editor** (`/coach/programs`, `/coach/programs/[id]`)
-- Programs index: every linked athlete plus the coach; New block creates
-  program + first block + first week and opens the editor.
-- Grid: exercise / sets / reps / load / rest / note. Arrows move between cells
-  (sideways only from a cell's edge, so the caret still works inside `75% @8`),
-  Enter commits and moves down, Escape reverts, Alt+Up/Down reorders a line.
-- **The load cell indicator Order 18 owed**: each load shows what it parsed
-  as — "Percent · 75% of training max", "RPE 8 · athlete picks the weight",
-  "Freeform · shown as written" — which is the only thing that catches a bare
-  `8` meant as RPE.
-- Exercises are typed, never picked from a list. A variation the library lacks
-  is created **in the athlete's library**, because a coach-owned custom
-  exercise is unreadable on the athlete's Today.
-- Cells save on blur, only the edited field, optimistically; a refusal puts the
-  cell back and says why on the cell. Removing a day/week asks once, inline.
-- Read-only for anyone but the program's coach.
+- A forgery Appwrite accepts shows as `landed*` and counts as refused only if
+  no reader trusts it. 23 land; none is trusted.
+- "What a forged row does once it lands": rollup, coach's queue, review mark,
+  comment thread, typeahead, relabel, squat — all proven inert on the live
+  instance.
+- The validator: every landed row must be deleted within 45s, polled by id;
+  fails outright when the Function is not deployed.
+- Orders 19/22/28 from `dev`: rules for the five program tables (server-only;
+  read by coach, athlete, circle), `/api/program` and `/api/link/suggestions`
+  exercised with real JWTs for every role, before and after revocation. The
+  stamp scan also checks `isAuthentic` on every row, `suggestions_mode`'s
+  values, and that program children name their program's coach and athlete.
+- Discovery asserts the `library` team exists with no members and the
+  Function is deployed, enabled and subscribed.
 
-**Order 22 — Prescribed session**
-- Today: preview card with each line resolved against reference maxes, the
-  coach's note under it, Start today's session + Log something else.
-- Log Session: prescribed exercises lead in the coach's order, target lines
-  above the rows, first exercise opens with set 1 already holding the target.
-  Every new planned row (dev's multi-row planner from #37) gets the target for
-  the set it will be, counted in working sets; rows already on screen are
-  never re-priced. Sets store `prescription_id` and a text snapshot; sessions
-  store `program_day_id`.
+### What is not done, and why
 
-**Seams other orders left, now filled**
-- Order 28: `setTargetFor` (`lib/logging/set-targets.ts`) returns the reps + RPE
-  of the prescribed next set, so next-set load suggestions appear on RPE and
-  capped lines when the coach's switch is `direct`. A fixed or percentage load
-  still wins over a suggestion (prefill rule order), and drops its note.
-- Order 24: `fetchProgramSignals` (`lib/coach/roster-store.ts`, decided in
-  `lib/coach/program-signals.ts`) feeds the Roster's Block column ("Week 2 of
-  3", "Starts 12 Oct", "Block finished"), **missed sessions** ([Inference] past
-  published days this week that no session was *started from* — a free session
-  that day does not count), and **RPE 10 above prescription** (working sets at
-  RPE 10 answering a line whose RPE or cap was below 10; a line with no RPE
-  never fires).
+**The Function is not live.** [Fact] The instance's builder answers every
+deployment with `Internal server error` within 3 seconds — including a
+redeploy of the probe's own archive that built on 14 Sep — and only `node-22`
+is enabled in `_APP_FUNCTIONS_RUNTIMES`. The host is not reachable from the
+MacBook. On the host: `docker ps | grep -E 'executor|worker-builds'`,
+`docker logs appwrite-worker-builds --tail 100`, `docker logs
+appwrite-executor --tail 100` (or `openruntimes-executor`), `df -h`, then
+`npm run appwrite:functions`. Until then the audit reports exactly two
+failures, both "validate-row is not live"; everything else passes (452/454 on
+6 Oct). Readers already hide every forged row, so the live product is
+protected; the Function is the second layer.
 
-**Server ops added on top of the 27 Sep WIP**: `publishProgram`,
-`removeBlock/Week/Day` (children first), `createExercise` (athlete-owned,
-deduped), and lines refused for an exercise the athlete cannot read.
+**Sign-ups stay open.** The API key cannot reach `/projects/*` (console
+scope), and Appwrite 1.9 has no invite-only mode — the only control is Auth →
+Security → Users limit, which would stop athletes registering to redeem a
+code. [Inference] Left unchanged; the fix removes what a stranger's account
+could do.
 
-### What's stubbed or out of scope (seams left)
+### Verification
 
-- Duplicate week (20), backoff rules (21), My Program (23), video-required (30):
-  not built. `docs/programs.md` § Seams says where each plugs in.
-- Copy/paste of rows, multi-select percentage shift, block-level undo: not
-  built (blueprint bulk-editing beyond duplicate week).
-- Athlete View's "This block" panel now points to Programs; tracking against
-  the block is not built.
-- Template UI.
-
-### Security — rules the new tables need
-
-`appwrite/audit/rules.ts` is not on this base (it's on PR #36), so here are the
-rules to add there. All five tables: `rowSecurity: true`, **no table-level
-permissions**, so no client can create, update or delete. Writes only via
-`POST /api/program` (verified JWT → caller must be the program's coach with an
-`active` `coach_athlete_links` row for its athlete; child scope read from the
-parent row, never the request).
-
-| Table | Read | Create | Update | Delete | Owner columns |
-| --- | --- | --- | --- | --- | --- |
-| `programs` | coach, athlete, athlete's circle team (template: coach only) | server only | server only | none (archive) | `coach_id`, `athlete_id` (nullable = template) |
-| `program_blocks` | same | server only | server only | server only (cascade) | `coach_id`, `athlete_id`, `program_id` |
-| `program_weeks` | same | server only | server only | server only (cascade) | `coach_id`, `athlete_id`, `program_id`, `block_id` |
-| `program_days` | same | server only | server only | server only (cascade) | `coach_id`, `athlete_id`, `program_id`, `week_id` |
-| `prescriptions` | same | server only | server only | server only | `coach_id`, `athlete_id`, `program_id`, `day_id` |
-
-Audit assertions worth encoding: every row's `$permissions` contains only
-`read(...)` grants; `coach_id`/`athlete_id` on each child equal its program's;
-read set = {`user:coach_id`, `user:athlete_id`, `team:circle-<athlete_id>`}.
-
-New columns on existing tables (athlete-written): `sessions.program_day_id`,
-`sets.prescription_id`, `sets.prescribed`. These are pointers/snapshots on the
-athlete's own rows; a forged value only mislabels the athlete's own set. **[Inference]**
-No new audit rule needed beyond the existing owner checks PR #36 adds.
-
-Also: `createExercise` creates an `exercises` row owned by the athlete via the
-server — same stamp as an athlete creating it mid-session.
-
-### Schema
-
-v10. The five program tables and `sessions.program_day_id`,
-`sets.prescription_id`, `sets.prescribed` were applied to the live instance on
-27 Sep from the WIP, which is why Order 28's schema run saw them as unknown;
-this branch is the schema-as-code for them. After merging dev,
-`npm run appwrite:setup -- --dry-run` reports **"Schema already matches"** with
-no orphans. Both sides of the merge had bumped to v9 for different changes,
-so this goes to v10.
-
-### Tests
-
-- `npx tsc --noEmit -p .` clean, `npm run lint` clean.
-- Vitest: **113 files, 1805 tests passing** (after merging dev). New: `lib/programming/editor.test.ts`
-  (25), `components/coach/program-editor.test.tsx` (11),
-  `components/coach/program-list.test.tsx` (4), prescribed-row tests in
-  `session-plan.test.ts` and `log-screen.test.tsx`, server-op tests in
-  `program-admin.test.ts` (35 total).
-- `npm run e2e:program` against the live instance: **31/31**. Coach writes and
-  publishes a day in the editor; an unlinked user cannot list or read it, write
-  through the route, forge a program for the athlete, or write a program table
-  directly; the athlete sees it on Today in kilos, starts it, logs the
-  prefilled set with prescription id and snapshot; a later coach edit leaves the
-  set untouched; the Roster shows "Week 1 of 1" and flags an RPE 10 set on a
-  line prescribed @8.
-- Regression: `e2e:roster` 23/23, `e2e:suggestions` 29/29 on this branch.
-- **[Unverified]** `components/coach/review-queue.test.tsx` ("drops an
-  athlete's clips live when they unlink") failed once under full-suite load and
-  passed on every rerun — timing-sensitive, came in from dev.
+`lint` · `typecheck` · **1874 tests, 115 files** · `npm run appwrite:audit`
+live: 452/454, the two validator checks failing as above.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

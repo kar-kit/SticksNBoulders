@@ -67,7 +67,7 @@ describe("the proof of authorship", () => {
 
   it("is null for a row with no owner, and for a table it does not know", () => {
     expect(ownerProof("sets", {})).toBeNull();
-    expect(ownerProof("programs", { athlete_id: A })).toBeNull();
+    expect(ownerProof("widgets", { athlete_id: A })).toBeNull();
   });
 });
 
@@ -139,7 +139,7 @@ describe("isAuthentic", () => {
 
   it("trusts nothing it does not understand", () => {
     expect(isAuthentic("sets", { $id: "r", $permissions: [writtenByUser(A)] })).toBe(false);
-    expect(isAuthentic("programs", { $id: "r", athlete_id: A, $permissions: [writtenByUser(A)] })).toBe(false);
+    expect(isAuthentic("widgets", { $id: "r", athlete_id: A, $permissions: [writtenByUser(A)] })).toBe(false);
     expect(isAuthentic("sets", { $id: "r", athlete_id: A, $permissions: "not an array" })).toBe(false);
     expect(isAuthentic("sets", { $id: "r", athlete_id: A })).toBe(false);
   });
@@ -163,7 +163,7 @@ describe("the validator's verdict", () => {
     for (const table of SERVER_ONLY_TABLES) {
       expect(verdictFor(table, { $id: "r", athlete_id: A, $permissions: EVERYONE }).action).toBe("skip");
     }
-    expect(verdictFor("programs", { $id: "r", athlete_id: A, $permissions: EVERYONE }).action).toBe("skip");
+    expect(verdictFor("widgets", { $id: "r", athlete_id: A, $permissions: EVERYONE }).action).toBe("skip");
   });
 
   it("keeps every row the write helper would produce", () => {
@@ -227,7 +227,17 @@ describe("expectedStamp", () => {
 
   it("knows every policy table and nothing else", () => {
     for (const table of Object.keys(POLICIES)) expect(expectedStamp(table, {}), table).toBeNull();
-    expect(expectedStamp("programs", { athlete_id: A })).toBeNull();
+    expect(expectedStamp("widgets", { athlete_id: A })).toBeNull();
+  });
+
+  it("stamps a program row for its coach, its athlete and the athlete's circle, and a template for the coach alone", () => {
+    expect(expectedStamp("program_days", { coach_id: C, athlete_id: A })).toEqual([
+      `read("user:${C}")`,
+      `read("user:${A}")`,
+      `read("team:${circleTeamId(A)}")`,
+    ]);
+    expect(expectedStamp("programs", { coach_id: C, athlete_id: null })).toEqual([`read("user:${C}")`]);
+    expect(expectedStamp("programs", { coach_id: C })).toEqual([`read("user:${C}")`]);
   });
 
   it("reports a row missing its owner rather than guessing", () => {

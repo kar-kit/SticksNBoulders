@@ -22,21 +22,31 @@
  *   - Resources are discovered from the schema-as-code AND the live instance,
  *     and anything without a rule in appwrite/audit/rules.ts fails the run.
  *
+ * Since 6 Oct 2026 a forgery Appwrite accepts is judged twice: it counts as
+ * refused only if no reader trusts it (appwrite/documents/provenance.ts), and
+ * the validate-row Function must then delete it within a bounded wait.
+ *
  * Safe to run against a shared instance. It creates its own uniquely named
  * fixture users (under example.com, so e2e:prune recognises a stranded one)
- * and deletes only what they own. It never lists-and-deletes by table.
+ * and deletes only what they own. It never lists-and-deletes by table. The
+ * forged rows it writes are stamped so that no reader shows them, and are
+ * removed on the way out whether or not the validator got there first.
  */
-import { Client, ID, Query, Storage, TablesDB, Teams, Users, type Models } from "node-appwrite";
+import { Client, Functions, ID, Query, Storage, TablesDB, Teams, Users, type Models } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
 import { schema } from "../appwrite/schema";
 import { circleTeamId } from "../appwrite/documents/circle";
+import { libraryTeamMembers } from "../appwrite/documents/library-admin";
 import {
   commentPermissions,
-  exercisePermissions,
+  LIBRARY_TEAM_ID,
+  readableByAnySession,
   videoPermissions,
 } from "../appwrite/documents/policy";
+import { authenticRows, isAuthentic, ownerProof } from "../appwrite/documents/provenance";
+import { FUNCTIONS } from "../appwrite/functions";
 import type { RowWriter } from "../appwrite/documents/row-writer";
 import {
   attachVideo,
@@ -84,6 +94,8 @@ import { POST as circleRoute } from "../app/api/circle/route";
 import { POST as inviteRoute } from "../app/api/invite/route";
 import { POST as linkRoute } from "../app/api/link/route";
 import { POST as revokeRoute } from "../app/api/link/revoke/route";
+import { POST as suggestionsRoute } from "../app/api/link/suggestions/route";
+import { POST as programRoute } from "../app/api/program/route";
 import { POST as referenceMaxRoute, DELETE as referenceMaxDeleteRoute } from "../app/api/reference-max/route";
 import { POST as rollupRoute } from "../app/api/rollup/route";
 
@@ -95,6 +107,9 @@ const adminDb = new TablesDB(admin);
 const adminStorage = new Storage(admin);
 const users = new Users(admin);
 const teams = new Teams(admin);
+const functions = new Functions(admin);
+/** How long the validate-row Function gets to delete a forged row. Cold start included. */
+const VALIDATOR_WAIT_MS = 45_000;
 const D = config.databaseId;
 const BUCKET = "set_videos";
 const stamp = `${Date.now()}`;
@@ -222,11 +237,13 @@ const callRoute = async (
 
 /**
  * The strongest read an attacker can stamp: every signed-in user. Appwrite
- * lets any session stamp `users`, because every session holds it. Taken from
- * the one policy that legitimately emits it, rather than written as a literal
- * the guard test forbids.
+ * lets any session stamp `users`, because every session holds it. Built by
+ * the policy rather than written as a literal the guard test forbids. (It
+ * used to borrow the library stamp, which since 6 Oct carries the server's
+ * mark -- a role no session holds, so a forgery stamped with it is refused
+ * for the wrong reason.)
  */
-const readableByEveryone = () => exercisePermissions({ athleteId: "library", isGlobal: true });
+const readableByEveryone = () => [readableByAnySession()];
 
 /* -------------------------------------------------------------------------
  * Discovery
@@ -269,6 +286,31 @@ for (const r of declared) {
   }
 }
 if (uncovered.length === 0 && stale.length === 0) check("every table and bucket has an audit rule", true);
+
+// The server half of the forgery fix. Asserted here so a run against an
+// instance where it was never deployed, or was switched off in the console,
+// fails before anything else is measured.
+let validatorLive = false;
+for (const spec of FUNCTIONS) {
+  try {
+    const fn = await functions.get({ functionId: spec.id });
+    const eventsMatch = spec.events.every((e) => fn.events.includes(e));
+    validatorLive = fn.enabled && fn.deploymentId !== "" && eventsMatch;
+    check(
+      `Function "${spec.id}" is deployed, enabled and subscribed to its events`,
+      validatorLive,
+      `enabled=${fn.enabled} activeDeployment=${JSON.stringify(fn.deploymentId)} events ${eventsMatch ? "match" : "differ"}. Run npm run appwrite:functions.`,
+    );
+  } catch (error) {
+    check(`Function "${spec.id}" exists on the instance`, false, `${(error as Error).message}. Run npm run appwrite:functions.`);
+  }
+}
+try {
+  const members = await libraryTeamMembers(teams);
+  check(`team "${LIBRARY_TEAM_ID}" exists and has no members (its role is the server's mark)`, members.length === 0, `members: ${members.join(", ")}`);
+} catch (error) {
+  check(`team "${LIBRARY_TEAM_ID}" exists`, false, `${(error as Error).message}. Run npm run appwrite:setup.`);
+}
 
 /* -------------------------------------------------------------------------
  * Fixtures, written the way the app writes them
@@ -324,6 +366,16 @@ try {
     })
   ).rows[0];
   if (linkRow) targets.coach_athlete_links = linkRow.$id;
+
+  // Order 28: the coach's switch on the link row, through its route.
+  const suggest = (p: Party, mode: string) =>
+    callRoute(suggestionsRoute as Handler, "/api/link/suggestions", p, { athleteId: A.id, mode });
+  check("POST /api/link/suggestions: A's coach holds A's suggestions (coach_athlete_links write)", (await suggest(C, "held")).status === 200);
+  check("POST /api/link/suggestions: A cannot set his own", (await suggest(A, "direct")).status === 403);
+  for (const p of [U, B]) {
+    check(`POST /api/link/suggestions: ${ACTOR_LABELS[p.actor]} cannot set A's`, (await suggest(p, "direct")).status === 403);
+  }
+  check("POST /api/link/suggestions with no session is refused", (await suggest(anon, "direct")).status === 401);
 
   // A's logged work, through the write helper, as A.
   const ownerCreate = async (key: string, fn: () => Promise<{ $id: string }>, actor: AuditActor = "athlete") => {
@@ -474,6 +526,33 @@ try {
   targets["exercises:library"] = (await createGlobalExercise(adminDeps, { name: `Audit Library Lift ${stamp}` })).$id;
   createdRows.push({ table: "exercises", id: targets["exercises:library"] });
 
+  // Order 19: a program for A, written by A's coach through /api/program. One
+  // route, one op per row; the route reads program, coach and athlete from
+  // the parent row and never from the body.
+  const programOp = (p: Party, op: Record<string, unknown>) => callRoute(programRoute as Handler, "/api/program", p, op);
+  const programCreated = await programOp(C, { op: "createProgram", athleteId: A.id, name: `Audit Block ${stamp}`, status: "published" });
+  check("POST /api/program: A's coach creates a program for A (programs write)", programCreated.status === 200, JSON.stringify(programCreated.body));
+  targets.programs = typeof programCreated.body.rowId === "string" ? programCreated.body.rowId : "";
+  if (targets.programs) {
+    const block = await programOp(C, { op: "addBlock", programId: targets.programs, name: "Audit block" });
+    targets.program_blocks = typeof block.body.rowId === "string" ? block.body.rowId : "";
+    const week = await programOp(C, { op: "addWeek", blockId: targets.program_blocks, label: "Week 1", status: "published" });
+    targets.program_weeks = typeof week.body.rowId === "string" ? week.body.rowId : "";
+    const day = await programOp(C, { op: "addDay", weekId: targets.program_weeks, label: "Day 1" });
+    targets.program_days = typeof day.body.rowId === "string" ? day.body.rowId : "";
+    const line = await programOp(C, { op: "addPrescription", dayId: targets.program_days, exerciseId: targets["exercises:library"], setCount: 3, reps: 5, load: "75%" });
+    targets.prescriptions = typeof line.body.rowId === "string" ? line.body.rowId : "";
+    check("and a block, week, day and line under it", Boolean(targets.program_blocks && targets.program_weeks && targets.program_days && targets.prescriptions));
+  }
+  for (const p of [U, B]) {
+    const res = await programOp(p, { op: "createProgram", athleteId: A.id, name: "Forged" });
+    check(`POST /api/program: ${ACTOR_LABELS[p.actor]} cannot write a program for A`, res.status === 403, `${res.status} ${JSON.stringify(res.body)}`);
+    const line = await programOp(p, { op: "addPrescription", dayId: targets.program_days, exerciseId: targets["exercises:library"], setCount: 10, load: "100%" });
+    check(`POST /api/program: ${ACTOR_LABELS[p.actor]} cannot add a line to A's program`, line.status === 403, `${line.status}`);
+  }
+  check("POST /api/program: A cannot write his own programming through his coach's program", (await programOp(A, { op: "addBlock", programId: targets.programs, name: "Mine" })).status === 403);
+  check("POST /api/program with no session is refused", (await programOp(anon, { op: "createProgram", athleteId: A.id, name: "x" })).status === 401);
+
   // B's own training, so isolation is tested against real data both ways.
   const bSession = await createSession(B.deps, { userId: B.id }, { clientSessionId: `audit-b-session-${stamp}` });
   const bSet = await createSet(B.deps, { userId: B.id }, {
@@ -534,28 +613,51 @@ try {
    * Creates: forgery, attempted as an attacker would
    * -------------------------------------------------------------------- */
 
+  /** Forged rows Appwrite accepted, for the validator to delete. */
+  const landed: { table: string; id: string; what: string }[] = [];
+
+  /**
+   * A raw createRow as the attacker. Three outcomes: refused; landed and
+   * readable as the victim's (a failure); or landed but failing the authorship
+   * check every reader applies, which counts as a refusal because nobody will
+   * ever see it. Whether the validator also deletes it is asserted later.
+   */
   const forged = async (rule: ResourceRule, actor: AuditActor, table: string, rowId: string, data: Record<string, unknown>, permissions: string[], how: string) => {
+    let created: Record<string, unknown> | null = null;
     const outcome = await attempt(async () => {
-      const row = await party[actor].tables.createRow({ databaseId: D, tableId: table, rowId, data, permissions });
-      createdRows.push({ table, id: row.$id });
+      created = await party[actor].tables.createRow({ databaseId: D, tableId: table, rowId, data, permissions });
+      createdRows.push({ table, id: String(created.$id) });
     });
+    if (outcome.kind === "allowed" && created) {
+      const row = created as Record<string, unknown>;
+      if (isAuthentic(table, row)) {
+        record(rule, "create", actor, outcome, `${how}; readers trust it`);
+      } else {
+        landed.push({ table, id: String(row.$id), what: `${rule.key} by ${ACTOR_LABELS[actor]}` });
+        const proof = ownerProof(table, row) ?? [];
+        record(rule, "create", actor, { kind: "neutralised", reason: `lacks ${proof.join(", ") || "an owner"}` }, how);
+      }
+      return String(row.$id);
+    }
     record(rule, "create", actor, outcome, how);
+    return "";
   };
 
   const now = () => new Date().toISOString();
   const forgerId = (actor: AuditActor) => party[actor].id || ID.unique();
   const EVERYONE = 'stamped read for every signed-in user';
 
-  let bForgedSet = "";
+  const forgedBy: Record<string, string> = {};
+  const remember = (key: string, id: string) => {
+    if (id) forgedBy[key] = id;
+  };
   for (const actor of ACTORS) {
     const tag = `${actor}-${stamp}`;
     if (actor !== "athlete") {
       await forged(ruleFor("profiles"), actor, "profiles", ID.unique(), { user_id: A.id, display_name: "Forged", units: "kg", created_at: now() }, readableByEveryone(), `createRow naming A as user_id, ${EVERYONE}`);
       await forged(ruleFor("exercises"), actor, "exercises", ID.unique(), { name: `Forged ${tag}`, normalised_name: normaliseExerciseName(`Forged ${tag}`), is_global: false, owner_id: A.id, created_at: now() }, readableByEveryone(), `createRow with owner_id A (lands in A's typeahead), ${EVERYONE}`);
       await forged(ruleFor("sessions"), actor, "sessions", ID.unique(), { athlete_id: A.id, started_at: now(), set_count: 0, tonnage_kg: 0, client_session_id: `forged-${tag}` }, readableByEveryone(), `createRow with athlete_id A, ${EVERYONE}`);
-      const before = createdRows.length;
-      await forged(ruleFor("sets"), actor, "sets", ID.unique(), { session_id: targets.sessions, athlete_id: A.id, exercise_id: targets.exercises, set_index: 9, load_kg: 300, reps: 1, rpe: 10, e1rm_kg: 400, is_warmup: false, logged_at: loggedAt.toISOString(), client_set_id: `forged-${tag}` }, readableByEveryone(), `createRow with athlete_id A and e1rm 400, ${EVERYONE}`);
-      if (actor === "otherAthlete" && createdRows.length > before) bForgedSet = createdRows[createdRows.length - 1].id;
+      remember(`set:${actor}`, await forged(ruleFor("sets"), actor, "sets", ID.unique(), { session_id: targets.sessions, athlete_id: A.id, exercise_id: targets.exercises, set_index: 9, load_kg: 300, reps: 1, rpe: 10, e1rm_kg: 400, is_warmup: false, logged_at: loggedAt.toISOString(), client_set_id: `forged-${tag}`, video_file_id: targets.set_videos }, readableByEveryone(), `createRow with athlete_id A and e1rm 400, ${EVERYONE}`));
       const day = `2026-01-${String(10 + ACTORS.indexOf(actor)).padStart(2, "0")}`;
       await forged(ruleFor("bodyweight_entries"), actor, "bodyweight_entries", bodyweightRowId(A.id, day), { athlete_id: A.id, weight_kg: 140, measured_on: day, recorded_at: now() }, readableByEveryone(), `createRow at A's derived weigh-in id, ${EVERYONE}`);
     }
@@ -563,16 +665,23 @@ try {
       // The athlete forges with what he holds -- his circle -- which is enough
       // for his coach's queue to read it. Everyone else stamps read(users).
       const reviewStamp = actor === "athlete" ? commentPermissions({ athleteId: A.id, authorId: A.id }) : readableByEveryone();
-      await forged(ruleFor("set_reviews"), actor, "set_reviews", ID.unique(), { coach_id: C.id, athlete_id: A.id, set_id: extras.set2, reviewed_at: now(), client_review_id: `forged-${tag}` }, reviewStamp, `createRow claiming the coach cleared A's clip, ${actor === "athlete" ? "stamped read for A's circle" : EVERYONE}`);
+      remember(`review:${actor}`, await forged(ruleFor("set_reviews"), actor, "set_reviews", ID.unique(), { coach_id: C.id, athlete_id: A.id, set_id: extras.set2, reviewed_at: now(), client_review_id: `forged-${tag}` }, reviewStamp, `createRow claiming the coach cleared A's clip, ${actor === "athlete" ? "stamped read for A's circle" : EVERYONE}`));
     }
     if (actor !== "athlete" && actor !== "coach") {
-      await forged(ruleFor("set_comments"), actor, "set_comments", ID.unique(), { set_id: targets.sets, athlete_id: A.id, author_id: C.id, body: "Forged coaching note", parent_id: null, created_at: now(), client_comment_id: `forged-${tag}` }, readableByEveryone(), `createRow on A's set with author_id = the coach, ${EVERYONE}`);
+      remember(`comment:${actor}`, await forged(ruleFor("set_comments"), actor, "set_comments", ID.unique(), { set_id: targets.sets, athlete_id: A.id, author_id: C.id, body: "Forged coaching note", parent_id: null, created_at: now(), client_comment_id: `forged-${tag}` }, readableByEveryone(), `createRow on A's set with author_id = the coach, ${EVERYONE}`));
     }
-    await forged(ruleFor("exercises:library"), actor, "exercises", ID.unique(), { name: `Forged Library ${tag}`, normalised_name: normaliseExerciseName(`Forged Library ${tag}`), is_global: true, owner_id: forgerId(actor), created_at: now() }, readableByEveryone(), `createRow with is_global true, ${EVERYONE}`);
+    remember(`library:${actor}`, await forged(ruleFor("exercises:library"), actor, "exercises", ID.unique(), { name: `Forged Library ${tag}`, normalised_name: normaliseExerciseName(`Forged Library ${tag}`), is_global: true, owner_id: forgerId(actor), created_at: now() }, readableByEveryone(), `createRow with is_global true, ${EVERYONE}`));
     await forged(ruleFor("stats_rollups"), actor, "stats_rollups", ID.unique(), { athlete_id: A.id, exercise_id: targets.exercises, week_start: "2026-01-05T00:00:00.000Z", set_count: 1, volume_reps: 1, tonnage_kg: 999, best_e1rm_kg: 400, rebuilt_at: now() }, readableByEveryone(), `createRow with athlete_id A, ${EVERYONE}`);
     await forged(ruleFor("reference_maxes"), actor, "reference_maxes", ID.unique(), { athlete_id: A.id, exercise_id: targets.exercises, kind: "training", value_kg: 250, effective_from: now(), recorded_by: forgerId(actor), created_at: now() }, readableByEveryone(), `createRow with athlete_id A, ${EVERYONE}`);
     await forged(ruleFor("invite_codes"), actor, "invite_codes", `AUD-${ACTORS.indexOf(actor)}${stamp.slice(-6)}`, { coach_id: ID.unique(), created_at: now() }, readableByEveryone(), `createRow minting a code, ${EVERYONE}`);
     await forged(ruleFor("coach_athlete_links"), actor, "coach_athlete_links", ID.unique(), { coach_id: forgerId(actor), athlete_id: actor === "coach" ? B.id : A.id, status: "active", linked_at: now() }, readableByEveryone(), "createRow granting themselves a coach link");
+    // Programming for A, written by anyone but the route. Every table of it.
+    const programBase = { coach_id: forgerId(actor), athlete_id: A.id };
+    await forged(ruleFor("programs"), actor, "programs", ID.unique(), { ...programBase, name: `Forged ${tag}`, status: "published", created_at: now(), updated_at: now() }, readableByEveryone(), `createRow of a program for A, ${EVERYONE}`);
+    await forged(ruleFor("program_blocks"), actor, "program_blocks", ID.unique(), { ...programBase, program_id: targets.programs, position: 9, name: "Forged" }, readableByEveryone(), `createRow of a block in A's program, ${EVERYONE}`);
+    await forged(ruleFor("program_weeks"), actor, "program_weeks", ID.unique(), { ...programBase, program_id: targets.programs, block_id: targets.program_blocks, position: 9, status: "published" }, readableByEveryone(), `createRow of a week in A's program, ${EVERYONE}`);
+    await forged(ruleFor("program_days"), actor, "program_days", ID.unique(), { ...programBase, program_id: targets.programs, block_id: targets.program_blocks, week_id: targets.program_weeks, position: 9 }, readableByEveryone(), `createRow of a day on A's Today, ${EVERYONE}`);
+    await forged(ruleFor("prescriptions"), actor, "prescriptions", ID.unique(), { ...programBase, program_id: targets.programs, week_id: targets.program_weeks, day_id: targets.program_days, exercise_id: targets.exercises, position: 9, set_count: 10, load: "200%", load_kind: "freeform", updated_at: now() }, readableByEveryone(), `createRow of a line in A's program, ${EVERYONE}`);
     if (actor !== "athlete") {
       const outcome = await attempt(async () => {
         const file = await party[actor].storage.createFile({
@@ -587,31 +696,131 @@ try {
     }
   }
 
-  heading("What a forged row does once it lands");
-  if (bForgedSet) {
-    const rebuilt = await callRoute(rollupRoute as Handler, "/api/rollup", A, {
-      exerciseId: targets.exercises,
-      loggedAt: loggedAt.toISOString(),
-    });
-    const after = (
+  heading("What a forged row does once it lands: nothing, because no reader trusts it");
+  const rollupFor = async (p: Party, exerciseId: string) => {
+    const rebuilt = await callRoute(rollupRoute as Handler, "/api/rollup", p, { exerciseId, loggedAt: loggedAt.toISOString() });
+    const row = (
       await adminDb.listRows({
         databaseId: D,
         tableId: "stats_rollups",
-        queries: [Query.equal("athlete_id", A.id), Query.equal("exercise_id", targets.exercises), Query.limit(1)],
+        queries: [Query.equal("athlete_id", p.id), Query.equal("exercise_id", exerciseId), Query.limit(1)],
       })
     ).rows[0] as unknown as Record<string, unknown> | undefined;
+    return { status: rebuilt.body.status, bestE1rm: Number(row?.best_e1rm_kg ?? 0) };
+  };
+  const bForgedSet = forgedBy["set:otherAthlete"] ?? "";
+  if (bForgedSet) {
+    const after = await rollupFor(A, targets.exercises);
     check(
       "a set athlete B forged under A's id stays out of A's rollup when A next logs",
-      rebuilt.body.status === "written" && Number(after?.best_e1rm_kg ?? 0) < 400,
-      `A's best e1RM for the week is now ${String(after?.best_e1rm_kg)}kg, from a set B wrote`,
+      after.status === "written" && after.bestE1rm < 400,
+      `A's best e1RM for the week is now ${after.bestE1rm}kg, from a set B wrote`,
     );
-    check(
-      "and out of the coach's view of A's sets",
-      (await attempt(() => C.tables.getRow({ databaseId: D, tableId: "sets", rowId: bForgedSet }))).kind === "denied",
-      "the coach reads it as A's set",
-    );
+    const coachSees = authenticRows(
+      "sets",
+      (await C.tables.listRows({ databaseId: D, tableId: "sets", queries: [Query.equal("athlete_id", A.id), Query.limit(100)] })).rows,
+    ).map((row) => row.$id);
+    check("and out of the coach's view of A's sets, clip included", !coachSees.includes(bForgedSet) && coachSees.includes(targets.sets), `coach reads ${coachSees.length} of A's sets`);
   } else {
     check("athlete B could not forge a set under A's id, so there is nothing to leak", true);
+  }
+  const forgedReview = forgedBy["review:otherAthlete"] ?? forgedBy["review:athlete"] ?? "";
+  if (forgedReview) {
+    const cleared = authenticRows(
+      "set_reviews",
+      (await C.tables.listRows({ databaseId: D, tableId: "set_reviews", queries: [Query.equal("coach_id", C.id), Query.limit(100)] })).rows,
+    ).map((row) => row.$id);
+    check("a forged 'reviewed' mark does not clear A's clip from the coach's queue", !cleared.includes(forgedReview) && cleared.includes(targets.set_reviews), `coach's own reviews: ${cleared.length}`);
+  }
+  const forgedComment = forgedBy["comment:otherAthlete"] ?? "";
+  if (forgedComment) {
+    const thread = authenticRows(
+      "set_comments",
+      (await A.tables.listRows({ databaseId: D, tableId: "set_comments", queries: [Query.equal("set_id", targets.sets), Query.limit(100)] })).rows,
+    ).map((row) => row.$id);
+    check("a forged comment in the coach's name never reaches A's thread", !thread.includes(forgedComment) && thread.includes(targets.set_comments), `thread: ${thread.length} comments`);
+  }
+  const forgedLibrary = Object.entries(forgedBy).filter(([k]) => k.startsWith("library:")).map(([, id]) => id);
+  if (forgedLibrary.length > 0) {
+    const library = authenticRows(
+      "exercises",
+      (await B.tables.listRows({ databaseId: D, tableId: "exercises", queries: [Query.equal("is_global", true), Query.limit(100), Query.orderDesc("$id")] })).rows,
+    ).map((row) => row.$id);
+    check("a forged is_global exercise reaches nobody's typeahead; the seeded library does", forgedLibrary.every((id) => !library.includes(id)) && library.includes(targets["exercises:library"]), `typeahead: ${library.length} library rows`);
+  }
+
+  // Not asserted before 6 Oct: A relabelling his own set with B's id. Appwrite
+  // allows the update -- A holds update on his own row -- so the row is now
+  // stamped by A and claims to be B's.
+  const set3 = (await createSet(A.deps, { userId: A.id }, setInput("set3", 300))).$id;
+  const relabel = await attempt(() =>
+    A.tables.updateRow<Models.DefaultRow>({ databaseId: D, tableId: "sets", rowId: set3, data: { athlete_id: B.id } }),
+  );
+  if (relabel.kind === "allowed") {
+    landed.push({ table: "sets", id: set3, what: "A's set relabelled as B's" });
+    const relabelled = (await adminDb.getRow({ databaseId: D, tableId: "sets", rowId: set3 })) as unknown as Record<string, unknown>;
+    const bRollup = await rollupFor(B, targets.exercises);
+    check(
+      "A relabels his own set as B's: no reader takes it as B's, and B's rollup ignores it",
+      // B's own 100x5 set is in the same week; the relabelled 300x5 would push his best past 300.
+      !isAuthentic("sets", relabelled) && bRollup.bestE1rm < 300,
+      `authentic=${isAuthentic("sets", relabelled)} B's rollup ${bRollup.status} best ${bRollup.bestE1rm}`,
+    );
+  } else {
+    check("A cannot relabel his own set as B's", relabel.kind === "denied", relabel.kind === "error" ? relabel.message : relabel.kind);
+  }
+
+  // Also new: squatting a profile. L has an account and has not onboarded; B
+  // writes a profile at L's id first.
+  const late = await users.create({ userId: ID.unique(), email: `audit-late-${stamp}@example.com`, password: `Audit-${stamp}-pass!`, name: "Audit Late Joiner" });
+  createdUsers.push(late.$id);
+  const lateSession = await users.createSession({ userId: late.$id });
+  const L = { id: late.$id, tables: new TablesDB(new Client().setEndpoint(config.endpoint).setProject(config.projectId).setSession(lateSession.secret)) };
+  const squat = await attempt(() =>
+    B.tables.createRow<Models.DefaultRow>({ databaseId: D, tableId: "profiles", rowId: L.id, data: { user_id: L.id, display_name: "Squatter", units: "kg", created_at: now() }, permissions: readableByEveryone() }),
+  );
+  let squatted = false;
+  if (squat.kind === "allowed") {
+    createdRows.push({ table: "profiles", id: L.id });
+    landed.push({ table: "profiles", id: L.id, what: "B's squat on L's profile" });
+    squatted = true;
+    const seen = await attempt(async () => {
+      const row = (await L.tables.getRow({ databaseId: D, tableId: "profiles", rowId: L.id })) as unknown as Record<string, unknown>;
+      if (isAuthentic("profiles", row)) throw new Error("L's app would show B's profile as L's");
+    });
+    check("B squats L's profile before L onboards: L's app reads it as absent", seen.kind === "allowed", seen.kind === "error" ? seen.message : seen.kind);
+  } else {
+    check("B cannot squat L's profile id", squat.kind === "denied");
+  }
+
+  /* -----------------------------------------------------------------------
+   * The validator: every forged row that landed is deleted, within a bound
+   * -------------------------------------------------------------------- */
+
+  heading(`The validate-row Function deletes what landed (within ${VALIDATOR_WAIT_MS / 1000}s)`);
+  if (!validatorLive) {
+    check(`validate-row is not live, so ${landed.length} forged row(s) stay until teardown`, false, "Deploy it: npm run appwrite:functions");
+  } else if (landed.length === 0) {
+    check("nothing landed, nothing to delete", true);
+  } else {
+    const deadline = Date.now() + VALIDATOR_WAIT_MS;
+    const remaining = new Set(landed.map((l) => `${l.table}/${l.id}`));
+    while (remaining.size > 0 && Date.now() < deadline) {
+      for (const l of landed) {
+        const key = `${l.table}/${l.id}`;
+        if (!remaining.has(key)) continue;
+        const gone = (await attempt(() => adminDb.getRow({ databaseId: D, tableId: l.table, rowId: l.id }))).kind === "denied";
+        if (gone) remaining.delete(key);
+      }
+      if (remaining.size > 0) await new Promise((r) => setTimeout(r, 2000));
+    }
+    for (const l of landed) {
+      check(`deleted: ${l.what}`, !remaining.has(`${l.table}/${l.id}`), `${l.table}/${l.id} still present after ${VALIDATOR_WAIT_MS / 1000}s`);
+    }
+    if (squatted && !remaining.has(`profiles/${L.id}`)) {
+      const own = await attempt(() => createProfile(depsFor(L.tables), { userId: L.id }, { displayName: "Audit Late Joiner" }));
+      check("and L then onboards with his own profile", own.kind === "allowed", own.kind === "error" ? own.message : own.kind);
+    }
   }
 
   /* -----------------------------------------------------------------------
@@ -639,6 +848,11 @@ try {
       reference_maxes: { value_kg: 500 + n },
       invite_codes: { coach_id: ID.unique() },
       coach_athlete_links: { status: "revoked" },
+      programs: { name: tag },
+      program_blocks: { name: tag },
+      program_weeks: { label: tag },
+      program_days: { label: tag },
+      prescriptions: { load: tag },
     };
     return values[key] ?? {};
   };
@@ -764,6 +978,17 @@ try {
   );
   const lateMax = await callRoute(referenceMaxRoute as Handler, "/api/reference-max", C, maxBody(A.id, "training", 200));
   check("or set A's training max through the route", lateMax.status === 403, `${lateMax.status} ${JSON.stringify(lateMax.body)}`);
+  check("or hold A's suggestions", (await suggest(C, "held")).status === 403);
+  const lateEdit = await programOp(C, { op: "updateProgram", programId: targets.programs, name: "Edited after revoke" });
+  check("or edit the program he wrote for A", lateEdit.status === 403, `${lateEdit.status} ${JSON.stringify(lateEdit.body)}`);
+  check(
+    "[by policy] the ex-coach still reads the program he wrote: it is his work product, like a comment",
+    (await attempt(() => C.tables.getRow({ databaseId: D, tableId: "programs", rowId: targets.programs }))).kind === "allowed",
+  );
+  check(
+    "while A keeps reading the program and its days",
+    (await attempt(() => A.tables.getRow({ databaseId: D, tableId: "program_days", rowId: targets.program_days }))).kind === "allowed",
+  );
   check(
     "while A keeps reading his own set",
     (await attempt(() => A.tables.getRow({ databaseId: D, tableId: "sets", rowId: extras.set2 }))).kind === "allowed",
@@ -836,13 +1061,18 @@ async function scanStamps() {
     console.log("  skipped (--no-scan)");
     return;
   }
+  // Programs come before their children in the schema, so a child can be
+  // checked against its parent's coach and athlete as the scan goes.
+  const programsById = new Map<string, { coach_id: string; athlete_id: string | null }>();
+  const rulesFor = (tableId: string) => RULES.filter((r) => r.kind === "table" && r.resource === tableId && r.invariant);
   for (const table of schema.tables) {
     if (!STAMPED_TABLES.includes(table.id)) {
-      check(`${table.id}: the stamp scan knows this table's policy`, false, "Add it to expectedStamp in appwrite/audit/rules.ts.");
+      check(`${table.id}: the stamp scan knows this table's policy`, false, "Add it to expectedStamp in appwrite/documents/provenance.ts.");
       continue;
     }
     let scanned = 0;
     const drift: string[] = [];
+    const broken: string[] = [];
     let cursor: string | undefined;
     for (;;) {
       const queries = [Query.limit(100), Query.orderAsc("$id")];
@@ -850,7 +1080,8 @@ async function scanStamps() {
       const page = await adminDb.listRows({ databaseId: D, tableId: table.id, queries });
       for (const row of page.rows as unknown as Models.DefaultRow[]) {
         scanned += 1;
-        const want = expectedStamp(table.id, row as unknown as Record<string, unknown>);
+        const data = row as unknown as Record<string, unknown>;
+        const want = expectedStamp(table.id, data);
         if (want === null) {
           drift.push(`${row.$id}: missing the owner fields a stamp is derived from`);
           continue;
@@ -858,6 +1089,22 @@ async function scanStamps() {
         const { missing, extra } = stampDrift(want, row.$permissions);
         if (missing.length || extra.length) {
           drift.push(`${row.$id}: missing ${JSON.stringify(missing)} extra ${JSON.stringify(extra)}`);
+        }
+        // Authorship, not just shape: a row whose stamp matches the policy for
+        // the owner it names was written by that owner (or the server).
+        if (!isAuthentic(table.id, data)) broken.push(`${row.$id}: not written by the owner it names`);
+        for (const rule of rulesFor(table.id)) {
+          const problem = rule.invariant!(data);
+          if (problem) broken.push(`${row.$id}: ${problem}`);
+        }
+        if (table.id === "programs") {
+          programsById.set(row.$id, { coach_id: String(data.coach_id), athlete_id: typeof data.athlete_id === "string" ? data.athlete_id : null });
+        } else if (programsById.size > 0 && typeof data.program_id === "string") {
+          const parent = programsById.get(data.program_id);
+          if (!parent) broken.push(`${row.$id}: program ${data.program_id} does not exist`);
+          else if (parent.coach_id !== data.coach_id || parent.athlete_id !== (typeof data.athlete_id === "string" ? data.athlete_id : null)) {
+            broken.push(`${row.$id}: coach/athlete differ from program ${data.program_id}`);
+          }
         }
       }
       if (page.rows.length < 100) break;
@@ -868,6 +1115,9 @@ async function scanStamps() {
       drift.length === 0,
       `${drift.length} drifted, e.g.\n          ${drift.slice(0, 3).join("\n          ")}`,
     );
+    if (broken.length > 0 || rulesFor(table.id).length > 0 || table.id.startsWith("program") || table.id === "prescriptions") {
+      check(`${table.id}: every row was written by the owner it names and holds its invariants`, broken.length === 0, `${broken.length} row(s), e.g.\n          ${broken.slice(0, 3).join("\n          ")}`);
+    }
   }
 }
 
@@ -905,6 +1155,11 @@ async function teardown() {
     set_comments: ["athlete_id", "author_id"],
     coach_athlete_links: ["athlete_id", "coach_id"],
     invite_codes: ["coach_id"],
+    programs: ["athlete_id", "coach_id"],
+    program_blocks: ["athlete_id", "coach_id"],
+    program_weeks: ["athlete_id", "coach_id"],
+    program_days: ["athlete_id", "coach_id"],
+    prescriptions: ["athlete_id", "coach_id"],
   };
   if (createdUsers.length > 0) {
     for (const [table, columns] of Object.entries(ownerColumns)) {

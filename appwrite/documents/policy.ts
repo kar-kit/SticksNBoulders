@@ -56,6 +56,13 @@ const USERS = "users";
  */
 export const LIBRARY_TEAM_ID = "library";
 
+/**
+ * The strongest read a stranger can stamp: every signed-in user. Appwrite lets
+ * any session stamp `users` because every session holds it. No policy grants
+ * it on an athlete-owned row; the audit uses it to forge as an attacker would.
+ */
+export const readableByAnySession = () => read(USERS);
+
 /** The permission that proves the named user wrote the row. See provenance.ts. */
 export const writtenByUser = (userId: string) => update(user(requireId(userId, "userId")));
 /** The permission that proves the server wrote the row. See provenance.ts. */

@@ -51,6 +51,22 @@ describe("the audit's rules", () => {
     }
   });
 
+  it("expects a program to be read by its coach and athlete and written by nobody from a session", () => {
+    for (const table of ["programs", "program_blocks", "program_weeks", "program_days", "prescriptions"]) {
+      const rule = RULES.find((r) => r.resource === table)!;
+      expect(rule.allow.read).toEqual(["athlete", "coach"]);
+      expect(rule.ownerColumn).toBe("athlete_id");
+    }
+  });
+
+  it("checks the one column a coach may change on a link after linking", () => {
+    const rule = RULES.find((r) => r.key === "coach_athlete_links")!;
+    expect(rule.invariant!({ suggestions_mode: "direct" })).toBeNull();
+    expect(rule.invariant!({ suggestions_mode: "held" })).toBeNull();
+    expect(rule.invariant!({})).toBeNull();
+    expect(rule.invariant!({ suggestions_mode: "always" })).toMatch(/suggestions_mode/);
+  });
+
   it("never lets a coach rewrite logged work", () => {
     for (const key of ["sessions", "sets", "bodyweight_entries", "profiles", "exercises"]) {
       const rule = RULES.find((r) => r.key === key)!;
@@ -80,15 +96,15 @@ describe("coverage", () => {
   it("reports a table another branch added without a rule", () => {
     const result = coverage([
       { id: "sets", kind: "table" },
-      { id: "programs", kind: "table" },
+      { id: "widgets", kind: "table" },
     ]);
-    expect(result.uncovered).toEqual([{ id: "programs", kind: "table" }]);
+    expect(result.uncovered).toEqual([{ id: "widgets", kind: "table" }]);
   });
 
   it("counts a table found in both schema and instance once", () => {
     const result = coverage([
-      { id: "programs", kind: "table" },
-      { id: "programs", kind: "table" },
+      { id: "widgets", kind: "table" },
+      { id: "widgets", kind: "table" },
     ]);
     expect(result.uncovered).toHaveLength(1);
   });
@@ -125,6 +141,16 @@ describe("classifying an attempt", () => {
     expect(passes(false, { kind: "denied", code: 401 })).toBe(true);
     expect(passes(false, { kind: "allowed" })).toBe(false);
     expect(passes(true, { kind: "denied", code: 401 })).toBe(false);
+  });
+
+  it("counts a forgery that landed but that no reader trusts as a refusal, and says so", () => {
+    const neutralised = { kind: "neutralised" as const, reason: "lacks update(\"user:a\")" };
+    expect(passes(false, neutralised)).toBe(true);
+    expect(passes(true, neutralised)).toBe(false);
+    const cell: Cell = { rule: "sets", op: "create", actor: "otherAthlete", expected: false, outcome: neutralised, how: "createRow" };
+    expect(formatMatrix([cell])).toContain("landed*");
+    expect(formatMatrix([cell])).not.toContain("FAIL");
+    expect(describeFailure({ ...cell, expected: true })).toContain("no reader trusts it");
   });
 });
 

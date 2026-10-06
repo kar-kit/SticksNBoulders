@@ -52,6 +52,12 @@ export interface ResourceRule {
    * outsider filtering on it for athlete A must get zero rows back.
    */
   ownerColumn?: string;
+  /**
+   * A per-row invariant checked during the stored-stamp scan, on every row of
+   * the table. Returns what is wrong, or null. For the facts a stamp cannot
+   * carry: a column's allowed values, a child agreeing with its parent.
+   */
+  invariant?: (row: Record<string, unknown>) => string | null;
   /** Why the less obvious cells are what they are. */
   notes?: string;
 }
@@ -78,6 +84,22 @@ const serverOnly = (read: readonly AuditActor[]) => ({
   create: nobody,
   update: nobody,
   delete: nobody,
+});
+
+/**
+ * Order 19: five tables, one document. Written only by /api/program, which
+ * checks the caller is the program's coach on an active link; read by the
+ * coach, the athlete and the athlete's circle. The coach's read survives a
+ * revoked link by design (policy.ts, programPermissions).
+ */
+const programTable = (resource: string, target: string): ResourceRule => ({
+  key: resource,
+  kind: "table",
+  resource,
+  target,
+  allow: serverOnly(athleteAndCoach),
+  ownerColumn: "athlete_id",
+  notes: "Programs are archived, never deleted; a child row's coach_id and athlete_id must match its program's.",
 });
 
 export const RULES: readonly ResourceRule[] = [
@@ -202,7 +224,19 @@ export const RULES: readonly ResourceRule[] = [
     target: "the A-coach link, via /api/link",
     allow: serverOnly(athleteAndCoach),
     ownerColumn: "athlete_id",
+    // Order 28: the one column a coach may change after linking, through
+    // /api/link/suggestions only. Anything else here is a corrupt link.
+    invariant: (row) =>
+      row.suggestions_mode == null || row.suggestions_mode === "direct" || row.suggestions_mode === "held"
+        ? null
+        : `suggestions_mode is ${JSON.stringify(row.suggestions_mode)}`,
+    notes: "Each row carries exactly the two parties' reads: no update, delete, team or users grant.",
   },
+  programTable("programs", "the program A's coach wrote for A, via /api/program"),
+  programTable("program_blocks", "a block of that program"),
+  programTable("program_weeks", "a week of that program"),
+  programTable("program_days", "a day of that program"),
+  programTable("prescriptions", "a prescribed line of that program"),
   {
     key: "set_videos",
     kind: "bucket",
@@ -270,6 +304,14 @@ function dedupe(resources: readonly DiscoveredResource[]): DiscoveredResource[] 
 export type Outcome =
   | { kind: "allowed" }
   | { kind: "denied"; code: number }
+  /**
+   * Appwrite accepted the write, and it changed nothing anyone will read:
+   * the row fails the authorship check every reader applies
+   * (appwrite/documents/provenance.ts). Counts as a refusal. Whether the
+   * validate-row Function then deleted it is asserted separately, with a
+   * bounded wait, because the two defences are independent.
+   */
+  | { kind: "neutralised"; reason: string }
   /** Neither proof of access nor proof of refusal. Always a failure. */
   | { kind: "error"; message: string };
 
@@ -315,7 +357,14 @@ export interface Cell {
 
 const symbol = (cell: Cell | undefined): string => {
   if (!cell) return "-";
-  const seen = cell.outcome.kind === "allowed" ? "yes" : cell.outcome.kind === "denied" ? "no" : "ERR";
+  const seen =
+    cell.outcome.kind === "allowed"
+      ? "yes"
+      : cell.outcome.kind === "denied"
+        ? "no"
+        : cell.outcome.kind === "neutralised"
+          ? "landed*"
+          : "ERR";
   return passes(cell.expected, cell.outcome) ? seen : `${seen} FAIL`;
 };
 
@@ -356,7 +405,9 @@ export function describeFailure(cell: Cell): string {
       ? "it succeeded"
       : cell.outcome.kind === "denied"
         ? `it was refused (${cell.outcome.code})`
-        : `it errored: ${cell.outcome.message}`;
+        : cell.outcome.kind === "neutralised"
+          ? `it landed but no reader trusts it (${cell.outcome.reason})`
+          : `it errored: ${cell.outcome.message}`;
   return `${cell.rule} / ${cell.op} / ${who}: ${cell.how} -- ${expected}, ${got}`;
 }
 
