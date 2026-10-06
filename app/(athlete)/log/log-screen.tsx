@@ -13,6 +13,7 @@ import { UndoToast } from "@/components/ui/undo-toast";
 import { useSession } from "@/lib/auth/session-context";
 import { AttachVideo } from "@/components/logging/attach-video";
 import { setForNewClip } from "@/lib/video/clip";
+import { videoAsk } from "@/lib/logging/video-prompt";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { resolveOrCreateExercise } from "@/lib/exercises/library";
 import type { Exercise } from "@/lib/exercises/match";
@@ -200,6 +201,8 @@ export function LogScreen() {
    */
   const prescribed = usePrescribedSession(active?.programDayId, athleteId);
   const plan = useMemo(() => (prescribed.status === "ready" ? planDay(prescribed.day.prescriptions) : []), [prescribed]);
+  /** Exercises a clip was attached to on this page; sets read from Appwrite carry their own flag. */
+  const [filmed, setFilmed] = useState<ReadonlySet<string>>(new Set());
   const targetsOf = useCallback(
     (exerciseId: string, logged: readonly LoggedForTarget[]): SetTarget[] | null => {
       const planned = plan.find((p) => p.exerciseId === exerciseId);
@@ -796,11 +799,28 @@ export function LogScreen() {
                   block.id,
                 );
                 if (!target || !athleteId) return null;
+                const mine = setsOf(block.id);
+                // A coach's video request (Order 30): a nudge, never a gate.
+                // Backoff sets (Order 21) take positions too, so each line
+                // carries how many its rule adds right now.
+                const blockTargets = targetsOf(block.id, mine) ?? [];
+                const ask = videoAsk({
+                  lines: plan
+                    .find((p) => p.exerciseId === block.id)
+                    ?.lines.map((line) => ({
+                      ...line,
+                      backoffSets: blockTargets.filter((t) => t.prescriptionId === line.id && t.backoff).length,
+                    })),
+                  loggedWorking: mine.filter((s) => !s.isWarmup).length,
+                  hasClip: filmed.has(block.id) || mine.some((s) => s.hasVideo),
+                });
                 return (
                   <AttachVideo
                     key={target.clientSetId}
                     setId={target.clientSetId}
                     athleteId={athleteId}
+                    ask={ask}
+                    onAttached={() => setFilmed((prev) => new Set(prev).add(block.id))}
                   />
                 );
               })()}

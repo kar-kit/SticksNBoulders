@@ -250,6 +250,7 @@ export interface PrescriptionFields {
   notes?: string | null;
   /** The backoff cell as typed. Stored in its canonical spelling, derived here. */
   backoff?: string | null;
+  videoRequired?: boolean;
 }
 
 /**
@@ -302,6 +303,7 @@ export async function createPrescription(
       // Only when set: a line with no backoff writes exactly what it did
       // before Order 21, so it never depends on the column existing yet.
       ...(input.backoff ? { backoff: backoffOf(input.backoff) } : {}),
+      video_required: input.videoRequired ?? false,
       updated_at: iso(deps.now()),
     },
     permissions,
@@ -336,6 +338,7 @@ export async function updatePrescription(
       rest_seconds: input.restSeconds,
       notes: input.notes,
       backoff: backoffOf(input.backoff),
+      video_required: input.videoRequired,
       updated_at: iso(deps.now()),
     }),
     permissions,

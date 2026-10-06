@@ -384,8 +384,8 @@ describe("the write boundary", () => {
 describe("the editor's backoff cell", () => {
   const base = () => line({ id: "l1", backoff: null });
 
-  it("sits after notes, so Order 30's video column can follow it", () => {
-    expect(COLUMNS.slice(-2)).toEqual(["notes", "backoff"]);
+  it("sits right after notes", () => {
+    expect(COLUMNS[COLUMNS.indexOf("notes") + 1]).toBe("backoff");
   });
 
   it("saves what was typed in its canonical spelling", () => {

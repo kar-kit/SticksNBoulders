@@ -136,6 +136,11 @@ export interface Prescription {
    * read from Appwrite carries it.
    */
   backoff?: string | null;
+  /**
+   * The coach asks for a clip of this line. A nudge in the logger, never a
+   * gate. Absent means false; optional so a fixture need not spell it out.
+   */
+  videoRequired?: boolean;
   updatedAt: string;
 }
 
@@ -251,6 +256,7 @@ const prescriptionRow = z
     rest_seconds: nullableInt,
     notes: nullableString,
     backoff: nullableString,
+    video_required: z.boolean().nullish().transform((v) => v ?? false),
     updated_at: z.string(),
   })
   .transform(
@@ -269,6 +275,7 @@ const prescriptionRow = z
       restSeconds: r.rest_seconds,
       notes: r.notes,
       backoff: r.backoff,
+      videoRequired: r.video_required,
       updatedAt: r.updated_at,
     }),
   );
@@ -387,6 +394,7 @@ const lineFields = {
     const parsed = parseBackoff(value);
     if (!parsed.ok) ctx.addIssue({ code: "custom", message: parsed.reason });
   }),
+  videoRequired: z.boolean().optional(),
 };
 
 /** A range must run upwards. "8-6 reps" is a typo, not a prescription. */
@@ -409,6 +417,7 @@ const updatePrescription = z.object({
   restSeconds: lineFields.restSeconds,
   notes: lineFields.notes,
   backoff: lineFields.backoff,
+  videoRequired: lineFields.videoRequired,
 });
 
 const removePrescription = z.object({ op: z.literal("removePrescription"), prescriptionId: rowId });

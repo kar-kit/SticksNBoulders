@@ -487,6 +487,9 @@ export const schema: DatabaseSpec = {
         // set they actually logged. Optional and additive: a line with no
         // backoff is exactly the row it was before.
         { key: "backoff", type: "string", size: 40, required: false },
+        // Order 30. The coach asks for a clip of this line. Only ever a nudge
+        // in the logger -- nothing blocks on it. Null on rows written before.
+        { key: "video_required", type: "boolean", required: false, default: false },
         { key: "updated_at", type: "datetime", required: true },
       ],
       indexes: [

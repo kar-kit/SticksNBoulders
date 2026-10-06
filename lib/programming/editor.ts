@@ -15,10 +15,10 @@ import type { MaxKind } from "@/lib/strength/reference-max";
  */
 
 /**
- * The grid's editable columns, left to right. Backoff (Order 21) sits after
- * notes; video-required (Order 30) slots in after it.
+ * The grid's editable columns, left to right. Backoff (Order 21) is a typed
+ * rule; `video` (Order 30) is a toggle, not a typed cell.
  */
-export const COLUMNS = ["exercise", "sets", "reps", "load", "rest", "notes", "backoff"] as const;
+export const COLUMNS = ["exercise", "sets", "reps", "load", "rest", "notes", "backoff", "video"] as const;
 export type Column = (typeof COLUMNS)[number];
 
 /* -------------------------------------------------------------------------
@@ -125,6 +125,8 @@ export function cellText(line: Prescription, column: Exclude<Column, "exercise">
       return line.notes ?? "";
     case "backoff":
       return line.backoff ?? "";
+    case "video":
+      return line.videoRequired ? "Yes" : "No";
   }
 }
 
@@ -179,6 +181,8 @@ export function commitCell(
       const backoff = parsed.rule ? formatBackoff(parsed.rule) : null;
       return backoff === (line.backoff ?? null) ? { unchanged: true } : { op: { ...base, backoff } };
     }
+    case "video":
+      return { op: { ...base, videoRequired: /^(yes|y|true|1)$/i.test(text.trim()) } };
   }
 }
 
@@ -197,6 +201,7 @@ export function applyLineOp(line: Prescription, op: ProgramOpInput): Prescriptio
     restSeconds: op.restSeconds === undefined ? line.restSeconds : op.restSeconds,
     notes: op.notes === undefined ? line.notes : op.notes?.trim() || null,
     backoff: op.backoff === undefined ? line.backoff : op.backoff?.trim() || null,
+    videoRequired: op.videoRequired ?? line.videoRequired ?? false,
   };
 }
 
