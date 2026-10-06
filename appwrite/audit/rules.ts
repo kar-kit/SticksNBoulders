@@ -1,4 +1,5 @@
 import { POLICIES } from "../documents/policy";
+import { expectedStamp } from "../documents/provenance";
 
 /**
  * The permission audit's expectations: for every table and bucket, which of
@@ -363,69 +364,15 @@ export function describeFailure(cell: Cell): string {
  * Stored stamps
  * ---------------------------------------------------------------------- */
 
-type Row = Record<string, unknown>;
-
 /**
  * Tables expectedStamp can derive a stamp for. A table missing from here is
  * reported by the scan rather than skipped, so a new table cannot quietly
  * escape it.
  */
-export const STAMPED_TABLES: readonly string[] = [
-  "profiles",
-  "exercises",
-  "sessions",
-  "sets",
-  "bodyweight_entries",
-  "stats_rollups",
-  "reference_maxes",
-  "set_reviews",
-  "set_comments",
-  "coach_athlete_links",
-  "invite_codes",
-];
-const str = (row: Row, key: string) => (typeof row[key] === "string" ? (row[key] as string) : "");
+export const STAMPED_TABLES: readonly string[] = Object.keys(POLICIES);
 
-/**
- * The permissions policy.ts would stamp on this row today, or null when the
- * row does not carry the fields needed to say.
- *
- * This is the "rescan documents for missing or wrong permissions" half of the
- * audit (Build Plan section 7). Rows are frozen at write time, so a policy
- * change or a write path that skipped the helper leaves rows behind that no
- * session-based test will ever touch.
- */
-export function expectedStamp(tableId: string, row: Row): string[] | null {
-  try {
-    switch (tableId) {
-      case "profiles":
-        return POLICIES.profiles({ athleteId: str(row, "user_id") });
-      case "exercises":
-        return row.is_global === true
-          ? POLICIES.exercises({ athleteId: "library", isGlobal: true })
-          : POLICIES.exercises({ athleteId: str(row, "owner_id"), isGlobal: false });
-      case "sessions":
-      case "sets":
-      case "bodyweight_entries":
-      case "stats_rollups":
-      case "reference_maxes":
-        return POLICIES[tableId]({ athleteId: str(row, "athlete_id") });
-      case "set_reviews":
-        return POLICIES.set_reviews({ athleteId: str(row, "athlete_id"), coachId: str(row, "coach_id") });
-      case "set_comments":
-        return POLICIES.set_comments({ athleteId: str(row, "athlete_id"), authorId: str(row, "author_id") });
-      case "coach_athlete_links":
-        return POLICIES.coach_athlete_links({ coachId: str(row, "coach_id"), athleteId: str(row, "athlete_id") });
-      case "invite_codes":
-        return POLICIES.invite_codes({ coachId: str(row, "coach_id") });
-      default:
-        return null;
-    }
-  } catch {
-    // The policy refuses an empty id. A row missing its owner is drift too,
-    // and the caller reports it as such.
-    return null;
-  }
-}
+/** Moved to appwrite/documents/provenance.ts so the readers and the validate-row Function share it. */
+export { expectedStamp };
 
 export interface StampDrift {
   missing: string[];

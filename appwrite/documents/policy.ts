@@ -35,6 +35,23 @@ const user = (id: string) => `user:${id}`;
 const team = (id: string) => `team:${id}`;
 const USERS = "users";
 
+/**
+ * The team that marks a row as the server's.
+ *
+ * It has no members and never will: `appwrite:setup` creates it with the API
+ * key so nobody else can, and no session can stamp a `team:` role for a team
+ * it is not in. So `update("team:library")` on a row is a mark only the server
+ * can make -- which is what lets a reader tell a seeded library exercise from
+ * one a signed-in stranger wrote with `is_global: true` and `read("users")`,
+ * a stamp every session may make. See provenance.ts.
+ */
+export const LIBRARY_TEAM_ID = "library";
+
+/** The permission that proves the named user wrote the row. See provenance.ts. */
+export const writtenByUser = (userId: string) => update(user(requireId(userId, "userId")));
+/** The permission that proves the server wrote the row. See provenance.ts. */
+export const writtenByServer = () => update(team(LIBRARY_TEAM_ID));
+
 export interface RowOwner {
   /** The athlete the row belongs to. Never the coach, even on a coach action. */
   athleteId: string;
@@ -124,9 +141,17 @@ export function rollupPermissions({ athleteId }: RowOwner): string[] {
 }
 
 export function exercisePermissions({ athleteId, isGlobal }: ExerciseOwner): string[] {
-  // The shared library: readable by anyone signed in, editable by nobody.
-  // Curating it is an admin job, not something an athlete does mid-set.
-  if (isGlobal) return [read(USERS)];
+  // The shared library: readable by anyone signed in, editable by nobody who
+  // holds a session. Curating it is an admin job, not something an athlete
+  // does mid-set.
+  //
+  // The second entry grants nothing to anyone -- the team has no members. It
+  // is the server's mark. `read("users")` alone is a stamp every session can
+  // make, so a stranger could write `is_global: true` into every athlete's
+  // typeahead and nothing stored on the row would tell it from a seeded one
+  // (the 27 Sep finding in docs/permission-audit.md). A `team:` role for a
+  // team the caller is not in is the one thing Appwrite refuses to stamp.
+  if (isGlobal) return [read(USERS), writtenByServer()];
   return ownedByAthlete(requireId(athleteId, "athleteId"), true);
 }
 
@@ -222,16 +247,18 @@ export function videoPermissions({ athleteId }: RowOwner): string[] {
  * The circle is the role they share, so the circle is what the row is stamped
  * with, and both of them read it because both are in it.
  *
- * Written from the coach's browser rather than a server route, which is safe
- * here and is not elsewhere. The forgery that makes `reference_maxes`
- * server-only does not bite: a stranger could create a row naming somebody
- * else's coach and set, but they can only stamp roles they hold, so the row
- * would be unreadable by the real coach and would filter nothing out of the
- * real queue. It is litter, not a lie -- and a training max is a number on a
- * bar, where this is only whether a video has been watched.
+ * Written from the coach's browser rather than a server route. That is NOT
+ * safe on its own, and this comment used to say it was: a stranger -- or the
+ * athlete, stamping their own circle -- can create a row naming the real
+ * coach, stamped `read("users")`, a role every session holds, and the coach's
+ * queue reads it as their own clearance. Found by the audit, 27 Sep 2026.
+ * What makes it safe is provenance.ts: a reader only trusts a review carrying
+ * `update("user:<coach_id>")`, which only that coach can stamp, and the
+ * validate-row Function deletes anything that lacks it.
  *
- * The athlete never writes one, and cannot: update and delete are the coach's
- * alone. Clearing a coach's queue is not something the person being coached
+ * The athlete never writes one: update and delete are the coach's alone, and
+ * a row the athlete forges carries no coach stamp and is never read as a
+ * review. Clearing a coach's queue is not something the person being coached
  * gets to do.
  */
 export function reviewPermissions({ athleteId, coachId }: ReviewParties): string[] {

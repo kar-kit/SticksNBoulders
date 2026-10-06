@@ -176,7 +176,7 @@ describe("stored stamps", () => {
       `delete("user:${A}")`,
     ]);
     expect(expectedStamp("set_comments", { athlete_id: A, author_id: C })).toContain(`update("user:${C}")`);
-    expect(expectedStamp("exercises", { is_global: true })).toEqual(['read("users")']);
+    expect(expectedStamp("exercises", { is_global: true })).toEqual(['read("users")', 'update("team:library")']);
     expect(expectedStamp("exercises", { is_global: false, owner_id: A })).toContain(`update("user:${A}")`);
   });
 

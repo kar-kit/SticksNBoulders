@@ -37,6 +37,9 @@ export {
   POLICIES,
   SERVER_ONLY_TABLES,
   USER_WRITABLE_TABLES,
+  LIBRARY_TEAM_ID,
+  writtenByServer,
+  writtenByUser,
   type CodeOwner,
   type CommentAuthor,
   type ReviewParties,
@@ -46,6 +49,16 @@ export {
 } from "./policy";
 
 export type { RowWriter } from "./row-writer";
+
+export {
+  authenticRows,
+  expectedStamp,
+  isAuthentic,
+  ownerProof,
+  verdictFor,
+  VALIDATED_TABLES,
+  type Verdict,
+} from "./provenance";
 
 export {
   createCoachLink,
