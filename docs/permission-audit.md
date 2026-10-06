@@ -270,7 +270,7 @@ could do. `[Inference]` from the API's scope error and the console's options.
 
 **What the audit says now.** Every forgery in the finding, plus relabelling
 and squatting, is `landed*` (Appwrite accepts it, no reader trusts it) or
-refused; the consequence checks pass against the live instance. The remaining
+refused; the consequence checks pass against the live instance (463/465). The remaining
 `FAIL`s on 6 Oct are the two validator checks: the instance's Function builder
 answers every deployment with `Internal server error` within 3 seconds, the
 probe's own archive included, so `validate-row` has no active deployment yet.

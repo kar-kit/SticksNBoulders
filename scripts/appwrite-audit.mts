@@ -551,6 +551,21 @@ try {
     check(`POST /api/program: ${ACTOR_LABELS[p.actor]} cannot add a line to A's program`, line.status === 403, `${line.status}`);
   }
   check("POST /api/program: A cannot write his own programming through his coach's program", (await programOp(A, { op: "addBlock", programId: targets.programs, name: "Mine" })).status === 403);
+  // Orders 20/43: duplicating a week and copying a program. The coach may;
+  // nobody else may, and the coach may not copy onto an athlete he does not
+  // coach -- B here, who has his own circle and no link to C.
+  const dup = await programOp(C, { op: "duplicateWeek", weekId: targets.program_weeks });
+  check("POST /api/program duplicateWeek: A's coach duplicates a week of A's program", dup.status === 200, `${dup.status} ${JSON.stringify(dup.body)}`);
+  const copied = await programOp(C, { op: "copyProgram", programId: targets.programs, athleteId: A.id, name: `Audit Copy ${stamp}` });
+  check("POST /api/program copyProgram: A's coach copies A's program back to A as a draft", copied.status === 200, `${copied.status} ${JSON.stringify(copied.body)}`);
+  const copyToStranger = await programOp(C, { op: "copyProgram", programId: targets.programs, athleteId: B.id });
+  check("POST /api/program copyProgram: A's coach cannot copy it onto athlete B, whom he does not coach", copyToStranger.status === 403, `${copyToStranger.status}`);
+  for (const p of [U, B]) {
+    check(`POST /api/program duplicateWeek: ${ACTOR_LABELS[p.actor]} cannot duplicate A's week`, (await programOp(p, { op: "duplicateWeek", weekId: targets.program_weeks })).status === 403);
+    check(`POST /api/program copyProgram: ${ACTOR_LABELS[p.actor]} cannot copy A's program to themselves`, (await programOp(p, { op: "copyProgram", programId: targets.programs, athleteId: p.id })).status === 403);
+  }
+  check("POST /api/program duplicateWeek with no session is refused", (await programOp(anon, { op: "duplicateWeek", weekId: targets.program_weeks })).status === 401);
+  check("POST /api/program copyProgram with no session is refused", (await programOp(anon, { op: "copyProgram", programId: targets.programs, athleteId: A.id })).status === 401);
   check("POST /api/program with no session is refused", (await programOp(anon, { op: "createProgram", athleteId: A.id, name: "x" })).status === 401);
 
   // B's own training, so isolation is tested against real data both ways.
@@ -981,6 +996,8 @@ try {
   check("or hold A's suggestions", (await suggest(C, "held")).status === 403);
   const lateEdit = await programOp(C, { op: "updateProgram", programId: targets.programs, name: "Edited after revoke" });
   check("or edit the program he wrote for A", lateEdit.status === 403, `${lateEdit.status} ${JSON.stringify(lateEdit.body)}`);
+  check("or duplicate a week of it", (await programOp(C, { op: "duplicateWeek", weekId: targets.program_weeks })).status === 403);
+  check("or copy it to A again", (await programOp(C, { op: "copyProgram", programId: targets.programs, athleteId: A.id })).status === 403);
   check(
     "[by policy] the ex-coach still reads the program he wrote: it is his work product, like a comment",
     (await attempt(() => C.tables.getRow({ databaseId: D, tableId: "programs", rowId: targets.programs }))).kind === "allowed",

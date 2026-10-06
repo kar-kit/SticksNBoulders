@@ -57,9 +57,11 @@ covered by the same two layers and now asserted by the audit.
   instance.
 - The validator: every landed row must be deleted within 45s, polled by id;
   fails outright when the Function is not deployed.
-- Orders 19/22/28 from `dev`: rules for the five program tables (server-only;
-  read by coach, athlete, circle), `/api/program` and `/api/link/suggestions`
-  exercised with real JWTs for every role, before and after revocation. The
+- Orders 19/22/28/43 from `dev`: rules for the five program tables
+  (server-only; read by coach, athlete, circle), `/api/program` — including
+  `duplicateWeek` and `copyProgram`, with a copy onto an athlete the coach
+  does not link to refused — and `/api/link/suggestions`, exercised with real
+  JWTs for every role, before and after revocation. The
   stamp scan also checks `isAuthentic` on every row, `suggestions_mode`'s
   values, and that program children name their program's coach and athlete.
 - Discovery asserts the `library` team exists with no members and the
@@ -75,7 +77,7 @@ MacBook. On the host: `docker ps | grep -E 'executor|worker-builds'`,
 `docker logs appwrite-worker-builds --tail 100`, `docker logs
 appwrite-executor --tail 100` (or `openruntimes-executor`), `df -h`, then
 `npm run appwrite:functions`. Until then the audit reports exactly two
-failures, both "validate-row is not live"; everything else passes (452/454 on
+failures, both "validate-row is not live"; everything else passes (463/465 on
 6 Oct). Readers already hide every forged row, so the live product is
 protected; the Function is the second layer.
 
@@ -87,7 +89,7 @@ could do.
 
 ### Verification
 
-`lint` · `typecheck` · **1874 tests, 115 files** · `npm run appwrite:audit`
-live: 452/454, the two validator checks failing as above.
+`lint` · `typecheck` · **1917 tests, 120 files** · `npm run appwrite:audit`
+live: 463/465, the two validator checks failing as above.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
