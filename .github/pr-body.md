@@ -1,145 +1,68 @@
-## Order 37 — DOTS calculation and display
+## Order 28 — Coach toggle for next-set suggestions
 
-A total divided by what a lifter that size is expected to total, so progress at
-a changing bodyweight still reads as progress.
+The coach decides, per athlete, whether the logger suggests the next load from the athlete's own RPE or holds suggestions back. The Build Plan calls this a coaching philosophy question, so the product leaves the answer to the coach. This is not an AI coach. The switch exists so the coach stays in control.
 
-**A personal progression number, not a ranking.** No leaderboard, no groups, no
-percentile, no comparison between two athletes — and deliberately no shape that
-would make one cheap to add later. That layer is the final phase.
+**Source: Inferred.** Treated as a proposal, so the interpretation below is labelled and kept as small as it can be.
 
-### The coefficients are cited, not remembered
+### What "held" means
 
-This is the part of the ticket that was allowed to block, so none of the ten
-numbers are written from memory. They're transcribed from OpenPowerlifting's
-reference implementation — the code that computes the DOTS printed on every
-lifter page on that site — **pinned to a commit rather than to `main`**, because
-a citation that can change underneath you isn't a citation. Tim Konertz wrote
-the formula for the BVDK; there's one published revision. `docs/dots.md` carries
-the URL, the blob hash and the retrieval date.
+**[Inference]** The Profile blueprint offers *"Athletes see them directly"* vs *"Hold for my approval"*. Nothing specifies an approval queue (who approves, when, on which screen), and an athlete resting two minutes between sets can't wait on one. So:
 
-**Validated against 98 published meet rows, three lifters, both sexes.** Seven
-are in the tests.
+- **direct**: the logger shows the Order 27 engine's suggestion, ranked second in prefill and marked *suggested from RPE 7 @ 170*. It stays editable, and the note drops as soon as the athlete types a load.
+- **held**: the logger shows no suggestion. The next row repeats the last set (prefill rule 3), which is how the logger behaved before Order 27.
 
-A published DOTS isn't reproducible to the last decimal from a published
-bodyweight, and the reason is worth having rather than papering over with a
-loose tolerance: the site stores bodyweight to two decimals and prints **one**,
-so a row reading `63.4` was lifted somewhere in `[63.4, 63.5)`, and the true
-score sits in a band a few hundredths wide. **96 of the 98 fall inside it.** The
-two that don't are pound-converted high-school totals whose hidden precision is
-its own problem — excluded from the table rather than explained away. The tests
-assert the band, which is tight enough that a transposed digit misses it by
-whole points.
+**[Inference]** The switch is **per linked athlete**, not one per coach. A coach may trust a veteran's RPE and not a novice's. It lives on the **Athlete View**. **Profile & Settings** tells the athlete when their coach holds suggestions and tells a coach where the switch is.
 
-### The old `lib/dots.ts` is deleted, not reused
+**Default: direct**, as instructed for this ticket. **[SME to confirm]** The blueprint says to ask Ruairi rather than ship a default. Changing it only means changing `DEFAULT_SUGGESTION_MODE`.
 
-It carried the same ten numbers — and that wasn't evidence of anything. Its test
-recomputed the same polynomial inline and asserted the two agreed, which passes
-for *any* coefficients at all. That's precisely the plausible-numbers-with-a-
-tautological-test trap this ticket was written to avoid, and it sat green in the
-suite the whole time. It was also per-lift and leaderboard-shaped, and returned
-a **negative** score at zero bodyweight.
+### No athlete sees a suggestion yet
 
-The clamp came with the citation and is part of the formula rather than
-tidiness: **40–210kg for men, 40–150kg for women**, and the ceilings must not be
-shared. The quartic has a negative leading term, so past its fitted range it
-turns over and a heavier lifter would score *higher*.
+The engine has no default target on purpose (docs/suggestions.md). Targets come from prescriptions, and prescriptions reach the logger at Order 22. `lib/logging/set-targets.ts` is that seam and returns null for now. Everything downstream of it is wired and tested: the switch, the gate, the engine and the prefill note. The Athlete View says so in one line, so the coach isn't left wondering why nothing shows.
 
-### Where the total comes from — your call to confirm
+### Storage and who can write it
 
-This changes the number, so it was decided rather than inherited: **the better
-of the tested max and the best rolling e1RM per competition lift, with training
-maxes excluded.**
+- `suggestions_mode` (`direct` | `held`, optional, default `direct`) is a column on **`coach_athlete_links`**. That row is already unique per pair and readable by exactly the coach and the athlete, and nobody can write it from a client. Re-linking reuses the row, so the coach's choice survives an unlink and re-link.
+- Writes only go through **`POST /api/link/suggestions`**. The caller comes from the Appwrite JWT and never from the body. Only the coach on an **active** link qualifies. The route refuses the athlete (even for their own link), a stranger, and a revoked coach. It checks the link record rather than circle membership, the same rule `/api/reference-max` follows. Authorisation runs before validation, so a stranger gets 403 even for a malformed mode.
+- The write helper `setLinkSuggestionMode` writes only that one column. It never touches status or dates, and it re-stamps link permissions from the policy.
+- This avoids the forged-owner-field problem the parallel integrity fix is addressing, because no client-created row is involved.
 
-That diverges from `preferredMax`, which CURRENT MAXES uses, and the divergence
-is the point. A training max is deliberately submaximal — so feeding it in would
-mean **you starting a conservative block lowers your athlete's progression
-number** without the athlete doing anything. The e2e writes one and asserts the
-score doesn't move.
+### Audit rule this storage needs
 
-Not e1RM alone either: a meet total you typed in has no set behind it and would
-vanish. Not tested alone: most athletes never enter one and would never see a
-score.
+`rules.ts` is on unmerged PR #36, so the rule is described here. For `coach_athlete_links`:
 
-> **[SME to confirm]** — is Ruairi happy with DOTS built partly on e1RM
-> estimates, or does he want tested maxes only? One line to change. Worth asking,
-> because an athlete who's never tested would then have no DOTS at all.
+1. **Table permissions are `[]`**, so no client may create a row.
+2. **Every row's permissions are exactly `[read("user:<athlete_id>"), read("user:<coach_id>")]`**, matching that row's own `athlete_id` and `coach_id`. No `update`, no `delete`, no team or `users` read.
+3. **`suggestions_mode` is null, `direct` or `held`.**
 
-### Identifying the three lifts
+Rules 1 and 2 are what make the route the only way to change the switch. `e2e:suggestions` checks both on the live instance.
 
-Needed a concept no field in the schema carries, so it's a constant of three
-normalised names and **no schema change** — three sibling branches are live and
-`appwrite-setup.mts` is where they'd all collide.
+### Offline
 
-Matched on exact equality and `is_global`, never `includes`. The seeded library
-holds five squat variations, and `seed.ts` is explicit that a variation is its
-own exercise with its own max. The global filter stops an athlete's hand-typed
-"Squat" shadowing the seeded row.
+The athlete's logger reads its active link rows straight from Appwrite and caches the answer on the device (`snb.suggestion-mode`, keyed by athlete id). It re-reads on load, on `online`, and when the app comes back to the foreground. A failed read never changes the cached value.
 
-**All three or none.** Two lifts isn't a total — a missing deadlift cuts the
-score by a third and would read as a collapse in form rather than an absent
-number.
+**[Inference]** A device that has never read its link row (a fresh install opened with no signal) assumes **held**. Showing a suggestion the coach switched off is the failure this toggle exists to prevent. Withholding one costs the athlete one number typed, and the first read with signal corrects it. In that case Profile doesn't claim the coach held anything.
 
-### Nothing is stored
+### Schema
 
-The compute-and-store rule is about aggregates Appwrite can't compute on read.
-This is one division over numbers both screens already fetch, so storing it
-would just add a second copy to keep true. One `fetchDots` serves both surfaces
-— you and your athlete seeing different DOTS for the same lifter is a bug found
-in a conversation, not in a test.
+v9 adds one optional column. I applied it to the live instance with `npm run appwrite:setup` ("Applied 1 change(s)"). No data was rewritten or deleted.
 
-### The four ways there's no number
+The setup script also reports orphans that predate this branch: `programs`, `program_blocks`, `program_weeks`, `program_days` and `prescriptions` tables, plus `sessions.program_day_id`, `sets.prescription_id` and `sets.prescribed`. They're presumably from the Order 19 work. I left them untouched, as the script always does.
 
-A discriminated result rather than a null, because each needs different words.
-The blueprint asks DOTS to fail with a prompt to complete the profile, which it
-can only do if it knows *which* thing is missing. Refusals are ordered by what
-the athlete can act on — sex is one tap, a weigh-in needs scales, a missing lift
-needs training.
+### Tests
 
-**A stale bodyweight still scores, labelled.** Following the precedent
-`bodyweight.md` set: suppressing it would empty the panel on the screen that
-exists so you stop having to ask, and showing it bare would present a month-old
-weight as this morning's. The window is the bodyweight module's own, so there's
-no second staleness constant to drift.
+- **vitest: 1584 passed** (1533 on `dev`, +51). New coverage:
+  - Route authorisation, 14 tests. These run the real admin module through the real route, with the JWT check and tables faked at the edges: no token, a bad token, the athlete, a stranger, a revoked coach, another coach, a coach id smuggled in the body, a bad mode, malformed bodies, and Appwrite down.
+  - Logger gating, 9 tests in `log-screen.test.tsx`: direct suggests 175 from 170×5 @ 7, held repeats 170, a pre-Order-28 link reads as direct, typing a load drops the note, a held cache keeps working offline, so does a direct cache, another user's cache is ignored, a never-told device suggests nothing and still logs, and no target means no suggestion.
+  - The gate, plan, write helper, schema, Athlete View switch and Profile note.
+- **tsc** (`npm run typecheck`) and **eslint** are clean. The write-helper guard test passes.
+- **`npm run e2e:suggestions`: 29/29 against the live instance.** It covers the default, route authorisation, client-side writes refused for the athlete, the coach and a stranger, read access for exactly the two parties, the coach changing the switch on the Athlete View, the athlete's Profile note, the logger caching the mode, the cache surviving an offline re-read, and the device picking up a change when the signal returns.
 
-### One thing about the blueprint
+Flaky test: `review-queue.test.tsx > shows the reason on the empty screen when the last athlete leaves` failed once in about seven runs and passed on every rerun. That file isn't touched by this branch.
 
-Page 08's wireframe shows `DOTS 341.2` above `from 212.5 / 140 / 200`. Those
-don't reconcile — that lifter scores **374.5**. I read the figures as decorative
-and didn't use them as a test vector. Flagging it in case 341.2 was meant to
-mean something.
+### Not done, on purpose
 
-### Not in scope
-
-- **No DOTS-over-time chart, no roster DOTS column.** Both are a few lines on
-  top of this, and both are the first step of the competition layer rather than
-  the last step of this ticket. Blueprint 08 shows a single number. Say if you
-  want either.
-- **No lb display.** The figure is unitless and the breakdown is in kg like
-  everything else. `profiles.units` is a preference nothing yet honours — its own
-  ticket.
-
-### Verification
-
-`lint` · `typecheck` · **1244 tests, 76 files** · `perf:check` inside budget ·
-`appwrite:probe` **42/42**.
-
-Live: `npm run e2e:dots` — **12/12**. The arithmetic is unit-tested and needs no
-network; what only the instance proves is the composition, because DOTS is the
-first number in the product assembled from **five tables at once** — `profiles`,
-`bodyweight_entries`, `reference_maxes`, `stats_rollups`, `exercises`. The
-headline check is that a linked coach reads all five through the circle team and
-lands on exactly the number the athlete sees. Five tables is five chances for
-one to be readable by the athlete and not their coach, and that failure wouldn't
-look like a permission error — it'd look like a slightly different score.
-
-Also proved rather than claimed: a training max doesn't move it, a Pause Squat
-with a 400kg e1RM stays out of the total, a better rolling e1RM raises it, a
-month-old weigh-in still scores and is flagged, a stranger gets nothing, a
-revoked coach loses it.
-
-⚠️ **`npm run build` could not be run in this worktree** — `node_modules` is a
-symlink into the primary checkout and Turbopack rejects it as "out of the
-filesystem root". Pre-existing worktree setup, nothing to do with this diff, but
-worth a build on `dev` after merge.
+- No approval queue. If Ruairi wants one, it's a separate ticket that can reuse "held" as its starting point.
+- No coach-wide "apply to all athletes" switch.
+- No prescription targets. That's Order 22.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
