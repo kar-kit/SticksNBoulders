@@ -87,7 +87,9 @@ await coachPage.waitForURL("**/coach/roster", { timeout: 20000 }).catch(() => {}
 check("a coach lands on their roster, not on Today", coachPage.url().includes("/coach/roster"));
 // The rail costs two sequential round trips after the session resolves --
 // links, then profiles -- so it is waited for rather than raced.
+// Scoped to the rail: the Roster's own table names the athlete too (Order 24).
 const railed = await coachPage
+  .getByRole("complementary")
   .getByText("Joey P")
   .waitFor({ timeout: 15000 })
   .then(() => true)

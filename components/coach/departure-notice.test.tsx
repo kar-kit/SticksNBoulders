@@ -41,3 +41,15 @@ it("renders nothing when the read fails, rather than an error box", async () => 
   await waitFor(() => expect(links.fetchCoachLinks).toHaveBeenCalled());
   expect(container).toBeEmptyDOMElement();
 });
+
+it("uses records it is handed instead of reading them again", async () => {
+  links.fetchCoachLinks.mockClear();
+  render(<DepartureNotice records={[{ athleteId: "joey", status: "revoked", revokedAt: daysAgo(2) }]} />);
+  expect(screen.getByRole("status")).toHaveTextContent(/^An athlete stopped sharing/);
+  expect(links.fetchCoachLinks).not.toHaveBeenCalled();
+});
+
+it("renders nothing while handed records are still loading", () => {
+  const { container } = render(<DepartureNotice records={null} />);
+  expect(container).toBeEmptyDOMElement();
+});
