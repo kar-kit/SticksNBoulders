@@ -58,6 +58,7 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
       await createSession(browserWriteDeps(() => sessionId), actor, {
         clientSessionId: sessionId,
         startedAt: asDate(p.startedAt),
+        programDayId: asString(p.programDayId) || null,
       });
       return;
     }
@@ -83,6 +84,8 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
         isWarmup: p.isWarmup === true,
         clientSetId: setId,
         loggedAt: asDate(p.loggedAt),
+        prescriptionId: asString(p.prescriptionId) || null,
+        prescribed: asString(p.prescribed) || null,
         // e1RM is computed and stored at write time from Order 11, and the
         // rebuild script backfills every set once the formula is verified.
       });

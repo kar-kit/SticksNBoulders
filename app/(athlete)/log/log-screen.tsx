@@ -34,6 +34,17 @@ import {
   type SessionSet,
 } from "@/lib/logging/session";
 import { formatNumber } from "@/lib/logging/prefill";
+import { usePrescribedSession } from "@/lib/programming/use-prescribed";
+import {
+  basisMaxesFor,
+  lineSummaries,
+  nextTarget,
+  planDay,
+  prefillFrom,
+  targetLine,
+  targetsFor,
+  type SetTarget,
+} from "@/lib/programming/session-plan";
 
 /**
  * Log Session. The screen this product lives or dies on.
@@ -53,7 +64,13 @@ interface Draft {
   reps: number | null;
   rpe: RpeValue | null;
   isWarmup: boolean;
+  /** The prescription line this row answers, and its target in words (Order 22). */
+  prescriptionId?: string;
+  prescribed?: string;
 }
+
+/** The fields prescription targets are computed from. */
+type LoggedForTarget = { loadKg: number; reps: number; rpe?: number | null; isWarmup?: boolean };
 
 export function LogScreen() {
   const router = useRouter();
@@ -111,6 +128,26 @@ export function LogScreen() {
   }, [library.exercises]);
 
   const sessionId = active?.id ?? null;
+
+  /**
+   * The prescribed day this session was started from, if any (Order 22).
+   *
+   * Read-only input to the rows: targets and prefill. Nothing the athlete logs
+   * is derived from it after the fact, so a coach editing the program mid-
+   * session changes the next target on the next load and never a logged set.
+   */
+  const prescribed = usePrescribedSession(active?.programDayId, athleteId);
+  const plan = useMemo(() => (prescribed.status === "ready" ? planDay(prescribed.day.prescriptions) : []), [prescribed]);
+  const targetsOf = useCallback(
+    (exerciseId: string, logged: readonly LoggedForTarget[]): SetTarget[] | null => {
+      const planned = plan.find((p) => p.exerciseId === exerciseId);
+      if (!planned) return null;
+      const maxes = basisMaxesFor(exerciseId, prescribed.maxes.entries, prescribed.maxes.estimated, new Date());
+      return targetsFor(planned, maxes, logged.map((s) => ({ ...s, rpe: s.rpe ?? null })));
+    },
+    [plan, prescribed.maxes],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -190,13 +227,19 @@ export function LogScreen() {
    * query into the last session -- Orders 22, 27 and 13.
    */
   const draftFor = useCallback(
-    (exerciseId: string, after?: { loadKg: number; reps: number }): Draft => {
+    (exerciseId: string, after?: LoggedForTarget): Draft => {
       // `after` is passed by the confirm path with the set that was just
       // logged. Reading it from state there would read a stale array -- the
       // optimistic append has not landed yet -- and the new row would come up
       // empty, which is exactly the one tap this rule exists to save.
       const previous = after ?? setsOf(exerciseId).at(-1) ?? null;
+      // Rule 1 (and 2, for a weight priced off today's top set): the
+      // prescription for the next working set, when the session has one.
+      const logged = after ? [...setsOf(exerciseId), after] : setsOf(exerciseId);
+      const targets = targetsOf(exerciseId, logged);
+      const target = targets ? nextTarget(targets, logged) : null;
       const prefill = resolvePrefill({
+        ...prefillFrom(target),
         previousSetThisSession: previous ? { loadKg: previous.loadKg, reps: previous.reps } : null,
       });
       return {
@@ -210,9 +253,10 @@ export function LogScreen() {
         // tonnage; a stuck one hides real work from PRs and the rollups, and
         // that is the failure nobody notices.
         isWarmup: false,
+        ...(target ? { prescriptionId: target.prescriptionId, prescribed: target.snapshot } : {}),
       };
     },
-    [setsOf],
+    [setsOf, targetsOf],
   );
 
   /** One place that changes the rest timer, so the stored copy cannot drift. */
@@ -291,7 +335,7 @@ export function LogScreen() {
       loggedAt: new Date(),
     };
     setLocal((prev) => [...prev, optimistic]);
-    setDraft(draftFor(row.exerciseId, { loadKg: optimistic.loadKg, reps: optimistic.reps }));
+    setDraft(draftFor(row.exerciseId, optimistic));
     setPad(null);
     setRpeOpen(false);
     // Warm-ups start it too. Anything else is a rule an athlete has to learn,
@@ -309,6 +353,10 @@ export function LogScreen() {
         rpe: row.rpe,
         isWarmup: row.isWarmup,
         clientSetId: row.clientSetId,
+        // Warm-ups answer no prescription: targets count working sets only.
+        ...(row.prescriptionId && !row.isWarmup
+          ? { prescriptionId: row.prescriptionId, prescribed: row.prescribed }
+          : {}),
       });
     } catch {
       // Only reachable if the device cannot write to its own storage at all.
@@ -355,6 +403,20 @@ export function LogScreen() {
     }
   };
 
+  // A prescribed session opens on its first exercise, ready to log, so the
+  // athlete's first tap is a set rather than finding the squat in a list.
+  const firstPlanned = plan[0]?.exerciseId ?? null;
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (!firstPlanned || !sessionId || opened.current === sessionId) return;
+    opened.current = sessionId;
+    if (draft || all.length > 0) return;
+    void (async () => {
+      await Promise.resolve();
+      activate(firstPlanned);
+    })();
+  }, [firstPlanned, sessionId, draft, all.length, activate]);
+
   if (phase === "finished") {
     return <FinishedSummary summary={summary} onDone={() => router.push("/today")} />;
   }
@@ -377,12 +439,26 @@ export function LogScreen() {
   }
 
   const withSets = new Set(groups.map((g) => g.exerciseId));
+  // Prescribed exercises lead, in the coach's order, whether or not anything is
+  // logged yet; whatever the athlete added on top follows.
+  const planned = new Set(plan.map((p) => p.exerciseId));
   const blocks = [
-    ...groups.map((g) => ({ id: g.exerciseId, name: g.exerciseName })),
+    ...plan.map((p) => ({ id: p.exerciseId, name: nameFor(p.exerciseId) ?? "Prescribed exercise" })),
+    ...groups.filter((g) => !planned.has(g.exerciseId)).map((g) => ({ id: g.exerciseId, name: g.exerciseName })),
     ...added
-      .filter((e) => !withSets.has(e.id))
+      .filter((e) => !withSets.has(e.id) && !planned.has(e.id))
       .map((e) => ({ id: e.id, name: e.name })),
   ];
+
+  /** The coach's lines, then the next set's target, for one exercise block. */
+  const targetFor = (exerciseId: string): string[] | null => {
+    const logged = setsOf(exerciseId);
+    const targets = targetsOf(exerciseId, logged);
+    const planned = plan.find((p) => p.exerciseId === exerciseId);
+    if (!targets || !planned) return null;
+    const next = nextTarget(targets, logged);
+    return [...lineSummaries(planned, targets), ...(next ? [`Next: ${targetLine(next)}`] : [])];
+  };
 
   /**
    * What gets the bottom of the screen. Exactly one thing does.
@@ -430,6 +506,7 @@ export function LogScreen() {
                 isWarmup: s.isWarmup,
               }))}
               draft={draft?.exerciseId === block.id ? draft : null}
+              target={targetFor(block.id)}
               onFocus={focusField}
               onConfirm={confirmSet}
               onActivate={() => activate(block.id)}

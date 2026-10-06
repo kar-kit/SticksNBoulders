@@ -32,6 +32,7 @@ interface SessionRow {
   set_count?: unknown;
   tonnage_kg?: unknown;
   notes?: unknown;
+  program_day_id?: unknown;
 }
 
 const asDate = (value: unknown): Date | null => {
@@ -55,6 +56,7 @@ function toSession(row: SessionRow): SessionRecord | null {
     setCount: asNumber(row.set_count),
     tonnageKg: asNumber(row.tonnage_kg),
     notes: typeof row.notes === "string" ? row.notes : null,
+    programDayId: typeof row.program_day_id === "string" && row.program_day_id ? row.program_day_id : null,
   };
 }
 
@@ -138,10 +140,14 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
 export async function startOrRecoverSession(
   clientSessionId: string,
   startedAt: Date = new Date(),
+  programDayId: string | null = null,
 ): Promise<SessionRecord> {
   await enqueue("session.create", {
     sessionId: clientSessionId,
     startedAt: startedAt.toISOString(),
+    // The prescribed day it was started from (Order 22). Carried in the op so
+    // a session started offline still knows which day it is.
+    ...(programDayId ? { programDayId } : {}),
   });
 
   return {
@@ -152,6 +158,7 @@ export async function startOrRecoverSession(
     setCount: 0,
     tonnageKg: 0,
     notes: null,
+    programDayId,
   };
 }
 

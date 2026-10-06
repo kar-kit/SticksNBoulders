@@ -40,6 +40,7 @@ export function queuedSessions(ops: readonly QueuedOp[]): SessionRecord[] {
         setCount: 0,
         tonnageKg: 0,
         notes: null,
+        programDayId: str(op.payload.programDayId) || null,
       });
     }
     if (op.kind === "session.finish") {

@@ -24,6 +24,10 @@ export interface NewSet {
   isWarmup: boolean;
   /** Generated when the row appears, and used as the Appwrite row id. */
   clientSetId: string;
+  /** The prescription line this answers, when the session was prescribed (Order 22). */
+  prescriptionId?: string | null;
+  /** What that line's target said at the moment of logging. Stored as written. */
+  prescribed?: string | null;
 }
 
 /**
@@ -46,6 +50,7 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
     rpe: input.rpe,
     isWarmup: input.isWarmup,
     loggedAt: loggedAt.toISOString(),
+    ...(input.prescriptionId ? { prescriptionId: input.prescriptionId, prescribed: input.prescribed ?? null } : {}),
   });
   await queueRollupRefresh(input.exerciseId, loggedAt);
 
