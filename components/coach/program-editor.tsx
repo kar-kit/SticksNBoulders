@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
+import { CopyProgram } from "@/components/coach/copy-program";
 import { cn } from "@/lib/cn";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { useSession } from "@/lib/auth/session-context";
@@ -47,9 +48,9 @@ import { fetchProgramTree, sendProgramOp } from "@/lib/programming/program-store
  * program are live on save -- see docs/programs.md for why there is no second
  * draft layer yet.
  *
- * Out of scope here, with seams left: duplicate week (Order 20) is one more op
- * plus a button by "+ Week"; backoff rules (21) and video-required (30) are
- * columns after Notes.
+ * Duplicate week and Copy to… are Order 20 (copies are drafts, written by the
+ * server). Seams left: backoff rules (21) and video-required (30) are columns
+ * after Notes.
  */
 
 type Load =
@@ -219,7 +220,8 @@ export function ProgramEditor({ programId }: { programId: string }) {
               : ""}
           </p>
         </div>
-        <div className="flex items-end gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          {editable ? <CopyProgram tree={tree} blockId={block?.id ?? null} disabled={busy} /> : null}
           <label className="flex flex-col gap-1 text-label uppercase text-muted-2">
             Starts
             <input
@@ -321,6 +323,20 @@ export function ProgramEditor({ programId }: { programId: string }) {
                   }}
                 >
                   + Week
+                </Button>
+              ) : null}
+              {editable && week ? (
+                // Order 20: most blocks are one week repeated with load changes.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={async () => {
+                    const id = await run({ op: "duplicateWeek", weekId: week.id });
+                    if (id) setWeekId(id);
+                  }}
+                >
+                  Duplicate {week.label ?? `week ${weekNumber(week.id)}`}
                 </Button>
               ) : null}
             </div>

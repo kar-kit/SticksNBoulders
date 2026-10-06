@@ -16,7 +16,9 @@ import {
   type ProgramTree,
   type ReorderLevel,
 } from "@/lib/programming/program";
+import { copyCalendar, duplicateShift, shiftDay } from "@/lib/programming/copy";
 import {
+  copyPrescription,
   createExerciseFor,
   createPrescription,
   createProgram,
@@ -354,6 +356,10 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
     }
     case "createExercise":
       return createExerciseOp(ctx, op);
+    case "duplicateWeek":
+      return duplicateWeekOp(ctx, op.weekId);
+    case "copyProgram":
+      return copyProgramOp(ctx, op);
   }
 }
 
@@ -405,8 +411,12 @@ const libraryOwner = (scope: ProgramScope) => scope.athleteId ?? scope.coachId;
  */
 async function createExerciseOp(ctx: Ctx, op: ProgramOpOf<"createExercise">): Promise<string> {
   const scope = await scopeOf(ctx, op.programId);
-  const owner = libraryOwner(scope);
-  const normalised = normaliseExerciseName(op.name);
+  return exerciseInLibrary(ctx, libraryOwner(scope), op.name);
+}
+
+/** The exercise of this name the owner can read -- global first, then theirs -- created in their library if neither exists. */
+async function exerciseInLibrary(ctx: Ctx, owner: string, name: string): Promise<string> {
+  const normalised = normaliseExerciseName(name);
   if (!normalised) return refuse({ status: "invalid", reason: "name: needs a letter or number in it" });
   const same = await ctx.tables.listRows({
     databaseId: ctx.databaseId,
@@ -416,7 +426,7 @@ async function createExerciseOp(ctx: Ctx, op: ProgramOpOf<"createExercise">): Pr
   const existing =
     same.rows.find((row) => row.is_global === true) ?? same.rows.find((row) => row.owner_id === owner);
   if (existing) return String(existing.$id);
-  const row = await createExerciseFor(ctx.deps, owner, op.name);
+  const row = await createExerciseFor(ctx.deps, owner, name);
   return row.$id;
 }
 
@@ -489,6 +499,208 @@ async function reorderOp(ctx: Ctx, op: ProgramOpOf<"reorder">): Promise<string> 
     else await updatePrescription(ctx.deps, scope, move.id, fields);
   }
   return op.parentId;
+}
+
+/* -------------------------------------------------------------------------
+ * Copies (Order 20)
+ *
+ * Both copies read everything first and write second, so a refusal -- an
+ * exercise that no longer exists, a target the caller does not coach -- is
+ * found before a single row is written. Both write drafts: a half-finished
+ * copy is a draft week the athlete cannot see, or a draft program only the
+ * coach can, never half a block on somebody's Today. Neither reads or writes
+ * `sessions` or `sets`.
+ * ---------------------------------------------------------------------- */
+
+type RawRow = Record<string, unknown>;
+
+/** Raw lines grouped by day, in order, dropping any that do not parse. */
+function linesByDay(rows: readonly RawRow[]): Map<string, RawRow[]> {
+  const parsed = rows.flatMap((raw) => {
+    const line = parsePrescriptionRow(raw);
+    return line ? [{ ...line, raw }] : [];
+  });
+  const byDay = new Map<string, RawRow[]>();
+  for (const line of byPosition(parsed)) {
+    const list = byDay.get(line.dayId) ?? [];
+    list.push(line.raw);
+    byDay.set(line.dayId, list);
+  }
+  return byDay;
+}
+
+/** Copies a day's lines under a new day, in parallel: they share nothing but the parent. */
+async function copyLines(
+  ctx: Ctx,
+  scope: ProgramScope,
+  to: { weekId: string; dayId: string },
+  lines: readonly RawRow[],
+  exerciseFor: (sourceExerciseId: string) => string,
+) {
+  await Promise.all(
+    lines.map((raw, position) =>
+      copyPrescription(
+        ctx.deps,
+        scope,
+        { ...to, exerciseId: exerciseFor(String(raw.exercise_id)), position },
+        raw,
+      ),
+    ),
+  );
+}
+
+/**
+ * Appends a draft copy of a week to its own block -- the "most blocks are one
+ * week repeated with load changes" button. Same program, same athlete, so
+ * every exercise is already one they can read and is kept as is.
+ */
+async function duplicateWeekOp(ctx: Ctx, weekId: string): Promise<string> {
+  const { row: source, scope } = await childOf(ctx, "program_weeks", weekId, parseWeek);
+  const [siblingRows, dayRows, lineRows] = await Promise.all([
+    listAll(ctx.tables, ctx.databaseId, "program_weeks", "block_id", source.blockId),
+    listAll(ctx.tables, ctx.databaseId, "program_days", "week_id", source.id),
+    listAll(ctx.tables, ctx.databaseId, "prescriptions", "week_id", source.id),
+  ]);
+  const weeks = byPosition(parseRows(siblingRows, parseWeek));
+  const shift = duplicateShift(
+    weeks.map((w) => w.id),
+    source.id,
+  );
+  const days = byPosition(parseRows(dayRows, parseDay));
+  const lines = linesByDay(lineRows);
+
+  // The label is not copied: two tabs both called "Heavy" are worse than
+  // "Week 5". [Inference]
+  const week = await createProgramWeek(ctx.deps, scope, {
+    blockId: source.blockId,
+    position: nextPosition(weeks),
+    label: null,
+    status: "draft",
+    notes: source.notes,
+  });
+  for (const day of days) {
+    const copy = await createProgramDay(ctx.deps, scope, {
+      blockId: source.blockId,
+      weekId: week.$id,
+      position: day.position,
+      label: day.label,
+      scheduledOn: shiftDay(day.scheduledOn, shift),
+      notes: day.notes,
+    });
+    await copyLines(ctx, scope, { weekId: week.$id, dayId: copy.$id }, lines.get(day.id) ?? [], (id) => id);
+  }
+  return week.$id;
+}
+
+/**
+ * Copies a program, or one of its blocks, to an athlete as a new draft program.
+ *
+ * Authorised on both ends: the caller must be allowed to edit the SOURCE (its
+ * coach, still linked to its athlete) and to program for the TARGET (an active
+ * link, or themselves). Copying from a former athlete's program is refused for
+ * the same reason editing it is.
+ *
+ * Lines are copied as typed. `75%` on the copy is 75% of the target's own
+ * training max for that exercise, resolved when they log it -- never the
+ * source athlete's kilos. Fixed kilos (`142.5`) stay the kilos the coach
+ * typed. [Inference] Those were written for someone else; the copy is a draft
+ * so the coach reads it before it is published.
+ */
+async function copyProgramOp(ctx: Ctx, op: ProgramOpOf<"copyProgram">): Promise<string> {
+  await scopeOf(ctx, op.programId);
+  if (!(await mayProgramFor(ctx.tables, ctx.databaseId, ctx.callerId, op.athleteId))) {
+    return refuse({ status: "not-allowed" });
+  }
+  const source = parseProgram(await rowOf(ctx, "programs", op.programId));
+  if (!source) return refuse({ status: "not-found" });
+
+  const all = (tableId: ProgramTable) => listAll(ctx.tables, ctx.databaseId, tableId, "program_id", source.id);
+  const [blockRows, weekRows, dayRows, lineRows] = await Promise.all([
+    all("program_blocks"),
+    all("program_weeks"),
+    all("program_days"),
+    all("prescriptions"),
+  ]);
+  let blocks = byPosition(parseRows(blockRows, parseBlock));
+  if (op.blockId) {
+    blocks = blocks.filter((b) => b.id === op.blockId);
+    if (blocks.length === 0) return refuse({ status: "not-found" });
+  }
+  const keptBlocks = new Set(blocks.map((b) => b.id));
+  const weeks = byPosition(parseRows(weekRows, parseWeek).filter((w) => keptBlocks.has(w.blockId)));
+  const keptWeeks = new Set(weeks.map((w) => w.id));
+  const days = byPosition(parseRows(dayRows, parseDay).filter((d) => keptWeeks.has(d.weekId)));
+  const keptDays = new Set(days.map((d) => d.id));
+  const lines = linesByDay(lineRows.filter((row) => keptDays.has(String(row.day_id))));
+
+  // Every exercise, resolved in the target's library before anything is
+  // written. A variation is its own exercise with its own max, so the source
+  // athlete's "Paused Bench" becomes the target's "Paused Bench" -- found by
+  // name, or created there by the same path the editor uses.
+  const target = op.athleteId;
+  const exercises = new Map<string, string>();
+  const missing: Array<{ id: string; name: string }> = [];
+  for (const id of new Set([...lines.values()].flat().map((row) => String(row.exercise_id)))) {
+    const row = await rowOf(ctx, "exercises", id);
+    if (!row) return refuse({ status: "invalid", reason: "exerciseId: a line's exercise no longer exists" });
+    if (row.is_global === true || row.owner_id === target) exercises.set(id, id);
+    else missing.push({ id, name: String(row.name ?? "") });
+  }
+  // The only writes before the program row, and find-or-create: a copy that
+  // fails after this leaves at most a variation the athlete was getting anyway.
+  for (const { id, name } of missing) exercises.set(id, await exerciseInLibrary(ctx, target, name));
+
+  const calendar = copyCalendar({
+    wholeProgram: !op.blockId,
+    sourceStartOn: source.startOn,
+    days: days.map((d) => d.scheduledOn),
+    startOn: op.startOn,
+  });
+  const programRow = await createProgram(
+    ctx.deps,
+    { userId: ctx.callerId },
+    {
+      athleteId: target,
+      name: op.name ?? (op.blockId ? `${source.name} · ${blocks[0].name}` : source.name),
+      status: "draft",
+      startOn: calendar.startOn,
+      notes: source.notes,
+      // Lineage only when the source is the caller's own template, as createProgram requires.
+      templateId: source.athleteId === null ? source.id : null,
+    },
+  );
+  const to: ProgramScope = { programId: programRow.$id, coachId: ctx.callerId, athleteId: target };
+
+  for (const [blockAt, block] of blocks.entries()) {
+    const newBlock = await createProgramBlock(ctx.deps, to, {
+      position: blockAt,
+      name: block.name,
+      notes: block.notes,
+    });
+    for (const [weekAt, week] of weeks.filter((w) => w.blockId === block.id).entries()) {
+      const newWeek = await createProgramWeek(ctx.deps, to, {
+        blockId: newBlock.$id,
+        position: weekAt,
+        label: week.label,
+        status: "draft",
+        notes: week.notes,
+      });
+      for (const day of days.filter((d) => d.weekId === week.id)) {
+        const newDay = await createProgramDay(ctx.deps, to, {
+          blockId: newBlock.$id,
+          weekId: newWeek.$id,
+          position: day.position,
+          label: day.label,
+          scheduledOn: shiftDay(day.scheduledOn, calendar.shift),
+          notes: day.notes,
+        });
+        await copyLines(ctx, to, { weekId: newWeek.$id, dayId: newDay.$id }, lines.get(day.id) ?? [], (id) =>
+          exercises.get(id)!,
+        );
+      }
+    }
+  }
+  return programRow.$id;
 }
 
 /* -------------------------------------------------------------------------

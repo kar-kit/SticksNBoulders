@@ -346,6 +346,74 @@ export async function updatePrescription(
 }
 
 /**
+ * Columns a copied line takes from where it is going, never from where it came
+ * from: its scope, its parents, its exercise (re-resolved for the target's
+ * library), its slot, and the two the helper derives itself.
+ *
+ * A NEW column holding a row id belongs here too, with the copy remapping it --
+ * otherwise a copied line points at its source's rows. Order 20.
+ */
+const LINE_PLACEMENT = new Set([
+  "program_id",
+  "coach_id",
+  "athlete_id",
+  "block_id",
+  "week_id",
+  "day_id",
+  "exercise_id",
+  "position",
+  "load_kind",
+  "updated_at",
+]);
+
+/**
+ * What a line says, as opposed to where it sits: every stored column except
+ * Appwrite's own (`$id`, `$permissions`, ...) and the placement above.
+ *
+ * Deliberately a deny-list. A column added to `prescriptions` later (backoff
+ * rules, Order 21; video required, Order 30) is copied by duplicate-week and
+ * copy-program without either being touched -- a copy that silently drops the
+ * coach's backoff rule is worse than one that has to be taught about a new id.
+ */
+export function lineContent(source: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(source).filter(([key]) => !key.startsWith("$") && !LINE_PLACEMENT.has(key)),
+  );
+}
+
+/**
+ * A copy of a stored line, in a new place. The load is copied as TYPED, so a
+ * percentage stays a percentage and resolves against whoever it now belongs
+ * to; nothing here ever turns one into kilos. Order 20.
+ */
+export async function copyPrescription(
+  deps: WriteDeps,
+  scope: ProgramScope,
+  placement: { weekId: string; dayId: string; exerciseId: string; position: number },
+  source: Record<string, unknown>,
+) {
+  const { data, permissions } = scoped(scope);
+  const content = lineContent(source);
+  const load = typeof content.load === "string" ? content.load : null;
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: "prescriptions",
+    rowId: deps.newId(),
+    data: {
+      ...content,
+      ...data,
+      week_id: placement.weekId,
+      day_id: placement.dayId,
+      exercise_id: placement.exerciseId,
+      position: placement.position,
+      load_kind: loadKindOf(load),
+      updated_at: iso(deps.now()),
+    },
+    permissions,
+  });
+}
+
+/**
  * Removes a line. Safe for the same reason editing is: a set logged against it
  * keeps its snapshot, and its `prescription_id` simply stops resolving.
  */
