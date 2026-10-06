@@ -9,6 +9,7 @@ import { AthleteVideos } from "@/components/coach/athlete-videos";
 import { CurrentMaxes } from "@/components/coach/current-maxes";
 import { RecentFeedback } from "@/components/coach/recent-feedback";
 import { DotsBlock } from "@/components/strength/dots-block";
+import { ExportLog } from "@/components/export/export-log";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
@@ -169,6 +170,7 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
           <DotsBlock athleteId={athleteId} audience="coach" />
           <AthleteVideos athleteId={athleteId} />
           <RecentFeedback athleteId={athleteId} />
+          <ExportLog athleteId={athleteId} audience="coach" />
         </div>
       </div>
     </div>
