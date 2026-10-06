@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InstallHint } from "@/components/pwa/install-hint";
 import { useTrainingSessions } from "@/lib/logging/session-context";
+import { useFeedbackBadge } from "@/lib/review/feedback-context";
+import { unreadLabel } from "@/lib/review/feedback";
 import { elapsedMs, formatElapsed, lastSessionLabel, sessionDateLabel } from "@/lib/logging/session";
 
 /**
@@ -21,6 +24,11 @@ export function TodayScreen() {
   const { state, active, lastFinished, start } = useTrainingSessions();
   const [starting, setStarting] = useState(false);
   const [failed, setFailed] = useState(false);
+  const feedback = useFeedbackBadge();
+  // Absent, not greyed out, for an athlete training solo -- the blueprint's
+  // rule for every coach-only screen. Unread feedback from a coach who has
+  // since been unlinked still earns the entry: those words were said to them.
+  const showFeedback = feedback.hasCoach === true || feedback.unread > 0;
 
   const go = async () => {
     setStarting(true);
@@ -53,6 +61,23 @@ export function TodayScreen() {
         // Ruairi's first morning is an entirely empty account, and this is the
         // line he reads. It states the fact and offers the one action.
         <p className="m-0 text-body text-muted">No sessions logged yet.</p>
+      ) : null}
+
+      {showFeedback ? (
+        <Link
+          href="/today/feedback"
+          className="flex min-h-[44px] items-center justify-between rounded-control border border-border bg-surface px-[14px] text-body"
+        >
+          <span className="font-semibold">Coach feedback</span>
+          {feedback.unread > 0 ? (
+            <span className="flex items-center gap-2 text-ui font-semibold text-accent-fill">
+              <span aria-hidden className="size-2 rounded-full bg-accent-fill" />
+              {unreadLabel(feedback.unread)}
+            </span>
+          ) : (
+            <span className="text-ui text-muted-2">Nothing new</span>
+          )}
+        </Link>
       ) : null}
 
       {/* Renders nothing on most visits. See lib/pwa/install.ts for when it does. */}

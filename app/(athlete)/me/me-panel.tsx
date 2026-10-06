@@ -5,6 +5,7 @@ import { CoachLink } from "@/components/coach/coach-link";
 import { TrainingSettings } from "@/components/profile/training-settings";
 import Link from "next/link";
 import { InviteCodePanel } from "@/components/coach/invite-code";
+import { ExportLog } from "@/components/export/export-log";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth/session";
 import { useSession } from "@/lib/auth/session-context";
@@ -16,10 +17,12 @@ import { useSession } from "@/lib/auth/session-context";
  * already put here: who is signed in, the way out, the switch into coach mode,
  * the invite code, and the coach who can see this athlete's training.
  *
+ * Order 39 adds DATA: the training log as a CSV.
+ *
  * The blueprint's remaining rows belong elsewhere on purpose. Bodyweight is
  * Order 36. The load-suggestion toggle is Order 28 and is blocked on Ruairi --
- * it is a coaching philosophy question, not a product one. CSV export is
- * Order 39. The coach-side BILLING section waits for something to bill.
+ * it is a coaching philosophy question, not a product one. The coach-side
+ * BILLING section waits for something to bill.
  */
 export function MePanel() {
   const router = useRouter();
@@ -52,6 +55,8 @@ export function MePanel() {
       <CoachLink />
 
       <InviteCodePanel />
+
+      <ExportLog athleteId={state.user.id} athleteName={state.user.name} audience="athlete" />
 
       {/* Shown only when athletes are linked. Role is a relationship, so this
           appears and disappears on its own as links are made and revoked. */}
