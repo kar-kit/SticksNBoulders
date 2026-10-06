@@ -3,11 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { useFeedbackBadge } from "@/lib/review/feedback-context";
 import { HistoryIcon, LogIcon, MeIcon, TodayIcon } from "./icons";
 
 /**
  * Four tabs, no more. Bodyweight, Lift Detail, My Program and Coach Feedback
  * are reached from inside these four. A fifth tab means something else is wrong.
+ *
+ * Coach Feedback lives under Today, so Today carries its unread dot -- the one
+ * badge in the athlete app, because a coach's comment is the one thing here
+ * that goes stale if it waits.
  */
 const TABS = [
   { href: "/today", label: "Today", Icon: TodayIcon },
@@ -18,6 +23,7 @@ const TABS = [
 
 export function TabBar() {
   const pathname = usePathname();
+  const { unread } = useFeedbackBadge();
 
   return (
     <nav
@@ -27,6 +33,7 @@ export function TabBar() {
       {TABS.map(({ href, label, Icon }) => {
         // Sub-routes keep their parent tab lit: /log/squat is still Log.
         const active = pathname === href || pathname.startsWith(`${href}/`);
+        const badged = href === "/today" && unread > 0;
         return (
           <Link
             key={href}
@@ -41,10 +48,20 @@ export function TabBar() {
               active ? "text-accent-fill" : "text-muted-2",
             )}
           >
-            <Icon />
+            <span className="relative">
+              <Icon />
+              {badged ? (
+                <span
+                  data-testid="feedback-dot"
+                  aria-hidden
+                  className="absolute -right-1 -top-0.5 size-2 rounded-full bg-accent-fill"
+                />
+              ) : null}
+            </span>
             <span className={cn("text-label tracking-normal", active ? "font-semibold" : "font-medium")}>
               {label}
             </span>
+            {badged ? <span className="sr-only">, new coach feedback</span> : null}
           </Link>
         );
       })}

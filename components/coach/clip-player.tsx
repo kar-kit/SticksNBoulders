@@ -31,9 +31,13 @@ export interface ClipPlayerProps {
   src: string | null;
   /** Changes when the clip does, so playback restarts rather than continuing. */
   clipId: string;
+  /** The keyboard line under the controls. The queue's default names its clearing keys. */
+  hint?: string;
 }
 
-export function ClipPlayer({ src, clipId }: ClipPlayerProps) {
+const QUEUE_HINT = "Space plays, arrows step a frame. Enter skips; ⌘/Ctrl + Enter comments and moves on.";
+
+export function ClipPlayer({ src, clipId, hint = QUEUE_HINT }: ClipPlayerProps) {
   const video = useRef<HTMLVideoElement>(null);
   const [speed, setSpeed] = useState<number>(0.5);
   const [loop, setLoop] = useState(true);
@@ -161,9 +165,7 @@ export function ClipPlayer({ src, clipId }: ClipPlayerProps) {
         </div>
       </div>
 
-      <p className="m-0 text-ui text-muted-2">
-        Space plays, arrows step a frame. Enter skips; ⌘/Ctrl + Enter comments and moves on.
-      </p>
+      <p className="m-0 text-ui text-muted-2">{hint}</p>
     </div>
   );
 }
