@@ -98,8 +98,9 @@ profile carries a name.
 
 The blueprint's Profile page lists five features. **15** (invite code) and **16**
 (redeem) already shipped. **Bodyweight** is Order 36's row. **The load-suggestion
-toggle is Order 28 and is blocked** — the blueprint marks it `[SME to confirm]`
-because it is a coaching philosophy question, not a product decision. **CSV
+toggle** shipped at Order 28 as a per-athlete switch on the Athlete View;
+Profile carries a LOAD SUGGESTIONS note for each side — see `suggestions.md`.
+Its default (direct) is still `[SME to confirm]` with Ruairi. **CSV
 export** shipped at Order 39 — see `csv-export.md`. The coach-side **BILLING** section waits for something to
 bill.
 

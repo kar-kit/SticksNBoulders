@@ -7,7 +7,9 @@ _Order 27. Phase 2b. Source: Joey. P1 Must._
 Joey already does this by hand, asking Claude between sets. The last set says
 how the day is actually going; the next set's target says where it should go.
 
-**Nothing is wired to it.** See "Why it stays unwired" below.
+**Wired behind the coach's switch since Order 28.** See "The coach's switch"
+below. No suggestion reaches an athlete yet, because the logger does not read
+prescribed targets until Order 22.
 
 ## It is a ratio, which is why it could be built now
 
@@ -80,18 +82,94 @@ in this ticket — plate maths is a fact about barbells, needed by both the
 suggestion engine and the percentage resolver, and `lib/programming` depends on
 `lib/strength` rather than the reverse. `prescription.ts` re-exports them.
 
-## Why it stays unwired
+## The coach's switch (Order 28)
 
-Unlike Order 18, a caller **does** exist: `lib/logging/prefill.ts` already
-accepts a `Suggestion` and ranks it second.
+_Order 28. Phase 2b. Source: Inferred. P2._
 
-It stays unwired because **Order 28** asks whether load suggestions reach
-athletes directly or wait behind coach approval, and calls that "a coaching
-philosophy question, not ours — ask Ruairi". Wiring the live path would answer
-that question by default, in the direction of straight through.
+Order 27 left the engine unwired because wiring it would have answered
+"direct or held?" by default. Order 28 is that switch, so the engine is now
+wired, behind it.
 
-The ticket's own rule points the same way: "Always a suggestion, always
-overridable, never silently imposed."
+### What it means
+
+[Inference] The Profile blueprint offers "Athletes see them directly" vs "Hold
+for my approval". Nothing specifies an approval queue (who approves what,
+when, on which screen), and an athlete resting two minutes between sets
+cannot wait on one. So the smallest reading that keeps the coach in control
+is taken:
+
+- **direct**: the athlete's logger shows the engine's suggestion, ranked
+  second in prefill and marked *suggested from RPE 7 @ 170*. Always editable,
+  and the note drops the moment the athlete types their own load.
+- **held**: the logger shows no suggestion at all, and the next row repeats
+  the set just logged (prefill rule 3), as it did before Order 27.
+
+[Inference] **Per linked athlete**, not one switch per coach. A coach may
+trust a veteran's RPE and not a novice's, which is the scepticism the Athlete
+View's RPE curve exists for. The switch sits on the Athlete View; Profile &
+Settings tells an athlete when their coach holds suggestions and tells a
+coach where the switch is.
+
+**Default: direct.** [SME to confirm] The blueprint says to ask Ruairi rather
+than ship a default. Changing it is `DEFAULT_SUGGESTION_MODE` and nothing
+else; links from before Order 28 carry no value and read through it.
+
+This is not an AI coach. The switch exists so the coach decides whether
+arithmetic on the athlete's own RPE reaches them at all.
+
+### Where it lives, and who can write it
+
+`suggestions_mode` (`direct` | `held`, optional, default `direct`) on
+`coach_athlete_links`. That row is already the record of this relationship,
+already unique per pair, and already readable by exactly the coach and the
+athlete and by nobody else. Revoking and re-linking reuse the row, so a
+coach's choice survives an athlete leaving and coming back.
+
+The table is server-only. Writes go through `POST /api/link/suggestions`:
+the caller comes from the JWT, never the body, and only the coach on an
+**active** link row qualifies. The athlete is refused, even for their own
+link: a switch the person being coached can flip back is not the coach
+staying in control. A revoked coach is refused because the link record is
+checked rather than circle membership, the same rule as reference maxes.
+
+### Audit rule it depends on
+
+Order 4's permission audit (`rules.ts`, on PR #36) needs to assert, for
+`coach_athlete_links`:
+
+1. Table permissions are `[]`: no client may create a row.
+2. Every row's permissions are exactly
+   `[read("user:<athlete_id>"), read("user:<coach_id>")]`, matching the row's
+   own `athlete_id` and `coach_id`: no `update`, no `delete`, no team or
+   `users` read.
+3. `suggestions_mode` is null, `direct` or `held`.
+
+Rules 1 and 2 are what make the route the only way to change the switch.
+`npm run e2e:suggestions` proves them on the live instance: the athlete, the
+coach and a stranger are all refused a client-side write.
+
+### With no signal
+
+The logger reads the athlete's active link rows straight from Appwrite and
+caches the answer on the device (`snb.suggestion-mode`, keyed by athlete).
+It re-reads on load, on `online` and on return to the foreground. A failed
+read never moves the cached value, so a coach's switch keeps applying in a
+basement.
+
+A device that has **never** read its link row (a fresh install opened with
+no signal) assumes **held**. Showing a suggestion the coach has switched off
+is the failure this switch exists to prevent; withholding one costs the
+athlete one number typed, and the first read with signal corrects it.
+Profile does not claim the coach held anything in that case.
+
+### Why nothing appears yet
+
+The engine has no default target on purpose (above). Targets come from
+prescriptions, which reach the logger at Order 22.
+`lib/logging/set-targets.ts` is that seam and returns null today. Everything
+downstream (the switch, the gate, the engine, the prefill note) is wired and
+tested now, so when a target exists the suggestion appears for athletes whose
+coach allows it, and for nobody else.
 
 ## Files
 
@@ -99,3 +177,11 @@ overridable, never silently imposed."
 | --- | --- |
 | `lib/strength/suggestion.ts` | `suggestLoad`, `MAX_SUGGESTION_SPAN` |
 | `lib/strength/plates.ts` | `LOADABLE_INCREMENT_KG`, `roundToLoadable` (moved here) |
+| `lib/coach/suggestion-mode.ts` | Order 28: the two modes, the default, the athlete's fold over links |
+| `lib/logging/suggestion-gate.ts` | The one place a suggestion enters the logger, and the switch on it |
+| `lib/logging/set-targets.ts` | The seam Order 22 fills; null today |
+| `lib/coach/suggestion-mode-store.ts`, `use-suggestion-mode.ts` | Reads, the device cache, the coach's write |
+| `appwrite/documents/suggestion-mode-admin.ts` | Who may set it: the coach on an active link, nobody else |
+| `app/api/link/suggestions/route.ts` | POST, caller from the JWT only |
+| `components/coach/suggestion-switch.tsx` | LOAD SUGGESTIONS on the Athlete View |
+| `components/profile/suggestion-mode-note.tsx` | LOAD SUGGESTIONS on Profile & Settings |
