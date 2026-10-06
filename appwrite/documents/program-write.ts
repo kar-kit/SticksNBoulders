@@ -1,3 +1,4 @@
+import { normaliseBackoff } from "@/lib/programming/backoff";
 import { parsePrescription } from "@/lib/programming/prescription";
 import { programPermissions, type ProgramTable } from "./policy";
 import { createExercise, type Actor, type WriteDeps } from "./write";
@@ -247,6 +248,19 @@ export interface PrescriptionFields {
   load?: string | null;
   restSeconds?: number | null;
   notes?: string | null;
+  /** The backoff cell as typed. Stored in its canonical spelling, derived here. */
+  backoff?: string | null;
+}
+
+/**
+ * The backoff as stored: canonical ("3 x 90%"), so the athlete's phone and
+ * the editor read the same rule however the coach spaced it. Undefined means
+ * "not in this write". The route has already refused anything unparseable;
+ * this throws rather than store a rule nobody can execute if a caller skips
+ * the route's schema.
+ */
+function backoffOf(backoff: string | null | undefined) {
+  return backoff === undefined ? undefined : normaliseBackoff(backoff);
 }
 
 /**
@@ -285,6 +299,9 @@ export async function createPrescription(
       load_kind: loadKindOf(load),
       rest_seconds: input.restSeconds ?? null,
       notes: input.notes ?? null,
+      // Only when set: a line with no backoff writes exactly what it did
+      // before Order 21, so it never depends on the column existing yet.
+      ...(input.backoff ? { backoff: backoffOf(input.backoff) } : {}),
       updated_at: iso(deps.now()),
     },
     permissions,
@@ -318,6 +335,7 @@ export async function updatePrescription(
       load_kind: loadKindOf(load),
       rest_seconds: input.restSeconds,
       notes: input.notes,
+      backoff: backoffOf(input.backoff),
       updated_at: iso(deps.now()),
     }),
     permissions,

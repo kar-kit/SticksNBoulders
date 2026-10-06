@@ -345,6 +345,13 @@ describe("the program tables (Order 19)", () => {
     expect(columnKeys("prescriptions")).toEqual(expect.arrayContaining(["load", "load_kind"]));
   });
 
+  it("hold a backoff rule as an optional column, so existing lines are untouched (Order 21)", () => {
+    expect(table("prescriptions").columns.find((c) => c.key === "backoff")).toMatchObject({
+      type: "string",
+      required: false,
+    });
+  });
+
   it("add only optional columns to the tables athletes already write", () => {
     // Additive, and never required: a required column on sets would reject
     // every queued write from a phone still running last week's build.
