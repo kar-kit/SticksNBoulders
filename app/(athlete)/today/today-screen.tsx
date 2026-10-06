@@ -78,6 +78,17 @@ export function TodayScreen() {
         <p className="m-0 text-body text-muted">No sessions logged yet.</p>
       ) : null}
 
+      {feedback.hasCoach === true ? (
+        // Absent, not greyed out, without a coach: no coach, no program.
+        <Link
+          href="/today/program"
+          className="flex min-h-[44px] items-center justify-between rounded-control border border-border bg-surface px-[14px] text-body"
+        >
+          <span className="font-semibold">My program</span>
+          <span className="text-ui text-muted-2">View</span>
+        </Link>
+      ) : null}
+
       {showFeedback ? (
         <Link
           href="/today/feedback"

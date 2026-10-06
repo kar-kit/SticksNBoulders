@@ -13,6 +13,13 @@
 export interface VideoLine {
   setCount: number;
   videoRequired?: boolean;
+  /**
+   * Backoff sets the line's rule adds after its own sets right now (Order 21),
+   * from `targetsFor`. They take positions like any other set, so a flagged
+   * line after them starts later; a flagged line WITH a backoff is done after
+   * its own sets, because the clip the coach wants is of the top set.
+   */
+  backoffSets?: number;
 }
 
 export type VideoAsk =
@@ -48,6 +55,7 @@ export function videoAsk(input: {
   for (const line of lines) {
     end += line.setCount;
     if (line.videoRequired) flaggedEnd = end;
+    end += line.backoffSets ?? 0;
   }
   if (flaggedEnd === 0) return "none";
   return loggedWorking >= flaggedEnd ? "prompt" : "emphasise";

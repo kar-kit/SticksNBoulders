@@ -801,8 +801,16 @@ export function LogScreen() {
                 if (!target || !athleteId) return null;
                 const mine = setsOf(block.id);
                 // A coach's video request (Order 30): a nudge, never a gate.
+                // Backoff sets (Order 21) take positions too, so each line
+                // carries how many its rule adds right now.
+                const blockTargets = targetsOf(block.id, mine) ?? [];
                 const ask = videoAsk({
-                  lines: plan.find((p) => p.exerciseId === block.id)?.lines,
+                  lines: plan
+                    .find((p) => p.exerciseId === block.id)
+                    ?.lines.map((line) => ({
+                      ...line,
+                      backoffSets: blockTargets.filter((t) => t.prescriptionId === line.id && t.backoff).length,
+                    })),
                   loggedWorking: mine.filter((s) => !s.isWarmup).length,
                   hasClip: filmed.has(block.id) || mine.some((s) => s.hasVideo),
                 });

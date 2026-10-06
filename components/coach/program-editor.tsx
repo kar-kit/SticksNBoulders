@@ -17,6 +17,7 @@ import {
   COLUMNS,
   commitCell,
   dayDateLabel,
+  describeBackoffCell,
   describeLoad,
   draftWeeks,
   moveCell,
@@ -65,6 +66,7 @@ const COLUMN_LABEL: Record<Column, string> = {
   load: "Load",
   rest: "Rest",
   notes: "Note",
+  backoff: "Backoff",
   video: "Video",
 };
 
@@ -609,6 +611,7 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
                         "px-1 py-0.5",
                         column === "sets" || column === "reps" || column === "rest" ? "w-20" : "",
                         column === "load" ? "w-56" : "",
+                        column === "backoff" ? "w-44" : "",
                         column === "video" ? "w-16" : "",
                       )}
                     >
@@ -646,6 +649,12 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
                         // are caught here or not at all.
                         <span className="block px-1 pt-0.5 text-caption text-muted" data-kind={loadKind.kind ?? "none"}>
                           {loadKind.label}
+                        </span>
+                      ) : null}
+                      {column === "backoff" && line.backoff ? (
+                        // Order 21: what the rule will do with today's top set.
+                        <span className="block px-1 pt-0.5 text-caption text-muted" data-kind="backoff">
+                          {describeBackoffCell(line.backoff)}
                         </span>
                       ) : null}
                       {errors[key] ? (
