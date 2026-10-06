@@ -16,10 +16,10 @@ import type { ClipSet } from "./queue";
  * needed a denormalised `has_video` column and a backfill.
  *
  * The coach reads the sets through the circle team, exactly as they read
- * everything else, so there is no branch anywhere for who is asking and the
- * whole screen stops working the moment a link is revoked. That is the
- * intended behaviour rather than a gap -- see the clip route for what a
- * revoked coach sees mid-scrub.
+ * everything else, so there is no branch anywhere for who is asking and a
+ * revoked athlete's rows simply stop coming back. The screen treats that as a
+ * state rather than a failure (Order 16.6, components/coach/review-queue.tsx),
+ * and the clip route covers what a revoked coach sees mid-scrub.
  */
 
 /** A season of filmed sets. Past this the queue needs a watermark, not a cap. */

@@ -68,7 +68,7 @@ export function AthleteBodyweight({ athleteId }: { athleteId: string }) {
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="m-0 text-ui font-semibold text-muted">Bodyweight</h2>
+      <h2 className="m-0 text-label uppercase tracking-wide text-muted">Bodyweight</h2>
 
       {summary ? (
         <p className="m-0 text-title font-semibold tabular-nums">

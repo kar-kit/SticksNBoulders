@@ -201,3 +201,44 @@ export function supersededRefresh(ops: readonly QueuedOp[], op: QueuedOp): boole
       other.payload.weekKey === op.payload.weekKey,
   );
 }
+
+/**
+ * What deleting a set does to the ops still carrying it.
+ *
+ * `drop` is every op that should simply leave the queue. `landed` says whether
+ * the set may exist on the server, and therefore whether a real delete has to
+ * be queued behind whatever is left.
+ *
+ * - A create never attempted, or refused outright (a 400 never lands), cannot
+ *   be on the server. It goes, and so does every edit or clip queued against
+ *   it -- each would 404 against a row that was never written.
+ * - A create that has been tried may have landed with the response lost, the
+ *   case the idempotent ids exist for. It stays, and the delete runs behind it.
+ * - An edit or clip that has never been tried is pointless once the set is
+ *   going, so it goes. One that has been tried may have landed; harmless,
+ *   because the delete behind it removes the row either way.
+ *
+ * `inFlight` is the op the drain loop is sending right now. It is treated as
+ * attempted whatever its counter says: dropping it locally while the request
+ * is on the wire is how a deleted set turns up on the coach's side anyway.
+ */
+export function opsDroppedByDelete(
+  ops: readonly QueuedOp[],
+  setId: string,
+  inFlight: string | null = null,
+): { drop: QueuedOp[]; landed: boolean } {
+  const mine = ops.filter((op) => op.payload.setId === setId);
+  const tried = (op: QueuedOp) => op.attempts > 0 || op.id === inFlight;
+
+  const create = mine.find((op) => op.kind === "set.create");
+  const landed = !create || (tried(create) && !create.permanentError);
+
+  const drop = mine.filter((op) => {
+    if (op.kind === "set.create") return !landed;
+    if (op.kind === "set.update" || op.kind === "set.attachVideo") {
+      return !landed || Boolean(op.permanentError) || !tried(op);
+    }
+    return false;
+  });
+  return { drop, landed };
+}

@@ -7,7 +7,9 @@ import {
   createProfile,
   createSession,
   createSet,
+  deleteSet,
   finishSession,
+  SET_HAS_COACH_COMMENTS,
   normaliseExerciseName,
   revokeCoachLink,
   updateSet,
@@ -335,5 +337,47 @@ describe("server-only writes", () => {
     await revokeCoachLink(h.deps, { rowId: "link1", coachId: COACH, athleteId: ATHLETE });
     expect(h.last().op).toBe("update");
     expect(h.last().data).toMatchObject({ status: "revoked", revoked_at: NOW.toISOString() });
+  });
+});
+
+describe("deleting a set", () => {
+  it("deletes when nobody else has commented", async () => {
+    const { deps, actor, calls } = harness();
+    await deleteSet(deps, actor, "st-1", { othersCommented: async () => false });
+    expect(calls).toEqual([{ op: "delete", tableId: "sets", rowId: "st-1", data: {} }]);
+  });
+
+  it("refuses, and writes nothing, once a coach has commented", async () => {
+    // The coach's words are their record, the athlete cannot delete them, and
+    // a thread about a set that no longer exists is a correction about nothing.
+    const { deps, actor, calls } = harness();
+    const attempt = deleteSet(deps, actor, "st-1", { othersCommented: async () => true });
+    await expect(attempt).rejects.toMatchObject({ message: SET_HAS_COACH_COMMENTS, code: 412 });
+    expect(calls).toEqual([]);
+  });
+
+  it("uses a status the queue files as permanent, not as already done", async () => {
+    const { classify } = await import("@/lib/offline/queue");
+    const { deps, actor } = harness();
+    const error = await deleteSet(deps, actor, "st-1", { othersCommented: async () => true }).catch((e) => e);
+    expect(classify(error)).toBe("permanent");
+  });
+});
+
+describe("rollups clear what no longer exists", () => {
+  it("writes null rather than undefined for an empty best, so an update clears it", async () => {
+    const { deps, last } = harness();
+    await writeRollup(deps, {
+      athleteId: ATHLETE,
+      exerciseId: "squat",
+      weekStart: new Date("2026-10-12T00:00:00.000Z"),
+      setCount: 1,
+      volumeReps: 5,
+      tonnageKg: 700,
+      bestE1rmKg: null,
+      rowId: "rollup-1",
+    });
+    expect(last().op).toBe("update");
+    expect(last().data.best_e1rm_kg).toBeNull();
   });
 });

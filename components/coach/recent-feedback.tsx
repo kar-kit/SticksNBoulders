@@ -59,7 +59,7 @@ export function RecentFeedback({ athleteId }: { athleteId: string }) {
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="m-0 text-ui font-semibold text-muted">Recent feedback</h2>
+      <h2 className="m-0 text-label uppercase tracking-wide text-muted">Recent feedback</h2>
       {state.comments.length === 0 ? (
         <p className="m-0 text-ui text-muted-2">
           Nothing said yet. Comments you leave on their clips appear here.

@@ -4,6 +4,7 @@ import {
   backoffMs,
   classify,
   collapsibleCreate,
+  opsDroppedByDelete,
   failedOps,
   newOp,
   pendingClientIds,
@@ -130,5 +131,57 @@ describe("newOp", () => {
       attempts: 0,
       nextAttemptAt: 900,
     });
+  });
+});
+
+describe("opsDroppedByDelete", () => {
+  const op = (id: string, kind: QueuedOp["kind"], over: Partial<QueuedOp> = {}): QueuedOp => ({
+    id,
+    kind,
+    payload: { setId: "st-9" },
+    sequence: Number(id.replace(/\D/g, "")) || 0,
+    attempts: 0,
+    nextAttemptAt: 0,
+    ...over,
+  });
+
+  it("drops a create that was never sent, with everything queued against it, and needs no delete", () => {
+    const ops = [op("c1", "set.create"), op("a2", "set.attachVideo"), op("u3", "set.update")];
+    const { drop, landed } = opsDroppedByDelete(ops, "st-9");
+    expect(landed).toBe(false);
+    expect(drop.map((o) => o.id)).toEqual(["c1", "a2", "u3"]);
+  });
+
+  it("keeps a create that has been tried, because it may have landed", () => {
+    const ops = [op("c1", "set.create", { attempts: 2 }), op("a2", "set.attachVideo")];
+    const { drop, landed } = opsDroppedByDelete(ops, "st-9");
+    expect(landed).toBe(true);
+    // The untried clip is pointless once the set is going; the create stays.
+    expect(drop.map((o) => o.id)).toEqual(["a2"]);
+  });
+
+  it("treats the op on the wire as tried, whatever its counter says", () => {
+    const { drop, landed } = opsDroppedByDelete([op("c1", "set.create")], "st-9", "c1");
+    expect(landed).toBe(true);
+    expect(drop).toEqual([]);
+  });
+
+  it("treats a create the server refused as never having landed", () => {
+    const ops = [op("c1", "set.create", { attempts: 1, permanentError: "Invalid document structure" })];
+    const { drop, landed } = opsDroppedByDelete(ops, "st-9");
+    expect(landed).toBe(false);
+    expect(drop.map((o) => o.id)).toEqual(["c1"]);
+  });
+
+  it("says a synced set has landed, and drops nothing", () => {
+    expect(opsDroppedByDelete([], "st-9")).toEqual({ drop: [], landed: true });
+  });
+
+  it("leaves other sets' ops and rollup refreshes alone", () => {
+    const ops = [
+      op("c1", "set.create", { payload: { setId: "st-other" } }),
+      op("r2", "rollup.refresh", { payload: { exerciseId: "squat" } }),
+    ];
+    expect(opsDroppedByDelete(ops, "st-9").drop).toEqual([]);
   });
 });
