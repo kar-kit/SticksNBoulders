@@ -1,4 +1,5 @@
 import { parsePrescription, type PrescriptionKind } from "./prescription";
+import { describeBackoff, formatBackoff, parseBackoff } from "./backoff";
 import { addDays, type Prescription, type ProgramOpInput, type ProgramTree } from "./program";
 import type { MaxKind } from "@/lib/strength/reference-max";
 
@@ -13,8 +14,11 @@ import type { MaxKind } from "@/lib/strength/reference-max";
  * Pure. No client, no network, no clock of its own.
  */
 
-/** The grid's editable columns, left to right. Video-required (Order 30) slots in after notes. */
-export const COLUMNS = ["exercise", "sets", "reps", "load", "rest", "notes"] as const;
+/**
+ * The grid's editable columns, left to right. Backoff (Order 21) sits after
+ * notes; video-required (Order 30) slots in after it.
+ */
+export const COLUMNS = ["exercise", "sets", "reps", "load", "rest", "notes", "backoff"] as const;
 export type Column = (typeof COLUMNS)[number];
 
 /* -------------------------------------------------------------------------
@@ -119,7 +123,18 @@ export function cellText(line: Prescription, column: Exclude<Column, "exercise">
       return formatRestCell(line.restSeconds);
     case "notes":
       return line.notes ?? "";
+    case "backoff":
+      return line.backoff ?? "";
   }
+}
+
+/**
+ * What the backoff cell's rule means, beside it: "3 sets at 90% of today's
+ * top set". The same job describeLoad does for the load cell.
+ */
+export function describeBackoffCell(text: string | null | undefined): string {
+  const parsed = parseBackoff(text);
+  return parsed.ok ? describeBackoff(parsed.rule) : parsed.reason;
 }
 
 /**
@@ -156,6 +171,14 @@ export function commitCell(
     }
     case "notes":
       return text.length > 500 ? { error: "A note is 500 characters at most" } : { op: { ...base, notes: text } };
+    case "backoff": {
+      // No freeform fallback: a rule that does not parse cannot be executed,
+      // so it is refused on the cell. Saved in its canonical spelling.
+      const parsed = parseBackoff(text);
+      if (!parsed.ok) return { error: parsed.reason };
+      const backoff = parsed.rule ? formatBackoff(parsed.rule) : null;
+      return backoff === (line.backoff ?? null) ? { unchanged: true } : { op: { ...base, backoff } };
+    }
   }
 }
 
@@ -173,6 +196,7 @@ export function applyLineOp(line: Prescription, op: ProgramOpInput): Prescriptio
     loadKind: op.load === undefined ? line.loadKind : load ? (parsePrescription(load)?.kind ?? null) : null,
     restSeconds: op.restSeconds === undefined ? line.restSeconds : op.restSeconds,
     notes: op.notes === undefined ? line.notes : op.notes?.trim() || null,
+    backoff: op.backoff === undefined ? line.backoff : op.backoff?.trim() || null,
   };
 }
 
