@@ -994,6 +994,62 @@ describe("next-set load suggestions, behind the coach's switch (Order 28)", () =
     expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
   });
 
+  it("marks the prefilled load Suggested while it stands", async () => {
+    coachChose("direct");
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"direct"'));
+    await addSquat(user);
+    await logTopSet(user);
+
+    const next = await screen.findByRole("group", { name: "Set 2" });
+    expect(within(next).getByText("Suggested")).toBeInTheDocument();
+    expect(screen.getAllByText("Suggested")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Set 2 weight in kilograms" })).toHaveAccessibleDescription(
+      "Suggested",
+    );
+    // Logging is never blocked on it: the confirm square is live.
+    expect(screen.getByRole("button", { name: "Log Set 2" })).toBeEnabled();
+  });
+
+  it("clears the marker the moment the athlete edits the load", async () => {
+    coachChose("direct");
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"direct"'));
+    await addSquat(user);
+    await logTopSet(user);
+    await screen.findByText("Suggested");
+
+    await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
+    // Opening the pad is not an edit.
+    expect(screen.getByText("Suggested")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "1" }));
+    expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+    expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the marker when the athlete changes only the reps", async () => {
+    coachChose("direct");
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"direct"'));
+    await addSquat(user);
+    await logTopSet(user);
+    await screen.findByText("Suggested");
+
+    await user.click(screen.getByRole("button", { name: "Set 2 reps" }));
+    await user.click(screen.getByRole("button", { name: "3" }));
+    expect(screen.getByText("Suggested")).toBeInTheDocument();
+  });
+
+  it("shows no marker when the coach holds suggestions", async () => {
+    coachChose("held");
+    const { user } = setup({ active: session() });
+    await waitFor(() => expect(localStorage.getItem("snb.suggestion-mode")).toContain('"held"'));
+    await addSquat(user);
+    await logTopSet(user);
+    await screen.findByRole("group", { name: "Set 2" });
+    expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+  });
+
   it("drops the note once the athlete types their own load", async () => {
     coachChose("direct");
     const { user } = setup({ active: session() });
@@ -1032,6 +1088,8 @@ describe("next-set load suggestions, behind the coach's switch (Order 28)", () =
       await addSquat(user);
       await logTopSet(user);
       expect(await screen.findByText("suggested from RPE 7 @ 170")).toBeInTheDocument();
+      // The marker needs no request either: it is row state.
+      expect(screen.getByText("Suggested")).toBeInTheDocument();
     });
 
     it("ignores a cached switch that belongs to somebody else who used this phone", async () => {
