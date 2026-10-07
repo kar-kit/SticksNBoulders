@@ -81,6 +81,12 @@ So clips are served through this app's own origin, behind a **signed ticket**.
 with `VIDEO_TICKET_SECRET` and valid for five minutes. It checks the caller is
 signed in and nothing else.
 
+`VIDEO_TICKET_SECRET` is required at runtime: a production start refuses to boot
+without it (32+ characters; `openssl rand -base64 48` makes one), because the
+alternative is a server that runs and fails every playback with a screen that
+only says the clip "could not be loaded". `next dev` warns once and carries on;
+`next build` needs no secret.
+
 That is not an omission. `GET /api/clip/[fileId]` mints a fresh JWT **for the
 ticket's user** and asks Appwrite as them, so the access decision is Appwrite's
 own. Consequences:

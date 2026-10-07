@@ -1,90 +1,52 @@
-## feat(log): ticking a set means done, plus a dedicated End session button
+## fix(video): fail loudly at startup when VIDEO_TICKET_SECRET is missing
 
-Joey, on the logger: *"There's no way to end a session at the moment that's
-obvious, and there's no way to add a set or mark a set as completed without
-adding a new set below it. It should be 'mark as completed' and that's it, no
-adding new sets. There should also be a dedicated End session button."*
+### Why
+
+Clip playback signs its URLs with `VIDEO_TICKET_SECRET`. When it is unset the
+app builds and boots normally, then every coach playback request fails with one
+server log line, and the review screen says only "The video for this clip could
+not be loaded". Nothing points at the cause. It cost real debugging time, and
+the unit tests could not catch it because they inject the secret.
 
 ### What changes
 
-- **Confirming a set only logs it.** `afterConfirm` (lib/logging/plan.ts) no
-  longer appends a prefilled row when the exercise has nothing else waiting.
-  It returns `next: PlannedRow | null`; a row the athlete already planned with
-  Add set still becomes the head, exactly as before. The pad and RPE sheet
-  close, focus clears (or moves to the next planned row), and the rest timer
-  starts as it always has.
-- **`+ Add set` is the one way to the next row.** It carries everything the
-  auto-row used to: prefill from the last planned row or last logged set, the
-  coach's prescribed target via `prescribeNewRows`, and the Order 28
-  next-set suggestion. The suggestion is now computed in `addSet`
-  (`suggestionFor` in log-screen.tsx) from the last logged set and passed to
-  `addRow`, which only applies it when the exercise has no planned rows --
-  behind a planned row it would be pricing the wrong set, and it never
-  touches numbers the athlete typed. The coach's **held** switch still means
-  no suggestion; that gate is unchanged (`nextSetSuggestion`).
-- **End session button.** Full-width, outlined (`secondary`, `lg`, 48px)
-  under the last exercise block, label and accessible name "End session".
-  Opens the existing *Finish this session? N sets logged* panel and is hidden
-  while that panel shows. It closes the pad / RPE sheet first, because both
-  outrank the confirm panel for the bottom of the screen. The header clock is
-  untouched and still opens the same panel (aria-label "Finish session").
-- **Write-failure path:** if `logSet` throws (device storage unwritable), the
-  row now goes back to the head of its exercise with the athlete's numbers.
-  Before, the auto-row happened to carry them; without it they would vanish.
+- `instrumentation.ts` (new, repo root; there is no `src/`) runs on the Node
+  runtime only and calls `checkVideoTicketSecret`. A production start throws
+  with a message naming `VIDEO_TICKET_SECRET` and `openssl rand -base64 48`.
+  Development logs a single `console.warn`, so `next dev` still works.
+- `lib/video/startup-check.ts` (new) holds the decision as a pure function of
+  `{ env, nodeEnv, phase }`. It asks `ticketSecret()` rather than restating the
+  32-character rule, so there is still one place to change it.
+- `docs/review-queue.md` says a production start refuses to boot without it.
+- `next build` is unaffected. Next skips the instrumentation hook itself while
+  `NEXT_PHASE` is `phase-production-build` (`instrumentation-globals.external.js`,
+  `registerInstrumentation`), and the check repeats that exemption so it does
+  not depend on a framework detail. CI needs no secret.
 
-### Deliberately not done
+`register()` is awaited by `NextNodeServer.prepareImpl`, so a throw stops
+`next start` before it accepts requests. That is read from Next's source, not
+observed; see below.
 
-- **No prescribed rows laid out up front.** A prescribed 3 × 5 still shows one
-  row; each further set comes from Add set, priced to the coach's line.
-- `activate` (tapping an exercise name) is unchanged: it opens one fresh,
-  unplanned row from the last logged set, with no suggestion -- as before.
-- The header clock does not close the pad when tapped (unchanged). Tapped
-  mid-entry, the confirm panel waits behind the pad until it is dismissed, as
-  it always has; the new button does not have this problem.
-- Nothing in `lib/offline` touched.
+### How to verify
 
-### Tests
+1. `npm test -- lib/video/startup-check` : 10 tests (missing, empty, 31 chars,
+   exactly 32, 64, prod vs dev, build phase, other phases).
+2. Build without the secret, which must still succeed:
+   `env -u VIDEO_TICKET_SECRET npm run build`
+3. Prod refuses: `env -u VIDEO_TICKET_SECRET npx next start -p 3199`
+   should exit non-zero with the message above. Check `.env.local` does not
+   supply one, since Next loads it. [Not run by the author.]
+4. Prod boots with one: `VIDEO_TICKET_SECRET=$(openssl rand -base64 48) npx next start -p 3199`.
+5. Dev warns once: `env -u VIDEO_TICKET_SECRET npx next dev` logs
+   `[startup] VIDEO_TICKET_SECRET is missing...` and carries on.
 
-`npm test` 2232 passed / 138 files (baseline 2225 / 138). `npm run lint` and
-`npm run typecheck` clean. New/changed coverage: confirm adds no row and
-closes the pad; Add set after a confirm is the head and logs with the next
-`set_index`; prescribed Add set carries the target and `prescriptionId`;
-suggestions (direct / held / offline / no target) now asserted on the Add set
-row; deleting the only set falls back to "tap the name to start"; End
-session opens/hides/finishes and closes the pad; storage-failure row returns.
+### Heads-up for deploys
 
-E2E scripts updated to the new flow but **not run** (they hit the live
-instance): e2e-session, e2e-offline, e2e-backoff, e2e-video-required (tap Add
-set where they relied on the auto-row; e2e-session finishes via End session).
-docs/suggestions.md and docs/programs.md updated; app/design athlete frame
-shows the button.
+Any production environment without the secret will now fail to start instead of
+starting broken. Set it on the host before this ships.
 
-### Manual test on the real app (390 × 852 phone)
+### Not covered
 
-1. Free session: add Squat, enter 100 × 5, tick. Set 1 shows logged, **no Set
-   2 row**, rest timer starts, pad closed, `+ Add set` visible.
-2. Tap `+ Add set`: Set 2 appears with 100 × 5 and a live confirm square. Tick
-   it; again no row appears.
-3. With Set 1 logged, tap Add set twice, edit Set 3 to 80. Tick Set 2: Set 3
-   (80) becomes the confirm row. Tick it: nothing new appears.
-4. Prescribed day (e.g. 2 × 5 @ 75%): tick Set 1, no Set 2 row; Add set gives
-   Set 2 at the prescribed load; after the last prescribed set, Add set
-   repeats the last set.
-5. Coach on **direct**, RPE line prescribed: log 170 × 5 @ RPE 7, Add set ->
-   175 marked *Suggested* / "suggested from RPE 7 @ 170". Switch coach to
-   **held**: Add set repeats 170, no marker.
-6. Backoff line: log top set, Add set -> backoff load with "backoff from top
-   set …" note. Repeat with the phone offline.
-7. Delete the only logged set of an exercise: the block shows "No sets yet —
-   tap the name to start"; tapping the name opens Set 1.
-8. Scroll to the bottom: **End session** sits under the last exercise, clearly
-   separate from Add set. Tap it -> confirm panel, button disappears. Keep
-   going -> button returns. End session -> Finish -> summary.
-9. Open the pad on a row, then tap End session: pad closes, panel shows.
-10. Header clock still opens the same panel.
-11. Video-required line: log both sets (Add set for the second); the nudge and
-    clip attach behave as before.
-12. Airplane mode: log, Add set, log, reload -- queued sets survive, nothing
-    stranded.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+`instrumentation.ts` itself has no unit test: vitest only collects tests under
+`app/ appwrite/ components/ lib/ scripts/`, and the file is a thin wrapper
+around the tested function. Steps 2 to 5 above are the check on the wiring.
