@@ -1,90 +1,65 @@
-## test(coach,review,export): cover the coach-side stores, fix two export bugs
+## Video upload and playback: tests that fail when the code breaks, plus two fixes
 
 ### Why
 
-The test-suite audit broke the source on purpose and ran the suite. In the
-coach-side data layer the suite stayed green through every mutation, because
-`roster-store`, `queue-store`, `comment-store` and `coach-links-store` had no
-tests at all. That gap is how the "Unnamed athlete" bug reached a coach. The
-same pass turned up two real bugs in the CSV export.
+A mutation audit (break the source, run the suite) found the video path largely
+unguarded: `lib/video/resumable-upload.ts` had no tests, `attachClipToSet` had
+none, two limit tests compared code to itself, and neither `/api/clip` route had
+a test. It also found two real bugs, both fixed here.
 
-### What changes
+### Source fixes (failing test written first, watched fail, then fixed)
 
-**Test infrastructure**
+1. **`POST /api/clip` threw on a missing `VIDEO_TICKET_SECRET`.** `ticketSecret()`
+   sat outside any try/catch, so the handler threw: a 500 with nothing in the log.
+   The stream route already logged it. Both now log
+   `clip: VIDEO_TICKET_SECRET is not configured` once and return
+   `500 { error: "unavailable" }`.
+2. **Playback broke after five minutes on one clip.** The stream route checks the
+   ticket on every request, and every seek, frame step or loop past the buffer is
+   a new Range request carrying the same URL. The queue only re-mints when
+   `items` changes, so staying on a clip (or picking one from the rail) past five
+   minutes gave "This clip would not play". The old comment in `ticket.ts`
+   ("the stream, once started, is not interrupted by expiry") was true only for a
+   response already in flight. `ClipPlayer` now takes `refreshSrc`. On a video
+   error it asks once for a fresh URL and resumes at the same time and play
+   state. If a fresh URL fails before it loads, the player treats that as final
+   (revoked access, or the file is still uploading), so it never loops. It is
+   wired into the review queue and the athlete videos list.
 
-- `lib/testing/fake-tables.ts` (new, test-only): an in-memory Appwrite
-  `tables` that applies `equal`, `isNotNull`, `isNull`, `greaterThanEqual`,
-  `lessThan`, ordering, `cursorAfter`, `limit` and `select`. It throws on any
-  other query method. A store that drops a filter, flips a sort or forgets to
-  select a column it reads now gets the wrong rows back, the same as it would
-  from the server.
+### Tests added, and the mutations they now catch
 
-**New store tests**
+| Area | Mutation | Caught by |
+|---|---|---|
+| resumable-upload | 4xx marked retryable | 4xx reported permanent, stops sending |
+| | 5xx / dropped connection marked permanent | retryable-failure tests |
+| | resume from 0 instead of `chunksUploaded` | three resume tests |
+| | report success without asking the server (L191-198) | unreadable final response, server not complete |
+| | JWT minted per chunk | clean-upload test |
+| attachClipToSet | forget pending after a retryable failure | keeps pending |
+| | skip `enqueue("set.attachVideo")` | records the clip |
+| | remember after upload / keep refused clip | order + drop tests |
+| ticket | minimum 32→6, 32→33 | 31 throws, 32 passes |
+| clip | `MAX_VIDEO_BYTES` → 300MB; extra extension | compared to `set_videos` in `appwrite/schema` |
+| `/api/clip` | unwrap secret; mint for wrong user; skip JWT check; trust bad JWT | route tests |
+| `/api/clip/[fileId]` | drop file-id comparison (L58); ignore expiry; drop log; drop Range | route tests |
+| ClipPlayer / queue | never refresh; refresh forever; refresh once ever; lose position; lose play state; ignore failed refresh; queue not wired | player + queue tests |
 
-- `lib/coach/roster-store.test.ts`: `fetchRoster` → `buildRoster`. Covers an
-  athlete with a profile (named), one with no profile (listed as
-  `Unnamed athlete`, not dropped and not handed someone else's name), forged
-  profiles, open sessions not counted as completed, circle visibility, and
-  waiting clips.
-- `lib/review/queue-store.test.ts`: covers the athlete filter, forged clips
-  being dropped, the 300-clip cap keeping the newest clips, unfilmed sets being
-  filtered server-side, the prescription snapshot, `fetchReviewedSetIds`
-  returning only this coach's own unforged rows, and `subscribeToClips` firing
-  on both `update` and `create`.
-- `lib/review/comment-store.test.ts`: threads come back in `created_at` order
-  even when ids disagree with that order. Also covers forged and empty comments
-  being dropped, one round trip per 100 sets, and the Athlete View feed
-  (newest first, capped, this athlete only).
-- `lib/coach/coach-links-store.test.ts`: only `status: "active"` counts as
-  linked. An unknown or missing status does not. Also covers this coach's rows
-  only, the revoked/linked dates surviving the column select, and
-  `canSeeCircle`.
+29 mutations run, all 29 caught. The no-JWT test initially survived "drop the
+`!jwt` check" (Appwrite rejects an empty JWT anyway); it now also asserts no
+Appwrite lookup happens.
 
-**Bug fixes (failing test written first, watched fail, then fixed)**
+### Not done / worth knowing
 
-1. **Cancelled share sheet reported success.** `components/export/export-log.tsx`
-   ignored the `false` that `deliverFile` returns when the athlete dismisses
-   the share sheet, so it still showed "Exported N sets". It now returns to
-   idle.
-2. **CSV Prescription column always blank.** Sets have stored `prescribed`
-   since Order 22. The export failed to fill it in two places: it never
-   selected the column, and `buildLogRows` defaulted to a lookup that returned
-   null. The store now selects and parses `prescribed`, and the default lookup
-   returns it. The column order is unchanged. `docs/csv-export.md` is updated.
-   The new `lib/export/export-log.test.ts` checks the assembled CSV for a
-   fixture with a header, a warm-up, a working set with its prescription, and
-   another athlete's set that gets excluded.
-
-### Mutations now caught
-
-34 mutations run, 34 caught. Each one was applied, run against the named
-test file, and reverted with `git checkout`.
-
-| Audit id / mutation | Caught by |
-| --- | --- |
-| M1 open session counted (`finishedAt` `""` instead of null) | roster-store |
-| M2 names map emptied; also names paired by position | roster-store |
-| `finished_at` dropped from select; visibility forced true; reviewed ids emptied; forged profile kept (`lib/auth/athletes.ts`) | roster-store |
-| M10 subscription reacts to creates only | queue-store |
-| M11 `authenticRows` removed from `fetchClips` | queue-store |
-| M21 cap keeps the oldest (`orderAsc`) | queue-store |
-| athlete filter removed; `isNotNull(video_file_id)` removed; review coach filter / provenance removed; prescription dropped | queue-store |
-| M17 unknown status treated as active | coach-links-store |
-| coach filter removed; `revoked_at` unselected; `canSeeCircle` always true | coach-links-store |
-| comment order, provenance (both reads), empty-body filter, batch size, athlete filter, `parent_id` | comment-store |
-| cancel ignored; prescription default, select, parse; athlete filter; warm-up parse | export-log, training-log-store |
-
-One mutation survived on the first try: removing `isNotNull("video_file_id")`.
-The store discards video-less rows anyway, so the only effect is extra round
-trips. The test now asserts one round trip for 400 unfilmed sets plus one clip.
-
-### Not done / for a decision
-
-- `subscribeToClips` ignores `.delete` events. I did not pin that either way.
-  Whether a deleted filmed set should refresh the queue is a product call.
-- `fetchCommentsForSets` orders within each 100-set batch, not across batches.
-  It is untested past 100 sets and I left it unchanged.
+- **There is no backoff.** `uploadResumable` does not retry. It reports
+  `retryable`, and the retry is `resumeInterruptedUploads` on the next app
+  start, capped at `MAX_UPLOAD_ATTEMPTS`. The tests cover that contract. Adding
+  in-session backoff would be a product change, so I left it out.
+- `athlete-videos.tsx` got the same `refreshSrc` wiring but has no test file.
+  The behaviour lives in `ClipPlayer` and is tested there.
+- The expiry diagnosis comes from reading the route and the media Range
+  behaviour. Nobody reproduced it in a browser. Safari issues many small
+  ranges, so it is the likeliest place to hit it.
 
 ### How to verify
 
-`npm test` (144 files / 2268 tests), `npm run lint`, `npm run typecheck`.
+`npm test`, `npm run lint`, `npm run typecheck`.

@@ -31,8 +31,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 /**
  * Five minutes. Long enough to start playing a clip and scrub through it,
  * short enough that a URL in a browser history or a proxy log is stale by the
- * time anyone reads it. The stream, once started, is not interrupted by
- * expiry -- this gates opening the file, not holding it.
+ * time anyone reads it.
+ *
+ * Checked on every request, not once per clip: each seek, frame step or loop
+ * past the buffer is a new Range request on the same URL. Only a response
+ * already in flight outlives expiry, so the player asks for a fresh URL when
+ * one fails -- see ClipPlayer's refreshSrc.
  */
 export const TICKET_TTL_MS = 5 * 60 * 1000;
 
