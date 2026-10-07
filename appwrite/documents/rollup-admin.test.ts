@@ -192,3 +192,30 @@ describe("rebuilding a week after a set is deleted", () => {
     expect(t.db.sets.map((s) => s.$id)).toEqual(["last"]);
   });
 });
+
+describe("rebuilding a week that holds a forged set", () => {
+  // The rebuild reads with the API key, so it sees every row carrying this
+  // athlete's id -- including one a stranger created and stamped for everyone.
+  const STRANGER = "athlete_stranger";
+  const forged = set("forged", 400, 1, {
+    e1rm_kg: 400,
+    $permissions: ['read("users")', `update("user:${STRANGER}")`, `delete("user:${STRANGER}")`],
+  });
+
+  it("counts the athlete's own set and ignores the stranger's", async () => {
+    const t = tables([set("real", 150, 3, { e1rm_kg: 165 }), forged]);
+    await rebuild(t.store);
+    expect(t.db.stats_rollups[0]).toMatchObject({
+      set_count: 1,
+      volume_reps: 3,
+      best_single_kg: 150,
+      best_e1rm_kg: 165,
+    });
+  });
+
+  it("writes no week from forged sets alone", async () => {
+    const t = tables([forged]);
+    expect((await rebuild(t.store)).status).toBe("absent");
+    expect(t.db.stats_rollups).toHaveLength(0);
+  });
+});
