@@ -47,7 +47,13 @@ export function ExportLog({ athleteId, athleteName, audience }: ExportLogProps) 
         return;
       }
       // The athlete is on a phone; the coach is at a desk. See deliverFile.
-      await deliverFile(built.fileName, built.parts, { preferShare: audience === "athlete" });
+      const delivered = await deliverFile(built.fileName, built.parts, { preferShare: audience === "athlete" });
+      // Dismissing the share sheet is a change of mind, not a failure, and no
+      // file went anywhere -- so back to the button, with no "Exported" line.
+      if (!delivered) {
+        setState({ status: "idle" });
+        return;
+      }
       setState({
         status: "done",
         setCount: built.setCount,

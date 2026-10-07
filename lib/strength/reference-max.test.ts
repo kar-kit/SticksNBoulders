@@ -80,13 +80,21 @@ describe("currentMax", () => {
     expect(currentMax(entries, "training", at("2026-10-01T00:00:00.000Z"))?.valueKg).toBe(190);
   });
 
-  /** A typo correction re-enters the same date, and the correction must win. */
-  it("breaks a tie on the later-listed entry, which is the correction", () => {
-    const entries = [
-      entry({ id: "typo", valueKg: 1800, effectiveFrom: "2026-08-12T00:00:00.000Z" }),
-      entry({ id: "fixed", valueKg: 180, effectiveFrom: "2026-08-12T00:00:00.000Z" }),
-    ];
-    expect(currentMax(entries, "training", at("2026-09-15T10:00:00.000Z"))?.entryId).toBe("fixed");
+  /**
+   * A typo correction re-enters the same date, and the correction must win.
+   *
+   * Ids shaped like Appwrite's ID.unique(): hex seconds, hex milliseconds, then
+   * random padding -- so the later-created row has the larger id. Both list
+   * orders, because the store reads newest-first: a tie broken on list
+   * position let the 1800kg typo outrank the fix that came after it, and every
+   * percentage, DOTS and the coach panel priced off it.
+   */
+  it("breaks a same-date tie on the later-created entry, whatever order the list is in", () => {
+    const typo = entry({ id: "68c3a1f00012a3b4c5d", valueKg: 1800, effectiveFrom: "2026-08-12T00:00:00.000Z" });
+    const fixed = entry({ id: "68c3a1f3001f0a9b8c7", valueKg: 180, effectiveFrom: "2026-08-12T00:00:00.000Z" });
+    const asOf = at("2026-09-15T10:00:00.000Z");
+    expect(currentMax([typo, fixed], "training", asOf)?.valueKg).toBe(180);
+    expect(currentMax([fixed, typo], "training", asOf)?.valueKg).toBe(180);
   });
 
   it("keeps the kinds apart", () => {

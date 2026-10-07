@@ -6,9 +6,9 @@ import { runOp } from "./runner";
 import {
   afterFailure,
   classify,
-  collapsibleCreate,
   newOp,
   opsDroppedByDelete,
+  pendingOps,
   readyPrefix,
   supersededRefresh,
   type OpKind,
@@ -111,29 +111,16 @@ export const queuedOps = (): QueuedOp[] => cache;
 /** Writes the op down, then tries it. In that order, always. */
 export async function enqueue(kind: OpKind, payload: Record<string, unknown>): Promise<void> {
   const open = await ready();
-  const op = newOp(kind, payload, sequence++, `op-${Date.now()}-${sequence}`);
+  const next = sequence++;
+  // Padded because the id is IndexedDB's key and getAll returns by key: unpadded,
+  // op-<t>-10 comes back ahead of op-<t>-9. The drain sorts by `sequence` anyway;
+  // this keeps what is on disk readable in the same order.
+  const op = newOp(kind, payload, next, `op-${Date.now()}-${String(next).padStart(8, "0")}`);
   await open.put(op);
   cache = [...cache, op];
   announce();
   heartbeat();
   void flush();
-}
-
-/**
- * Undo, for a write that has not been attempted yet.
- *
- * Returns false when the create has already been tried, in which case the
- * caller must queue a real delete: the attempt may have landed.
- */
-export async function cancelQueued(kind: OpKind, rowId: string): Promise<boolean> {
-  const open = await ready();
-  const op = collapsibleCreate(cache, kind, rowId);
-  // Mid-send counts as attempted: the request may land after this returns.
-  if (!op || op.id === inFlight) return false;
-  await open.remove(op.id);
-  cache = cache.filter((each) => each.id !== op.id);
-  announce();
-  return true;
 }
 
 /**
@@ -189,7 +176,9 @@ async function drain(force: boolean): Promise<void> {
   // one was still in flight would otherwise sit until the heartbeat -- and the
   // athlete who just tapped confirm is exactly who is owed a prompt send.
   for (let pass = 0; ; pass += 1) {
-    const batch = force && pass === 0 ? cache.filter((op) => !op.permanentError) : readyPrefix(cache, Date.now());
+    // Both paths sort by the stored sequence. The cache is in whatever order the
+    // store returned it, and IndexedDB returns by key, not by when it was queued.
+    const batch = force && pass === 0 ? pendingOps(cache) : readyPrefix(cache, Date.now());
     if (batch.length === 0) return;
 
     for (const op of batch) {

@@ -12,6 +12,18 @@ interface Call {
 }
 const calls: Call[] = [];
 const db = vi.hoisted(() => ({ rows: {} as Record<string, unknown[]>, honourQueries: true }));
+// Every writing method the browser SDK's TablesDB has, so a write from the
+// read path is seen rather than failing as "not a function" inside some
+// swallowed promise.
+const writes = vi.hoisted(() => ({
+  createRow: vi.fn(),
+  updateRow: vi.fn(),
+  upsertRow: vi.fn(),
+  deleteRow: vi.fn(),
+  incrementRowColumn: vi.fn(),
+  decrementRowColumn: vi.fn(),
+  createOperations: vi.fn(),
+}));
 
 const parsed = (q: string) => JSON.parse(q) as { method: string; attribute?: string; values?: unknown[] };
 
@@ -19,6 +31,7 @@ vi.mock("@/appwrite/browser-client", () => ({
   browserAppwrite: () => ({
     databaseId: "db",
     tables: {
+      ...writes,
       listRows: async ({ tableId, queries }: { tableId: string; queries: string[] }) => {
         calls.push({ tableId, queries });
         let rows = (db.rows[tableId] ?? []) as Array<Record<string, unknown>>;
@@ -76,6 +89,7 @@ const ln = (id: string, day: string, week: string) => ({
 });
 
 beforeEach(() => {
+  vi.clearAllMocks();
   calls.length = 0;
   db.honourQueries = true;
   db.rows = {
@@ -131,5 +145,6 @@ describe("fetchMyProgram", () => {
   it("reads and never writes", async () => {
     await fetchMyProgram("joey");
     expect(calls.length).toBeGreaterThan(0);
+    for (const [method, spy] of Object.entries(writes)) expect(spy, method).not.toHaveBeenCalled();
   });
 });

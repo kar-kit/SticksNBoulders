@@ -67,8 +67,13 @@ describe("ticketSecret", () => {
     expect(() => ticketSecret({})).toThrow(/VIDEO_TICKET_SECRET/);
   });
 
-  it("throws on a secret short enough to guess", () => {
-    expect(() => ticketSecret({ VIDEO_TICKET_SECRET: "short" })).toThrow();
+  /**
+   * At the boundary, not well below it: a five-character probe passes for any
+   * minimum from 6 to 32, so it could not tell the rule had been weakened.
+   */
+  it("throws on 31 characters and accepts 32", () => {
+    expect(() => ticketSecret({ VIDEO_TICKET_SECRET: "x".repeat(31) })).toThrow(/VIDEO_TICKET_SECRET/);
+    expect(ticketSecret({ VIDEO_TICKET_SECRET: "x".repeat(32) })).toBe("x".repeat(32));
   });
 
   it("returns a real one", () => {

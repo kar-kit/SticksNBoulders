@@ -6,6 +6,7 @@ import type { Exercise } from "@/lib/exercises/match";
 import { createMemoryStore } from "@/lib/offline/memory-store";
 import { rememberRest } from "@/lib/logging/rest-store";
 import { attachQueue, enqueue, resetQueueForTests } from "@/lib/offline/client";
+import type { QueueStore } from "@/lib/offline/queue";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -46,11 +47,17 @@ const removeSet = vi.hoisted(() =>
   vi.fn<(clientSetId: string, set?: { exerciseId: string; loggedAt: Date }) => Promise<{ queued: boolean }>>(),
 );
 let clientIds = 0;
-vi.mock("@/lib/logging/set-store", () => ({
-  logSet,
-  removeSet,
-  newClientSetId: () => `cs-${++clientIds}`,
-}));
+// The real module is kept to hand so the tests at the bottom can follow a set
+// past the screen into the queue; everything else talks to the mocks.
+const realSetStore = vi.hoisted(() => ({ value: null as unknown as typeof import("@/lib/logging/set-store") }));
+vi.mock("@/lib/logging/set-store", async (importOriginal) => {
+  realSetStore.value = await importOriginal<typeof import("@/lib/logging/set-store")>();
+  return {
+    logSet,
+    removeSet,
+    newClientSetId: () => `cs-${++clientIds}`,
+  };
+});
 
 const comments = vi.hoisted(() => ({ value: [] as { setId: string; authorId: string }[] }));
 vi.mock("@/lib/review/comment-store", () => ({
@@ -1037,6 +1044,38 @@ describe("a session started from a prescribed day (Order 22)", () => {
     expect(logSet.mock.calls[1][0]).toMatchObject({ loadKg: 150, reps: 5, prescriptionId: "sq", setIndex: 2 });
   });
 
+  it("queues a warm-up without the coach's line, and the working set after it with it", async () => {
+    // Followed past the screen into the queue: the payload here is what
+    // reaches the set row. A warm-up carrying the link would count against the
+    // line, so the coach's 2 x 5 would read as done one set early.
+    const store = useRealQueue();
+    const { user } = setup({ active: session({ programDayId: "d1" }) });
+    await screen.findByRole("group", { name: "Set 1" });
+    await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+    await user.click(screen.getByRole("switch", { name: "Warm-up" }));
+    await user.click(screen.getByRole("button", { name: "Log Warm-up set" }));
+    await waitFor(async () => expect(await setCreates(store)).toHaveLength(1));
+
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
+
+    const [warmup, working] = await setCreates(store);
+    expect(warmup).toMatchObject({ sessionId: "s1", exerciseId: "squat", isWarmup: true, setIndex: 1 });
+    expect(warmup).not.toHaveProperty("prescriptionId");
+    expect(warmup).not.toHaveProperty("prescribed");
+    expect(working).toMatchObject({
+      sessionId: "s1",
+      exerciseId: "squat",
+      isWarmup: false,
+      setIndex: 2,
+      loadKg: 150,
+      reps: 5,
+      prescriptionId: "sq",
+      prescribed: "5 reps · 150 kg (75%)",
+    });
+  });
+
   it("gives a free session no targets at all", async () => {
     setup({ active: session() });
     expect(await screen.findByText("Nothing logged yet")).toBeInTheDocument();
@@ -1238,5 +1277,105 @@ describe("next-set load suggestions, behind the coach's switch (Order 28)", () =
     await logTopSet(user);
     expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("170");
     expect(screen.queryByText(/suggested from/)).not.toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Swaps the set-store mocks for the real module over an in-memory queue.
+ *
+ * No actor is attached, so nothing drains: every op the screen produced is
+ * still on the store for the test to read.
+ */
+function useRealQueue(store: QueueStore = createMemoryStore()): QueueStore {
+  resetQueueForTests(store);
+  logSet.mockImplementation((input) => realSetStore.value.logSet(input as never).then(() => undefined));
+  removeSet.mockImplementation((id, set) => realSetStore.value.removeSet(id, set));
+  onTestFinished(() => resetQueueForTests());
+  return store;
+}
+
+/** The set.create payloads on the store, in the order they were queued. */
+async function setCreates(store: QueueStore) {
+  return (await store.all())
+    .filter((op) => op.kind === "set.create")
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((op) => op.payload);
+}
+
+describe("a set followed into the queue", () => {
+  const addSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+  };
+  const enterSet = async (user: ReturnType<typeof userEvent.setup>, kg: string, reps: string) => {
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    for (const key of [...kg]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    for (const key of [...reps]) await user.click(screen.getByRole("button", { name: key }));
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not reuse a set index freed by a delete on this page", async () => {
+    // set_index is one past the highest this page has seen, deleted sets
+    // included. Counted from what is still shown, the next set would take the
+    // deleted one's number, and History would show two set 2s if the delete
+    // and the create landed in either order.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const store = useRealQueue();
+    const { user } = setup({ active: session() }, { advanceTimers: vi.advanceTimersByTime });
+    await addSquat(user);
+    await enterSet(user, "140", "5");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
+
+    await user.click(screen.getByRole("group", { name: "Set 2" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 2" }));
+    await act(async () => {
+      vi.advanceTimersByTime(UNDO_MS + 10);
+    });
+    // Never sent, so the delete took the create back out of the queue.
+    await waitFor(async () => expect((await setCreates(store)).map((p) => p.setIndex)).toEqual([1]));
+
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
+    expect((await setCreates(store)).map((p) => p.setIndex)).toEqual([1, 3]);
+  });
+
+  it("brings a deleted set back when the device cannot write the delete down", async () => {
+    // Storage full or blocked: the delete exists nowhere, so the set is still
+    // logged. Leaving it hidden would show the athlete a session that is not
+    // the one their coach will see.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const inner = createMemoryStore();
+    const disk = { full: false };
+    const refuse = () => Promise.reject(new DOMException("Quota exceeded", "QuotaExceededError"));
+    const store = useRealQueue({
+      put: (op) => (disk.full ? refuse() : inner.put(op)),
+      remove: (id) => (disk.full ? refuse() : inner.remove(id)),
+      all: inner.all,
+    });
+    storedSets.value = [logged("a", 140, 30, { setIndex: 1 }), logged("b", 150, 10, { setIndex: 2 })];
+    const { user } = setup({ active: session() }, { advanceTimers: vi.advanceTimersByTime });
+    await screen.findByRole("group", { name: "Set 2" });
+
+    disk.full = true;
+    await user.click(screen.getByRole("group", { name: "Set 2" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 2" }));
+    expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
+    await act(async () => {
+      vi.advanceTimersByTime(UNDO_MS + 10);
+    });
+
+    expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("150");
+    expect(removeSet).toHaveBeenCalledWith("b", expect.objectContaining({ exerciseId: "squat" }));
+    expect((await store.all()).filter((op) => op.kind === "set.delete")).toEqual([]);
   });
 });

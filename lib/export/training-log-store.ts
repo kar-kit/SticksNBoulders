@@ -49,6 +49,7 @@ const SET_COLUMNS = [
   "e1rm_kg",
   "logged_at",
   "notes",
+  "prescribed",
 ];
 const SESSION_COLUMNS = ["athlete_id", "started_at", "notes"];
 
@@ -80,6 +81,7 @@ const SetRow = z.object({
   e1rm_kg: optionalNumber,
   logged_at: date,
   notes: optionalText,
+  prescribed: optionalText,
 });
 
 export interface TrainingLog {
@@ -155,6 +157,7 @@ export async function fetchTrainingLog(
       e1rmKg: row.e1rm_kg,
       loggedAt: row.logged_at,
       notes: row.notes,
+      prescribed: row.prescribed,
     });
   }
 

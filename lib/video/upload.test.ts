@@ -1,4 +1,4 @@
-import { MAX_UPLOAD_ATTEMPTS, resumeInterruptedUploads } from "./upload";
+import { MAX_UPLOAD_ATTEMPTS, attachClipToSet, resumeInterruptedUploads } from "./upload";
 import type { PendingUpload } from "./pending-store";
 
 const store = vi.hoisted(() => ({
@@ -35,6 +35,7 @@ beforeEach(() => {
   store.pendingUploads.mockResolvedValue([]);
   store.forgetUpload.mockResolvedValue(undefined);
   store.recordAttempt.mockResolvedValue(undefined);
+  store.rememberUpload.mockResolvedValue(undefined);
   offline.enqueue.mockResolvedValue(undefined);
 });
 
@@ -125,5 +126,75 @@ describe("picking up an interrupted upload", () => {
       setId: "set-b",
       videoFileId: "good",
     });
+  });
+});
+
+describe("attaching a fresh clip to a set", () => {
+  const clip = (name = "squat.mp4", bytes = 1024) =>
+    new File([new Uint8Array(bytes)], name, { type: "video/mp4" });
+
+  /** The id the upload chose, read from what was remembered before it began. */
+  const rememberedId = (): string => store.rememberUpload.mock.calls[0][0].fileId;
+
+  it("records the clip on the set once the upload lands", async () => {
+    transport.uploadResumable.mockImplementation(async (_blob, { fileId }) => ({ ok: true, fileId }));
+
+    const result = await attachClipToSet("set-1", "joey", clip());
+
+    const fileId = rememberedId();
+    expect(result).toEqual({ ok: true, fileId });
+    // Through the queue, keyed to the same id the upload used.
+    expect(offline.enqueue).toHaveBeenCalledWith("set.attachVideo", { setId: "set-1", videoFileId: fileId });
+    expect(transport.uploadResumable.mock.calls[0][1]).toMatchObject({ fileId, athleteId: "joey" });
+    expect(store.forgetUpload).toHaveBeenCalledWith(fileId);
+  });
+
+  /**
+   * Remembered before the first byte, so a phone locked mid-upload leaves
+   * something for the next app start to find.
+   */
+  it("remembers the upload before sending anything", async () => {
+    transport.uploadResumable.mockImplementation(async (_blob, { fileId }) => ({ ok: true, fileId }));
+    await attachClipToSet("set-1", "joey", clip());
+
+    expect(store.rememberUpload.mock.calls[0][0]).toMatchObject({ setId: "set-1", athleteId: "joey", attempts: 1 });
+    expect(store.rememberUpload.mock.invocationCallOrder[0]).toBeLessThan(
+      transport.uploadResumable.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps a clip that failed for a retryable reason, and does not record it yet", async () => {
+    transport.uploadResumable.mockResolvedValue({ ok: false, retryable: true, message: "network", uploadedCount: 2 });
+
+    const result = await attachClipToSet("set-1", "joey", clip());
+
+    expect(result).toMatchObject({ ok: false, reason: "failed" });
+    // Said as reassurance, not the raw transport error: the set is saved.
+    expect((result as { message: string }).message).toContain("carry on by itself");
+    expect(store.forgetUpload).not.toHaveBeenCalled();
+    expect(offline.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("drops a clip the server refused, and passes on why", async () => {
+    transport.uploadResumable.mockResolvedValue({
+      ok: false,
+      retryable: false,
+      message: "File extension not allowed",
+      uploadedCount: 0,
+    });
+
+    const result = await attachClipToSet("set-1", "joey", clip());
+
+    expect(result).toEqual({ ok: false, reason: "failed", message: "File extension not allowed" });
+    expect(store.forgetUpload).toHaveBeenCalledWith(rememberedId());
+    expect(offline.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("refuses a file that is not a video without remembering or sending it", async () => {
+    const result = await attachClipToSet("set-1", "joey", clip("program.pdf"));
+
+    expect(result).toMatchObject({ ok: false, reason: "type" });
+    expect(store.rememberUpload).not.toHaveBeenCalled();
+    expect(transport.uploadResumable).not.toHaveBeenCalled();
   });
 });
