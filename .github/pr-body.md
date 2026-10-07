@@ -1,52 +1,50 @@
-## fix(video): fail loudly at startup when VIDEO_TICKET_SECRET is missing
+## fix(strength, programming): same-day max typo beat its correction; stale program across athletes; close mutation-audit gaps
 
 ### Why
 
-Clip playback signs its URLs with `VIDEO_TICKET_SECRET`. When it is unset the
-app builds and boots normally, then every coach playback request fails with one
-server log line, and the review screen says only "The video for this clip could
-not be loaded". Nothing points at the cause. It cost real debugging time, and
-the unit tests could not catch it because they inject the secret.
+A mutation audit (break the source, run the suite) found behaviours the 2242
+tests did not protect. Two of them hid real bugs.
 
-### What changes
+### Source bugs fixed (failing test written first, watched fail, then fixed)
 
-- `instrumentation.ts` (new, repo root; there is no `src/`) runs on the Node
-  runtime only and calls `checkVideoTicketSecret`. A production start throws
-  with a message naming `VIDEO_TICKET_SECRET` and `openssl rand -base64 48`.
-  Development logs a single `console.warn`, so `next dev` still works.
-- `lib/video/startup-check.ts` (new) holds the decision as a pure function of
-  `{ env, nodeEnv, phase }`. It asks `ticketSecret()` rather than restating the
-  32-character rule, so there is still one place to change it.
-- `docs/review-queue.md` says a production start refuses to boot without it.
-- `next build` is unaffected. Next skips the instrumentation hook itself while
-  `NEXT_PHASE` is `phase-production-build` (`instrumentation-globals.external.js`,
-  `registerInstrumentation`), and the check repeats that exemption so it does
-  not depend on a framework detail. CI needs no secret.
+1. **`currentMax` let a typo beat its own correction.** Same-day ties broke on
+   list position ("later-listed wins"), but `fetchReferenceMaxes` reads
+   newest-first (`orderDesc("$id")`) while the test fed entries oldest-first.
+   With the store's order, a coach entering 1800 then 180 on the same date got
+   1800, which then priced every percentage, DOTS and the coach panel. Ties now
+   break on the row id: rows are written with `ID.unique()` (route.ts), whose
+   hex seconds + milliseconds prefix sorts in creation order. Tested in both
+   list orders, and end to end through the store; switching the store to
+   `orderAsc` leaves that answer unchanged.
+2. **`useMyProgram` kept the previous athlete's program.** On an athlete change
+   whose read failed, the catch kept any `ready` state (the previous athlete's),
+   and a null id left it on screen. State is now tagged with the athlete it was
+   loaded for; anything else reads as `loading`.
 
-`register()` is awaited by `NextNodeServer.prepareImpl`, so a throw stops
-`next start` before it accepts requests. That is read from Next's source, not
-observed; see below.
+### Tests added or tightened
 
-### How to verify
+- backoff: a heavier line BEFORE the backoff line must not price it (M20).
+- `rollupMatches`: drift in each of the 8 fields alone, plus a guard that the
+  list covers every `Rollup` key. The source already compared all 8; the gap
+  was test-only.
+- `personalRecords`: pins current cross-week heaviest-single tie behaviour.
+- Button: variants must produce distinct classes; default equals primary.
+- library fetch: query-applying fake (handles `Query.or`), so dropping the
+  `owner_id` branch fails; also paging and coach-vs-athlete scoping.
+- my-program store: spies on every browser TablesDB write method and asserts
+  none is called (the old test passed a fire-and-forget `upsertRow`).
+- New read-layer tests: `reference-max-store`, `lift-store`, `rollup-client`.
+- dots: corrected the comment. A trailing-digit swap in b/c/d/e moves the
+  score by at most 0.003, inside the band; tolerance unchanged.
 
-1. `npm test -- lib/video/startup-check` : 10 tests (missing, empty, 31 chars,
-   exactly 32, 64, prod vs dev, build phase, other phases).
-2. Build without the secret, which must still succeed:
-   `env -u VIDEO_TICKET_SECRET npm run build`
-3. Prod refuses: `env -u VIDEO_TICKET_SECRET npx next start -p 3199`
-   should exit non-zero with the message above. Check `.env.local` does not
-   supply one, since Next loads it. [Not run by the author.]
-4. Prod boots with one: `VIDEO_TICKET_SECRET=$(openssl rand -base64 48) npx next start -p 3199`.
-5. Dev warns once: `env -u VIDEO_TICKET_SECRET npx next dev` logs
-   `[startup] VIDEO_TICKET_SECRET is missing...` and carries on.
+### Mutations
 
-### Heads-up for deploys
+38 run, 38 caught (one, rollupFrom's rep tie-break, by an existing test).
 
-Any production environment without the secret will now fail to start instead of
-starting broken. Set it on the host before this ships.
+### Not done / for a decision
 
-### Not covered
-
-`instrumentation.ts` itself has no unit test: vitest only collects tests under
-`app/ appwrite/ components/ lib/ scripts/`, and the file is a thin wrapper
-around the tested function. Steps 2 to 5 above are the check on the wiring.
+- **Heaviest-single tie rules disagree.** `rollupFrom` prefers more reps
+  within a week; `personalRecords` keeps the first week listed (`>`), so the
+  all-time record can read 140x3 after a 140x5 week, depending on list order.
+  Documented by a test, not changed.
+- `dots-store.ts` not tested: pure fan-out to five tested readers plus `dotsFor`.
