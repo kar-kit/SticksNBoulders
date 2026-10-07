@@ -978,7 +978,12 @@ try {
         how = "rename the file";
         // The bucket's own extension, so a refusal is about permission and
         // never about a name the bucket would not accept anyway.
-        const name = rule.resource === AVATAR_BUCKET ? "renamed.webp" : "renamed.mp4";
+        // One name per actor: if two actors asked for the same name, whoever
+        // is allowed would change it first and every later refusal would read
+        // as success, because an update that changes nothing is never checked
+        // against permissions. Found 7 Oct 2026, when A's coach "renamed" A's
+        // avatar to the name A had just chosen.
+        const name = `${actor}-renamed.${rule.resource === AVATAR_BUCKET ? "webp" : "mp4"}`;
         fn = () => p.storage.updateFile({ bucketId: rule.resource, fileId: targets[rule.key], name });
       } else if (helper) {
         how = "the write helper, from their own session";
