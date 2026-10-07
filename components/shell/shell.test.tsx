@@ -31,6 +31,8 @@ const SIGNED_IN: SessionState = {
   status: "signed-in",
   user: { id: "u1", name: "Joey Pang", email: "joey@example.com" },
   coach: { isCoach: false, athleteIds: [] },
+  prefs: { mode: "athlete", choseCoach: false },
+  offline: false,
 };
 
 beforeEach(() => {
@@ -63,6 +65,29 @@ describe("AthleteShell", () => {
     expect(replace).toHaveBeenCalledWith("/sign-in");
     // The chrome may flash for a frame; the athlete's data never does.
     expect(screen.queryByText("Session content")).not.toBeInTheDocument();
+  });
+
+  describe("the way back to coach mode", () => {
+    const coachLink = () => screen.queryByRole("link", { name: "Coach mode" });
+
+    it("is not there for someone who has only ever been an athlete", () => {
+      render(<AthleteShell><p>Content</p></AthleteShell>);
+      expect(coachLink()).not.toBeInTheDocument();
+    });
+
+    it("is there for a coach with no athletes yet, who last used the athlete side", () => {
+      // The trap this closes: last-used made their mode "athlete", they have
+      // no links, and the roster with their invite code was unreachable.
+      session.state = { ...SIGNED_IN, prefs: { mode: "athlete", choseCoach: true } };
+      render(<AthleteShell><p>Content</p></AthleteShell>);
+      expect(coachLink()).toHaveAttribute("href", "/coach/roster");
+    });
+
+    it("is there for anyone with athletes linked, whatever they chose", () => {
+      session.state = { ...SIGNED_IN, coach: { isCoach: true, athleteIds: ["a1"] } };
+      render(<AthleteShell><p>Content</p></AthleteShell>);
+      expect(coachLink()).toHaveAttribute("href", "/coach/roster");
+    });
   });
 
   it("keeps the tab bar outside the scrolling region", () => {

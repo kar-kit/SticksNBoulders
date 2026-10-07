@@ -4,10 +4,17 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 /**
  * Role is a relationship, not an account type.
  *
- * There is no "coach" flag on a profile and there never will be. Someone is a
- * coach because athletes are linked to them, which means the answer changes the
- * moment a link is created or revoked -- and it means a coach who also lifts
- * needs no second account.
+ * Nothing grants coach access except a link. Someone can read an athlete's
+ * training because that athlete is linked to them, which means the answer
+ * changes the moment a link is created or revoked -- and it means a coach who
+ * also lifts needs no second account.
+ *
+ * What does exist, since the first-run question, is a stored LANDING
+ * preference: `snb_mode` in the account's prefs (lib/auth/mode.ts) says which
+ * side to open on, and `snb_chose_coach` keeps the way into coach mode visible
+ * for a coach with no athletes yet. Neither is read by any permission, any
+ * query or the write helper; a user who sets their own mode to "coach" gets an
+ * empty roster and an invite code, and nothing else. docs/onboarding.md.
  */
 
 export interface CoachStatus {

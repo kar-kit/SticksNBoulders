@@ -70,10 +70,11 @@ answer cannot reach a coefficient set. DOTS renders a prompt back to this
 screen rather than picking one of the two formulas — see `docs/dots.md`.
 
 **[SME to confirm]** — the blueprint wants this asked during onboarding, not on
-the settings screen. The onboarding flow is its own blueprint page and not this
-ticket, so today an athlete who never opens Profile & Settings has no DOTS and
-is not told why. Worth deciding before the beta whether it belongs in the
-sign-up flow.
+the settings screen. The first-run screen (`/welcome`, docs/onboarding.md) now
+exists and asks coach-or-athlete and a name, and deliberately not sex: it is
+the one question with a stated reason, and that reason lives on Me. So an
+athlete who never opens Profile & Settings still has no DOTS and is not told
+why. Worth deciding before the beta whether it moves into the welcome screen.
 
 ## The rest of the screen
 

@@ -19,6 +19,7 @@ import { ID, Query, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { presetMode } from "./e2e-mode";
 import { circleTeamId } from "../appwrite/documents/circle";
 import { sessionPermissions, setPermissions } from "../appwrite/documents/policy";
 import { estimateOneRepMax } from "../lib/strength/e1rm";
@@ -64,6 +65,7 @@ const athlete = await users.create({
   password: "Probe-pass-123!",
   name: "Joey Pang",
 });
+await presetMode(users, athlete, "athlete");
 
 const WEEK = 7 * 24 * 60 * 60_000;
 const thisMonday = weekStart(new Date()).getTime();

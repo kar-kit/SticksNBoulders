@@ -24,6 +24,7 @@ import { Client as WebClient, TablesDB as WebTablesDB } from "appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { presetMode } from "./e2e-mode";
 import { addCoachToCircle, ensureCircle } from "../appwrite/documents/circle-admin";
 import { circleTeamId } from "../appwrite/documents/circle";
 import {
@@ -68,7 +69,7 @@ const mkUser = (tag: string, name: string) =>
     email: `e2e-feedback-${tag}-${stamp}@sticksnboulders.test`,
     password: PASSWORD,
     name,
-  });
+  }).then((user) => presetMode(users, user, "athlete"));
 
 /** A browser-shaped client carrying one person's session, like the app's. */
 const asUser = async (userId: string) => {

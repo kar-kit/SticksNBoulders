@@ -18,6 +18,7 @@ import { ID, Query, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { presetMode } from "./e2e-mode";
 import { circleTeamId } from "../appwrite/documents/circle";
 import { normaliseInviteCode } from "../lib/coach/invite-code";
 
@@ -51,7 +52,7 @@ const mkUser = (tag: string, name: string) =>
     email: `invite-${tag}-${stamp}@example.com`,
     password: "Probe-pass-123!",
     name,
-  });
+  }).then((user) => presetMode(users, user, "athlete"));
 
 const coach = await mkUser("coach", "Ruairi Deane");
 const other = await mkUser("other", "Sam Tierney");

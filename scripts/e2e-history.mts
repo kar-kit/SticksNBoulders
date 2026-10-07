@@ -19,6 +19,7 @@ import { ID, Query, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { presetMode } from "./e2e-mode";
 import { circleTeamId } from "../appwrite/documents/circle";
 import { sessionPermissions, setPermissions } from "../appwrite/documents/policy";
 import { weekStart } from "../lib/strength/rollup";
@@ -80,6 +81,7 @@ const athlete = await users.create({
   password: "Probe-pass-123!",
   name: "Joey Pang",
 });
+await presetMode(users, athlete, "athlete");
 
 let n = 0;
 const seedSession = async (startedAt: Date, minutes: number, sets: Array<{ exerciseId: string; loadKg: number; reps: number; rpe?: number; isWarmup?: boolean; e1rm?: number }>) => {

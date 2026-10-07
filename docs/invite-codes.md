@@ -66,16 +66,21 @@ instance, which is the half no amount of mocking establishes.
 
 ## Why everyone is offered a code
 
-Role is a relationship — `isCoach` is true because athletes are linked to you —
-so there is no account type to gate this on, and gating it on having athletes
-would mean a coach with none could never get their first.
+Access is a relationship — `isCoach` is true because athletes are linked to
+you — and gating the code on having athletes would mean a coach with none could
+never get their first.
 
-So the COACHING section appears for every signed-in user, offering a button. An
-athlete who never taps it never has a code, and nothing about their account
-changes. This resolves a contradiction between two blueprints: 09 — Profile &
-Settings files the code under "coach additions", which cannot bootstrap, while
-Onboarding says a coach's code is generated at sign-up, which would require
-asking a new user which kind of user they are.
+Since 7 Oct 2026 the app does ask a new user which kind they are (`/welcome`,
+docs/onboarding.md), but the answer is a landing preference, not an account
+type, and it is still not a gate here. So the COACHING section appears for
+every signed-in user, offering a button. An athlete who never taps it never has
+a code, and nothing about their account changes. A coach who chose Coach lands
+on an empty roster whose one action is this same panel.
+
+The code is still minted on demand rather than at sign-up. Onboarding's
+blueprint says a coach's code is generated at sign-up; minting on the first tap
+gives the same result with no code minted for somebody who picked Coach by
+mistake.
 
 ## One code per coach
 

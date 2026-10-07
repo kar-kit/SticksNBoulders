@@ -18,6 +18,7 @@ import { ID, Query, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { presetMode } from "./e2e-mode";
 import { circleTeamId, CIRCLE_ROLES } from "../appwrite/documents/circle";
 import { setPermissions } from "../appwrite/documents/policy";
 
@@ -65,7 +66,7 @@ const mkUser = (tag: string, name: string) =>
     email: `link-${tag}-${stamp}@example.com`,
     password: "Probe-pass-123!",
     name,
-  });
+  }).then((user) => presetMode(users, user, "athlete"));
 
 const asUser = async (userId: string) => {
   const session = await users.createSession({ userId });
