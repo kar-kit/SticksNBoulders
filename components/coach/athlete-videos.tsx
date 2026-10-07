@@ -85,6 +85,16 @@ export function AthleteVideos({ athleteId }: { athleteId: string }) {
     setPlaying((now) => (now?.clipId === row.id ? { clipId: row.id, src: urls.get(row.videoFileId) ?? null } : now));
   };
 
+  // The ticket in `src` lasts five minutes; ClipPlayer asks for a new one
+  // when a seek past that fails.
+  const refreshSrc = async (row: VideoRow): Promise<boolean> => {
+    const urls = await fetchClipUrls([row.videoFileId]).catch(() => new Map<string, string>());
+    const src = urls.get(row.videoFileId);
+    if (!src) return false;
+    setPlaying((now) => (now?.clipId === row.id ? { clipId: row.id, src } : now));
+    return true;
+  };
+
   return (
     <section className="flex flex-col gap-3" aria-labelledby="athlete-videos-heading">
       <div className="flex items-baseline justify-between gap-3">
@@ -137,7 +147,12 @@ export function AthleteVideos({ athleteId }: { athleteId: string }) {
                 {open ? (
                   <div className="flex flex-col gap-2 pb-3">
                     {row.notes ? <p className="m-0 text-ui text-muted">“{row.notes}”</p> : null}
-                    <ClipPlayer src={current?.src ?? null} clipId={row.id} hint="Space plays, arrows step a frame." />
+                    <ClipPlayer
+                      src={current?.src ?? null}
+                      clipId={row.id}
+                      hint="Space plays, arrows step a frame."
+                      refreshSrc={() => refreshSrc(row)}
+                    />
                   </div>
                 ) : null}
               </li>

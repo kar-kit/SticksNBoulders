@@ -33,6 +33,13 @@ export interface ExportSet {
   e1rmKg: number | null;
   loggedAt: Date;
   notes: string | null;
+  /**
+   * What the target said when the set was logged, e.g. "5 x 152.5 kg (75%)",
+   * or null for a set nobody prescribed. The snapshot stored on the set, not
+   * the line as it reads now: a coach editing the block later must not
+   * rewrite what this set was an answer to.
+   */
+  prescribed: string | null;
 }
 
 /**
@@ -62,12 +69,13 @@ export const LOG_COLUMNS = [
 /**
  * What the coach prescribed for a set, as he would read it back.
  *
- * Always null today: prescriptions have no table until the Program Editor at
- * Order 19 decides how a block is stored. The column ships now, empty, so the
- * file's layout does not change under anyone's formulas the day it fills in.
+ * By default the snapshot stored on the set (Order 22). The column shipped
+ * empty before then so the file's layout would not move under anyone's
+ * formulas the day it filled in; a default that ignored the stored text kept
+ * it empty after sets began carrying one.
  */
 export type PrescriptionLookup = (set: ExportSet) => string | null;
-const noPrescriptions: PrescriptionLookup = () => null;
+const storedPrescription: PrescriptionLookup = (set) => set.prescribed;
 
 /**
  * `2026-09-13`, the calendar day in London.
@@ -112,7 +120,7 @@ export function buildLogRows(
   sessions: readonly ExportSession[],
   sets: readonly ExportSet[],
   exerciseNames: ReadonlyMap<string, string>,
-  prescriptionFor: PrescriptionLookup = noPrescriptions,
+  prescriptionFor: PrescriptionLookup = storedPrescription,
 ): CsvValue[][] {
   const orderedSessions = [...sessions].sort(
     (a, b) => a.startedAt.getTime() - b.startedAt.getTime() || a.id.localeCompare(b.id),

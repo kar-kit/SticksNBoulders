@@ -110,6 +110,8 @@ describe("fetchTrainingLog", () => {
           e1rm_kg: null,
           logged_at: "2026-09-14T18:00:00.000+00:00",
           notes: "",
+          prescription_id: "line1",
+          prescribed: "3 x 142.5 kg @ RPE 8",
         },
       ],
       sessions: [
@@ -135,6 +137,7 @@ describe("fetchTrainingLog", () => {
       e1rmKg: null,
       loggedAt: new Date("2026-09-14T18:00:00Z"),
       notes: null,
+      prescribed: "3 x 142.5 kg @ RPE 8",
     });
     expect(log.sessions[0]).toEqual({ id: "s", startedAt: new Date("2026-09-14T17:30:00Z"), notes: "PB day" });
   });

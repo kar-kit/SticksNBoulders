@@ -33,13 +33,15 @@ coach's laptop gets a plain download.
 | Warm-up | `is_warmup` | `Yes` / `No` |
 | e1RM (kg) | `e1rm_kg` | stored value, one decimal |
 | Notes | `sets.notes` | |
-| Prescription | — | **always blank today**: prescriptions have no table until Order 19 |
+| Prescription | `sets.prescribed` | the target as the athlete saw it when logging, e.g. `5 x 152.5 kg (75%)`; blank for a set nobody prescribed |
 | Session notes | `sessions.notes` | [Inference] not in the ticket; added so "full log" means full |
 
 One row per set, not a pre-aggregated layout, because a set table is what a
-pivot table can do anything with. The Prescription column ships empty so the
-layout does not move under anyone's formulas the day Order 19 fills it.
-`buildLogRows` already takes a `prescriptionFor(set)` lookup for that.
+pivot table can do anything with. The Prescription column shipped empty before
+Order 22 so the layout would not move under anyone's formulas the day it
+filled in. It now carries the snapshot stored on the set, never the line as
+the coach has since edited it, so a re-planned block does not rewrite what an
+old set was an answer to.
 
 ## Excel and Sheets
 
@@ -83,7 +85,7 @@ the query; it is not the privacy boundary. No schema change.
 
 - **Sets still in the offline queue** are not in the file: the export reads
   Appwrite. An athlete exporting with sets pending gets them next time.
-- **Prescriptions** (Order 19), **bodyweight** and **coach comments** are not
+- **The program itself** (Order 19: blocks, weeks, unlogged lines), **bodyweight** and **coach comments** are not
   exported. Each would be a second file or a different row shape.
 - **Pounds.** Loads export in kg regardless of the profile's units setting.
 - **Roster-wide export** for a coach. One athlete at a time, per the ticket.
