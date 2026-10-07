@@ -161,4 +161,11 @@ describe("dumping an instance", () => {
     expect(backup.manifest.takenAt).toBe("2026-09-14T03:00:00.000Z");
     expect(backup.manifest.schemaVersion).toBe(1);
   });
+
+  it("leaves files to dumpBuckets, so a rows-only dump is still a valid one", async () => {
+    const backup = await dumpInstance(fakeSource({}), context);
+    expect(backup.files).toEqual([]);
+    expect(backup.manifest.buckets).toEqual([]);
+    expect(backup.manifest.formatVersion).toBe(2);
+  });
 });

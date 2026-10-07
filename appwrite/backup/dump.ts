@@ -47,9 +47,9 @@ export interface DumpContext {
  * truncated backup that reports success. So we page until a page comes back
  * empty, and reconcile against the instance's own count afterwards.
  */
-const PAGE_SIZE = 100;
+export const PAGE_SIZE = 100;
 
-async function pageThrough<T>(
+export async function pageThrough<T>(
   fetch: (cursor: string | null) => Promise<{ total: number; items: T[] }>,
   idOf: (item: T) => string,
   label: string,
@@ -93,7 +93,7 @@ async function pageThrough<T>(
  * A long count is not a failure -- someone logged a set while the dump ran --
  * so it is recorded rather than thrown.
  */
-function reconcile(label: string, collected: number, expected: number) {
+export function reconcile(label: string, collected: number, expected: number) {
   if (collected < expected) {
     throw new Error(
       `Dump of ${label} collected ${collected} of ${expected} reported. ` +
@@ -157,10 +157,14 @@ export async function dumpInstance(source: BackupSource, context: DumpContext): 
       users: users.length,
       teams: teams.length,
       memberships: teams.reduce((n, t) => n + t.memberships.length, 0),
+      // Filled in by dumpBuckets (./bucket), which needs a disk to write to.
+      // Kept out of here so this stays a pure read of the instance.
+      buckets: [],
       omits: [...BACKUP_OMISSIONS],
     },
     tables,
     users,
     teams,
+    files: [],
   };
 }

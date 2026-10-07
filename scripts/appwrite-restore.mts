@@ -6,15 +6,21 @@
  *
  * Plans by default and writes nothing, the same contract as appwrite:reset.
  *
+ * A dump's clips are read from `files/` beside the dump directory, and every
+ * one is checked against the hash the dump recorded before anything is
+ * written -- in the plan too, so a bad copy is found before `--yes`, not
+ * during it.
+ *
  * Run npm run appwrite:setup first: this restores rows, not the schema. The
  * schema is code and belongs to the setup script; a dump that also carried
  * table definitions would give the two a chance to disagree.
  */
-import { TablesDB, Teams, Users } from "node-appwrite";
+import { resolve } from "node:path";
+import { Storage, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
-import { readBackup } from "../appwrite/backup/files";
+import { fileStoreFor, readBackup, verifyBlobs } from "../appwrite/backup/files";
 import { describeRestore, restoreBackup, validateBackup } from "../appwrite/backup/restore";
 import { appwriteTarget } from "./backup-driver";
 
@@ -44,7 +50,14 @@ if (backup.manifest.projectId !== config.projectId) {
 
 console.log(describeRestore(backup).join("\n"));
 
+const fileStore = fileStoreFor(resolve(dir));
 const problems = validateBackup(backup);
+if (backup.files.length > 0 && !problems.some((p) => p.severity === "blocking")) {
+  console.log(`\nChecking ${backup.files.length} clip(s) in ${fileStore} against the dump's hashes...`);
+  for (const message of await verifyBlobs(fileStore, backup.files)) {
+    problems.push({ severity: "blocking", message });
+  }
+}
 if (problems.length > 0) {
   console.log("");
   for (const problem of problems) {
@@ -66,6 +79,8 @@ console.log("");
 const client = createServerClient(config);
 const target = appwriteTarget(new TablesDB(client), new Users(client), new Teams(client), {
   databaseId: config.databaseId,
+  storage: new Storage(client),
+  fileStore,
 });
 
 const report = await restoreBackup(target, backup, (step) => console.log(`  ${step}`));
@@ -76,6 +91,7 @@ const line = (label: string, t: { created: number; existed: number }) =>
 line("users", report.users);
 line("teams", report.teams);
 line("memberships", report.memberships);
+line("files", report.files);
 for (const [table, counts] of Object.entries(report.rows)) line(table, counts);
 
 console.log("\nDone. Restored accounts have no password: their owners sign in");

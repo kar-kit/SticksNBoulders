@@ -86,8 +86,11 @@ one-line change.
 > The compose file lives at `/home/websprint-server/appwrite/docker-compose.yml`,
 > with `docker-compose.yml.bak-prenfs` as the pre-move original.
 
-> The NAS dataset now holds the **only** copy of every clip. It needs its own
-> snapshot task; nothing else is backing it up.
+> `npm run appwrite:backup` now copies every finished clip, with its
+> permissions, into `SNB_BACKUP_DIR` and on to `SNB_BACKUP_OFFSITE`
+> (docs/backups.md). A ZFS snapshot task on the dataset is still worth having:
+> it is the fast undo for a bad delete, and the dump is the copy that survives
+> the pool.
 
 ### 2. Chunked uploads DO resume — but the SDK does not use it
 
@@ -159,7 +162,8 @@ state this is meant to avoid. Doing it the other way round needs the queue to
 report when the write landed, which it does not. So the file is left behind and
 reclaiming it is a sweep over files no set references: an orphan is a storage
 bill, a broken player is a coach losing trust in the review queue, and between
-the two this picks the bill.
+the two this picks the bill. The sweep is `npm run clips:sweep`, a dry run
+unless given `--delete`; see docs/backups.md §6.
 
 ## Permissions
 
