@@ -31,13 +31,15 @@ export interface ClipPlayerProps {
   src: string | null;
   /** Changes when the clip does, so playback restarts rather than continuing. */
   clipId: string;
+  /** Why there is no `src`, when the URL will not arrive. Replaces "Loading the clip…". */
+  unavailable?: string;
   /** The keyboard line under the controls. The queue's default names its clearing keys. */
   hint?: string;
 }
 
 const QUEUE_HINT = "Space plays, arrows step a frame. Enter skips; ⌘/Ctrl + Enter comments and moves on.";
 
-export function ClipPlayer({ src, clipId, hint = QUEUE_HINT }: ClipPlayerProps) {
+export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT }: ClipPlayerProps) {
   const video = useRef<HTMLVideoElement>(null);
   const [speed, setSpeed] = useState<number>(0.5);
   const [loop, setLoop] = useState(true);
@@ -110,7 +112,7 @@ export function ClipPlayer({ src, clipId, hint = QUEUE_HINT }: ClipPlayerProps) 
           <div className="flex size-full items-center justify-center p-6 text-center text-ui text-muted">
             {failed
               ? "This clip would not play. It may still be uploading from their phone, or the athlete may have withdrawn access."
-              : "Loading the clip…"}
+              : (unavailable ?? "Loading the clip…")}
           </div>
         )}
       </div>

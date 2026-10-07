@@ -287,10 +287,33 @@ describe("the Program Editor grid", () => {
     await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "removeDay", dayId: "d1" }));
   });
 
+  it("releases one week at a time and pulls a published week back to draft", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Publish week 1" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "publishWeek", weekId: "w1" }));
+    expect(store.send).not.toHaveBeenCalledWith({ op: "publishProgram", programId: "p1" });
+
+    const published = tree();
+    published.status = "published";
+    published.blocks[0].weeks[0].status = "published";
+    store.tree = published;
+    await user.click(screen.getByRole("tab", { name: /Week 2/ }));
+    await user.click(screen.getByRole("button", { name: "Publish week 2" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "publishWeek", weekId: "w2" }));
+
+    await user.click(screen.getByRole("tab", { name: "Week 1" }));
+    await user.click(screen.getByRole("button", { name: "Unpublish week 1" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updateWeek", weekId: "w1", status: "draft" }),
+    );
+  });
+
   it("is read-only for anyone but the coach who wrote it", async () => {
     viewer.id = "louis";
     await ready();
     expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Publish|Unpublish) week/ })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Load, line 1" })).toBeDisabled();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
