@@ -1,6 +1,13 @@
 import type { RowWriter } from "./row-writer";
 import { createSession, createSet, type WriteDeps } from "./write";
-import { createPrescription, createProgram, updatePrescription, type ProgramScope } from "./program-write";
+import {
+  copyPrescription,
+  createPrescription,
+  createProgram,
+  lineContent,
+  updatePrescription,
+  type ProgramScope,
+} from "./program-write";
 
 /**
  * The write helper's Order 19 and 22 surface: program rows, and the two
@@ -66,6 +73,47 @@ describe("program rows", () => {
     await updatePrescription(deps, scope, "row1", { position: 2 });
     expect(calls[0].data).toMatchObject({ program_id: "p1", coach_id: "ruairi", athlete_id: "joey", position: 2 });
     expect(calls[0].permissions).toContain('read("user:joey")');
+  });
+});
+
+describe("a line's reference lift (docs/reference-lift.md §5)", () => {
+  const line = { weekId: "w1", dayId: "d1", exerciseId: "tempo", position: 0, setCount: 3, load: "70%" };
+
+  it("writes the column on create only when there is a reference, so a line on its own max is the row it always was", async () => {
+    const { calls, deps } = harness();
+    await createPrescription(deps, scope, { ...line, referenceExerciseId: "bench" });
+    await createPrescription(deps, scope, line);
+    await createPrescription(deps, scope, { ...line, referenceExerciseId: null });
+    expect(calls[0].data).toMatchObject({ exercise_id: "tempo", reference_exercise_id: "bench" });
+    expect("reference_exercise_id" in calls[1].data).toBe(false);
+    expect("reference_exercise_id" in calls[2].data).toBe(false);
+  });
+
+  it("stores a reference to the line's own exercise as no reference", async () => {
+    const { calls, deps } = harness();
+    await createPrescription(deps, scope, { ...line, referenceExerciseId: "tempo" });
+    await updatePrescription(deps, scope, "row1", { exerciseId: "bench", referenceExerciseId: "bench" });
+    expect("reference_exercise_id" in calls[0].data).toBe(false);
+    expect(calls[1].data.reference_exercise_id).toBeNull();
+  });
+
+  it("writes it on update when sent, clears it with null, and leaves it alone otherwise", async () => {
+    const { calls, deps } = harness();
+    await updatePrescription(deps, scope, "row1", { referenceExerciseId: "bench" });
+    await updatePrescription(deps, scope, "row1", { referenceExerciseId: null });
+    await updatePrescription(deps, scope, "row1", { load: "72.5%" });
+    expect(calls.map((c) => c.data.reference_exercise_id)).toEqual(["bench", null, undefined]);
+    expect("reference_exercise_id" in calls[2].data).toBe(false);
+  });
+
+  it("is placement on a copy: taken from the remap, never from the source row", async () => {
+    const { calls, deps } = harness();
+    const source = { $id: "src", exercise_id: "joey-tempo", reference_exercise_id: "joey-bench", load: "70%", set_count: 3 };
+    expect(lineContent(source)).toEqual({ load: "70%", set_count: 3 });
+    await copyPrescription(deps, scope, { weekId: "w2", dayId: "d2", exerciseId: "andrea-tempo", referenceExerciseId: "andrea-bench", position: 0 }, source);
+    await copyPrescription(deps, scope, { weekId: "w2", dayId: "d2", exerciseId: "andrea-tempo", referenceExerciseId: null, position: 1 }, source);
+    expect(calls[0].data).toMatchObject({ exercise_id: "andrea-tempo", reference_exercise_id: "andrea-bench", load_kind: "percent" });
+    expect("reference_exercise_id" in calls[1].data).toBe(false);
   });
 });
 

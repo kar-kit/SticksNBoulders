@@ -1,68 +1,73 @@
-## feat(coach): from a reviewed clip to the program it changes
+## feat: reference lift -- Tempo Bench at 70% of the competition bench
 
-Ruairi's review day (form, 6 Oct 2026): "Watch videos, analyse weaknesses and
-then adjust program accordingly". Videos already lead the Roster (#47), but
-neither the Review Queue nor Athlete View linked to the editor, and the clip
-context left out the "Prescribed" line. No new writes, no schema change.
+Ruairi answered "70% of what?" with **the competition bench max** (6 Oct 2026,
+as reported by Joey). This builds option (A) from `docs/reference-lift.md`: a
+nullable `prescriptions.reference_exercise_id`, with the editor remembering the
+last reference per exercise per program, so `of bench` is typed once per
+variation per program. Null is today's behaviour byte for byte: no column
+written, same display, same snapshot.
 
 ### What changes
 
-- **Prescribed line.** `toClip` keeps `prescription_id` and `prescribed`;
-  `ClipContext` renders `Prescribed: <snapshot>` under the logged line. It shows
-  the set's stored snapshot (`5 reps · RPE 8`) and never recomputes it from the
-  live line. A free set gets no line.
-- **Adjust program** under each clip (with the set's line) and in Athlete View's
-  "This block" (which used to say "No program yet" for everyone). Both go to
-  `/coach/programs?athlete=<id>[&line=<id>]`, which:
-  1. checks the coach's **active** link row first and reads nothing else
-     without one ("Not one of your athletes" / "No longer linked");
-  2. follows the line to its week and day if it is this athlete's, in one of
-     their non-archived programs;
-  3. else opens their current program (published, updated last), else lists
-     their programs, else shows "No program for <name> yet";
-  4. `router.replace`s to `/coach/programs/<id>?week=&day=&line=`. The editor
-     opens that week in its own block, scrolls to the day and focuses the line.
-- **Queue keeps its place.** [Fact] The queue holds position, Undo, the comment
-  draft and two Realtime subscriptions in component state, and `cacheComponents`
-  is off, so a same-tab navigation would reload it onto the oldest clip. The
-  clip link opens a **new tab**: Cmd+W returns to the same clip with nothing
-  re-read. The Enter-to-clear handler now ignores focused links. Athlete View
-  links in the same tab, since it has no state that a re-read would lose.
-- **Editor change kept small** (`program-editor.tsx`, about 25 lines): an
-  optional `landing` prop, the block found from the landing week, a
-  scroll-and-focus effect that runs once, and an `id` on each day section.
-  Expect a trivial merge against the reference-lift branch.
-- **Stale comments fixed:** the `clip-context.tsx` header ("no programs
-  table") and the `roster-triggers.ts` "Nothing reads program tables yet"
-  paragraph, plus the same claim in that file's other Order 19 comments and the
-  Athlete View page header.
+- **Schema v12**: one nullable string column, no index, no backfill (null =
+  the line's own exercise, which every existing row already means).
+- **Write helper** (`program-write.ts`): writes the column only when set;
+  a self-reference is stored as null; `reference_exercise_id` joins
+  `LINE_PLACEMENT` and `copyPrescription` takes it from the remap.
+- **Admin** (`program-admin.ts`): `requireExercise` on the reference (global or
+  in the athlete's library); `copyProgram` resolves `exercise_id ∪
+  reference_exercise_id` in the target's library (kept / found by name /
+  created) and refuses before any write if a reference is gone;
+  `duplicateWeek` keeps it.
+- **Resolver**: a reference row reads only the referenced lift's stored maxes,
+  never its own exercise's sets (not `synced`), never the variation's max.
+  Display `105 kg (70% of Bench Press)`; snapshot `5 reps · 105 kg (70% of
+  Bench Press, training 150)`; no max reads `70% of Bench Press`.
+- **Editor**: `70% of bench` strips into the column (stored load stays `70%`),
+  `of own` clears, `of tested` stays a kind, an unknown lift stays freeform.
+  Indicator: `Percent · 70% of Bench Press (training max)`. New lines inherit
+  the last reference for that exercise. **Audit finding closed:** the editor
+  now loads the athlete's maxes and warns beside any percentage that would
+  resolve to nothing, e.g. `No Bench Press training max for Joey · they see
+  "70% of Bench Press"`.
 
-### Access
+### Where it departs from the design (also `docs/reference-lift.md` §9)
 
-[Fact] `adjust-program.test.tsx` edits the URL to a never-linked athlete and to
-a revoked one whose block the coach wrote (a coach can still read programs they
-wrote after a revoke, per `docs/programs.md`). It asserts the refusal screen, no
-program or line read, and no redirect. A `line` from another athlete's program
-is ignored, and URL ids that are not valid row ids are dropped. The editor URL's
-`week/day/line` only sets where it opens and grants nothing. Writes still go
-through `/api/program`, which re-checks the link.
+- §6 example 3's snapshot (`105 kg (70%)`) contradicted §4. Built to §4.
+- `schema.test.ts` did not pin the version as §5 claimed; it does now.
+- The warning covers own-exercise rows too. [Inference] Otherwise the
+  `prescription.ts` comment stays false for the common case.
+- `targetsFor` takes an optional `ReferenceLookup` 4th argument, not a
+  replacement `maxesFor`, so existing callers are untouched.
+- The design dated the answer 7 Oct; the brief says 6 Oct. [Unverified] Joey
+  to confirm.
 
-### For Joey
+### Run live, in this order
 
-- `scripts/e2e-roster.mts:202` still checks "no block until the Program Editor
-  exists". Not edited. [Inference] It should still pass, because the script
-  writes no program for its fixture athlete, but the label is now stale.
-- [Unverified] A new tab cold-loads the coach shell. Nobody has measured whether
-  that fits the 2.5s budget on the beta instance.
-- [Inference] When the coach focuses a queue-rail button and presses Enter, the
-  window handler clears the clip instead of selecting it. This predates this
-  PR, which leaves it alone.
-- [SME to confirm] Should a clip with no traced line (logged freely) land on
-  the current block, or should it say so first?
+1. `npm run appwrite:setup -- --dry-run`. Expect exactly one `create-column`
+   (`prescriptions.reference_exercise_id`).
+2. `npm run appwrite:setup`. No backfill: null is today's semantics.
+3. `npm run appwrite:audit`. New checks: the coach may reference a library lift
+   and may not reference his own private exercise.
+4. `E2E_BASE_URL=… npm run e2e:copy` (with `next dev` running). Its paused
+   bench is now 80% of the squat, carried through both copies, and
+   Andrea's Today should read `95 kg (80% of Squat)`.
 
-### Verified offline
+Deploy the app after step 2. Until the column exists, a write carrying a
+reference would fail; rows without one never send the column.
 
-`npm test` 138 files / 2183 tests (after merging origin/dev with #55), `npm run lint`, `npm run typecheck` all
-clean. No `appwrite:*` or `e2e:*` scripts were run.
+### Not built
+
+Task 9 (own-row snapshots gain the basis) and task 10 (phase 2, pricing off
+the comp single logged earlier in the session: **[SME to confirm]** with
+Ruairi). `e2e:program` is not extended; `e2e:copy` covers Today pricing.
+
+### Verification
+
+`npm test` 2112 passed (130 files), `npm run lint` clean, `npm run typecheck`
+clean, all offline. The design's §6 numbers are unit tests: 150 → 105,
+`of tested` 157.5 → 110, 155 mid-block → 107.5 with the 105 snapshot kept, no
+max → null, 145×1@9 → 102.5 vs the wrong 90, rounding via `roundToLoadable`.
+Audit and e2e not run.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

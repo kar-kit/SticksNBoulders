@@ -46,11 +46,19 @@ A max is held against an `exercise_id`. A 3-0-0 tempo bench and a competition
 bench are different numbers and neither stands in for the other, and the
 exercise library already treats a variation as its own row.
 
-**[SME to confirm]** — whether Ruairi wants a percentage prescription *on* a
+~~**[SME to confirm]** — whether Ruairi wants a percentage prescription *on* a
 variation to be able to point at the base lift's max instead of the variation's
-own. That is a property of a prescription, so it belongs to Order 18 and is
-deliberately not modelled here; guessing the shape now is the retrofit CLAUDE.md
-warns about.
+own.~~ **Answered by Ruairi, 6 Oct 2026:** yes, by default. "Tempo Bench at
+70%" is 70% of the competition bench max. [Fact] — Joey's report of the
+conversation.
+
+It is still not modelled here, as this section said it should not be: the
+pointer is a property of the prescription, `prescriptions.reference_exercise_id`
+(`docs/reference-lift.md`, `docs/prescriptions.md`). Maxes stay per exercise —
+a tempo bench max is still its own row and still prices any Tempo Bench line
+that does not reference another lift. A referenced line simply reads the bench's
+rows instead: same `currentMax`, same effective dates, same kinds, nothing
+written twice. No change to this table, its permissions or the route.
 
 ## Panel order, and a cap that pointed the wrong way
 

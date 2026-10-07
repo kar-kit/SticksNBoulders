@@ -435,3 +435,38 @@ describe("more than one RPE set in the same exercise", () => {
     expect(resolved[0].synced).toBe(true);
   });
 });
+
+describe("a percentage of another lift (docs/reference-lift.md §2)", () => {
+  // The caller hands over the REFERENCE lift's maxes; this only changes words.
+  const bench = { name: "Bench Press" };
+
+  it("names the lift on the display and records the basis for the snapshot", () => {
+    const resolved = resolvePrescription(parse("70%")!, { training: 150, session: null }, bench);
+    expect(resolved).toMatchObject({ loadKg: 105, basisUsed: "training", basisKg: 150, synced: false });
+    expect(resolved.display).toBe("105 kg (70% of Bench Press)");
+    expect(resolved.record).toBe("105 kg (70% of Bench Press, training 150)");
+  });
+
+  it("rounds down to a loadable weight through roundToLoadable, like any percentage", () => {
+    // 72.5% of 150 = 108.75.
+    expect(roundToLoadable(108.75)).toBe(107.5);
+    expect(resolvePrescription(parse("72.5%")!, { training: 150 }, bench).loadKg).toBe(107.5);
+  });
+
+  it("names the missing lift when it cannot resolve, and keeps a cap", () => {
+    expect(resolvePrescription(parse("70%")!, {}, bench)).toMatchObject({
+      loadKg: null,
+      unresolved: true,
+      display: "70% of Bench Press",
+      basisKg: null,
+    });
+    expect(resolvePrescription(parse("70% @8")!, {}, bench).display).toBe("70% of Bench Press, stop at RPE 8");
+    expect(resolvePrescription(parse("70%")!, {}, bench).record).toBeUndefined();
+  });
+
+  it("leaves an own-exercise row exactly as it was: no name, no record", () => {
+    const resolved = resolvePrescription(parse("70%")!, { training: 150 });
+    expect(resolved.display).toBe("105 kg (70%)");
+    expect(resolved).not.toHaveProperty("record");
+  });
+});

@@ -359,6 +359,17 @@ describe("the program tables (Order 19)", () => {
     });
   });
 
+  it("point a percentage at another lift's max with one nullable id, so every existing line keeps its own (v12)", () => {
+    expect(schema.version).toBe(12);
+    expect(table("prescriptions").columns.find((c) => c.key === "reference_exercise_id")).toEqual({
+      key: "reference_exercise_id",
+      type: "string",
+      size: 36,
+      required: false,
+    });
+    expect(table("prescriptions").indexes.some((i) => i.columns.includes("reference_exercise_id"))).toBe(false);
+  });
+
   it("add only optional columns to the tables athletes already write", () => {
     // Additive, and never required: a required column on sets would reject
     // every queued write from a phone still running last week's build.

@@ -372,3 +372,86 @@ describe("a copied line carries every column, including ones added later", () =>
     expect(content).toEqual({ set_count: 3, load: "75%", video_required: true });
   });
 });
+
+describe("a line's reference lift (docs/reference-lift.md §3)", () => {
+  /** Tempo Bench lines at a percentage of another lift, on Joey's Monday. */
+  async function withReferences(h: ReturnType<typeof harness>) {
+    const p = await joeysProgram(h);
+    const exercises = h.tableOf("exercises");
+    exercises.set("ex-bench", { $id: "ex-bench", name: "Bench Press", normalised_name: "bench press", is_global: true, owner_id: null });
+    exercises.set("ex-joey-tempo", { $id: "ex-joey-tempo", name: "Tempo Bench", normalised_name: "tempo bench", is_global: false, owner_id: JOEY });
+    const add = (referenceExerciseId: string) =>
+      h.ok(COACH, { op: "addPrescription", dayId: p.monday, exerciseId: "ex-joey-tempo", setCount: 3, reps: 5, load: "70%", referenceExerciseId });
+    const global = await add("ex-bench");
+    const found = await add("ex-joey-pin");
+    const created = await add("ex-joey-paused");
+    return { ...p, global, found, created };
+  }
+
+  const referencesIn = (h: ReturnType<typeof harness>, where: (r: Row) => boolean) =>
+    [...h.tableOf("prescriptions").values()]
+      .filter((r) => where(r) && r.exercise_id !== "ex-squat" && r.load === "70%")
+      .map((r) => r.reference_exercise_id);
+
+  it("duplicateWeek keeps the reference as is: same athlete, same library", async () => {
+    const h = harness();
+    const p = await withReferences(h);
+    const weekId = await h.ok(COACH, { op: "duplicateWeek", weekId: p.week1 });
+    expect(referencesIn(h, (r) => r.week_id === weekId)).toEqual(["ex-bench", "ex-joey-pin", "ex-joey-paused"]);
+  });
+
+  it("copyProgram resolves it in the target's library: global kept, hers found by name, missing created there", async () => {
+    const h = harness();
+    const p = await withReferences(h);
+    const copyId = await h.ok(COACH, { op: "copyProgram", programId: p.programId, athleteId: ANDREA });
+    const [global, found, created] = referencesIn(h, (r) => r.program_id === copyId) as string[];
+    expect(global).toBe("ex-bench");
+    expect(found).toBe("ex-andrea-pin");
+    expect(h.tableOf("exercises").get(created)).toMatchObject({ name: "Paused Bench", owner_id: ANDREA, is_global: false });
+    // Shares the map with line exercises: the copied Paused Bench line and the
+    // reference to Paused Bench land on the same new row.
+    const pausedLine = [...h.tableOf("prescriptions").values()].find((r) => r.program_id === copyId && r.load === "80%")!;
+    expect(pausedLine.exercise_id).toBe(created);
+    // Nothing the source athlete owns survives into the copy.
+    const copied = [...h.tableOf("prescriptions").values()].filter((r) => r.program_id === copyId);
+    expect(copied.some((r) => String(r.reference_exercise_id ?? "").startsWith("ex-joey"))).toBe(false);
+  });
+
+  it("refuses the copy before any write when a reference lift no longer exists", async () => {
+    const h = harness();
+    const p = await withReferences(h);
+    h.tableOf("prescriptions").get(p.global)!.reference_exercise_id = "ex-gone";
+    h.writes.length = 0;
+    expect(await h.run(COACH, { op: "copyProgram", programId: p.programId, athleteId: ANDREA })).toEqual({
+      status: "invalid",
+      reason: "referenceExerciseId: a line's reference lift no longer exists",
+    });
+    expect(h.writes).toEqual([]);
+  });
+
+  it("leaves a line on its own max without the column, on both copies", async () => {
+    const h = harness();
+    const p = await withReferences(h);
+    const copyId = await h.ok(COACH, { op: "copyProgram", programId: p.programId, athleteId: ANDREA });
+    const weekId = await h.ok(COACH, { op: "duplicateWeek", weekId: p.week1 });
+    const own = [...h.tableOf("prescriptions").values()].filter(
+      (r) => (r.program_id === copyId || r.week_id === weekId) && r.load !== "70%",
+    );
+    expect(own.length).toBeGreaterThan(0);
+    expect(own.every((r) => !("reference_exercise_id" in r))).toBe(true);
+  });
+
+  it("never touches logged work", async () => {
+    const h = harness();
+    const p = await withReferences(h);
+    h.writes.length = 0;
+    await h.ok(COACH, { op: "copyProgram", programId: p.programId, athleteId: ANDREA });
+    await h.ok(COACH, { op: "duplicateWeek", weekId: p.week1 });
+    expect(h.writes.every((w) => w.op === "create" && w.tableId !== "sessions" && w.tableId !== "sets")).toBe(true);
+    expect(h.tableOf("sets").get("set1")).toEqual({ $id: "set1", athlete_id: JOEY, prescription_id: p.squat, load_kg: 150 });
+  });
+
+  it("is placement, not content: lineContent never carries the source's reference", () => {
+    expect(lineContent({ reference_exercise_id: "ex-joey-pin", load: "70%" })).toEqual({ load: "70%" });
+  });
+});

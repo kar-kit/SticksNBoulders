@@ -2,6 +2,13 @@
 
 _Design, 7 Oct 2026. Phase 2a, extends Orders 17/18/19/20/22. Source: Ruairi._
 
+**Status: option (A) built, 7 Oct 2026, branch `FTP1-reference-lift`** —
+tasks 1–6 and 7, with task 8's audit assertion and `e2e:copy` extension. Not
+yet applied to the live instance: needs `npm run appwrite:setup` (one
+`create-column`), then `appwrite:audit` and `e2e:copy`. Task 9 (own-exercise
+snapshots gain the basis) and task 10 (phase 2 session sync, [SME to confirm])
+are not built. Where the build departs from this design, see §9.
+
 Ruairi was asked: "If you programme Tempo Bench at 70%, 70% of what?" He
 answered **"the competition bench max"** — not the tempo bench's own max, and
 not "I would want to choose each time". So a percentage on a variation must
@@ -377,3 +384,40 @@ bench.
   table without a rebuild** — every previous nullable addition (`backoff`,
   `video_required`, `program_day_id`) did; confirmed by running `appwrite:setup`
   against the beta instance at task 1.
+
+## 9. As built: where it departs from the design
+
+- **Example 3's snapshot.** §6 example 3 shows the logged set stamped
+  `5 reps · 105 kg (70%)`; that is today's own-exercise form and contradicts
+  §4, which requires the lift, kind and basis on a reference row. Built to §4:
+  `5 reps · 105 kg (70% of Bench Press, training 150)`. The numbers are as
+  computed (105, then 107.5 on 22 Oct, the snapshot unmoved).
+- **Date of the answer.** The §5 schema comment dates Ruairi's answer 7 Oct,
+  the design's own date. The brief for the build dates it 6 Oct 2026, with his
+  other form answers; the code and docs say 6 Oct. [Unverified] — Joey to
+  confirm which day he asked.
+- **`targetsFor`'s signature.** Task 4 says it "takes `maxesFor(exerciseId)`".
+  Built as an optional fourth argument, a `ReferenceLookup` (maxes and name by
+  id), leaving the own-exercise `maxes` argument and every existing caller and
+  test as they were. A reference row with no lookup resolves to nothing rather
+  than the own max.
+- **`schema.test.ts` did not pin the version** (§5 says it does; it asserted
+  `>= 1`). The new test pins 12 and the column's exact shape.
+- **The editor warning covers own-exercise rows too.** §0's finding was that
+  the editor warned on nothing, despite `prescription.ts` saying it did. It now
+  loads the athlete's maxes and warns on any percentage that would resolve to
+  nothing, own or referenced, naming the max to set. No warning while the maxes
+  are unread or failed, or on a template. [Inference] The narrower fix (reference
+  rows only) would have left the comment's claim false for the common case.
+- **"Last reference used" is the last line of the exercise in program order**,
+  not the last edit. [Inference] The tree carries no per-cell history and
+  blocks are written forwards; `of own` on the latest line stops inheritance.
+- **An unnamed reference.** If the athlete's library has not loaded when a row
+  is stamped, the display and snapshot say "the reference lift" instead of the
+  name. The kilos are unaffected. [Inference] Rare: the library is cached
+  offline with the session.
+- **`e2e:program` is not extended**; `e2e:copy` carries the end-to-end proof
+  instead — a referenced line through duplicate and copy, Andrea's Today
+  reading `95 kg (80% of Squat)`, and the route refusing a reference to a
+  lift she cannot read.
+

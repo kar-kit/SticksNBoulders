@@ -12,7 +12,7 @@ import { useFeedbackBadge } from "@/lib/review/feedback-context";
 import { unreadLabel } from "@/lib/review/feedback";
 import { elapsedMs, formatElapsed, lastSessionLabel, sessionDateLabel } from "@/lib/logging/session";
 import { usePrescribedToday, type PrescribedState } from "@/lib/programming/use-prescribed";
-import { basisMaxesFor, lineSummaries, planDay, targetsFor } from "@/lib/programming/session-plan";
+import { basisMaxesFor, lineSummaries, planDay, referenceLookup, targetsFor } from "@/lib/programming/session-plan";
 
 /**
  * Today. One question, answered in under a second: what am I doing, and how do
@@ -151,14 +151,16 @@ function PrescribedPreview({ state }: { state: Extract<PrescribedState, { status
 
   const exercises = useMemo(() => {
     const now = new Date();
+    // A line priced off another lift ("70% of Bench Press") reads that lift's maxes and name.
+    const references = referenceLookup(state.maxes.entries, state.maxes.estimated, now, (id) => names.get(id));
     return planDay(prescriptions).map((planned) => {
       const maxes = basisMaxesFor(planned.exerciseId, state.maxes.entries, state.maxes.estimated, now);
       return {
         id: planned.exerciseId,
-        lines: lineSummaries(planned, targetsFor(planned, maxes)),
+        lines: lineSummaries(planned, targetsFor(planned, maxes, [], references)),
       };
     });
-  }, [prescriptions, state.maxes]);
+  }, [prescriptions, state.maxes, names]);
 
   return (
     <section aria-label="Today's session" className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">

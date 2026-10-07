@@ -61,6 +61,7 @@ import {
   nextTarget,
   planDay,
   prescribeNewRows,
+  referenceLookup,
   targetLine,
   targetsFor,
   type LoggedForTarget,
@@ -207,10 +208,13 @@ export function LogScreen() {
     (exerciseId: string, logged: readonly LoggedForTarget[]): SetTarget[] | null => {
       const planned = plan.find((p) => p.exerciseId === exerciseId);
       if (!planned) return null;
-      const maxes = basisMaxesFor(exerciseId, prescribed.maxes.entries, prescribed.maxes.estimated, new Date());
-      return targetsFor(planned, maxes, logged.map((s) => ({ ...s, rpe: s.rpe ?? null })));
+      const now = new Date();
+      const maxes = basisMaxesFor(exerciseId, prescribed.maxes.entries, prescribed.maxes.estimated, now);
+      // A line priced off another lift reads that lift's stored max, never this exercise's sets.
+      const references = referenceLookup(prescribed.maxes.entries, prescribed.maxes.estimated, now, nameFor);
+      return targetsFor(planned, maxes, logged.map((s) => ({ ...s, rpe: s.rpe ?? null })), references);
     },
-    [plan, prescribed.maxes],
+    [plan, prescribed.maxes, nameFor],
   );
 
   const readSession = useRef<string | null>(null);

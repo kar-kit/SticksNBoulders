@@ -251,6 +251,20 @@ export interface PrescriptionFields {
   /** The backoff cell as typed. Stored in its canonical spelling, derived here. */
   backoff?: string | null;
   videoRequired?: boolean;
+  /** The lift a percentage is OF, when not the line's own. Null clears it. */
+  referenceExerciseId?: string | null;
+}
+
+/**
+ * The reference as stored. A line referencing its own exercise is a line with
+ * no reference, so it is stored as null: one spelling for "own max", which is
+ * what every row written before the column already says. Undefined means "not
+ * in this write". Only decidable when the write names the line's exercise --
+ * program-admin compares against the stored row for an update that does not.
+ */
+function referenceOf(exerciseId: string | undefined, reference: string | null | undefined) {
+  if (reference === undefined) return undefined;
+  return reference === null || reference === exerciseId ? null : reference;
 }
 
 /**
@@ -283,6 +297,7 @@ export async function createPrescription(
 ) {
   const { data, permissions } = scoped(scope);
   const load = input.load?.trim() || null;
+  const reference = referenceOf(input.exerciseId, input.referenceExerciseId);
   return deps.writer.createRow({
     databaseId: deps.databaseId,
     tableId: "prescriptions",
@@ -304,6 +319,9 @@ export async function createPrescription(
       // before Order 21, so it never depends on the column existing yet.
       ...(input.backoff ? { backoff: backoffOf(input.backoff) } : {}),
       video_required: input.videoRequired ?? false,
+      // Same rule as backoff: a line on its own max writes exactly the row it
+      // did before the column existed.
+      ...(reference ? { reference_exercise_id: reference } : {}),
       updated_at: iso(deps.now()),
     },
     permissions,
@@ -339,6 +357,7 @@ export async function updatePrescription(
       notes: input.notes,
       backoff: backoffOf(input.backoff),
       video_required: input.videoRequired,
+      reference_exercise_id: referenceOf(input.exerciseId, input.referenceExerciseId),
       updated_at: iso(deps.now()),
     }),
     permissions,
@@ -347,8 +366,9 @@ export async function updatePrescription(
 
 /**
  * Columns a copied line takes from where it is going, never from where it came
- * from: its scope, its parents, its exercise (re-resolved for the target's
- * library), its slot, and the two the helper derives itself.
+ * from: its scope, its parents, its exercise and its reference lift (both
+ * re-resolved for the target's library), its slot, and the two the helper
+ * derives itself.
  *
  * A NEW column holding a row id belongs here too, with the copy remapping it --
  * otherwise a copied line points at its source's rows. Order 20.
@@ -361,6 +381,7 @@ const LINE_PLACEMENT = new Set([
   "week_id",
   "day_id",
   "exercise_id",
+  "reference_exercise_id",
   "position",
   "load_kind",
   "updated_at",
@@ -389,11 +410,19 @@ export function lineContent(source: Record<string, unknown>): Record<string, unk
 export async function copyPrescription(
   deps: WriteDeps,
   scope: ProgramScope,
-  placement: { weekId: string; dayId: string; exerciseId: string; position: number },
+  placement: {
+    weekId: string;
+    dayId: string;
+    exerciseId: string;
+    /** The source's reference, remapped like `exerciseId`. Null for none. */
+    referenceExerciseId: string | null;
+    position: number;
+  },
   source: Record<string, unknown>,
 ) {
   const { data, permissions } = scoped(scope);
   const content = lineContent(source);
+  const reference = referenceOf(placement.exerciseId, placement.referenceExerciseId);
   const load = typeof content.load === "string" ? content.load : null;
   return deps.writer.createRow({
     databaseId: deps.databaseId,
@@ -405,6 +434,7 @@ export async function copyPrescription(
       week_id: placement.weekId,
       day_id: placement.dayId,
       exercise_id: placement.exerciseId,
+      ...(reference ? { reference_exercise_id: reference } : {}),
       position: placement.position,
       load_kind: loadKindOf(load),
       updated_at: iso(deps.now()),

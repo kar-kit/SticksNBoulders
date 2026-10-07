@@ -10,6 +10,7 @@ import {
   planDay,
   prefillFrom,
   prescribeNewRows,
+  referenceLookup,
   repsLabel,
   targetLine,
   targetsFor,
@@ -300,5 +301,136 @@ describe("stamping the logger's new rows with their targets", () => {
     expect(extra).toEqual(row("x", { loadKg: 150, reps: 3 }));
     expect(warmup.prescriptionId).toBeUndefined();
     expect(bench.prescriptionId).toBeUndefined();
+  });
+});
+
+/**
+ * docs/reference-lift.md §6, ported from the design's scratch script. Ruairi,
+ * 6 Oct 2026: "Tempo Bench at 70%" is 70% of the competition bench max.
+ */
+describe("a percentage of another lift: the worked examples", () => {
+  const max = (over: Partial<ReferenceMaxEntry>): ReferenceMaxEntry => ({
+    id: `m${++seq}`,
+    exerciseId: "bench",
+    kind: "training",
+    valueKg: 150,
+    effectiveFrom: "2026-10-01T00:00:00.000Z",
+    recordedBy: "ruairi",
+    ...over,
+  });
+  const names = new Map([
+    ["bench", "Bench Press"],
+    ["tempo", "Tempo Bench"],
+  ]);
+  const lookup = (entries: ReferenceMaxEntry[], asOf: string, estimated = new Map()) =>
+    referenceLookup(entries, estimated, new Date(asOf), (id) => names.get(id));
+  /** A Tempo Bench line, referencing the comp bench unless told otherwise. */
+  const tempo = (load: string, over: Partial<Prescription> = {}) =>
+    planDay([line({ exerciseId: "tempo", setCount: 3, reps: 5, load, referenceExerciseId: "bench", ...over })])[0];
+  const target = (
+    load: string,
+    entries: ReferenceMaxEntry[],
+    asOf = "2026-10-15T09:00:00.000Z",
+    extra: { own?: Parameters<typeof targetsFor>[1]; logged?: ReturnType<typeof set>[]; estimated?: Map<string, { valueKg: number; asOf: string }>; over?: Partial<Prescription> } = {},
+  ) => targetsFor(tempo(load, extra.over), extra.own ?? {}, extra.logged ?? [], lookup(entries, asOf, extra.estimated))[0];
+
+  it("1. comp bench training 150: Tempo Bench 70% referencing it is 105 kg, and the tempo max is not consulted", () => {
+    const t = target("70%", [max({}), max({ exerciseId: "tempo", valueKg: 120 })], undefined, { own: { training: 120 } });
+    expect(t).toMatchObject({ loadKg: 105, display: "105 kg (70% of Bench Press)", synced: false, unresolved: false });
+    // The same row on its own max -- today's behaviour -- is 84 rounded down.
+    const own = targetsFor(tempo("70%", { referenceExerciseId: null }), { training: 120 })[0];
+    expect(own).toMatchObject({ loadKg: 82.5, display: "82.5 kg (70%)" });
+    expect(target("72.5%", [max({})]).loadKg).toBe(107.5);
+  });
+
+  it("2. the kind is the load text's, on the reference lift", () => {
+    const entries = [max({ kind: "tested", valueKg: 157.5, effectiveFrom: "2026-09-20T00:00:00.000Z" }), max({})];
+    const estimated = new Map([["bench", { valueKg: 160, asOf: "2026-10-05T00:00:00.000Z" }]]);
+    expect(target("70%", entries, undefined, { estimated }).loadKg).toBe(105);
+    // 110.25 and 112, both rounded down.
+    expect(target("70% of tested", entries, undefined, { estimated }).loadKg).toBe(110);
+    expect(target("70% of e1rm", entries, undefined, { estimated }).loadKg).toBe(110);
+    expect(target("70% @8", entries, undefined, { estimated })).toMatchObject({ loadKg: 105, rpe: 8 });
+    expect(target("70% of tested", entries).snapshot).toBe("5 reps · 110 kg (70% of Bench Press, tested 157.5)");
+  });
+
+  it("3. the reference max moves mid-block: the live line follows it, the logged set's snapshot does not", () => {
+    const entries = [
+      max({ valueKg: 150 }),
+      max({ valueKg: 155, effectiveFrom: "2026-10-20T00:00:00.000Z" }),
+      max({ valueKg: 160, effectiveFrom: "2026-11-01T00:00:00.000Z" }),
+    ];
+    const oct15 = target("70%", entries, "2026-10-15T09:00:00.000Z");
+    expect(oct15.loadKg).toBe(105);
+    const [logged] = prescribeNewRows(
+      [],
+      [{ exerciseId: "tempo", clientSetId: "s1", loadKg: null, reps: null, rpe: null, isWarmup: false, planned: false }],
+      () => ({ logged: [], targets: [oct15] }),
+    );
+    expect(logged).toMatchObject({ loadKg: 105, prescribed: "5 reps · 105 kg (70% of Bench Press, training 150)" });
+
+    // A week later: 70% of 155 = 108.5, floored. The 1 Nov entry is invisible.
+    const oct22 = target("70%", entries, "2026-10-22T09:00:00.000Z");
+    expect(oct22).toMatchObject({ loadKg: 107.5, snapshot: "5 reps · 107.5 kg (70% of Bench Press, training 155)" });
+    // A typo fix dated 1 Oct, entered later, wins the tie for 15 Oct from now on.
+    const fixed = target("70%", [...entries, max({ valueKg: 152.5 })], "2026-10-15T09:00:00.000Z");
+    expect(fixed.snapshot).toBe("5 reps · 105 kg (70% of Bench Press, training 152.5)");
+    // The set already on screen is never re-priced, and its snapshot stays put.
+    expect(prescribeNewRows([logged], [logged], () => ({ logged: [], targets: [oct22] }))[0]).toEqual(logged);
+    expect(logged.prescribed).toBe("5 reps · 105 kg (70% of Bench Press, training 150)");
+  });
+
+  it("4. the reference lift has no max: unresolved, the lift named, the own max not used", () => {
+    const tempoOnly = [max({ exerciseId: "tempo", valueKg: 120 })];
+    const future = [max({ effectiveFrom: "2026-12-01T00:00:00.000Z" })];
+    for (const entries of [tempoOnly, future]) {
+      expect(target("70%", entries, undefined, { own: { training: 120 } })).toMatchObject({
+        loadKg: null,
+        unresolved: true,
+        display: "70% of Bench Press",
+        snapshot: "5 reps · 70% of Bench Press",
+      });
+    }
+    expect(target("70% @8", tempoOnly)).toMatchObject({ loadKg: null, rpe: 8, display: "70% of Bench Press, stop at RPE 8" });
+    // No lookup at all is the same honest failure, never the own max.
+    expect(targetsFor(tempo("70%"), { training: 120 })[0]).toMatchObject({ loadKg: null, unresolved: true });
+  });
+
+  it("5. a reference row is never priced off its own exercise's sets (phase 1)", () => {
+    // Today's comp bench single: 145 x 1 @9 is an e1RM of 149.1. Priced off
+    // it, 70% is 102.5 -- phase 2's answer, still [SME to confirm], so a bench
+    // line of its own gets it and the tempo line does not.
+    expect(estimateOneRepMax({ loadKg: 145, reps: 1, rpe: 9 })).toBeCloseTo(149.1, 1);
+    const benchOwn = planDay([line({ exerciseId: "bench", setCount: 3, reps: 5, load: "70%" })])[0];
+    expect(targetsFor(benchOwn, { training: 150 }, [set(145, 1, 9)])[0]).toMatchObject({ loadKg: 102.5, synced: true });
+
+    // The tempo bench's own first set, 110 x 5 @8, is an e1RM of 132: 70% of
+    // it is 90 kg, the wrong lift. The reference row stays on the stored bench max.
+    const tempoSet = [set(110, 5, 8)];
+    expect(estimateOneRepMax({ loadKg: 110, reps: 5, rpe: 8 })).toBeCloseTo(132, 0);
+    const own = targetsFor(tempo("70%", { referenceExerciseId: null }), {}, tempoSet)[0];
+    expect(own).toMatchObject({ loadKg: 90, synced: true });
+    const referenced = target("70%", [max({})], undefined, { logged: tempoSet });
+    expect(referenced).toMatchObject({ loadKg: 105, synced: false, anchor: null });
+    expect(target("70% of tested", [max({ kind: "tested", valueKg: 157.5 })], undefined, { logged: tempoSet }).loadKg).toBe(110);
+  });
+
+  it("keeps the reference for a non-percentage load without consulting it", () => {
+    const t = target("@8", [max({})]);
+    expect(t).toMatchObject({ loadKg: null, rpe: 8, display: "RPE 8", unresolved: false });
+    // A reference to the line's own exercise is no reference.
+    const self = targetsFor(tempo("70%", { referenceExerciseId: "tempo" }), { training: 120 })[0];
+    expect(self.display).toBe("82.5 kg (70%)");
+  });
+
+  it("names the lift on the line summary only when a reference is set", () => {
+    const plan = planDay([
+      line({ id: "ref", exerciseId: "tempo", setCount: 3, reps: 5, load: "70%", referenceExerciseId: "bench" }),
+      line({ id: "own", exerciseId: "tempo", setCount: 2, reps: 5, load: "70%" }),
+    ])[0];
+    expect(lineSummaries(plan, targetsFor(plan, { training: 120 }, [], lookup([max({})], "2026-10-15T09:00:00.000Z")))).toEqual([
+      "3 × 5 · 105 kg (70% of Bench Press)",
+      "2 × 5 · 82.5 kg (70%)",
+    ]);
   });
 });

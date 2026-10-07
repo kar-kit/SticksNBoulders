@@ -16,6 +16,7 @@ import {
 import {
   parsePrescription,
   resolveExercise,
+  resolvePrescription,
   sessionMaxFrom,
   type BasisMaxes,
   type PrescriptionKind,
@@ -127,6 +128,44 @@ export function basisMaxesFor(
   };
 }
 
+/**
+ * Where a reference row (`70% of Bench Press` on a Tempo Bench line) finds the
+ * other lift's maxes and its name. Both are already on the device: maxes are
+ * fetched for every exercise, not filtered, and names come from the library
+ * the typeahead loads.
+ */
+export interface ReferenceLookup {
+  maxesFor: (exerciseId: string) => BasisMaxes;
+  nameOf: (exerciseId: string) => string | null | undefined;
+}
+
+/** A `ReferenceLookup` over the same maxes `basisMaxesFor` reads, as of the same date. */
+export function referenceLookup(
+  entries: readonly ReferenceMaxEntry[],
+  estimated: ReadonlyMap<string, EstimatedInput>,
+  asOf: Date,
+  nameOf: (exerciseId: string) => string | null | undefined,
+): ReferenceLookup {
+  return { maxesFor: (exerciseId) => basisMaxesFor(exerciseId, entries, estimated, asOf), nameOf };
+}
+
+/**
+ * The lift a line's percentage is OF, when it is not the line's own -- or null.
+ *
+ * Consulted only for a percentage: the column survives a coach changing `70%`
+ * to `@8` and back, and means nothing in between. A self-reference is the
+ * line's own exercise (the write helper stores it as null; this is the same
+ * rule on the read side).
+ */
+export function referenceOf(line: Prescription, spec: PrescriptionSpec | null): string | null {
+  const id = line.referenceExerciseId ?? null;
+  if (!id || id === line.exerciseId) return null;
+  return spec?.kind === "percent" || spec?.kind === "capped" ? id : null;
+}
+
+/** Said when the library has not given the reference lift a name yet. */
+const UNNAMED_REFERENCE = "the reference lift";
+
 /** "5", "8–10", or "" when the line leaves reps to the load cell. */
 export function repsLabel(reps: number | null, repMax: number | null): string {
   if (reps === null) return "";
@@ -147,23 +186,32 @@ function snapshotOf(reps: number | null, repMax: number | null, display: string)
  * `resolveExercise` ignores the ones it cannot estimate from, which is the
  * safe direction. Re-run it after every set: that is what turns "75%" into a
  * weight priced off the top set the athlete just did.
+ *
+ * A line whose percentage is of another lift (`reference_exercise_id`) is
+ * priced off THAT lift's stored max through `references`, and never off this
+ * exercise's sets: a tempo bench set at RPE 8 measures tempo bench, not comp
+ * bench. Phase 1 of docs/reference-lift.md §2 -- it behaves like a named kind,
+ * never `synced`. Without `references` such a line resolves to nothing rather
+ * than falling back to this exercise's max: the coach said "of bench".
  */
 export function targetsFor(
   exercise: PlannedExercise,
   maxes: BasisMaxes,
   logged: readonly SetForEstimate[] = [],
+  references?: ReferenceLookup,
 ): SetTarget[] {
   type Slot =
-    | { line: Prescription; spec: PrescriptionSpec | null; backoff?: undefined }
-    | { line: Prescription; spec: null; backoff: { rule: BackoffRule; topSet: TopSet | null } };
+    | { line: Prescription; spec: PrescriptionSpec | null; backoff?: undefined; reference?: string | null }
+    | { line: Prescription; spec: null; backoff: { rule: BackoffRule; topSet: TopSet | null }; reference?: undefined };
   // Working sets in the order they were logged: slot n is answered by the nth.
   // Warm-ups never fill a slot, and never count as a top set.
   const working = logged.filter((set) => !set.isWarmup);
   const slots: Slot[] = [];
   for (const line of exercise.lines) {
     const spec = line.load ? parsePrescription(line.load) : null;
+    const reference = referenceOf(line, spec);
     const first = slots.length;
-    for (let i = 0; i < line.setCount; i++) slots.push({ line, spec });
+    for (let i = 0; i < line.setCount; i++) slots.push({ line, spec, reference });
     const rule = readBackoff(line.backoff);
     if (!rule) continue;
     // The top set is the heaviest of the sets logged against this line's own
@@ -173,7 +221,12 @@ export function targetsFor(
     for (let i = 0; i < run.sets; i++) slots.push({ line, spec: null, backoff: { rule, topSet } });
   }
 
-  const specs = slots.map((slot) => slot.spec).filter((spec): spec is PrescriptionSpec => spec !== null);
+  // Own-exercise specs resolve together against today's sets, exactly as
+  // before; reference rows are kept out of that and priced on their own.
+  const specs = slots
+    .filter((slot) => !slot.reference)
+    .map((slot) => slot.spec)
+    .filter((spec): spec is PrescriptionSpec => spec !== null);
   const resolved = resolveExercise(specs, maxes, logged);
   const anchor = topSet(logged);
 
@@ -207,6 +260,22 @@ export function targetsFor(
         anchor: null,
         backoff: { rule, topSet },
         snapshot: snapshotOf(line.reps, line.repMax, display),
+      };
+    }
+    if (slot.reference && spec) {
+      const name = references?.nameOf(slot.reference) || UNNAMED_REFERENCE;
+      const own = references?.maxesFor(slot.reference) ?? {};
+      const r = resolvePrescription(spec, { ...own, session: null }, { name });
+      return {
+        ...base,
+        loadKg: r.loadKg,
+        rpe: r.rpe,
+        kind: spec.kind,
+        display: r.display,
+        synced: false,
+        unresolved: r.unresolved,
+        anchor: null,
+        snapshot: snapshotOf(line.reps, line.repMax, r.record ?? r.display),
       };
     }
     const r = spec === null ? null : resolved[next++];
