@@ -2,11 +2,15 @@
  * The Roster's "needs you" triggers, and nothing else.
  *
  * Order 24. Blueprint 10 asks for an exception list that is computed, never a
- * manual to-do list -- and the blueprint is BLOCKED on question 2 for Ruairi
- * (what does his review day actually look like, in order). Every trigger below
- * is inferred from his complaints on the 13 Sep call, not from watching him
- * work. So they live in this one file, as data plus one small function each,
- * so that his answer is an edit here and a test run rather than a refactor.
+ * manual to-do list. Question 2 for Ruairi (what does his review day actually
+ * look like, in order) is only partly answered. [Fact] Videos come first: his
+ * review day is "Watch videos, analyse weaknesses and then adjust program
+ * accordingly" (Ruairi's form answer, 6 Oct 2026). Nothing in that answer
+ * ranks the other kinds or sets a threshold, so the order of the rest and
+ * every threshold remain [Inference] from his complaints on the 13 Sep call,
+ * not from watching him work. They live in this one file, as data plus one
+ * small function each, so that the rest of his answer is an edit here and a
+ * test run rather than a refactor.
  *
  * Each rule is labelled [Inference] with the reasoning it rests on. The
  * thresholds are in TRIGGER_RULES, one place, named.
@@ -99,15 +103,19 @@ export interface NeedsYouItem {
 }
 
 /**
- * The order kinds are listed in, most urgent first.
+ * The order kinds are listed in, first thing to look at first.
  *
- * [Inference] An unprompted max goes first because it is the one Ruairi named
- * as throwing off his whole rhythm before a comp, and the blueprint says
- * surfacing it the day it happens is the improvement. Missed sessions next,
- * because they change what he writes for next week. Videos are routine work
- * with their own queue and badge. A missing weigh-in is the least urgent.
+ * [Fact] Videos lead: Ruairi's review day starts with "Watch videos, analyse
+ * weaknesses and then adjust program accordingly" (his form answer, 6 Oct
+ * 2026).
+ *
+ * [Inference] The rest keep the order they had before that answer. An
+ * unprompted max goes next because it is the one Ruairi named as throwing off
+ * his whole rhythm before a comp, and the blueprint says surfacing it the day
+ * it happens is the improvement. Missed sessions after it, because they change
+ * what he writes for next week. A missing weigh-in is the least urgent.
  */
-export const KIND_ORDER: readonly NeedsYouKind[] = ["unprompted-max", "missed-sessions", "videos", "no-bodyweight"];
+export const KIND_ORDER: readonly NeedsYouKind[] = ["videos", "unprompted-max", "missed-sessions", "no-bodyweight"];
 
 const DAY_MS = 86_400_000;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

@@ -113,6 +113,9 @@ interactive budget that the build plan calls a non-negotiable. WebCodecs
 kind that works in testing and fails on someone's phone mid-session, which is
 the worst way to discover it.
 
+[Fact] The December beta has 5 athletes (Ruairi form answer, 6 Oct 2026). That
+is an input for sizing, not a sizing: this doc makes no capacity claim from it.
+
 **Nothing is currently blocked by its absence.** The stated reason is cost
 economics for the Cloud migration in January, not the beta. As of 15 Sep 2026
 uploads land on the TrueNAS box with 941GB free and a 200MB per-file ceiling, so

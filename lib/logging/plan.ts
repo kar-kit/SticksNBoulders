@@ -44,6 +44,13 @@ export interface PlannedRow {
    * through (Order 28), and cleared the moment the athlete edits the load.
    */
   note?: string | null;
+  /**
+   * The load is the app's suggestion and the athlete has not touched it. The
+   * row shows a "Suggested" marker for as long as this holds. Separate from
+   * `note`, which also carries a backoff's provenance and is not a suggestion.
+   * Cleared the moment the athlete edits the load.
+   */
+  suggested?: boolean;
 }
 
 export interface LoggedValues {
@@ -82,7 +89,7 @@ export function rowAfter(
     rpe: null,
     isWarmup: false,
     planned,
-    ...(prefill.source === "suggested" ? { note: prefill.note } : {}),
+    ...(prefill.source === "suggested" ? { note: prefill.note, suggested: true } : {}),
   };
 }
 

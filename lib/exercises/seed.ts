@@ -106,3 +106,16 @@ export const SEED_EXERCISES: readonly string[] = [
   "Ab Wheel Rollout",
   "Pallof Press",
 ] as const;
+
+/**
+ * Exercises the Program Editor pre-ticks "video required" for. Ruairi, asked
+ * which lifts he wants filmed: "Mainly compounds but if you have questions on
+ * accessories or variations do record too." [Fact] That is the whole brief.
+ *
+ * Only the three competition lifts are listed. [Inference] They are the
+ * unambiguous reading of "compounds". Variations (Pause Squat, Tempo Bench
+ * Press, Romanian Deadlift ...) are deliberately NOT guessed at: whether they
+ * count is [SME to confirm] with Ruairi. Until then the coach ticks them by
+ * hand, which the editor has always allowed on any line.
+ */
+export const VIDEO_DEFAULT_EXERCISES: readonly string[] = ["Squat", "Bench Press", "Deadlift"] as const;

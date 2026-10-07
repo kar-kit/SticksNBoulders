@@ -336,6 +336,8 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
       return reorderOp(ctx, op);
     case "publishProgram":
       return publishOp(ctx, op.programId);
+    case "publishWeek":
+      return publishWeekOp(ctx, op.weekId);
     case "removeBlock": {
       const { row: block } = await childOf(ctx, "program_blocks", op.blockId, parseBlock);
       for (const week of await listAll(ctx.tables, ctx.databaseId, "program_weeks", "block_id", block.id)) {
@@ -384,6 +386,24 @@ async function publishOp(ctx: Ctx, programId: string): Promise<string> {
   }
   await updateProgram(ctx.deps, scope, { status: "published" });
   return programId;
+}
+
+/**
+ * Publishes one week -- the week-at-a-time button -- and the program with it
+ * if it is not live yet. Week first, program second, as above: a failure
+ * between the two leaves the athlete seeing nothing new, and pressing again
+ * finishes it. Unpublishing a week is `updateWeek {status: "draft"}`; the
+ * program is left published, so the other weeks stay where they are.
+ */
+async function publishWeekOp(ctx: Ctx, weekId: string): Promise<string> {
+  const { row: week, scope } = await childOf(ctx, "program_weeks", weekId, parseWeek);
+  if (scope.athleteId === null) {
+    return refuse({ status: "invalid", reason: "weekId: a template is never published; assign it first" });
+  }
+  if (week.status !== "published") await updateProgramWeek(ctx.deps, scope, week.id, { status: "published" });
+  const program = parseProgram(await rowOf(ctx, "programs", scope.programId));
+  if (program && program.status !== "published") await updateProgram(ctx.deps, scope, { status: "published" });
+  return week.id;
 }
 
 /** Children first, so a failure halfway leaves orphans the tree drops, never a dangling parent. */

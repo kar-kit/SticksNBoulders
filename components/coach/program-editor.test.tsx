@@ -15,6 +15,7 @@ vi.mock("@/lib/exercises/library", () => ({
   fetchExerciseLibrary: async () => [
     { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true },
     { id: "bench", name: "Bench Press", normalisedName: "bench press", isGlobal: true },
+    { id: "deadlift", name: "Deadlift", normalisedName: "deadlift", isGlobal: true, videoDefault: true },
   ],
 }));
 
@@ -218,6 +219,42 @@ describe("the Program Editor grid", () => {
     );
   });
 
+  it("pre-ticks video required on a new line for an exercise whose default is on", async () => {
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), "deadl");
+    await user.click(await screen.findByRole("option", { name: "Deadlift" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({
+        op: "addPrescription",
+        dayId: "d1",
+        exerciseId: "deadlift",
+        setCount: 1,
+        videoRequired: true,
+      }),
+    );
+  });
+
+  it("leaves video required out of a new line when the exercise has no default", async () => {
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), "bench");
+    await user.click(await screen.findByRole("option", { name: "Bench Press" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalled());
+    expect(store.send.mock.calls[0][0]).not.toHaveProperty("videoRequired", true);
+  });
+
+  it("does not touch an existing line's flag when its exercise is swapped for one with a default", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getAllByRole("button", { name: "Squat" })[1]);
+    await user.type(screen.getByRole("combobox", { name: "Exercise for line 2" }), "deadl");
+    await user.click(await screen.findByRole("option", { name: "Deadlift" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l2", exerciseId: "deadlift" }),
+    );
+  });
+
   it("creates a variation the library lacks in the athlete's library, then uses it", async () => {
     store.send.mockImplementation(async (op) => ({ rowId: op.op === "createExercise" ? "ex-tempo" : "l3" }));
     const user = userEvent.setup();
@@ -250,10 +287,33 @@ describe("the Program Editor grid", () => {
     await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "removeDay", dayId: "d1" }));
   });
 
+  it("releases one week at a time and pulls a published week back to draft", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Publish week 1" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "publishWeek", weekId: "w1" }));
+    expect(store.send).not.toHaveBeenCalledWith({ op: "publishProgram", programId: "p1" });
+
+    const published = tree();
+    published.status = "published";
+    published.blocks[0].weeks[0].status = "published";
+    store.tree = published;
+    await user.click(screen.getByRole("tab", { name: /Week 2/ }));
+    await user.click(screen.getByRole("button", { name: "Publish week 2" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "publishWeek", weekId: "w2" }));
+
+    await user.click(screen.getByRole("tab", { name: "Week 1" }));
+    await user.click(screen.getByRole("button", { name: "Unpublish week 1" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updateWeek", weekId: "w1", status: "draft" }),
+    );
+  });
+
   it("is read-only for anyone but the coach who wrote it", async () => {
     viewer.id = "louis";
     await ready();
     expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Publish|Unpublish) week/ })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Load, line 1" })).toBeDisabled();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
