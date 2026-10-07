@@ -14,6 +14,7 @@ import { ExportLog } from "@/components/export/export-log";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
+import { adjustProgramHref } from "@/lib/coach/adjust-program";
 import { decideAthleteAccess, shortDate, type AthleteAccess } from "@/lib/coach/athlete-view";
 import { fetchLinkRows } from "@/lib/coach/athlete-view-store";
 
@@ -166,7 +167,7 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
           <AthleteSessions athleteId={athleteId} />
         </div>
         <div className="flex min-w-0 flex-col gap-10">
-          <ProgramPlaceholder />
+          <ProgramSection athleteId={athleteId} />
           <SuggestionSwitch athleteId={athleteId} />
           <AthleteBodyweight athleteId={athleteId} />
           <DotsBlock athleteId={athleteId} audience="coach" />
@@ -181,20 +182,27 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
 
 /**
  * THIS BLOCK, from the blueprint. The block itself is written in the Program
- * Editor (Order 19); how the athlete is tracking against it is not built yet.
- * A pointer there rather than progress inferred from what was lifted -- a
- * number nobody prescribed is worse than no number.
+ * Editor (Order 19); "Adjust program" opens it for this athlete -- their
+ * current program, their list, or an empty state that says nobody has written
+ * one (components/coach/adjust-program.tsx). Same tab: nothing on this screen
+ * is lost by leaving it, since every panel re-reads on return. How the athlete
+ * is tracking against the block is not built yet; a pointer rather than
+ * progress inferred from what was lifted -- a number nobody prescribed is
+ * worse than no number.
  */
-function ProgramPlaceholder() {
+function ProgramSection({ athleteId }: { athleteId: string }) {
   return (
     <section className="flex flex-col gap-3" aria-labelledby="athlete-program-heading">
       <h2 id="athlete-program-heading" className="m-0 text-label uppercase tracking-wide text-muted">
         This block
       </h2>
-      <EmptyState
-        title="No program yet"
-        body="Write their block under Programs. How they’re tracking against it will sit here later."
-      />
+      <Link
+        href={adjustProgramHref(athleteId)}
+        className="inline-flex h-9 items-center self-start rounded-chip border border-border bg-surface px-[14px] text-ui font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+      >
+        Adjust program
+      </Link>
+      <p className="m-0 text-ui text-muted">How they’re tracking against it will sit here later.</p>
     </section>
   );
 }

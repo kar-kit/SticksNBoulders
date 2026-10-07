@@ -55,6 +55,25 @@ them into one `ProgramSignals` per athlete (block label, missed sessions this
 week, recent unprompted RPE 10 sets). The rules and the Block column consume it;
 the unit tests cover both rules and the computation.
 
+## From review to the program
+
+Ruairi's order is videos, then weaknesses, then the program. The Roster leads
+with videos; the last step is now one link from either place a weakness is
+seen: **Adjust program** under each clip in the Review Queue (with the line the
+set was logged against, so the editor opens on that week and day) and in Athlete
+View's "This block" (their current program). Both go through
+`/coach/programs?athlete=<id>`, which checks the coach's active link first and
+falls back to the current program, then their programs, then an empty state
+(`docs/review-queue.md`, "Prescribed, and Adjust program"). Athlete View's
+"This block" used to say "No program yet" for everyone; it no longer claims
+anything it has not read. Progress against the block is still not shown there.
+
+[Fact] `scripts/e2e-roster.mts` still checks "no block until the Program Editor
+exists" (`joeyText.includes("No block")`), and the editor exists. [Inference]
+The check should still pass, because the script writes no program for its
+fixture athlete; the label is stale, not the assertion. Not edited, since it
+can only be proved against the live instance.
+
 ## Testing
 
 - `npm test`: trigger rules, row building, sorting, and the screen's loading,

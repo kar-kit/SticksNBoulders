@@ -13,9 +13,10 @@ export const metadata = { title: "Athlete — Sticks N Boulders" };
  * server render with the API key would be reading past it. What it shows is
  * gated on `coach_athlete_links`; see components/coach/athlete-view.tsx.
  *
- * Still absent, on purpose: the current block (Order 19, blocked on Ruairi's
- * block-shape question -- a placeholder says so), the personal RPE curve (no
- * `personal_rpe_curves` yet), and the attempt board (February, not the MVP).
+ * Still absent, on purpose: progress against the current block ("Adjust
+ * program" opens the block itself in the Program Editor), the personal RPE
+ * curve (no `personal_rpe_curves` yet), and the attempt board (February, not
+ * the MVP).
  */
 export default async function AthleteViewPage({
   params,

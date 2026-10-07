@@ -321,6 +321,9 @@ export function ReviewQueue() {
       if (event.key !== "Enter" || !current) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      // Nor on a focused link: Enter there is the link's own ("Adjust
+      // program"), and swallowing it would clear the clip instead of opening it.
+      if (target?.closest("a[href]")) return;
       event.preventDefault();
       clear(current);
     };

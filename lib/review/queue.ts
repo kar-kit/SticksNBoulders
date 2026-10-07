@@ -28,6 +28,15 @@ export interface ClipSet {
   loggedAt: string;
   videoFileId: string;
   notes: string | null;
+  /**
+   * The line the set was logged against, and the target as it read on the
+   * athlete's screen when they logged it -- a snapshot, stored on the set and
+   * never recomputed, because logged work is immutable and a coach editing the
+   * line since must not change what this set was asked to be. Null for a set
+   * logged freely. Optional so a fixture need not spell them out.
+   */
+  prescriptionId?: string | null;
+  prescribed?: string | null;
 }
 
 export interface QueueItem extends ClipSet {

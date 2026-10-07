@@ -179,23 +179,55 @@ not a dependency of it.
 The nav badge is counted from the same two reads the queue itself uses, so the
 number beside "Review" and the number of clips on screen cannot disagree.
 
-## What the blueprint asks for and this does not do
+## Prescribed, and Adjust program
 
-**"Prescribed: 3 @ RPE 8" is still absent, but it is now buildable.** This
-section used to say it needed a stored program that did not exist. Programs
-shipped at Orders 19 and 22, and a set logged against a prescription carries
-`prescription_id` and a `prescribed` text snapshot of the target at the moment
-of logging (`docs/programs.md`). [Fact] `fetchClips` reads whole `sets` rows
-with no `Query.select`, so `prescribed` already reaches the client;
-`toClip` drops it and `ClipContext` does not render it. Showing the snapshot
-would not infer anything, only display what the coach prescribed. Two limits:
-a set logged freely, outside a prescribed session, has none and the line stays
-absent for it, and [Inference] the snapshot is the target as the logger
-displayed it (reps and load, e.g. `5 x 152.5 kg (75%)`), which may not read
-like the blueprint's `3 @ RPE 8`. The blueprint calls the context panel "the
-product", so the gap is worth closing; rendering an empty line, or inferring a
-target from what was lifted, would still put a number in front of a coach that
-nobody prescribed.
+**"Prescribed:" is the set's own snapshot.** A set logged against a
+prescription carries `prescription_id` and a `prescribed` text snapshot of the
+target at the moment of logging (`docs/programs.md`). [Fact] `fetchClips` reads
+whole `sets` rows, `toClip` now keeps both, and `ClipContext` renders
+`Prescribed: <snapshot>` directly under the logged line, so what was asked and
+what was done sit together. It is never recomputed from the live line: logged
+work is immutable, and a coach who has edited the block since must not change
+what this set was asked to be. A set logged freely has no snapshot and gets no
+line, rather than a target inferred from what was lifted. [Fact] The snapshot
+reads as the logger wrote it (`5 reps · RPE 8`, `5 reps · 150 kg (75%)`,
+`session-plan.ts` `snapshotOf`), not as the blueprint's `3 @ RPE 8`.
+
+**Adjust program** is the third step of Ruairi's review day ("Watch videos,
+analyse weaknesses and then adjust program accordingly", form answer, 6 Oct
+2026). The link under the clip context goes to
+`/coach/programs?athlete=<id>&line=<prescription_id>`, which:
+
+1. checks this coach's **active** link row first, alone, exactly as Athlete View
+   does, and reads nothing else about the athlete without one. "Not one of your
+   athletes" and "No longer linked" are screens, with no navigation. [Fact]
+   `adjust-program.test.tsx` edits the URL to a stranger and to a revoked
+   athlete whose block the coach wrote (their read survives a revoke) and
+   asserts no program read and no redirect;
+2. follows the line to its week and day if the line is this athlete's and its
+   program is theirs and not archived. A line id from someone else's program is
+   ignored;
+3. else opens their current program (published, updated last: the rule Today
+   and the Roster's Block column use), else lists their programs, else says
+   nobody has written them one;
+4. `router.replace`s itself with `/coach/programs/<id>?week=&day=&line=`, so
+   Back skips the hop. The editor opens on that week (in its own block),
+   scrolls to the day and focuses the line's first cell, so the arrows work at
+   once. The query only sets a starting position and grants nothing.
+
+**It opens in a new tab, on purpose.** [Fact] The queue holds its place in
+component state (`currentId`, defaulting to the oldest clip), along with Undo,
+a half-written comment and its two Realtime subscriptions. A same-tab
+navigation unmounts all of it: coming back reloads the queue and reopens on the
+oldest clip. [Fact] `cacheComponents`, which would keep the route alive under
+React's `<Activity>`, is not enabled, and turning it on is an app-wide change.
+In a new tab the queue never unmounts, so closing the editor tab (Cmd+W) lands
+the coach on the same clip with nothing re-read. Enter on the focused link opens
+it; the queue's Enter-to-clear handler now ignores links, which it did not need
+to before. [Unverified] A new tab is a cold load of the coach shell; whether
+that sits inside the 2.5s budget on the beta instance is not measured.
+
+## What the blueprint asks for and this does not do
 
 **"Still uploading" is not shown.** A set row carries no trace of a clip that has
 not landed yet: `attachClipToSet` uploads first and records second, so an
@@ -234,7 +266,9 @@ unlinked coach's existing ticket dying immediately.
 | `app/api/clip/[fileId]/route.ts` | Streams one, as the ticket's user |
 | `components/coach/review-queue.tsx` | The screen |
 | `components/coach/clip-player.tsx` | Speed, loop, frame step, keyboard |
-| `components/coach/clip-context.tsx` | Everything right of the video |
+| `components/coach/clip-context.tsx` | Everything right of the video, including Prescribed and Adjust program |
+| `lib/coach/adjust-program.ts` | Pure: where Adjust program lands, and its URLs |
+| `components/coach/adjust-program.tsx` | The link check and the hand-over to the editor |
 | `scripts/e2e-review.mts` | The data path, live |
 | `scripts/e2e-clip.mts` | Playback, live |
 
