@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { e1rmDelta, setPosition, type QueueItem } from "@/lib/review/queue";
 import type { RecentSet } from "@/lib/review/queue-store";
+import { adjustProgramHref } from "@/lib/coach/adjust-program";
 import { formatWeight } from "@/lib/units";
 
 /**
@@ -12,11 +14,19 @@ import { formatWeight } from "@/lib/units";
  * about it is exactly what Joey currently types into WhatsApp by hand before
  * Ruairi can say anything useful. None of it is typed by anyone here.
  *
- * One line from the blueprint is deliberately absent. "Prescribed: 3 @ RPE 8"
- * needs a stored program, and there is no programs table until Order 19 --
- * the Program Editor is blocked on Ruairi's block-shape question. Rendering
- * the row as empty, or worse inferring a target from what was lifted, would
- * put a number in front of a coach that nobody prescribed.
+ * "Prescribed:" is the set's own `prescribed` snapshot, as stored when the
+ * athlete logged it, and never recomputed from the program: logged work is
+ * immutable, and a coach editing the line since must not change what this set
+ * was asked to be. A set logged freely has no snapshot and gets no line --
+ * inferring a target from what was lifted would put a number in front of a
+ * coach that nobody prescribed.
+ *
+ * "Adjust program" is the third step of Ruairi's review day ("Watch videos,
+ * analyse weaknesses and then adjust program accordingly", form answer, 6 Oct
+ * 2026). It opens in a new tab on purpose: the queue holds its place, the
+ * undo, a half-written comment and its Realtime subscriptions in this
+ * component's state, and a same-tab navigation unmounts all of it. Closing the
+ * editor tab puts the coach back on this exact clip.
  */
 
 const dateLabel = (iso: string): string => {
@@ -55,6 +65,22 @@ export function ClipContext({ item, sessionSets, recent, previousBestKg }: ClipC
         {formatWeight(item.loadKg, "kg")} × {item.reps}{" "}
         <span className="text-title font-semibold text-muted">{rpeLabel(item.rpe)}</span>
       </p>
+
+      {item.prescribed ? (
+        <p className="m-0 text-ui tabular-nums">
+          <span className="text-muted">Prescribed: </span>
+          <span className="font-semibold">{item.prescribed}</span>
+        </p>
+      ) : null}
+
+      <Link
+        href={adjustProgramHref(item.athleteId, item.prescriptionId)}
+        target="_blank"
+        rel="noopener"
+        className="self-start text-ui text-muted underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+      >
+        Adjust program<span className="sr-only"> (opens in a new tab)</span> ↗
+      </Link>
 
       {estimate ? (
         <p className="m-0 text-ui tabular-nums">

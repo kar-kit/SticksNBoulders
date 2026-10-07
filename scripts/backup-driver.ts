@@ -12,10 +12,16 @@
  * exactly that. It replays permissions recorded in a dump rather than stamping
  * new ones, so it must not go near the policy.
  */
-import { AppwriteException, Query, TablesDB, Teams, Users, type Models } from "node-appwrite";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { AppwriteException, Query, Storage, TablesDB, Teams, Users, type Models } from "node-appwrite";
+import { InputFile } from "node-appwrite/file";
+import type { BucketSource } from "../appwrite/backup/bucket";
 import type { BackupSource } from "../appwrite/backup/dump";
+import { blobPath } from "../appwrite/backup/files";
 import type { RestoreTarget, Outcome } from "../appwrite/backup/restore";
 import type { BackupRow, BackupTeam, BackupUser } from "../appwrite/backup/types";
+import type { ClipStore } from "../appwrite/documents/clip-admin";
 
 /** Rows carry Appwrite's own `$` fields; only id and permissions are restorable. */
 function rowData(row: Models.DefaultRow): Record<string, unknown> {
@@ -107,6 +113,81 @@ export function appwriteSource(
   };
 }
 
+export interface BucketOptions {
+  endpoint: string;
+  projectId: string;
+  apiKey: string;
+  bucketIds: readonly string[];
+}
+
+/**
+ * Files, read with the API key.
+ *
+ * Listed in Appwrite's default order with a cursor, not ordered by `$id` as
+ * rows are: [Unverified] whether a file list accepts an order on `$id`, and
+ * the default order is the internal sequence, which is stable. pageThrough
+ * refuses to loop if it is not.
+ */
+export function appwriteBucketSource(storage: Storage, options: BucketOptions): BucketSource {
+  return {
+    bucketIds: () => options.bucketIds,
+
+    async filePage(bucketId, cursor, limit) {
+      const queries = [Query.limit(limit)];
+      if (cursor) queries.push(Query.cursorAfter(cursor));
+      const result = await storage.listFiles({ bucketId, queries });
+      return {
+        total: result.total,
+        files: result.files.map((f) => ({
+          $id: f.$id,
+          bucketId: f.bucketId,
+          $permissions: f.$permissions,
+          $createdAt: f.$createdAt,
+          $updatedAt: f.$updatedAt,
+          name: f.name,
+          mimeType: f.mimeType,
+          sizeOriginal: f.sizeOriginal,
+          chunksTotal: f.chunksTotal,
+          chunksUploaded: f.chunksUploaded,
+        })),
+      };
+    },
+
+    /**
+     * Streamed, not `storage.getFileDownload`: the SDK buffers the whole file
+     * into an ArrayBuffer, and a 200MB clip in memory per download is the kind
+     * of thing that works in testing and falls over on the real bucket.
+     *
+     * The key goes in a header and nowhere else. Errors name the file and the
+     * status, never the request.
+     */
+    async download(bucketId, fileId) {
+      const url =
+        `${options.endpoint}/storage/buckets/${encodeURIComponent(bucketId)}` +
+        `/files/${encodeURIComponent(fileId)}/download`;
+      const response = await fetch(url, {
+        headers: {
+          "x-appwrite-project": options.projectId,
+          "x-appwrite-key": options.apiKey,
+          // The bytes as stored, so the size check compares like with like.
+          "accept-encoding": "identity",
+        },
+        cache: "no-store",
+      });
+      if (response.status === 404) return null;
+      if (!response.ok || !response.body) {
+        throw new Error(`Download of ${bucketId}/${fileId} failed: HTTP ${response.status}.`);
+      }
+      return Readable.fromWeb(response.body as unknown as NodeReadableStream<Uint8Array>);
+    },
+  };
+}
+
+/** The write helper's view of storage, for the orphan sweep. */
+export function appwriteClipStore(storage: Storage): ClipStore {
+  return { deleteFile: (params) => storage.deleteFile(params) };
+}
+
 /** Appwrite's "already exists". A restore re-run must be boring, not fatal. */
 const CONFLICT = 409;
 
@@ -130,7 +211,12 @@ export function appwriteTarget(
   db: TablesDB,
   users: Users,
   teams: Teams,
-  options: { databaseId: string },
+  options: {
+    databaseId: string;
+    /** Both needed to restore files. A rows-only restore can leave them out. */
+    storage?: Storage;
+    fileStore?: string;
+  },
 ): RestoreTarget {
   return {
     async ensureUser(user) {
@@ -171,6 +257,24 @@ export function appwriteTarget(
       // no team read, which would restore a coach's access in name only.
       return createOrExisting(() =>
         teams.createMembership({ teamId, userId: membership.userId, roles: membership.roles }),
+      );
+    },
+
+    async ensureFile(file) {
+      if (!options.storage || !options.fileStore) {
+        throw new Error(`Restoring ${file.bucketId}/${file.$id} needs a Storage client and a file store.`);
+      }
+      const storage = options.storage;
+      const path = blobPath(options.fileStore, file.bucketId, file.$id);
+      // Replays the permissions the dump recorded, as putRow does for rows.
+      // The SDK chunks anything over 5MB itself.
+      return createOrExisting(() =>
+        storage.createFile({
+          bucketId: file.bucketId,
+          fileId: file.$id,
+          file: InputFile.fromPath(path, file.name),
+          permissions: file.$permissions,
+        }),
       );
     },
 

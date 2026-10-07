@@ -178,6 +178,25 @@ it("puts the clips back on re-link and clears the notice", async () => {
   await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
 });
 
+it("leaves Enter on the focused Adjust program link to the link, rather than clearing the clip", async () => {
+  render(<ReviewQueue />);
+  await screen.findByText("3 waiting");
+  const adjust = screen.getByRole("link", { name: /Adjust program/ });
+  expect(adjust).toHaveAttribute("href", "/coach/programs?athlete=joey");
+  expect(adjust).toHaveAttribute("target", "_blank");
+
+  adjust.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(queueStore.clearClip).not.toHaveBeenCalled();
+  expect(screen.getByText("3 waiting")).toBeInTheDocument();
+
+  // Off the link, Enter still clears and advances, as before.
+  adjust.blur();
+  await userEvent.keyboard("{Enter}");
+  expect(await screen.findByText("2 waiting")).toBeInTheDocument();
+  expect(queueStore.clearClip).toHaveBeenCalledWith("coach", "joey", "joey-1");
+});
+
 /** Joey's clips, oldest first, enough of them to need more than one URL request. */
 const many = (count: number): ClipSet[] =>
   Array.from({ length: count }, (_, i) =>

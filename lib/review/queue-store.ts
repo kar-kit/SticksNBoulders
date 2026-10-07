@@ -40,6 +40,8 @@ interface SetRow {
   logged_at?: unknown;
   video_file_id?: unknown;
   notes?: unknown;
+  prescription_id?: unknown;
+  prescribed?: unknown;
 }
 
 const num = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
@@ -69,6 +71,8 @@ function toClip(raw: SetRow): ClipSet | null {
     loggedAt,
     videoFileId,
     notes: str(raw.notes) || null,
+    prescriptionId: str(raw.prescription_id) || null,
+    prescribed: str(raw.prescribed) || null,
   };
 }
 
