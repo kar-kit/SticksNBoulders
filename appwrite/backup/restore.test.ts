@@ -5,7 +5,13 @@ import {
   type Outcome,
   type RestoreTarget,
 } from "./restore";
-import { BACKUP_FORMAT_VERSION, type Backup, type BackupRow, type BackupUser } from "./types";
+import {
+  BACKUP_FORMAT_VERSION,
+  type Backup,
+  type BackupFile,
+  type BackupRow,
+  type BackupUser,
+} from "./types";
 
 const user = (id: string): BackupUser => ({
   $id: id,
@@ -39,6 +45,7 @@ function backup(overrides: Partial<Backup> = {}): Backup {
       users: 2,
       teams: 1,
       memberships: 2,
+      buckets: [],
       omits: [],
     },
     tables: [
@@ -59,8 +66,30 @@ function backup(overrides: Partial<Backup> = {}): Backup {
         ],
       },
     ],
+    files: [],
   };
   return { ...base, ...overrides };
+}
+
+const clip = (id: string, permissions = [`read("user:joey")`, `read("team:circle_joey")`]): BackupFile => ({
+  $id: id,
+  bucketId: "set_videos",
+  $permissions: permissions,
+  $createdAt: "2026-10-01T10:00:00.000Z",
+  $updatedAt: "2026-10-01T10:00:00.000Z",
+  name: `${id}.mov`,
+  mimeType: "video/quicktime",
+  sizeOriginal: 12_000_000,
+  sha256: "a".repeat(64),
+});
+
+/** Joey's set with a clip on it, and the clip in the dump. */
+function backupWithClip(): Backup {
+  const b = backup();
+  b.tables[0].rows[0].data.video_file_id = "clipA";
+  b.files = [clip("clipA")];
+  b.manifest.buckets = [{ id: "set_videos", files: 1, bytes: 12_000_000, incomplete: [] }];
+  return b;
 }
 
 function recordingTarget(existing: Set<string> = new Set()) {
@@ -79,6 +108,10 @@ function recordingTarget(existing: Set<string> = new Set()) {
     async ensureMembership(teamId, m) {
       calls.push(`member:${teamId}:${m.userId}`);
       return outcome(`member:${teamId}:${m.userId}`);
+    },
+    async ensureFile(f) {
+      calls.push(`file:${f.bucketId}/${f.$id}:${f.$permissions.join("|")}`);
+      return outcome(`file:${f.$id}`);
     },
     async putRow(tableId, r) {
       calls.push(`row:${tableId}:${r.$id}:${r.$permissions.join("|")}`);
@@ -128,6 +161,86 @@ describe("restore ordering", () => {
     expect(report.users).toEqual({ created: 1, existed: 1 });
     expect(report.rows.sets).toEqual({ created: 0, existed: 1 });
     expect(report.memberships).toEqual({ created: 2, existed: 0 });
+  });
+});
+
+describe("restoring clips", () => {
+  it("writes files after memberships and before rows", async () => {
+    // After: a clip's permissions name the same circle a row's do. Before: the
+    // set row names the clip, and a coach opening it first gets a dead player.
+    const { target, calls } = recordingTarget();
+    await restoreBackup(target, backupWithClip());
+
+    const file = calls.findIndex((c) => c.startsWith("file:"));
+    expect(file).toBeGreaterThan(calls.findLastIndex((c) => c.startsWith("member:")));
+    expect(file).toBeLessThan(calls.findIndex((c) => c.startsWith("row:")));
+  });
+
+  it("restores a clip with the permissions it was dumped with", async () => {
+    const { target, calls } = recordingTarget();
+    await restoreBackup(target, backupWithClip());
+    expect(calls).toContain(`file:set_videos/clipA:read("user:joey")|read("team:circle_joey")`);
+  });
+
+  it("counts clips already there, so a re-run is boring", async () => {
+    const { target } = recordingTarget(new Set(["file:clipA"]));
+    const report = await restoreBackup(target, backupWithClip());
+    expect(report.files).toEqual({ created: 0, existed: 1 });
+  });
+
+  it("passes a coherent dump with a clip", () => {
+    expect(validateBackup(backupWithClip())).toEqual([]);
+  });
+
+  it("blocks a clip granting read to a circle the dump does not hold", () => {
+    const b = backupWithClip();
+    b.files = [clip("clipA", [`read("team:circle_gone")`])];
+    expect(
+      validateBackup(b)
+        .filter((p) => p.severity === "blocking")
+        .map((p) => p.message)
+        .join(" "),
+    ).toMatch(/team:circle_gone.*not in this dump/);
+  });
+
+  it("blocks a clip id that would escape the file store", () => {
+    const b = backupWithClip();
+    b.files = [{ ...clip("clipA"), $id: "../../etc" }];
+    expect(validateBackup(b).some((p) => p.severity === "blocking" && /not an Appwrite id/.test(p.message))).toBe(
+      true,
+    );
+  });
+
+  it("blocks a bucket holding fewer clips than its manifest claims", () => {
+    const b = backupWithClip();
+    b.manifest.buckets[0].files = 2;
+    expect(validateBackup(b).some((p) => p.severity === "blocking" && /Truncated dump/.test(p.message))).toBe(true);
+  });
+
+  it("warns, without blocking, on a set naming a clip the dump does not hold", () => {
+    // What a clip deleted mid-dump looks like. The set is still worth having.
+    const b = backupWithClip();
+    b.files = [];
+    b.manifest.buckets[0].files = 0;
+    const problems = validateBackup(b);
+    expect(problems.filter((p) => p.severity === "blocking")).toEqual([]);
+    expect(problems.some((p) => /sets\/set1 points at clip clipA/.test(p.message))).toBe(true);
+  });
+
+  it("still restores a v1 dump, warning that it holds no clips", async () => {
+    const b = backup();
+    b.manifest.formatVersion = 1;
+    const problems = validateBackup(b);
+    expect(problems.filter((p) => p.severity === "blocking")).toEqual([]);
+    expect(problems.some((p) => /predates file backups/.test(p.message))).toBe(true);
+
+    const { target, calls } = recordingTarget();
+    await restoreBackup(target, b);
+    expect(calls.some((c) => c.startsWith("file:"))).toBe(false);
+  });
+
+  it("lists clips in the plan", () => {
+    expect(describeRestore(backupWithClip()).join("\n")).toMatch(/files\s+1 \(12000000 bytes\)/);
   });
 });
 
