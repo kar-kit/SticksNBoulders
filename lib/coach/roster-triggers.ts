@@ -18,10 +18,12 @@
  * Pure: no Appwrite, no React, no clock of its own. The screen hands it what
  * it read and the time.
  *
- * Two triggers from the blueprint depend on the program (Order 19, being built
- * in parallel) and fire only when a ProgramSignals is supplied. Nothing reads
- * program tables yet -- see `fetchProgramSignals` in roster-store.ts, which is
- * the seam. A third, bodyweight drifting against a weight class near a meet, is
+ * Two triggers from the blueprint depend on the program (Order 19) and fire
+ * only when a ProgramSignals is supplied. `fetchProgramSignals` in
+ * roster-store.ts reads the program tables for every athlete at once and
+ * `computeProgramSignals` (program-signals.ts) decides them; an athlete with no
+ * live program and no unprompted RPE 10 gets no ProgramSignals, so both stay
+ * quiet for them. A third, bodyweight drifting against a weight class near a meet, is
  * not here at all: there is no meet or weight-class data in the MVP (comp
  * planning is February 2027), and CLAUDE.md forbids scaffolding for it.
  */
@@ -29,14 +31,14 @@
 import { daysBetween, dayKey } from "@/lib/bodyweight/bodyweight";
 
 /**
- * What the program will be able to say about an athlete once Order 19 lands.
+ * What the program says about an athlete (Order 19, computeProgramSignals).
  *
  * The seam. Shaped by what the two program-dependent triggers need and no more
  * -- Order 19 owns how it is computed, and a field added here without a rule
  * using it would be a guess at that design.
  */
 export interface ProgramSignals {
-  /** "Week 3 of 8", or however Order 19 names a position in a block. */
+  /** "Week 3 of 8", "Starts 13 Oct", "Block finished"; null with no live block. */
   blockLabel: string | null;
   /** Prescribed days in the current week whose date has passed with nothing logged. */
   missedSessions: number;
@@ -63,7 +65,7 @@ export interface AthleteSignals {
   unreviewedClips: number;
   /** YYYY-MM-DD of their newest weigh-in, or null if they have never logged one. */
   lastBodyweightOn: string | null;
-  /** Order 19 seam. Null until the program exists; program triggers stay quiet. */
+  /** Null when the athlete has no live program and no unprompted RPE 10; program triggers stay quiet. */
   program: ProgramSignals | null;
 }
 
@@ -128,7 +130,7 @@ type Rule = (athlete: AthleteSignals, now: Date, rules: TriggerRules) => Omit<Ne
  * last week. Ruairi's specific complaint: an athlete maxing out unprompted
  * before a comp. A week, so a coach who checks in weekly still sees it; the
  * blueprint's "the day it happens" is satisfied because it appears at once.
- * Program-dependent: silent until Order 19 supplies `program`.
+ * Program-dependent: silent without `program`.
  */
 const unpromptedMax: Rule = (athlete, now, rules) => {
   const cutoff = now.getTime() - rules.unpromptedMaxWindowDays * DAY_MS;
@@ -148,7 +150,7 @@ const unpromptedMax: Rule = (athlete, now, rules) => {
  * [Inference] Prescribed sessions this week whose day has passed with nothing
  * logged. "Missed sessions against the block" in the blueprint; one is enough,
  * because a powerlifting week has three to five sessions and one missed is
- * already a fifth of it. Program-dependent: silent until Order 19.
+ * already a fifth of it. Program-dependent: silent without `program`.
  */
 const missedSessions: Rule = (athlete, _now, rules) => {
   const missed = athlete.program?.missedSessions ?? 0;
