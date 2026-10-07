@@ -40,16 +40,19 @@ import { schema } from "../appwrite/schema";
 import { circleTeamId } from "../appwrite/documents/circle";
 import { libraryTeamMembers } from "../appwrite/documents/library-admin";
 import {
+  avatarPermissions,
   commentPermissions,
   LIBRARY_TEAM_ID,
   readableByAnySession,
   videoPermissions,
 } from "../appwrite/documents/policy";
+import { AVATAR_BUCKET, newAvatarFileId } from "../appwrite/documents/avatar";
 import { authenticRows, isAuthentic, ownerProof } from "../appwrite/documents/provenance";
 import { FUNCTIONS } from "../appwrite/functions";
 import type { RowWriter } from "../appwrite/documents/row-writer";
 import {
   attachVideo,
+  setProfileAvatar,
   bodyweightRowId,
   createExercise,
   createGlobalExercise,
@@ -135,7 +138,7 @@ const heading = (title: string) => {
 
 /** Rows this run wrote, for teardown. Never anything it did not write. */
 const createdRows: { table: string; id: string }[] = [];
-const createdFiles: string[] = [];
+const createdFiles: { bucketId: string; fileId: string }[] = [];
 const createdUsers: string[] = [];
 
 const attempt = async (fn: () => Promise<unknown>): Promise<Outcome> => {
@@ -425,10 +428,26 @@ try {
       permissions: videoPermissions({ athleteId: A.id }),
     }),
   );
-  if (targets.set_videos) createdFiles.push(targets.set_videos);
+  if (targets.set_videos) createdFiles.push({ bucketId: BUCKET, fileId: targets.set_videos });
   check(
     "A records the clip on the set through the helper (attachVideo)",
     (await attempt(() => attachVideo(A.deps, { userId: A.id }, { rowId: targets.sets, videoFileId: targets.set_videos }))).kind === "allowed",
+  );
+
+  // A's profile picture: uploaded from A's session into A's own namespace,
+  // stamped by the policy, then pointed at through the helper.
+  targets.avatars = await ownerCreate("avatars", () =>
+    A.storage.createFile({
+      bucketId: AVATAR_BUCKET,
+      fileId: newAvatarFileId(A.id),
+      file: new File([Buffer.alloc(1024, 3)], "avatar.webp", { type: "image/webp" }),
+      permissions: avatarPermissions({ userId: A.id }),
+    }),
+  );
+  if (targets.avatars) createdFiles.push({ bucketId: AVATAR_BUCKET, fileId: targets.avatars });
+  check(
+    "A points the profile at the picture through the helper (setProfileAvatar)",
+    (await attempt(() => setProfileAvatar(A.deps, { userId: A.id }, { fileId: targets.avatars }))).kind === "allowed",
   );
 
   // The coach's side of the review loop, from the coach's own session.
@@ -737,9 +756,19 @@ try {
           file: new File([Buffer.alloc(512, 2)], "forged.mp4", { type: "video/mp4" }),
           permissions: videoPermissions({ athleteId: A.id }),
         });
-        createdFiles.push(file.$id);
+        createdFiles.push({ bucketId: BUCKET, fileId: file.$id });
       });
       record(ruleFor("set_videos"), "create", actor, outcome, "upload a clip stamped with A's video permissions");
+      const picture = await attempt(async () => {
+        const file = await party[actor].storage.createFile({
+          bucketId: AVATAR_BUCKET,
+          fileId: newAvatarFileId(A.id),
+          file: new File([Buffer.alloc(512, 4)], "forged.webp", { type: "image/webp" }),
+          permissions: avatarPermissions({ userId: A.id }),
+        });
+        createdFiles.push({ bucketId: AVATAR_BUCKET, fileId: file.$id });
+      });
+      record(ruleFor("avatars"), "create", actor, picture, "upload a picture into A's namespace stamped with A's avatar permissions");
     }
   }
 
@@ -947,7 +976,10 @@ try {
       let fn: () => Promise<unknown>;
       if (rule.kind === "bucket") {
         how = "rename the file";
-        fn = () => p.storage.updateFile({ bucketId: rule.resource, fileId: targets[rule.key], name: "renamed.mp4" });
+        // The bucket's own extension, so a refusal is about permission and
+        // never about a name the bucket would not accept anyway.
+        const name = rule.resource === AVATAR_BUCKET ? "renamed.webp" : "renamed.mp4";
+        fn = () => p.storage.updateFile({ bucketId: rule.resource, fileId: targets[rule.key], name });
       } else if (helper) {
         how = "the write helper, from their own session";
         fn = helper;
@@ -1024,6 +1056,7 @@ try {
     ["his own comment on A's set", () => C.tables.getRow({ databaseId: D, tableId: "set_comments", rowId: extras.comment2 })],
     ["A's reply to him", () => C.tables.getRow({ databaseId: D, tableId: "set_comments", rowId: extras.reply })],
     ["A's clip", () => C.storage.getFile({ bucketId: BUCKET, fileId: targets.set_videos })],
+    ["A's picture", () => C.storage.getFile({ bucketId: AVATAR_BUCKET, fileId: targets.avatars })],
   ];
   for (const [what, fn] of exCoachCannotRead) {
     const outcome = await attempt(fn);
@@ -1215,8 +1248,8 @@ async function teardown() {
   for (const row of createdRows) {
     await quiet(() => adminDb.deleteRow({ databaseId: D, tableId: row.table, rowId: row.id }));
   }
-  for (const fileId of createdFiles) {
-    await quiet(() => adminStorage.deleteFile({ bucketId: BUCKET, fileId }));
+  for (const { bucketId, fileId } of createdFiles) {
+    await quiet(() => adminStorage.deleteFile({ bucketId, fileId }));
   }
 
   // Everything else a fixture user owns, found by the columns naming them.

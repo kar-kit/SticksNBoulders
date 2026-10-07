@@ -2,8 +2,9 @@
 
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { createProfile, isAuthentic, updateProfile, type Actor } from "@/appwrite/documents";
+import { avatarOf, createProfile, isAuthentic, updateProfile, type Actor } from "@/appwrite/documents";
 import { ensureMyCircle } from "@/lib/auth/circle";
+import { rememberAvatars } from "./avatar-cache";
 import {
   DEFAULT_UNITS,
   fallbackName,
@@ -34,6 +35,7 @@ interface ProfileRow {
   display_name?: unknown;
   sex?: unknown;
   units?: unknown;
+  avatar_file_id?: unknown;
 }
 
 function toProfile(raw: ProfileRow): Profile {
@@ -44,6 +46,8 @@ function toProfile(raw: ProfileRow): Profile {
     // A profile carrying a third value must not resolve to a DOTS coefficient.
     sex: isSex(raw.sex) ? raw.sex : null,
     units: isUnits(raw.units) ? raw.units : DEFAULT_UNITS,
+    // Only a picture in the owner's own namespace; see appwrite/documents/avatar.ts.
+    avatarFileId: avatarOf(raw as unknown as Record<string, unknown>),
   };
 }
 
@@ -58,7 +62,9 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
     // absent, so `ensure` writes the real one once the validate-row Function
     // has removed it (appwrite/documents/provenance.ts).
     if (!isAuthentic("profiles", row as unknown as Record<string, unknown>)) return null;
-    return toProfile(row as unknown as ProfileRow);
+    const profile = toProfile(row as unknown as ProfileRow);
+    rememberAvatars([[profile.userId, profile.avatarFileId]]);
+    return profile;
   } catch {
     // A missing row is the normal answer for an account that predates this
     // ticket, not an error worth surfacing.
@@ -107,7 +113,7 @@ async function ensure(): Promise<Profile | null> {
     // error. Re-reading settles it: whichever won, there is a row now.
     return fetchProfile(user.$id);
   }
-  return { userId: user.$id, displayName, sex: null, units: DEFAULT_UNITS };
+  return { userId: user.$id, displayName, sex: null, units: DEFAULT_UNITS, avatarFileId: null };
 }
 
 export function ensureMyProfile(): Promise<Profile | null> {
@@ -157,7 +163,7 @@ export async function claimMyProfile(name: string, edited: boolean): Promise<Pro
   } else {
     try {
       await createProfile(deps, actor, { displayName: name, units: DEFAULT_UNITS });
-      claimed = { userId: user.$id, displayName: name, sex: null, units: DEFAULT_UNITS };
+      claimed = { userId: user.$id, displayName: name, sex: null, units: DEFAULT_UNITS, avatarFileId: null };
     } catch (error) {
       // Lost a race with `ensureMyProfile` -- a queued set flushing in the
       // same second. Whichever won, there is a row now; treat it as existing.

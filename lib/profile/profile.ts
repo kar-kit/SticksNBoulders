@@ -15,6 +15,8 @@ export interface Profile {
   /** Null until answered. See `needsSex` for why that is not simply a bug. */
   sex: Sex | null;
   units: Units;
+  /** A file in the avatars bucket, already checked to be this user's own. Null for none. */
+  avatarFileId: string | null;
 }
 
 /**

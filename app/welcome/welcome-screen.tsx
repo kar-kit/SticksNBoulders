@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { PhotoSettings } from "@/components/profile/photo-settings";
 import { FieldLabel, TextField } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
 import { homeFor, type Mode } from "@/lib/auth/mode";
@@ -24,6 +25,10 @@ import { fetchProfile } from "@/lib/profile/profile-store";
  * used is where they open. The name is asked here so the profile row exists
  * from the first minute: an athlete who links and never logs anything is
  * otherwise "Unnamed athlete" to their coach.
+ *
+ * Then, once both are saved, an optional photo. Skippable and after the save,
+ * so a failed upload or a declined camera can never stand between someone and
+ * the app.
  */
 
 const CHOICES: { mode: Mode; title: string; body: string }[] = [
@@ -55,6 +60,7 @@ export function WelcomeScreen() {
   const [startedFrom, setStartedFrom] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [photoFor, setPhotoFor] = useState<{ mode: Mode; name: string } | null>(null);
   const saved = useRef(false);
 
   const userId = user?.id ?? null;
@@ -102,11 +108,33 @@ export function WelcomeScreen() {
       return;
     }
     saved.current = true;
-    // Seam for the optional photo step, which lands with profile pictures:
-    // after the save, before leaving, and skippable.
-    await refresh();
-    router.replace(homeFor(submission.mode));
+    setBusy(false);
+    setPhotoFor({ mode: submission.mode, name: submission.name });
   };
+
+  if (photoFor) {
+    const finish = async () => {
+      // The session learns the saved mode only now, so the "already answered"
+      // redirect above cannot fire mid-step and skip the photo.
+      await refresh();
+      router.replace(homeFor(photoFor.mode));
+    };
+    return (
+      <main className="pt-safe-8 flex min-h-dvh flex-col gap-7 px-6 pb-8">
+        <h1 className="m-0 text-display font-semibold">Add a photo?</h1>
+        <p className="m-0 text-body text-muted">
+          {photoFor.mode === "coach"
+            ? "Your athletes see it beside your name."
+            : "Your coach sees it beside your name."}{" "}
+          You can change it any time on Me.
+        </p>
+        <PhotoSettings userId={user.id} name={photoFor.name} onSaved={() => void finish()} />
+        <Button size="xl" block variant="secondary" className="mt-auto" onClick={() => void finish()}>
+          Skip for now
+        </Button>
+      </main>
+    );
+  }
 
   return (
     <main className="pt-safe-8 flex min-h-dvh flex-col gap-7 px-6 pb-8">

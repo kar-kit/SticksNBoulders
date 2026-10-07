@@ -18,13 +18,19 @@ import type { BackupFile } from "./types";
 /**
  * Every column that holds a storage file id, and the bucket it points into.
  *
- * Today that is one column. A test checks the schema for any other column
- * named like a file id, so a second one cannot be added without the sweep
- * learning about it -- the failure would be clips deleted from under a row
- * the sweep never read.
+ * A test checks the schema for any other column named like a file id, so a
+ * new one cannot be added without the sweep learning about it -- the failure
+ * would be files deleted from under a row the sweep never read.
+ *
+ * Profile pictures joined at schema v13. Replacing or removing one deletes the
+ * old file from the browser, best effort; when that delete fails, the file is
+ * an orphan exactly like a detached clip, and this sweep is what reclaims it.
+ * The 14-day grace below is far longer than the picture's own race (upload,
+ * then repoint, seconds apart), which only makes it safer.
  */
 export const CLIP_REFERENCES = [
   { tableId: "sets", column: "video_file_id", bucketId: "set_videos" },
+  { tableId: "profiles", column: "avatar_file_id", bucketId: "avatars" },
 ] as const;
 
 export interface ClipReference {

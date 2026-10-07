@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { Button } from "@/components/ui/button";
+import { UserAvatar } from "@/components/profile/user-avatar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/auth/session-context";
@@ -390,7 +391,10 @@ export function ReviewQueue() {
         ) : null}
         {groups.map((group) => (
           <div key={group.athleteId} className="mb-4">
-            <p className="m-0 mb-1 text-ui font-semibold">{group.athleteName}</p>
+            <p className="m-0 mb-1 flex items-center gap-2 text-ui font-semibold">
+              <UserAvatar userId={group.athleteId} name={group.athleteName} size={20} />
+              <span className="truncate">{group.athleteName}</span>
+            </p>
             <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
               {group.items.map((item) => (
                 <li key={item.id}>

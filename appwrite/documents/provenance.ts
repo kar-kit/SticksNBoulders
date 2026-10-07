@@ -1,3 +1,4 @@
+import { avatarOf } from "./avatar";
 import {
   LIBRARY_TEAM_ID,
   POLICIES,
@@ -196,11 +197,25 @@ export function verdictFor(tableId: string, row: Row): Verdict {
   }
   const have = new Set(permissionsOf(row));
   const missing = proof.filter((p) => !have.has(p));
-  if (missing.length === 0) return { action: "keep", reason: "stamped by its owner" };
+  if (missing.length === 0) {
+    // Its owner wrote it, so it stays: deleting somebody's profile over the
+    // picture they pointed it at would destroy an honest name, sex and units
+    // to remove a cosmetic field. Every reader goes through `avatarOf`, which
+    // shows initials instead. Said in the log so the oddity is visible.
+    if (tableId === "profiles" && hasForeignAvatar(row)) {
+      return { action: "keep", reason: "stamped by its user; avatar_file_id is not theirs and is ignored by readers" };
+    }
+    return { action: "keep", reason: "stamped by its owner" };
+  }
   return {
     action: "delete",
     reason: `missing ${missing.join(", ")}: not written by the ${ownerLabel(tableId)} it names`,
   };
+}
+
+function hasForeignAvatar(row: Row): boolean {
+  const raw = row.avatar_file_id;
+  return typeof raw === "string" && raw !== "" && avatarOf(row) === null;
 }
 
 function ownerLabel(tableId: string): string {

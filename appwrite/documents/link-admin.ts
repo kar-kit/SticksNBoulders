@@ -7,6 +7,8 @@ import {
   removeCoachFromCircle,
 } from "./circle-admin";
 import { createCoachLink, reactivateCoachLink, revokeCoachLink } from "./write";
+import { avatarOf } from "./avatar";
+import { isAuthentic } from "./provenance";
 import type { RowWriter } from "./row-writer";
 
 /**
@@ -110,6 +112,36 @@ export async function activeCoachFor(
     coachName: await tables.userName(active.coachId).catch(() => ""),
     linkedAt: typeof row?.linked_at === "string" ? row.linked_at : null,
   };
+}
+
+/**
+ * The caller's own coach's picture id, or null.
+ *
+ * The coach-to-athlete direction of profile pictures, and the reason it runs
+ * here rather than in the browser is the reason the coach's name does: an
+ * athlete is not in their coach's circle, so neither the coach's profile row
+ * nor the file it points at is readable from the athlete's session. Widening
+ * the file's stamp to fix that would mean `read("users")` or re-stamping every
+ * picture each time a link changes; asking through the link instead keeps the
+ * file's audience exactly the profile's.
+ *
+ * Only an ACTIVE link, only the coach's own authentic profile, and only a
+ * picture in the coach's own namespace -- the same three things every other
+ * reader of a profile checks.
+ */
+export async function coachPictureFor(
+  tables: LinkTables,
+  databaseId: string,
+  athleteId: string,
+): Promise<{ coachId: string; fileId: string } | null> {
+  const active = (await linksFor(tables, databaseId, athleteId)).find((l) => l.status === "active");
+  if (!active) return null;
+  const row = await tables
+    .getRow({ databaseId, tableId: "profiles", rowId: active.coachId })
+    .catch(() => null);
+  if (!row || !isAuthentic("profiles", row)) return null;
+  const fileId = avatarOf(row);
+  return fileId ? { coachId: active.coachId, fileId } : null;
 }
 
 export type RedeemResult =

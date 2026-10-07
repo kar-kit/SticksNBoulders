@@ -224,8 +224,15 @@ npm run clips:sweep -- --min-age-days 21   # a longer grace period (minimum 7)
 npm run clips:sweep -- --delete            # deletes them
 ```
 
-A file is an orphan only if no set's `video_file_id` names it, its upload is
-**finished**, and it was last touched more than **14 days** ago. In order:
+Since schema v13 the same sweep also covers the `avatars` bucket: an old
+profile picture whose best-effort delete failed on replace or remove is an
+orphan by the same rules, judged against `profiles.avatar_file_id`
+(docs/avatars.md). The dump copies both buckets, so the "fresh backup holds it"
+check applies to pictures too.
+
+A file is an orphan only if no set's `video_file_id` (or, for a picture, no
+profile's `avatar_file_id`) names it, its upload is **finished**, and it was
+last touched more than **14 days** ago. In order:
 
 | Case | Verdict |
 | --- | --- |

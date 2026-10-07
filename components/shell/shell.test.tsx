@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AthleteShell } from "./athlete-shell";
 import { CoachShell } from "./coach-shell";
@@ -145,9 +145,10 @@ describe("CoachShell", () => {
     expect(push).toHaveBeenCalledWith("/today");
   });
 
-  it("shows the coach's own initials", () => {
+  it("shows the coach's own initials in the header when there is no picture", () => {
     render(<CoachShell athletes={athletes}>content</CoachShell>);
-    expect(screen.getByText("JP")).toBeInTheDocument();
+    // Scoped: the rail draws "JP" too, for the athlete also called Joey Pang.
+    expect(within(screen.getByRole("banner")).getByText("JP")).toBeInTheDocument();
   });
 
   it("sends a signed-out visitor to sign in", () => {

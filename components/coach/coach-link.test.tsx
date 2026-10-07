@@ -13,6 +13,8 @@ const store = vi.hoisted(() => ({
   resolveCode: vi.fn(),
   redeemCode: vi.fn(),
   unlinkCoach: vi.fn(),
+  // The coach's picture comes through its own route; none here, so initials.
+  fetchMyCoachPicture: vi.fn(async () => null),
 }));
 vi.mock("@/lib/coach/link-store", () => store);
 

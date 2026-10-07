@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 12,
+  version: 13,
   tables: [
     {
       id: "profiles",
@@ -46,6 +46,11 @@ export const schema: DatabaseSpec = {
         { key: "sex", type: "enum", elements: ["male", "female"], required: false },
         { key: "units", type: "enum", elements: ["kg", "lb"], required: false, default: "kg" },
         { key: "created_at", type: "datetime", required: true },
+        // The profile picture: a file in the `avatars` bucket, named inside
+        // this user's own namespace (appwrite/documents/avatar.ts). Null for
+        // nobody, which is every row written before v13, so no backfill. 36
+        // because that is an Appwrite id. No index: nothing queries by it.
+        { key: "avatar_file_id", type: "string", size: 36, required: false },
       ],
       indexes: [{ key: "idx_user_id", type: "unique", columns: ["user_id"] }],
     },
@@ -601,6 +606,38 @@ export const schema: DatabaseSpec = {
        * cannot fix.
        */
       encryption: false,
+      antivirus: false,
+    },
+    {
+      id: "avatars",
+      name: "Avatars",
+      purpose:
+        "Profile pictures, coaches and athletes alike. Seen by the owner and their circle -- the same audience as the profile row that points at the file -- so a coach sees each athlete's face in the rail, the roster and the queue.",
+      // Per file, for the reason every bucket and table here is: the reader
+      // differs per file. A bucket-wide read would put every user's face in
+      // front of every signed-in stranger.
+      fileSecurity: true,
+      permissions: [perm.createUsers],
+      /**
+       * 2MB, and real files are a small fraction of it. The browser crops to a
+       * square and re-encodes at 512px before uploading (lib/profile/avatar.ts),
+       * which lands around 20-80KB. The cap is what stops a client that skips
+       * that step from parking a 12MP original here.
+       */
+      maximumFileSizeBytes: 2_000_000,
+      // What the browser re-encodes to. Never HEIC or PNG: those are inputs,
+      // and nothing is uploaded without being redrawn first.
+      allowedFileExtensions: ["webp", "jpg", "jpeg"],
+      // Already compressed.
+      compression: "none",
+      /**
+       * Encrypted, unlike clips, because here the guarantee actually holds:
+       * Appwrite skips encryption above 20MB and this bucket refuses anything
+       * over 2MB, so every file is covered. It is a face, which is the most
+       * identifying thing the product stores.
+       */
+      encryption: true,
+      // No ClamAV beside the instance. Same reason as the clips.
       antivirus: false,
     },
   ],

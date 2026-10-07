@@ -4,7 +4,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
-import { initialsFor, railName } from "@/lib/auth/role";
+import { railName } from "@/lib/auth/role";
+import { UserAvatar } from "@/components/profile/user-avatar";
 import { useRequireSession } from "@/lib/auth/session-context";
 
 /**
@@ -20,6 +21,8 @@ export interface CoachAthlete {
   name: string;
   /** Draws the accent dot: this person needs something. */
   needsAttention?: boolean;
+  /** Their picture, if they have one. Also in the avatar registry. */
+  avatarFileId?: string | null;
 }
 
 const NAV = [
@@ -90,12 +93,7 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
             Athlete mode
           </button>
           <span className="text-ui font-medium">{user.name.split(" ")[0]}</span>
-          <span
-            aria-hidden
-            className="flex size-7 items-center justify-center rounded-chip bg-surface-2 text-caption font-semibold text-muted"
-          >
-            {initialsFor(user.name)}
-          </span>
+          <UserAvatar userId={user.id} name={user.name} size={28} />
         </div>
       </header>
 
@@ -118,7 +116,10 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
                     active ? "bg-surface-2 font-semibold" : "text-foreground",
                   )}
                 >
-                  {railName(athlete.name)}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <UserAvatar userId={athlete.id} name={athlete.name} size={20} />
+                    <span className="truncate">{railName(athlete.name)}</span>
+                  </span>
                   {athlete.needsAttention ? (
                     <span aria-label="Needs attention" className="block size-1.5 rounded-full bg-accent-line" />
                   ) : null}

@@ -19,6 +19,7 @@ const profile = (over: Partial<Profile> = {}): Profile => ({
   displayName: "Joey Pang",
   sex: "male",
   units: "kg",
+  avatarFileId: null,
   ...over,
 });
 

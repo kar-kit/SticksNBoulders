@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { CoachLink } from "@/components/coach/coach-link";
 import { TrainingSettings } from "@/components/profile/training-settings";
+import { PhotoSettings } from "@/components/profile/photo-settings";
 import { SuggestionModeNote } from "@/components/profile/suggestion-mode-note";
 import Link from "next/link";
 import { InviteCodePanel } from "@/components/coach/invite-code";
@@ -42,6 +43,8 @@ export function MePanel() {
         <span className="text-title font-semibold">{state.user.name}</span>
         <span className="text-body text-muted">{state.user.email}</span>
       </div>
+
+      <PhotoSettings userId={state.user.id} name={state.user.name} />
 
       <TrainingSettings />
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
+import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { FieldLabel, TextField } from "@/components/ui/input";
 import { useSession } from "@/lib/auth/session-context";
@@ -8,6 +9,7 @@ import { INVITE_PREFIX, normaliseInviteCode } from "@/lib/coach/invite-code";
 import { linkConsentSentence, linkedDateLabel, unlinkConsequenceSentence } from "@/lib/coach/link";
 import {
   fetchMyCoach,
+  fetchMyCoachPicture,
   redeemCode,
   resolveCode,
   unlinkCoach,
@@ -43,6 +45,21 @@ export function CoachLink() {
   const codeId = useId();
 
   const athleteId = session.status === "signed-in" ? session.user.id : null;
+
+  // The coach's face, through our own route: the athlete cannot read the
+  // coach's file directly (app/api/link/coach/avatar/route.ts).
+  const linkedCoachId = state.status === "linked" ? state.coach.coachId : null;
+  const [picture, setPicture] = useState<{ coachId: string; url: string | null } | null>(null);
+  useEffect(() => {
+    if (!linkedCoachId) return;
+    let cancelled = false;
+    void fetchMyCoachPicture().then((url) => {
+      if (!cancelled) setPicture({ coachId: linkedCoachId, url });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [linkedCoachId]);
 
   useEffect(() => {
     if (!athleteId) return;
@@ -144,7 +161,14 @@ export function CoachLink() {
 
       {state.status === "linked" ? (
         <>
-          <span className="text-body font-semibold">{state.coach.coachName || "Your coach"}</span>
+          <span className="flex items-center gap-2.5 text-body font-semibold">
+            <Avatar
+              name={state.coach.coachName || "Your coach"}
+              src={picture?.coachId === state.coach.coachId ? picture.url : null}
+              size={36}
+            />
+            {state.coach.coachName || "Your coach"}
+          </span>
           {state.coach.linkedAt ? (
             <span className="text-ui text-muted">{linkedDateLabel(state.coach.linkedAt)}</span>
           ) : null}

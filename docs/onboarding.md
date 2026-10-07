@@ -95,6 +95,12 @@ edited.
 Sex is not asked here. It stays on Me, where its reason is stated (see
 `docs/profile.md`).
 
+Once both are saved, the screen offers a photo (docs/avatars.md), with "Skip
+for now" beside it. It comes after the save on purpose: a declined camera or a
+failed upload can never stand between someone and the app. The session learns
+the saved mode only when they leave the step, so the "already answered"
+redirect cannot fire halfway through it.
+
 ## Fixed on the way past
 
 `ensureMyProfile` could not create a profile for an account with no circle

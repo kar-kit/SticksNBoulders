@@ -49,13 +49,9 @@ export async function fetchCoachStatus(userId: string): Promise<CoachStatus> {
   return { isCoach: athleteIds.length > 0, athleteIds };
 }
 
-/** Two initials at most, for the header avatar. */
-export function initialsFor(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
+// Lives beside the Avatar's other inputs now, so the component does not import
+// a module that reaches for the Appwrite client. Re-exported for callers here.
+export { initialsFor } from "@/lib/profile/initials";
 
 /** "Joey Pang" in the coach's rail is "Joey P" -- surnames waste the width. */
 export function railName(name: string): string {

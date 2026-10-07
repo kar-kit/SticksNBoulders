@@ -131,4 +131,5 @@ coach losing the name with everything else.
 | `lib/profile/profile.ts` | Pure: the two option sets, name rules, `needsSex`, fallbacks |
 | `lib/profile/profile-store.ts` | `ensureMyProfile`, reads, saves |
 | `components/profile/training-settings.tsx` | The TRAINING section |
+| `components/profile/photo-settings.tsx` | The Photo row (docs/avatars.md) |
 | `scripts/e2e-profile.mts` | The permission claims, live |

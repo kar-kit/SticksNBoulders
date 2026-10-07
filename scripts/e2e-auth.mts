@@ -45,6 +45,8 @@ check(
 );
 await page.getByRole("radio", { name: /Athlete/ }).click();
 await page.getByRole("button", { name: "Continue" }).click();
+// The optional photo step. Skipped: this script is about sign-in, not pictures.
+await page.getByRole("button", { name: "Skip for now" }).click({ timeout: 20000 }).catch(() => {});
 await page.waitForURL("**/today", { timeout: 20000 }).catch(() => {});
 check("answering athlete lands on Today", page.url().endsWith("/today"));
 const signedUp = (await users.list({ queries: [Query.equal("email", email)] })).users[0];

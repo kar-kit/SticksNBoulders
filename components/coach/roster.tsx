@@ -6,6 +6,7 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 import { DepartureNotice } from "@/components/coach/departure-notice";
 import { InviteCodePanel } from "@/components/coach/invite-code";
 import { EmptyState } from "@/components/ui/empty-state";
+import { UserAvatar } from "@/components/profile/user-avatar";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchCoachLinks, subscribeToLinks } from "@/lib/coach/coach-links-store";
 import { sameAthletes, type CoachLinkRecord } from "@/lib/coach/link-status";
@@ -277,8 +278,9 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
           className="grid h-[42px] items-center gap-3 border-b border-border px-[14px] text-ui last:border-b-0 hover:bg-surface focus-visible:bg-surface"
           style={{ gridTemplateColumns: "var(--table-cols)" }}
         >
-          <span role="cell" className="truncate font-semibold">
-            {row.name}
+          <span role="cell" className="flex min-w-0 items-center gap-2.5 font-semibold">
+            <UserAvatar userId={row.athleteId} name={row.name} size={24} />
+            <span className="truncate">{row.name}</span>
           </span>
           {row.visible ? (
             <>

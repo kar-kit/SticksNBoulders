@@ -185,6 +185,9 @@ it("asks a brand-new coach once, makes their profile, and remembers the side the
   await userEvent.clear(name);
   await userEvent.type(name, "Ruairi Deane");
   await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+  // The photo is offered after everything that matters is saved, and skipping
+  // it loses nothing.
+  await userEvent.click(await screen.findByRole("button", { name: "Skip for now" }));
   await waitFor(() => expect(replace).toHaveBeenCalledWith("/coach/roster"));
   cleanup();
 
@@ -252,6 +255,7 @@ it("keeps a name somebody already chose when the field was left as it was", asyn
   await waitFor(() => expect(screen.getByLabelText("Your name")).toHaveValue("Coach Ruairi"));
   await userEvent.click(screen.getByRole("radio", { name: /Athlete/ }));
   await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Skip for now" }));
   await waitFor(() => expect(replace).toHaveBeenCalledWith("/today"));
   expect(table("profiles").get("u1")?.display_name).toBe("Coach Ruairi");
 });
@@ -276,6 +280,7 @@ it("keeps that name even when the screen could not read it and guessed from the 
   expect(await screen.findByLabelText("Your name")).toHaveValue("Ruairi");
   await userEvent.click(screen.getByRole("radio", { name: /Athlete/ }));
   await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Skip for now" }));
   await waitFor(() => expect(replace).toHaveBeenCalledWith("/today"));
   expect(table("profiles").get("u1")?.display_name).toBe("Coach Ruairi");
 });

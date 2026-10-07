@@ -1,4 +1,5 @@
 import { VIDEO_BUCKET } from "@/lib/video/bucket";
+import { AVATAR_BUCKET } from "@/appwrite/documents/avatar";
 import { schema } from "../schema";
 import type { SourceFile } from "./bucket";
 import {
@@ -62,9 +63,19 @@ describe("what counts as a reference", () => {
     expect(fileColumns.sort()).toEqual(CLIP_REFERENCES.map((r) => `${r.tableId}.${r.column}`).sort());
   });
 
-  it("points into the bucket the app uploads to, which the schema declares", () => {
-    expect(CLIP_REFERENCES.map((r) => r.bucketId)).toEqual([VIDEO_BUCKET]);
-    expect(schema.buckets.map((b) => b.id)).toContain(VIDEO_BUCKET);
+  it("points into the buckets the app uploads to, which the schema declares", () => {
+    expect(CLIP_REFERENCES.map((r) => r.bucketId)).toEqual([VIDEO_BUCKET, AVATAR_BUCKET]);
+    for (const ref of CLIP_REFERENCES) expect(schema.buckets.map((b) => b.id)).toContain(ref.bucketId);
+  });
+
+  it("keeps a picture a profile still points at, and only that one", () => {
+    // Replace is upload, repoint, delete-old; a failed delete leaves the old
+    // file behind. The sweep must reclaim that one and never the current one.
+    const found = referencesIn("profiles", [
+      { $id: "joey", data: { user_id: "joey", avatar_file_id: "joey_abc12345" } },
+      { $id: "sam", data: { user_id: "sam", avatar_file_id: null } },
+    ]);
+    expect(found).toEqual([{ bucketId: AVATAR_BUCKET, tableId: "profiles", rowId: "joey", fileId: "joey_abc12345" }]);
   });
 });
 

@@ -300,6 +300,31 @@ export function videoPermissions({ athleteId }: RowOwner): string[] {
 }
 
 /**
+ * A profile picture.
+ *
+ * The audience of the profile row that points at it, and deliberately no
+ * wider: the owner and their circle read it, so a coach sees each athlete's
+ * face and nobody else on the instance does. `read("users")` is what a
+ * stranger would stamp and is never granted here -- the audit flags it as
+ * squattable, and a face is not something to show a whole instance.
+ *
+ * The owner alone may change or remove it. No coach update or delete: whose
+ * face appears beside a name is that person's call.
+ *
+ * The coach-to-athlete direction does not come from this stamp. An athlete is
+ * not in their coach's circle, the same reason they cannot read the coach's
+ * profile row, so the coach's picture reaches them the way the coach's name
+ * does: through /api/link/coach/avatar, which checks the active link.
+ *
+ * Not in POLICIES, which is keyed by table, for the reason `videoPermissions`
+ * is not.
+ */
+export function avatarPermissions({ userId }: { userId: string }): string[] {
+  const id = requireId(userId, "userId");
+  return [...athleteAndCircle(id), update(user(id)), del(user(id))];
+}
+
+/**
  * A coach's record that they have cleared a clip.
  *
  * Read through the circle team and NOT through `read("user:<athleteId>")`,

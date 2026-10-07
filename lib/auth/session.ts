@@ -4,6 +4,7 @@ import { OAuthProvider } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { forgetCircle } from "./circle";
 import { forgetProfile } from "@/lib/profile/profile-store";
+import { forgetAvatars } from "@/lib/profile/avatar-cache";
 import { toAuthFailure, type AuthFailure, type OAuthProviderName } from "./errors";
 import { normaliseEmail } from "./method-hint";
 import { AFTER_SIGN_IN } from "./destinations";
@@ -59,6 +60,8 @@ export async function signOut() {
   // profile one is worse because it carries a name.
   forgetCircle();
   forgetProfile();
+  // Faces and picture ids, the same reasoning: per page load, keyed to nobody.
+  forgetAvatars();
   return attempt(() => account.deleteSession({ sessionId: "current" }));
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CoachShell, type CoachAthlete } from "@/components/shell/coach-shell";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
+import { fetchProfile } from "@/lib/profile/profile-store";
 import { useRecordMode, useSession } from "@/lib/auth/session-context";
 import { fetchClips, fetchReviewedSetIds, subscribeToClips } from "@/lib/review/queue-store";
 import { browserAppwrite } from "@/appwrite/browser-client";
@@ -29,6 +30,13 @@ export function CoachLayoutShell({ children }: { children: React.ReactNode }) {
 
   const athleteIds = state.status === "signed-in" ? state.coach.athleteIds : null;
   const coachId = state.status === "signed-in" ? state.user.id : null;
+
+  // The coach's own profile, read once, so their picture is in the registry
+  // for the header. A read and not `ensureMyProfile`: the welcome screen
+  // already wrote it, and the coach side has no reason to create one.
+  useEffect(() => {
+    if (coachId) void fetchProfile(coachId).catch(() => {});
+  }, [coachId]);
 
   useEffect(() => {
     if (!athleteIds || athleteIds.length === 0) return;
