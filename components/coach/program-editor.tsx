@@ -4,8 +4,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Menu } from "@/components/ui/menu";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 import { CopyProgram } from "@/components/coach/copy-program";
+import { ConfirmStrip, InlineText } from "@/components/coach/program-editor-parts";
+import { ProgramOutline } from "@/components/coach/program-outline";
 import { cn } from "@/lib/cn";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { useSession } from "@/lib/auth/session-context";
@@ -23,39 +26,58 @@ import {
   draftWeeks,
   moveCell,
   rememberedReference,
-  suggestDayDate,
   unresolvedWarning,
+  weekState,
   type Column,
   type EditorMaxes,
 } from "@/lib/programming/editor";
-import type { DayTree, Prescription, ProgramOpInput, ProgramTree } from "@/lib/programming/program";
+import {
+  newDayDate,
+  placeDay,
+  programAnchor,
+  rangeLabel,
+  redatePlan,
+  scheduledOnFor,
+  weekIndexOf,
+  weekRange,
+  WEEKDAYS,
+} from "@/lib/programming/calendar";
+import { copyWeekPlan } from "@/lib/programming/copy";
+import type { BlockTree, DayTree, Prescription, ProgramOpInput, ProgramTree } from "@/lib/programming/program";
 import type { EditorLanding } from "@/lib/coach/adjust-program";
-import { fetchProgramTree, sendProgramOp } from "@/lib/programming/program-store";
+import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/programming/program-store";
 
 /**
  * The Program Editor. Order 19. The screen that has to beat Excel.
  *
- * Built to the blueprint's block-up-front layout -- week tabs across the top,
- * days down, exercise rows with sets / reps / load / rest / note -- which is
- * an ASSUMPTION still open with Ruairi (question 1). The data underneath does
- * not depend on it: weeks and days are added one at a time, each day carries
- * its own date, and each week its own draft/published status, so week-by-week
- * or session-by-session writing is a different screen over the same rows.
+ * Three columns: the coach's athlete rail (the shell's), the program outline
+ * (blocks, their dates, their weeks and where each stands), and the week on
+ * screen. One primary action at a time: the week's Publish. Everything else
+ * sits in a ⋯ beside the thing it acts on -- the program, a block, a week, a
+ * day -- the TrueCoach / TrainHeroic shape.
+ *
+ * Dates come from the program's start date. A week is a Monday-to-Sunday row
+ * counted from it and a day is a weekday chip; the stored `scheduled_on` is
+ * computed (lib/programming/calendar.ts). Moving the start date moves every
+ * day that sits in its week, except a day an athlete has logged from.
+ *
+ * Writing shape (Ruairi, question 1) is "a mix depending on the athlete", so
+ * nothing here forces block-up-front: "+ Week" repeats the last week, "+ Block"
+ * starts from it, and each week is released on its own.
  *
  * Keyboard first: arrows move between cells (sideways only from a cell's
  * edge), Enter commits and moves down, Tab walks the row, Escape puts a cell
  * back, Alt+Up/Down moves a line. A cell saves when it is left. Exercises are
  * typed, never picked from a list; a name the athlete's library lacks is
- * created there.
+ * created there. The outline walks with Up/Down; every ⋯ is a menu button.
  *
  * Every write goes to /api/program, which checks the coach still coaches this
- * athlete; nothing here writes Appwrite directly. Edits to a published
- * program are live on save -- see docs/programs.md for why there is no second
- * draft layer yet.
+ * athlete; nothing here writes Appwrite directly, and every write is an op the
+ * editor already had. Edits to a published week are live on save -- see
+ * docs/programs.md for why there is no second draft layer yet.
  *
- * Duplicate week and Copy to… are Order 20 (copies are drafts, written by the
- * server). Seams left: backoff rules (21) and video-required (30) are columns
- * after Notes.
+ * Seams left: backoff rules (21) and video-required (30) are columns after
+ * Notes. A month view of the program would read the same calendar helpers.
  */
 
 type Load =
@@ -75,6 +97,8 @@ const COLUMN_LABEL: Record<Column, string> = {
   video: "Video",
 };
 
+const STATE_WORD = { draft: "Draft", live: "Live", logged: "Logged" } as const;
+
 export function ProgramEditor({ programId, landing }: { programId: string; landing?: EditorLanding }) {
   const { state: session } = useSession();
   const viewerId = session.status === "signed-in" ? session.user.id : null;
@@ -83,11 +107,18 @@ export function ProgramEditor({ programId, landing }: { programId: string; landi
   const [athleteName, setAthleteName] = useState<string | null>(null);
   /** The athlete's maxes, for the unresolved-percentage warning. Null until read: unknown is not missing. */
   const [maxes, setMaxes] = useState<EditorMaxes | null>(null);
-  const [blockId, setBlockId] = useState<string | null>(null);
+  /**
+   * Days an athlete has started a session from. Undefined while reading, null
+   * when it could not be read: neither is "none", so neither marks a week
+   * logged nor lets a start-date change move a day.
+   */
+  const [logged, setLogged] = useState<ReadonlySet<string> | null | undefined>(undefined);
   // "Adjust program" from a clip opens on the week it was prescribed from.
   const [weekId, setWeekId] = useState<string | null>(landing?.weekId ?? null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [removingWeek, setRemovingWeek] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const tree = await fetchProgramTree(programId).catch(() => undefined);
@@ -111,6 +142,13 @@ export function ProgramEditor({ programId, landing }: { programId: string; landi
         void Promise.all([fetchReferenceMaxes(athleteId), fetchEstimatedMaxes(athleteId)])
           .then(([entries, estimated]) => setMaxes({ entries, estimated }))
           .catch(() => {});
+        const dayIds = tree.blocks.flatMap((b) => b.weeks).flatMap((w) => w.days).map((d) => d.id);
+        // Days added after this read cannot have been logged yet.
+        void fetchLoggedDayIds(athleteId, dayIds)
+          .then(setLogged)
+          .catch(() => setLogged(null));
+      } else {
+        setLogged(new Set());
       }
       if (tree.athleteId && tree.athleteId !== tree.coachId) {
         void fetchAthleteNames([tree.athleteId])
@@ -121,12 +159,9 @@ export function ProgramEditor({ programId, landing }: { programId: string; landi
   }, [reload]);
 
   const tree = load.status === "ready" ? load.tree : null;
-  const block =
-    tree?.blocks.find((b) => b.id === blockId) ??
-    tree?.blocks.find((b) => b.weeks.some((w) => w.id === weekId)) ??
-    tree?.blocks[0] ??
-    null;
-  const week = block?.weeks.find((w) => w.id === weekId) ?? block?.weeks[0] ?? null;
+  const allWeeks = useMemo(() => tree?.blocks.flatMap((b) => b.weeks) ?? [], [tree]);
+  const week = allWeeks.find((w) => w.id === weekId) ?? allWeeks[0] ?? null;
+  const block = (week && tree?.blocks.find((b) => b.id === week.blockId)) ?? tree?.blocks[0] ?? null;
   const names = useMemo(() => new Map(exercises.map((e) => [e.id, e.name])), [exercises]);
   /** Beside each percentage the athlete will get no kilos for: which max is missing. */
   const warningFor = useCallback(
@@ -156,6 +191,8 @@ export function ProgramEditor({ programId, landing }: { programId: string; landi
     if (row >= 0) section.querySelector<HTMLElement>(`[data-cell="${row}-0"]`)?.focus({ preventScroll: true });
   }, [tree, landDay, landLine]);
 
+  const failed = (failure: unknown) => setError(failure instanceof Error ? failure.message : "That did not save.");
+
   /** A structural write: send it, then read the tree back. */
   const run = async (op: ProgramOpInput): Promise<string | null> => {
     setBusy(true);
@@ -165,9 +202,27 @@ export function ProgramEditor({ programId, landing }: { programId: string; landi
       await reload();
       return rowId;
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "That did not save.");
+      failed(failure);
       return null;
     } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Several writes in order, then one read back -- even after a failure, so
+   * whatever did land is on screen rather than guessed at.
+   */
+  const runMany = async (work: () => Promise<string | null>): Promise<string | null> => {
+    setBusy(true);
+    setError(null);
+    try {
+      return await work();
+    } catch (failure) {
+      failed(failure);
+      return null;
+    } finally {
+      await reload();
       setBusy(false);
     }
   };
@@ -239,12 +294,77 @@ export function ProgramEditor({ programId, landing }: { programId: string; landi
   // can read the block but the server will not take their writes.
   const editable = viewerId === tree.coachId;
   const drafts = draftWeeks(tree);
-  const weekNumber = (id: string) => tree.blocks.flatMap((b) => b.weeks).findIndex((w) => w.id === id) + 1;
+  const anchor = programAnchor(tree);
+  const knownLogged = logged ?? null;
+  const weekName = (id: string) => {
+    const at = allWeeks.findIndex((w) => w.id === id);
+    return allWeeks[at]?.label ?? `Week ${at + 1}`;
+  };
+  // "Publish week 3", "Remove heavy": the week's own label when it has one.
+  const weekPhrase = (id: string) => {
+    const w = allWeeks.find((x) => x.id === id);
+    return w?.label ?? `week ${allWeeks.findIndex((x) => x.id === id) + 1}`;
+  };
+
+  /** "+ Week": a copy of the block's last week (duplicateWeek), or an empty one in an empty block. */
+  const addWeek = async (target: BlockTree) => {
+    const last = target.weeks.at(-1);
+    const id = await run(last ? { op: "duplicateWeek", weekId: last.id } : { op: "addWeek", blockId: target.id });
+    if (id) setWeekId(id);
+  };
+
+  /**
+   * "+ Block": a new last block whose first week copies the week before it --
+   * the last week of the current last block, a week later -- or is empty when
+   * there is none. Written as the ops the coach could have typed.
+   */
+  const addBlock = async () => {
+    const source = tree.blocks.at(-1)?.weeks.at(-1) ?? null;
+    const shift = source ? 7 * (allWeeks.length - weekIndexOf(tree, source.id)) : 0;
+    const id = await runMany(async () => {
+      const { rowId: newBlock } = await sendProgramOp({
+        op: "addBlock",
+        programId: tree.id,
+        name: `Block ${tree.blocks.length + 1}`,
+      });
+      const { rowId: newWeek } = await sendProgramOp({ op: "addWeek", blockId: newBlock });
+      for (const { day, lines } of source ? copyWeekPlan(source, shift) : []) {
+        const { rowId: dayId } = await sendProgramOp({ op: "addDay", weekId: newWeek, ...day });
+        for (const line of lines) await sendProgramOp({ op: "addPrescription", dayId, ...line });
+      }
+      return newWeek;
+    });
+    if (id) setWeekId(id);
+  };
+
+  /**
+   * The start date, and every day that follows it. Logged days and days
+   * already outside their week stay put (redatePlan). When the sessions could
+   * not be read, only the start date is saved and the coach is told why.
+   */
+  const changeStart = (startOn: string | null) =>
+    runMany(async () => {
+      const plan = logged ? redatePlan(tree, startOn, logged) : null;
+      await sendProgramOp({ op: "updateProgram", programId: tree.id, startOn });
+      if (plan === null) {
+        if (redatePlan(tree, startOn, new Set()).length > 0) {
+          setError("Start date saved. The days kept their dates: it could not be checked which ones were logged.");
+        }
+        return null;
+      }
+      for (const move of plan) await sendProgramOp({ op: "updateDay", dayId: move.dayId, scheduledOn: move.scheduledOn });
+      return null;
+    });
+
+  const weekAt = week ? weekIndexOf(tree, week.id) : -1;
+  const state = week ? weekState(tree, week, knownLogged) : null;
+  const live = week?.status === "published" && tree.status === "published";
+  const statusWord = tree.status === "published" ? "Live" : tree.status === "archived" ? "Archived" : "Draft";
 
   return (
-    <div className="flex flex-col gap-5 p-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col gap-1">
+    <div className="flex min-h-full flex-col">
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border px-6 pt-5 pb-4">
+        <div className="flex min-w-0 flex-col gap-1">
           <Link href="/coach/programs" className="text-ui text-muted">
             ← Programs
           </Link>
@@ -252,212 +372,199 @@ export function ProgramEditor({ programId, landing }: { programId: string; landi
             label="Program name"
             value={tree.name}
             disabled={!editable}
-            className="w-[min(48rem,100%)] text-display font-semibold"
+            className="w-[min(40rem,100%)] text-display font-semibold"
             onCommit={(name) => (name ? run({ op: "updateProgram", programId: tree.id, name }) : null)}
           />
           <p className="m-0 text-ui text-muted">
             {tree.athleteId === tree.coachId ? "Your own training" : (athleteName ?? "Athlete")} ·{" "}
-            <span aria-label="Status">
-              {tree.status === "published" ? "Published" : tree.status === "archived" ? "Archived" : "Draft"}
-            </span>
+            <span aria-label="Status">{statusWord}</span>
             {tree.status === "published" && drafts > 0
               ? ` · ${drafts} draft ${drafts === 1 ? "week" : "weeks"} not on their Today yet`
               : ""}
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-3">
-          {editable ? <CopyProgram tree={tree} blockId={block?.id ?? null} disabled={busy} /> : null}
+        <div className="flex items-end gap-2">
           <label className="flex flex-col gap-1 text-label uppercase text-muted-2">
             Starts
             <input
               type="date"
               aria-label="Start date"
-              disabled={!editable}
+              disabled={!editable || busy}
               defaultValue={tree.startOn ?? ""}
               key={tree.startOn ?? ""}
               onBlur={(e) => {
                 const value = e.target.value || null;
-                if (value !== tree.startOn) void run({ op: "updateProgram", programId: tree.id, startOn: value });
+                if (value !== tree.startOn) void changeStart(value);
               }}
-              className="h-9 rounded-control border border-border bg-surface-2 px-2 text-ui text-foreground"
+              className={cn(
+                "h-9 rounded-control border bg-surface-2 px-2 text-ui text-foreground",
+                !tree.startOn && tree.athleteId ? "border-accent-line" : "border-border",
+              )}
             />
           </label>
-          {editable && (tree.status !== "published" || drafts > 0) ? (
-            // Draft until published, so a half-written block never reaches
-            // Today. One press publishes the program and every week in it.
-            <Button disabled={busy} onClick={() => void run({ op: "publishProgram", programId: tree.id })}>
-              {tree.status === "published" ? `Publish ${drafts} draft ${drafts === 1 ? "week" : "weeks"}` : "Publish"}
-            </Button>
+          {editable ? (
+            <Menu
+              label="Program actions"
+              disabled={busy}
+              items={[
+                { label: "Copy to…", onSelect: () => setCopying(true) },
+                (tree.status !== "published" || drafts > 0) && {
+                  // Every week at once, for a block written up front. One
+                  // week at a time is the week's own Publish.
+                  label: "Publish all draft weeks",
+                  onSelect: () => void run({ op: "publishProgram", programId: tree.id }),
+                },
+              ]}
+            />
           ) : null}
         </div>
       </header>
 
+      {editable && copying ? (
+        <div className="px-6 pt-4">
+          <CopyProgram tree={tree} blockId={block?.id ?? null} open onClose={() => setCopying(false)} />
+        </div>
+      ) : null}
+
       {error ? (
-        <p role="alert" className="m-0 rounded-card border border-danger-line p-3 text-ui">
+        <p role="alert" className="mx-6 mt-4 mb-0 rounded-card border border-danger-line p-3 text-ui">
           {error}
         </p>
       ) : null}
 
-      <nav aria-label="Blocks" className="flex flex-wrap items-center gap-1">
-        {tree.blocks.map((b) => (
-          <button
-            key={b.id}
-            type="button"
-            aria-pressed={b.id === block?.id}
-            onClick={() => {
-              setBlockId(b.id);
-              setWeekId(null);
-            }}
-            className={cn(
-              "h-8 rounded-chip px-3 text-ui",
-              b.id === block?.id ? "bg-surface-2 font-semibold text-foreground" : "text-muted",
-            )}
-          >
-            {b.name}
-          </button>
-        ))}
-        {editable ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            onClick={async () => {
-              const id = await run({ op: "addBlock", programId: tree.id, name: `Block ${tree.blocks.length + 1}` });
-              if (id) {
-                await run({ op: "addWeek", blockId: id });
-                setBlockId(id);
-                setWeekId(null);
-              }
-            }}
-          >
-            + Block
-          </Button>
-        ) : null}
-      </nav>
+      <div className="flex min-h-0 flex-1">
+        <ProgramOutline
+          tree={tree}
+          selectedWeekId={week?.id ?? null}
+          onSelect={(id) => {
+            setWeekId(id);
+            setRemovingWeek(null);
+          }}
+          editable={editable}
+          busy={busy}
+          anchor={anchor}
+          logged={knownLogged}
+          weekName={weekName}
+          onAddWeek={(b) => void addWeek(b)}
+          onAddBlock={() => void addBlock()}
+          onRenameBlock={(b, name) => void run({ op: "updateBlock", blockId: b.id, name })}
+          onRemoveBlock={async (b) => {
+            await run({ op: "removeBlock", blockId: b.id });
+            if (week?.blockId === b.id) setWeekId(null);
+          }}
+        />
 
-      {block ? (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
-            <div role="tablist" aria-label="Weeks" className="flex flex-wrap items-center gap-1">
-              {block.weeks.map((w) => (
-                <button
-                  key={w.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={w.id === week?.id}
-                  onClick={() => setWeekId(w.id)}
-                  className={cn(
-                    "h-8 rounded-chip px-3 text-ui",
-                    w.id === week?.id
-                      ? "bg-surface-2 font-semibold text-foreground shadow-[inset_0_-2px_0_var(--accent-fill)]"
-                      : "text-muted",
-                  )}
-                >
-                  {w.label ?? `Week ${weekNumber(w.id)}`}
-                  {w.status === "draft" && tree.status === "published" ? " · draft" : ""}
-                </button>
-              ))}
-              {editable ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={async () => {
-                    const id = await run({ op: "addWeek", blockId: block.id });
-                    if (id) setWeekId(id);
-                  }}
-                >
-                  + Week
-                </Button>
-              ) : null}
-              {editable && week ? (
-                // Order 20: most blocks are one week repeated with load changes.
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={async () => {
-                    const id = await run({ op: "duplicateWeek", weekId: week.id });
-                    if (id) setWeekId(id);
-                  }}
-                >
-                  Duplicate {week.label ?? `week ${weekNumber(week.id)}`}
-                </Button>
-              ) : null}
-              {editable && week ? (
-                // Week-at-a-time release, and the way back while editing it.
-                // Nothing the athlete already logged moves either way.
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() =>
-                    void run(
-                      week.status === "published"
-                        ? { op: "updateWeek", weekId: week.id, status: "draft" }
-                        : { op: "publishWeek", weekId: week.id },
-                    )
-                  }
-                >
-                  {week.status === "published" ? "Unpublish" : "Publish"}{" "}
-                  {week.label ?? `week ${weekNumber(week.id)}`}
-                </Button>
-              ) : null}
-            </div>
-            {editable && week ? (
-              <ConfirmButton
-                label={`Remove ${week.label ?? `week ${weekNumber(week.id)}`}`}
-                disabled={busy}
-                onConfirm={async () => {
-                  await run({ op: "removeWeek", weekId: week.id });
-                  setWeekId(null);
-                }}
-              />
-            ) : null}
-          </div>
+        <section aria-label="Week" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5">
+          {!tree.startOn && tree.athleteId ? (
+            <p className="m-0 rounded-card border border-border p-3 text-ui text-muted">
+              No start date yet. Set one above and every day takes its date from its week and weekday.
+              {anchor ? " Until then, dates count from the days already dated." : ""}
+            </p>
+          ) : null}
 
-          {week ? (
-            <div className="flex flex-col gap-6">
-              {week.days.length === 0 ? (
-                <p className="m-0 text-body text-muted">No days in this week yet.</p>
-              ) : null}
-              {week.days.map((day, at) => (
-                <DayEditor
-                  key={day.id}
-                  day={day}
-                  index={at}
-                  editable={editable}
-                  busy={busy}
-                  names={names}
-                  exercises={exercises}
-                  warningFor={warningFor}
-                  referenceFor={(exerciseId) => rememberedReference(tree, exerciseId)}
-                  run={run}
-                  editLine={editLine}
-                  createExercise={createExercise}
-                />
-              ))}
-              {editable ? (
-                <div>
-                  <Button
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() =>
-                      void run({ op: "addDay", weekId: week.id, scheduledOn: suggestDayDate(tree, week.id) })
-                    }
-                  >
-                    + Day
-                  </Button>
+          {block && week ? (
+            <>
+              <header className="flex flex-wrap items-center gap-3 border-b border-border pb-3">
+                <div className="flex min-w-0 flex-col">
+                  <h2 className="m-0 text-heading font-semibold">
+                    {block.name} · {weekName(week.id)}
+                  </h2>
+                  <p className="m-0 text-ui text-muted">
+                    {anchor ? rangeLabel(weekRange(anchor, weekAt)) : "No dates yet"} · {state ? STATE_WORD[state] : ""}
+                  </p>
                 </div>
+                <span className="flex-1" />
+                {editable ? (
+                  // The one publish. publishWeek takes a draft program live
+                  // with it, so a coach never needs a second button to make
+                  // the week reach Today. Nothing logged moves either way.
+                  live ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => void run({ op: "updateWeek", weekId: week.id, status: "draft" })}
+                    >
+                      Unpublish {weekPhrase(week.id)}
+                    </Button>
+                  ) : (
+                    <Button size="sm" disabled={busy} onClick={() => void run({ op: "publishWeek", weekId: week.id })}>
+                      Publish {weekPhrase(week.id)}
+                    </Button>
+                  )
+                ) : null}
+                {editable ? (
+                  <Menu
+                    label={`${weekName(week.id)} actions`}
+                    disabled={busy}
+                    items={[
+                      {
+                        // A copy at the end of this block, as a draft.
+                        label: `Duplicate ${weekPhrase(week.id)}`,
+                        onSelect: async () => {
+                          const id = await run({ op: "duplicateWeek", weekId: week.id });
+                          if (id) setWeekId(id);
+                        },
+                      },
+                      { label: `Remove ${weekPhrase(week.id)}`, tone: "danger", onSelect: () => setRemovingWeek(week.id) },
+                    ]}
+                  />
+                ) : null}
+              </header>
+              {removingWeek === week.id ? (
+                <ConfirmStrip
+                  label={`Remove ${weekPhrase(week.id)}`}
+                  disabled={busy}
+                  onCancel={() => setRemovingWeek(null)}
+                  onConfirm={async () => {
+                    await run({ op: "removeWeek", weekId: week.id });
+                    setWeekId(null);
+                  }}
+                />
               ) : null}
-            </div>
+
+              <div className="flex flex-col gap-6">
+                {week.days.length === 0 ? <p className="m-0 text-body text-muted">No days in this week yet.</p> : null}
+                {week.days.map((day, at) => (
+                  <DayEditor
+                    key={day.id}
+                    day={day}
+                    index={at}
+                    editable={editable}
+                    busy={busy}
+                    anchor={anchor}
+                    weekIndex={weekAt}
+                    template={tree.athleteId === null}
+                    logged={knownLogged?.has(day.id) ?? false}
+                    names={names}
+                    exercises={exercises}
+                    warningFor={warningFor}
+                    referenceFor={(exerciseId) => rememberedReference(tree, exerciseId)}
+                    run={run}
+                    editLine={editLine}
+                    createExercise={createExercise}
+                  />
+                ))}
+                {editable ? (
+                  <div>
+                    <Button
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => void run({ op: "addDay", weekId: week.id, scheduledOn: newDayDate(tree, week.id) })}
+                    >
+                      + Day
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </>
+          ) : block ? (
+            <p className="m-0 text-body text-muted">This block has no weeks yet. Add one from the outline.</p>
           ) : (
-            <p className="m-0 text-body text-muted">This block has no weeks yet.</p>
+            <p className="m-0 text-body text-muted">No blocks yet. Add one to start writing.</p>
           )}
-        </>
-      ) : (
-        <p className="m-0 text-body text-muted">No blocks yet. Add one to start writing.</p>
-      )}
+        </section>
+      </div>
     </div>
   );
 }
@@ -484,6 +591,14 @@ interface DayEditorProps {
   index: number;
   editable: boolean;
   busy: boolean;
+  /** Week 1's Monday; null when nothing dates the program yet. */
+  anchor: string | null;
+  /** This day's week, counted across the program. */
+  weekIndex: number;
+  /** A template has no calendar: no chips. */
+  template: boolean;
+  /** An athlete has started a session from this day. */
+  logged: boolean;
   names: ReadonlyMap<string, string>;
   exercises: readonly Exercise[];
   /** docs/reference-lift.md: the missing-max warning, and the reference a new line inherits. */
@@ -494,8 +609,26 @@ interface DayEditorProps {
   createExercise: (name: string) => Promise<Exercise | null>;
 }
 
-function DayEditor({ day, index, editable, busy, names, exercises, warningFor, referenceFor, run, editLine, createExercise }: DayEditorProps) {
+function DayEditor({
+  day,
+  index,
+  editable,
+  busy,
+  anchor,
+  weekIndex,
+  template,
+  logged,
+  names,
+  exercises,
+  warningFor,
+  referenceFor,
+  run,
+  editLine,
+  createExercise,
+}: DayEditorProps) {
   const title = day.label ?? `Day ${index + 1}`;
+  const [removing, setRemoving] = useState(false);
+  const placement = placeDay(anchor, weekIndex, day.scheduledOn);
   const grid = useRef<HTMLTableSectionElement>(null);
   const [focusAfter, setFocusAfter] = useState<{ lineId: string; col: Column } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -591,35 +724,77 @@ function DayEditor({ day, index, editable, busy, names, exercises, warningFor, r
       aria-label={title}
       className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4"
     >
-      <header className="flex flex-wrap items-center gap-3">
-        <InlineText
-          label={`${title} name`}
-          value={day.label ?? ""}
-          placeholder={`Day ${index + 1}`}
-          disabled={!editable}
-          className="text-title font-semibold"
-          onCommit={(label) => run({ op: "updateDay", dayId: day.id, label })}
-        />
-        <input
-          type="date"
-          aria-label={`${title} date`}
-          disabled={!editable}
-          defaultValue={day.scheduledOn ?? ""}
-          key={day.scheduledOn ?? ""}
-          onBlur={(e) => {
-            const value = e.target.value || null;
-            if (value !== day.scheduledOn) void run({ op: "updateDay", dayId: day.id, scheduledOn: value });
-          }}
-          className="h-9 rounded-control border border-border bg-surface-2 px-2 text-ui text-foreground"
-        />
-        <span className="text-ui text-muted">{dayDateLabel(day.scheduledOn)}</span>
-        <span className="flex-1" />
-        {editable ? (
-          <ConfirmButton label={`Remove ${title}`} disabled={busy} onConfirm={() => run({ op: "removeDay", dayId: day.id })} />
-        ) : null}
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex items-center gap-1">
+          <InlineText
+            label={`${title} name`}
+            value={day.label ?? ""}
+            placeholder={`Day ${index + 1}`}
+            disabled={!editable}
+            className="text-title font-semibold"
+            onCommit={(label) => run({ op: "updateDay", dayId: day.id, label })}
+          />
+          {editable ? (
+            <Menu
+              label={`${title} actions`}
+              disabled={busy}
+              items={[{ label: `Remove ${title}`, tone: "danger", onSelect: () => setRemoving(true) }]}
+            />
+          ) : null}
+        </div>
+        {template ? null : (
+          // The day's date is its weekday in its week. A day dated outside
+          // its week (the old per-day picker) shows where it is and moves
+          // only when a weekday is picked.
+          <div role="group" aria-label={`${title} weekday`} className="flex items-center gap-1">
+            {WEEKDAYS.map((name, weekday) => {
+              const on = placement.kind === "on" && placement.weekday === weekday;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={on}
+                  disabled={!editable || busy || !anchor}
+                  onClick={() => {
+                    if (!anchor || on) return;
+                    void run({ op: "updateDay", dayId: day.id, scheduledOn: scheduledOnFor(anchor, weekIndex, weekday) });
+                  }}
+                  className={cn(
+                    "h-7 min-w-10 rounded-chip px-2 text-caption",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
+                    on ? "bg-accent-fill font-bold text-on-accent" : "border border-border text-muted disabled:text-muted-2",
+                  )}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {template ? null : (
+          <span className={cn("text-ui", placement.kind === "off" ? "text-danger-line" : "text-muted")}>
+            {placement.kind === "undated"
+              ? anchor
+                ? "No date"
+                : "Set a start date to date it"
+              : placement.kind === "off"
+                ? `${dayDateLabel(day.scheduledOn)} · outside this week`
+                : dayDateLabel(day.scheduledOn)}
+          </span>
+        )}
+        {logged ? <span className="text-caption font-semibold text-success">Logged</span> : null}
       </header>
+      {removing ? (
+        <ConfirmStrip
+          label={`Remove ${title}`}
+          disabled={busy}
+          onCancel={() => setRemoving(false)}
+          onConfirm={() => run({ op: "removeDay", dayId: day.id })}
+        />
+      ) : null}
 
-      <table className="w-full border-collapse text-ui">
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[46rem] border-collapse text-ui">
         <thead>
           <tr className="text-left font-mono text-label uppercase text-muted-2">
             {COLUMNS.map((column) => (
@@ -640,7 +815,7 @@ function DayEditor({ day, index, editable, busy, names, exercises, warningFor, r
             const warning = warningFor(line);
             return (
               <tr key={line.id} aria-label={`${title} line ${row + 1}: ${name}`} className="align-top">
-                <td className="w-64 px-1 py-0.5">
+                <td className="w-48 px-1 py-0.5">
                   {swapping === line.id ? (
                     <ExerciseTypeahead
                       exercises={exercises}
@@ -698,9 +873,9 @@ function DayEditor({ day, index, editable, busy, names, exercises, warningFor, r
                       key={column}
                       className={cn(
                         "px-1 py-0.5",
-                        column === "sets" || column === "reps" || column === "rest" ? "w-20" : "",
-                        column === "load" ? "w-56" : "",
-                        column === "backoff" ? "w-44" : "",
+                        column === "sets" || column === "reps" || column === "rest" ? "w-16" : "",
+                        column === "load" ? "w-48" : "",
+                        column === "backoff" ? "w-36" : "",
                         column === "video" ? "w-16" : "",
                       )}
                     >
@@ -780,6 +955,7 @@ function DayEditor({ day, index, editable, busy, names, exercises, warningFor, r
           })}
         </tbody>
       </table>
+      </div>
 
       {editable ? (
         <div className="max-w-sm">
@@ -806,91 +982,5 @@ function DayEditor({ day, index, editable, busy, names, exercises, warningFor, r
         onCommit={(notes) => run({ op: "updateDay", dayId: day.id, notes })}
       />
     </section>
-  );
-}
-
-/* -------------------------------------------------------------------------
- * Small pieces
- * ---------------------------------------------------------------------- */
-
-/** A text that saves when left. Escape puts it back. */
-function InlineText({
-  label,
-  value,
-  placeholder,
-  disabled,
-  className,
-  onCommit,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  disabled?: boolean;
-  className?: string;
-  onCommit: (value: string) => unknown;
-}) {
-  return (
-    <input
-      aria-label={label}
-      defaultValue={value}
-      key={value}
-      placeholder={placeholder}
-      disabled={disabled}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-        if (e.key === "Escape") {
-          e.currentTarget.value = value;
-          e.currentTarget.blur();
-        }
-      }}
-      onBlur={(e) => {
-        const next = e.target.value.trim();
-        if (next !== value.trim()) void onCommit(next);
-      }}
-      className={cn(
-        "min-w-0 rounded-control border border-transparent bg-transparent px-1 text-foreground",
-        "placeholder:text-muted-2 hover:border-border focus:border-accent-line focus:outline-none",
-        className,
-      )}
-    />
-  );
-}
-
-/** Removal asks once, inline, rather than in a dialog that steals the keyboard. */
-function ConfirmButton({
-  label,
-  disabled,
-  onConfirm,
-}: {
-  label: string;
-  disabled?: boolean;
-  onConfirm: () => unknown;
-}) {
-  const [asking, setAsking] = useState(false);
-  if (!asking) {
-    return (
-      <Button variant="ghost" size="sm" disabled={disabled} onClick={() => setAsking(true)}>
-        {label}
-      </Button>
-    );
-  }
-  return (
-    <span className="flex items-center gap-2">
-      <span className="text-ui text-muted">Logged sessions keep what was done.</span>
-      <Button
-        variant="danger"
-        size="sm"
-        disabled={disabled}
-        onClick={() => {
-          setAsking(false);
-          void onConfirm();
-        }}
-      >
-        Confirm {label.toLowerCase()}
-      </Button>
-      <Button variant="ghost" size="sm" onClick={() => setAsking(false)}>
-        Keep
-      </Button>
-    </span>
   );
 }

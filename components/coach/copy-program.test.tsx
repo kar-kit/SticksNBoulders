@@ -4,7 +4,7 @@ import { CopyProgram } from "./copy-program";
 import { ProgramEditor } from "./program-editor";
 import type { ProgramTree } from "@/lib/programming/program";
 
-/** Order 20 in the editor: the Duplicate week button and the Copy to… form. */
+/** Order 20 in the editor: Duplicate week (in the week's ⋯) and the Copy to… form. */
 
 vi.mock("@/lib/auth/session-context", () => ({
   useSession: () => ({
@@ -31,6 +31,7 @@ const store = vi.hoisted(() => ({
 vi.mock("@/lib/programming/program-store", () => ({
   fetchProgramTree: async () => store.tree,
   sendProgramOp: (op: Record<string, unknown>) => store.send(op),
+  fetchLoggedDayIds: async () => new Set(),
 }));
 
 const week = (id: string, blockId: string, position: number) => ({
@@ -68,10 +69,11 @@ beforeEach(() => {
 });
 
 describe("Duplicate week", () => {
-  it("sends one op for the week on screen and opens the copy", async () => {
+  it("sends one op for the week on screen, from the week's ⋯", async () => {
     const user = userEvent.setup();
     render(<ProgramEditor programId="p1" />);
-    await user.click(await screen.findByRole("button", { name: "Duplicate week 1" }));
+    await user.click(await screen.findByRole("button", { name: "Week 1 actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate week 1" }));
     await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "duplicateWeek", weekId: "w1" }));
   });
 });
@@ -126,5 +128,20 @@ describe("Copy to…", () => {
     await user.click(screen.getByRole("button", { name: "Copy" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("not-allowed");
     expect(screen.queryByRole("link", { name: "Open the copy" })).toBeNull();
+  });
+});
+
+describe("Copy to…, opened from a menu", () => {
+  it("shows no button of its own, only the form while open, and hands Close back", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<CopyProgram tree={tree()} blockId="b1" open={false} onClose={onClose} />);
+    expect(screen.queryByRole("button", { name: "Copy to…" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: "Copy program" })).not.toBeInTheDocument();
+
+    rerender(<CopyProgram tree={tree()} blockId="b1" open onClose={onClose} />);
+    expect(screen.getByRole("form", { name: "Copy program" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

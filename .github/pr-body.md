@@ -1,51 +1,43 @@
-## test(coach): wait for the editor's landing effect instead of assuming it ran
+## feat(editor): program outline, one publish, dates from the start date
 
-### What was flaky
+The Program Editor had buttons everywhere: block tabs, week tabs, "+ Week", "Duplicate week N", "Publish week N" and "Remove week N" in one row, a second Publish in the header, a date picker on every day plus the program's start date, and blocks that meant nothing. This rebuilds the layout around the shape Ruairi actually writes in (a mix of block-up-front and week-at-a-time) without touching the schema, the ops, permissions or validation.
 
-`components/coach/program-editor-landing.test.tsx` > "opens on the traced week, in its own block, with the traced line focused".
+### What changed
 
-```
-AssertionError: expected "vi.fn()" to be called 1 times, but got 0 times
-  at program-editor-landing.test.tsx:109  (expect(scrolled).toHaveBeenCalledTimes(1))
-```
+**1. Outline column** (`components/coach/program-outline.tsx`). Replaces both tab rows. Between the athlete rail and the week: each block with its name (rename inline), its date range, and its weeks. Each week shows its dates and a state: **Draft**, **Live** (week and program published) or **Logged** (an athlete has started a session from one of its days). Logged comes from `sessions.program_day_id`, read once on the `athlete_id` index, the same column the roster reads. If that read fails, nothing is marked logged. Up/Down walks every week, with one tab stop for the whole list. A block's ⋯ offers Accumulation / Intensity / Peak / Taper / Deload as one-click names, plus Remove (confirmed). The phase is the name, so there is no schema change.
 
-Before the fix it failed 2 times in 49 full-suite runs: 1 in 25 sequential default runs, and 1 in 24 runs with two suites going at once (`--sequence.shuffle` alongside `--pool=forks`). It was the only test that failed in any of those runs.
+**2. "+ Week" and "+ Block" copy by default.** "+ Week" at the end of a block is `duplicateWeek` on that block's **last** week; an empty block gets `addWeek`. "+ Block" adds a block whose first week copies the program's last week, a week later. `duplicateWeek` only appends within its own block, so this is written with the ordinary `addBlock` / `addWeek` / `addDay` / `addPrescription` ops (`copyWeekPlan`, a pure function in `lib/programming/copy.ts`). No new server path: it goes through the same validation and permission checks as typing it in by hand.
 
-### Why
+**3. One primary button at a time.** The week header is "Block 2 · Week 3", its dates and state, then **Publish week N** (primary) or **Unpublish week N** (secondary, when live), and a ⋯ with Duplicate and Remove (confirmed). The program header holds the name, athlete · status, Starts and a ⋯ with **Copy to…** (the existing form, now openable from the menu) and **Publish all draft weeks** (`publishProgram`). A day's ⋯ sits next to its title and holds Remove day. The menu is a small accessible one built here (`components/ui/menu.tsx`): menu-button ARIA, arrows, Home/End, Escape returns focus, and Tab or an outside click closes it. No dependency added.
 
-The test bug is in the test; the source is fine. `ProgramEditor` scrolls to the traced day and focuses the traced line in a `useEffect` that runs once the tree has loaded. The test waited for the day to appear (`findByRole("region", { name: "Heavy squat" })`) and then asserted the scroll straight away. That assumes passive effects have run by the time `findBy*` resolves, which nothing guarantees:
+**4. Dates from the start date** (`lib/programming/calendar.ts`, pure, unit-tested). Week N is the Nth Monday-to-Sunday row from the start date's Monday. A day is a Mon–Sun chip, and `scheduled_on` = that Monday + 7·(N−1) + weekday. The per-day date pickers are gone.
+- With no start date, the editor prompts for one. If days are already dated, the anchor is counted back from them, so the chips still work. If nothing is dated, the chips wait.
+- A day dated outside its week shows "Tue 20 Oct · outside this week" with no chip pressed. It moves only when the coach picks a weekday.
+- Changing the start date moves every day that sits in its week by whole weeks, keeping its weekday. Days an athlete has logged from, and days already outside their week, are not moved. If the sessions couldn't be read, only the start date is saved, and the editor says so.
 
-- React 19's scheduler yields after the commit when a 5 ms slice is spent (or when the commit requests a paint). The passive effect flush then runs in a later `setImmediate` task.
-- RTL's `findBy*` resolves one `setTimeout(0)` after the commit's DOM mutation (`asyncWrapper` in `@testing-library/react` 16.3).
+**5. Nothing logged changes.** Every write is an existing program op, and none of them touch `sessions` or `sets` (asserted in `program-admin.test.ts`).
 
-Usually the effect wins. On a busy machine the timer sometimes fires first, and the test sees `scrolled` called 0 times. The row's accessible name (`"Heavy squat line 2: Squat"`) had a second, independent race: the exercise name comes from a separate `fetchExerciseLibrary` call.
+### The publish decision
 
-### Repro (deterministic, not committed)
+[Fact] `publishWeek` already takes a draft program live with the week (`publishWeekOp` in `program-admin.ts`; `docs/programs.md`). A week published under a draft program reaches nobody, because `isLiveDay` needs both. So **Publish week N** alone always does the right thing, and the coach never needs a second publish to make a week reach Today. "Live" in the UI means week **and** program published. A week stored as published under a draft program therefore still shows Publish, and pressing it takes both live. Publishing every draft week at once moves into the program ⋯ for block-up-front writing.
 
-This is the same scenario in its own file, with React's clock stubbed so the scheduler yields after every unit of work:
+### Skipped
 
-```ts
-let t = 0;
-const spy = vi.spyOn(performance, "now").mockImplementation(() => (t += 10));
-render(<ProgramEditor programId="p1" landing={{ weekId: "w3", dayId: "d9", lineId: "l9" }} />);
-await screen.findByRole("region", { name: "Heavy squat" });
-expect(scrolled).toHaveBeenCalledTimes(1); // old pattern: 20/20 fail
-// await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1)); // new pattern: 0/20 fail
-```
+- **Clear week.** There is no clear op. It would be a `removeDay` per day, and Remove week plus "+ Week" covers the same need.
+- **Calendar month view.** This is the follow-up. `calendar.ts` already gives the Monday-aligned anchor, `weekRange`, `scheduledOnFor` and `placeDay`, so a month grid is a render over the same helpers.
 
-Without the stub the same file passes every time. The repro is not in the suite because it is only deterministic as the first render in a fresh worker. When it ran after another test in the same file, it caught the old pattern in only 1 of 5 runs, then 2 of 10. My best explanation, unproven: the jumping clock also ages scheduler tasks into "expired", and expired tasks run without yielding. A guard that flaky would be the problem we started with.
+### Check by eye
 
-### Fix
+- Width at 1440 with the 1.2× coach zoom. The outline is 224px and the grid narrowed (exercise 192, load 192, backoff 144), but it scrolls sideways rather than squeezing if it still doesn't fit.
+- The outline scrolls with the page rather than sticking, because a long program's outline is taller than the screen.
+- A program starting mid-week: week 1's Monday chip is dated before the start. [Inference] This is deliberate, so a coach's "Monday squat" stays in one column.
 
-The test now waits for what the effect produces: `await waitFor(...)` on the `scrollIntoView` call, then checks focus, then `await waitFor(...)` on the row's accessible name. There are no retries, timeout changes or skips. The assertions are unchanged; only their timing changed.
+### Tests
 
-### Verification
+New tests cover outline selection and arrow keys, the week states, "+ Week" copying the last week, "+ Block" copying op for op (plus a blank block and a halfway failure), the single publish button and its Unpublish swap, the program/week/day/block ⋯ menus, chip → `scheduled_on`, off-week days, the start-date move (including logged days and an unreadable sessions read), and pure tests for the calendar, `copyWeekPlan` and `weekState`. Mutation spot-checks were run on 24 lines across the new code, and every mutation was caught.
 
-- 30 consecutive sequential full runs: **30/30 green**, 2556/2556 each
-- 5 full runs with `--sequence.shuffle`: **5/5 green**
-- 16 full runs under load (two suites at once, one shuffled, one `--pool=forks`): **16/16 green**
-- `npm run typecheck` and `eslint` on the changed file: clean.
+- `npx vitest run`: 168 files, 2612 tests passed (was 166 / 2556).
+- `npx eslint .`: clean.
+- `npx next build --webpack`: passed. `npx tsc --noEmit` passed after it.
 
-### Known gap, not fixed here
-
-The second test in that file ("opens where it always did...") asserts `scrolled` was *not* called, straight after `findByRole`. It shares the same race, but there it can only pass when it shouldn't, never fail. A landing that wrongly scrolled could slip through on a busy machine. Making it airtight needs a signal that effects have flushed, which the editor doesn't expose. I left it alone rather than add a sleep.
+🤖 Generated with [Claude Code](https://claude.com/claude-code)

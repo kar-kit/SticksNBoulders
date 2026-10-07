@@ -1,6 +1,6 @@
 import { parsePrescription, resolvePrescription, type PrescriptionKind } from "./prescription";
 import { describeBackoff, formatBackoff, parseBackoff } from "./backoff";
-import { addDays, type Prescription, type ProgramOpInput, type ProgramTree } from "./program";
+import type { Prescription, ProgramOpInput, ProgramTree, WeekTree } from "./program";
 import { basisMaxesFor, referenceOf } from "./session-plan";
 import type { EstimatedInput, MaxKind, ReferenceMaxEntry } from "@/lib/strength/reference-max";
 import { rankExercises, type Exercise } from "@/lib/exercises/match";
@@ -383,37 +383,6 @@ export function moveCell(
  * Calendar
  * ---------------------------------------------------------------------- */
 
-/**
- * The date a new day in a week should default to. The coach can change it;
- * this only saves typing the obvious one.
- *
- * The day after the week's last dated day. For an empty week, the program's
- * start date plus seven days per week before it -- counted across blocks, so
- * week 1 of block 2 follows the last week of block 1. Null for a template or a
- * program with no start date and nothing dated to count from.
- *
- * A suggestion and never a rule: days carry their own dates precisely so that
- * a block written up front, a week written on Sunday and a session written the
- * night before are the same row.
- */
-export function suggestDayDate(tree: ProgramTree, weekId: string): string | null {
-  if (tree.athleteId === null) return null;
-  const weeks = tree.blocks.flatMap((block) => block.weeks);
-  const at = weeks.findIndex((week) => week.id === weekId);
-  if (at < 0) return null;
-
-  const dated = weeks[at].days.map((day) => day.scheduledOn).filter((d): d is string => d !== null);
-  if (dated.length > 0) return addDays([...dated].sort().at(-1)!, 1);
-
-  if (tree.startOn) return addDays(tree.startOn, 7 * at);
-  // No start date: a week after the first dated day of the nearest week above.
-  for (let back = at - 1; back >= 0; back--) {
-    const first = weeks[back].days.map((day) => day.scheduledOn).filter((d): d is string => d !== null).sort()[0];
-    if (first) return addDays(first, 7 * (at - back));
-  }
-  return null;
-}
-
 /** "Mon 6 Oct", read as the athlete's calendar day rather than an instant. */
 export function dayDateLabel(day: string | null): string {
   if (!day) return "No date";
@@ -424,4 +393,23 @@ export function dayDateLabel(day: string | null): string {
 /** How many weeks are still drafts -- what the Publish button counts. */
 export function draftWeeks(tree: ProgramTree): number {
   return tree.blocks.reduce((n, block) => n + block.weeks.filter((week) => week.status === "draft").length, 0);
+}
+
+export type WeekState = "draft" | "live" | "logged";
+
+/**
+ * What the outline shows beside a week. Logged beats live: once the athlete
+ * has started a session from one of its days, that is the thing the coach
+ * most needs to know before editing it. Live means the athlete can see it --
+ * the week AND its program published, the same rule as `isLiveDay`. `logged`
+ * is null when the sessions could not be read; the week then shows as draft
+ * or live, never as logged by guess.
+ */
+export function weekState(
+  tree: Pick<ProgramTree, "status">,
+  week: Pick<WeekTree, "status" | "days">,
+  logged: ReadonlySet<string> | null,
+): WeekState {
+  if (logged && week.days.some((d) => logged.has(d.id))) return "logged";
+  return week.status === "published" && tree.status === "published" ? "live" : "draft";
 }
