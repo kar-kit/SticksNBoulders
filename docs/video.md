@@ -192,3 +192,40 @@ that is right for a set proves nothing about the video on it. Six cases, all
 passing: the athlete reads their own clip, the coach reads it (the review loop),
 a stranger cannot and cannot list the bucket to find it, the coach cannot delete
 the clip under review, and the athlete can delete their own. Probe now 42/42.
+
+<!-- BEGIN: video default (compounds by default) -->
+## Which lifts get video: compounds by default, the coach flags the rest
+
+Ruairi, asked which lifts he wants filmed: "Mainly compounds but if you have
+questions on accessories or variations do record too." [Fact] Verbatim from the
+brief. The product reads that as a default the coach can override, not a rule.
+
+`exercises.video_default` is an optional boolean, null on every row written
+before it existed, and null reads as false. When a coach **adds a line** for an
+exercise whose default is on, the Program Editor sends the new line with
+`videoRequired: true`, so the Video box arrives ticked. The coach can untick it,
+and can tick it on any accessory or variation, exactly as before.
+
+What it does not do:
+
+- **It never gates logging.** Nothing in the logger reads it. `video_required`
+  stays a nudge and any set can carry a clip regardless.
+- **It never changes an existing line.** The pre-tick happens once, in the
+  editor, at add time. Swapping a line's exercise, `duplicateWeek` and
+  `copyProgram` leave the flag as the coach set it; both copies carry
+  `video_required` as stored, not as the exercise's default would now say.
+- **The server does not consult it.** `addPrescription` writes the
+  `videoRequired` it was sent (false when absent), so the line's flag is always
+  an explicit choice on the row.
+
+The seed sets it for the three competition lifts only: Squat, Bench Press,
+Deadlift (`VIDEO_DEFAULT_EXERCISES` in `lib/exercises/seed.ts`).
+`npm run exercises:seed` reconciles it on existing rows as well as new ones.
+Order of operations on a live instance: `npm run appwrite:setup` first (adds
+the column), then the seed.
+
+[SME to confirm] Whether variations count as compounds (Pause Squat, Tempo
+Bench Press, Close Grip Bench Press, Sumo Deadlift, Romanian Deadlift ...) is
+Ruairi's call. His quote says to record variations "if you have questions", which
+reads as coach-flagged rather than default. Not guessed at here.
+<!-- END: video default (compounds by default) -->

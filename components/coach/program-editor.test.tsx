@@ -15,6 +15,7 @@ vi.mock("@/lib/exercises/library", () => ({
   fetchExerciseLibrary: async () => [
     { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true },
     { id: "bench", name: "Bench Press", normalisedName: "bench press", isGlobal: true },
+    { id: "deadlift", name: "Deadlift", normalisedName: "deadlift", isGlobal: true, videoDefault: true },
   ],
 }));
 
@@ -215,6 +216,42 @@ describe("the Program Editor grid", () => {
     await user.click(await screen.findByRole("option", { name: "Bench Press" }));
     await waitFor(() =>
       expect(store.send).toHaveBeenCalledWith({ op: "addPrescription", dayId: "d1", exerciseId: "bench", setCount: 1 }),
+    );
+  });
+
+  it("pre-ticks video required on a new line for an exercise whose default is on", async () => {
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), "deadl");
+    await user.click(await screen.findByRole("option", { name: "Deadlift" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({
+        op: "addPrescription",
+        dayId: "d1",
+        exerciseId: "deadlift",
+        setCount: 1,
+        videoRequired: true,
+      }),
+    );
+  });
+
+  it("leaves video required out of a new line when the exercise has no default", async () => {
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), "bench");
+    await user.click(await screen.findByRole("option", { name: "Bench Press" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalled());
+    expect(store.send.mock.calls[0][0]).not.toHaveProperty("videoRequired", true);
+  });
+
+  it("does not touch an existing line's flag when its exercise is swapped for one with a default", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getAllByRole("button", { name: "Squat" })[1]);
+    await user.type(screen.getByRole("combobox", { name: "Exercise for line 2" }), "deadl");
+    await user.click(await screen.findByRole("option", { name: "Deadlift" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l2", exerciseId: "deadlift" }),
     );
   });
 

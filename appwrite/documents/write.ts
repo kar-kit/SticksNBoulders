@@ -150,7 +150,10 @@ export async function createExercise(deps: WriteDeps, actor: Actor, input: Creat
  * the app can correct a typo in one. That is why the seed script reconciles
  * rather than only inserting -- see scripts/seed-exercises.mts.
  */
-export async function createGlobalExercise(deps: WriteDeps, input: CreateExerciseInput) {
+export async function createGlobalExercise(
+  deps: WriteDeps,
+  input: CreateExerciseInput & { videoDefault?: boolean },
+) {
   const name = input.name.trim();
   if (!name) throw new Error("createGlobalExercise: name is required");
 
@@ -165,6 +168,9 @@ export async function createGlobalExercise(deps: WriteDeps, input: CreateExercis
       // No owner. The library belongs to the product, not to whoever ran the
       // seed script from their laptop.
       owner_id: undefined,
+      // Only when true: a row with no default writes exactly what it did
+      // before `video_default` existed, so seeding never depends on the column.
+      ...(input.videoDefault ? { video_default: true } : {}),
       created_at: iso(deps.now()),
     },
     // athleteId is required by the policy's signature but unused for a global
@@ -186,6 +192,23 @@ export async function renameGlobalExercise(
     tableId: "exercises",
     rowId: input.rowId,
     data: { name, normalised_name: normaliseExerciseName(name) },
+    permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
+  });
+}
+
+/**
+ * Sets whether the Program Editor pre-ticks "video required" for a library row.
+ * Only the seed script calls it. Null reads as false, so clearing writes false.
+ */
+export async function setGlobalExerciseVideoDefault(
+  deps: WriteDeps,
+  input: { rowId: string; videoDefault: boolean },
+) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: input.rowId,
+    data: { video_default: input.videoDefault },
     permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
   });
 }

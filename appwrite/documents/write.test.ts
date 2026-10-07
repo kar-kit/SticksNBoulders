@@ -3,6 +3,7 @@ import type { RowWriter } from "./row-writer";
 import {
   createCoachLink,
   createExercise,
+  createGlobalExercise,
   createInviteCode,
   createProfile,
   createSession,
@@ -12,6 +13,7 @@ import {
   SET_HAS_COACH_COMMENTS,
   normaliseExerciseName,
   revokeCoachLink,
+  setGlobalExerciseVideoDefault,
   setLinkSuggestionMode,
   updateSet,
   writeRollup,
@@ -252,6 +254,33 @@ describe("exercise names", () => {
   it("refuses a blank name", async () => {
     const h = harness();
     await expect(createExercise(h.deps, h.actor, { name: "   " })).rejects.toThrow(/name is required/);
+  });
+
+  it("never sets a video default on an exercise typed during a session", async () => {
+    const h = harness();
+    await createExercise(h.deps, h.actor, { name: "Belt Squat" });
+    expect(h.last().data).not.toHaveProperty("video_default");
+  });
+});
+
+describe("a library exercise's video default", () => {
+  it("is written only when true, so a row without one is the row it was before", async () => {
+    const h = harness();
+    await createGlobalExercise(h.deps, { name: "Squat", videoDefault: true });
+    expect(h.last().data).toMatchObject({ is_global: true, video_default: true });
+    await createGlobalExercise(h.deps, { name: "Leg Curl" });
+    expect(h.last().data).not.toHaveProperty("video_default");
+    await createGlobalExercise(h.deps, { name: "Leg Press", videoDefault: false });
+    expect(h.last().data).not.toHaveProperty("video_default");
+  });
+
+  it("is set on an existing row as that one field, keeping the library's stamp", async () => {
+    const h = harness();
+    await setGlobalExerciseVideoDefault(h.deps, { rowId: "ex-squat", videoDefault: true });
+    expect(h.last()).toMatchObject({ op: "update", tableId: "exercises", rowId: "ex-squat", data: { video_default: true } });
+    expect(h.last().permissions).toContain('read("users")');
+    await setGlobalExerciseVideoDefault(h.deps, { rowId: "ex-squat", videoDefault: false });
+    expect(h.last().data).toEqual({ video_default: false });
   });
 });
 
