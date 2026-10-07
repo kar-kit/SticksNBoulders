@@ -23,6 +23,8 @@ export {
   type TeamAdmin,
 } from "./circle-admin";
 
+export { deleteOrphanClip, type ClipStore } from "./clip-admin";
+
 export {
   exercisePermissions,
   invitePermissions,
