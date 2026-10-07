@@ -36,9 +36,21 @@ describe("Button", () => {
     expect(screen.getByRole("button")).toHaveAttribute("type", "submit");
   });
 
-  it.each(["primary", "secondary", "ghost", "danger"] as const)("renders the %s variant", (variant) => {
-    render(<Button variant={variant}>Label</Button>);
-    expect(screen.getByRole("button", { name: "Label" })).toBeInTheDocument();
+  it("styles each variant differently, defaulting to primary", () => {
+    // A destructive action that renders as the primary call to action is the
+    // failure this guards: the variant prop must reach the classes.
+    const classOf = (variant?: "primary" | "secondary" | "ghost" | "danger") => {
+      const { unmount } = render(<Button variant={variant}>Label</Button>);
+      const className = screen.getByRole("button", { name: "Label" }).className;
+      unmount();
+      return className;
+    };
+    const variants = (["primary", "secondary", "ghost", "danger"] as const).map(classOf);
+    expect(new Set(variants).size).toBe(4);
+    expect(classOf()).toBe(variants[0]);
+    expect(variants[0]).toContain("bg-accent-fill");
+    expect(variants[3]).toContain("border-danger-line");
+    expect(variants[3]).not.toContain("bg-accent-fill");
   });
 });
 

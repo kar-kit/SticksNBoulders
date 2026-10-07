@@ -266,6 +266,20 @@ describe("backoff targets in the logger", () => {
     expect(targets[2].loadKg).toBe(142.5); // 80% of 180, not of the later 200
   });
 
+  it("ignores a heavier line logged before the top line", () => {
+    // A heavy single first, then the line that carries the rule. The backoff is
+    // 90% of the triple, never of the single that came before it.
+    const plan = planDay([
+      line({ id: "single", setCount: 1, reps: 1, load: "@9" }),
+      line({ id: "top", setCount: 1, backoff: "2 x 90%" }),
+    ])[0];
+    const logged = [set(200, 1, 9), set(170, 3, 8)];
+    const targets = targetsFor(plan, {}, logged);
+    expect(targets.map((t) => t.prescriptionId)).toEqual(["single", "top", "top", "top"]);
+    expect(targets[2].backoff?.topSet).toEqual({ loadKg: 170, reps: 3, rpe: 8 });
+    expect(targets[2].loadKg).toBe(152.5); // 153 exact; 90% of 200 would be 180
+  });
+
   it("works on a freeform top line: the rule needs the athlete's set, not a parseable load", () => {
     const plan = planDay([line({ id: "top", load: "work up to a heavy triple", loadKind: "freeform", backoff: "2 x 85%" })])[0];
     const before = targetsFor(plan, {});
