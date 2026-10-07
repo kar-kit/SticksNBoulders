@@ -116,6 +116,7 @@ describe("a URL edited to reach somebody else", () => {
     expect(await screen.findByText("No longer linked")).toBeInTheDocument();
     expect(screen.queryByText(/Joey Pang/)).not.toBeInTheDocument();
     expect(programs.fetchPrograms).not.toHaveBeenCalled();
+    expect(lines.fetchTracedLine).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
   });
 
