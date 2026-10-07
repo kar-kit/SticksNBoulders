@@ -19,6 +19,23 @@ vi.mock("@/lib/exercises/library", () => ({
   ],
 }));
 
+const athleteMaxes = vi.hoisted(() => ({ entries: [] as unknown[], fail: false }));
+vi.mock("@/lib/strength/reference-max-store", () => ({
+  fetchReferenceMaxes: async () => {
+    if (athleteMaxes.fail) throw new Error("offline");
+    return athleteMaxes.entries;
+  },
+  fetchEstimatedMaxes: async () => new Map(),
+}));
+const squatMax = {
+  id: "m1",
+  exerciseId: "squat",
+  kind: "training",
+  valueKg: 200,
+  effectiveFrom: "2026-09-01T00:00:00Z",
+  recordedBy: "ruairi",
+};
+
 const store = vi.hoisted(() => ({
   tree: null as unknown,
   send: vi.fn<(op: Record<string, unknown>) => Promise<{ rowId: string }>>(),
@@ -101,6 +118,8 @@ function line(id: string, exerciseId: string, position: number, over: Record<str
 beforeEach(() => {
   vi.clearAllMocks();
   viewer.id = "ruairi";
+  athleteMaxes.entries = [squatMax];
+  athleteMaxes.fail = false;
   store.tree = tree();
   store.send.mockResolvedValue({ rowId: "new" });
 });
@@ -322,5 +341,57 @@ describe("the Program Editor grid", () => {
     store.tree = null;
     render(<ProgramEditor programId="nope" />);
     expect(await screen.findByText("No such program")).toBeInTheDocument();
+  });
+});
+
+describe("a percentage of another lift (docs/reference-lift.md)", () => {
+  it("takes `of <lift>` in the load cell as the reference, names it, and warns that its max is missing", async () => {
+    const user = userEvent.setup();
+    const day = await ready();
+    // Squat has a training max, so the own-exercise 75% resolves: no warning.
+    expect(within(day).queryByText(/No Squat training max/)).not.toBeInTheDocument();
+    const load = screen.getByRole("textbox", { name: "Load, line 2" });
+    await user.clear(load);
+    await user.type(load, "75% of bench");
+    await user.tab();
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l2", referenceExerciseId: "bench" }),
+    );
+    expect(within(day).getByText("Percent · 75% of Bench Press (training max)")).toBeInTheDocument();
+    // The stored load stays as the grammar knows it.
+    expect(screen.getByRole("textbox", { name: "Load, line 2" })).toHaveValue("75%");
+    expect(await within(day).findByText('No Bench Press training max for Joey · they see "75% of Bench Press"')).toBeInTheDocument();
+  });
+
+  it("gives a new line on the same exercise the reference used last in the program", async () => {
+    const user = userEvent.setup();
+    const t = tree();
+    t.blocks[0].weeks[0].days[0].prescriptions[1].referenceExerciseId = "bench";
+    store.tree = t;
+    const day = await ready();
+    await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), "squat");
+    await user.click(await screen.findByRole("option", { name: "Squat" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({
+        op: "addPrescription",
+        dayId: "d1",
+        exerciseId: "squat",
+        setCount: 1,
+        referenceExerciseId: "bench",
+      }),
+    );
+  });
+
+  it("warns on an own-exercise percentage with no max, as the resolver's comment always claimed", async () => {
+    athleteMaxes.entries = [];
+    const day = await ready();
+    expect(await within(day).findByText('No Squat training max for Joey · they see "75%"')).toBeInTheDocument();
+  });
+
+  it("says nothing about maxes it could not read: unknown is not missing", async () => {
+    athleteMaxes.fail = true;
+    const day = await ready();
+    await within(day).findByText("Percent · 75% of training max");
+    expect(within(day).queryByText(/training max for/)).not.toBeInTheDocument();
   });
 });

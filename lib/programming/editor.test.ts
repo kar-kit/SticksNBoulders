@@ -8,9 +8,12 @@ import {
   parseRepsCell,
   parseRestCell,
   parseSetsCell,
+  rememberedReference,
   suggestDayDate,
+  unresolvedWarning,
 } from "./editor";
-import type { Prescription, ProgramTree } from "./program";
+import type { Prescription, ProgramOpInput, ProgramTree } from "./program";
+import type { Exercise } from "@/lib/exercises/match";
 
 const line = (over: Partial<Prescription> = {}): Prescription => ({
   id: "l1",
@@ -219,5 +222,136 @@ describe("dating a new day", () => {
 
   it("counts the draft weeks the Publish button is about", () => {
     expect(draftWeeks(tree())).toBe(2);
+  });
+});
+
+describe("a percentage of another lift (docs/reference-lift.md)", () => {
+  const library: Exercise[] = [
+    { id: "bench", name: "Bench Press", normalisedName: "bench press", isGlobal: true },
+    { id: "cgbp", name: "Close Grip Bench Press", normalisedName: "close grip bench press", isGlobal: true },
+    { id: "tempo", name: "Tempo Bench", normalisedName: "tempo bench", isGlobal: false, ownerId: "joey" },
+  ];
+  const tempo = (over: Partial<Prescription> = {}) => line({ exerciseId: "tempo", load: "70%", ...over });
+
+  it("strips `of <lift>` off the load into the reference, so the stored load stays 70%", () => {
+    expect(commitCell(tempo({ load: null, loadKind: null }), "load", "70% of bench", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", load: "70%", referenceExerciseId: "bench" },
+    });
+    // Load already 70%: only the reference is sent.
+    expect(commitCell(tempo(), "load", "70% of bench", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", referenceExerciseId: "bench" },
+    });
+    expect(commitCell(tempo(), "load", "70% of bench @8", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", load: "70% @8", referenceExerciseId: "bench" },
+    });
+    expect(commitCell(tempo(), "load", "70% of bench of tested", library)).toMatchObject({
+      op: { load: "70% of tested", referenceExerciseId: "bench" },
+    });
+  });
+
+  it("leaves `of tested` alone: a kind, not a lift, and the reference untouched", () => {
+    expect(commitCell(tempo({ referenceExerciseId: "bench" }), "load", "70% of tested", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", load: "70% of tested" },
+    });
+  });
+
+  it("clears the reference with `of own`", () => {
+    expect(commitCell(tempo({ referenceExerciseId: "bench" }), "load", "70% of own", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", referenceExerciseId: null },
+    });
+  });
+
+  it("lets a lift it cannot find land as freeform, as today -- parsing never fails", () => {
+    expect(commitCell(tempo(), "load", "75% of nonsense", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", load: "75% of nonsense" },
+    });
+    expect(describeLoad("75% of nonsense").kind).toBe("freeform");
+  });
+
+  it("writes nothing when the typed lift is the one already set", () => {
+    expect(commitCell(tempo({ referenceExerciseId: "bench" }), "load", "70% of bench press", library)).toEqual({
+      unchanged: true,
+    });
+  });
+
+  it("keeps the reference through a load edit, and shows it before the server answers", () => {
+    const referenced = tempo({ referenceExerciseId: "bench" });
+    const edited = commitCell(referenced, "load", "@8", library);
+    expect(edited).toEqual({ op: { op: "updatePrescription", prescriptionId: "l1", load: "@8" } });
+    expect(applyLineOp(referenced, (edited as { op: ProgramOpInput }).op).referenceExerciseId).toBe("bench");
+    expect(
+      applyLineOp(tempo(), { op: "updatePrescription", prescriptionId: "l1", referenceExerciseId: "bench" }).referenceExerciseId,
+    ).toBe("bench");
+  });
+
+  it("says which lift the percentage is of, and only where it matters", () => {
+    expect(describeLoad("70%", "Bench Press").label).toBe("Percent · 70% of Bench Press (training max)");
+    expect(describeLoad("70% of tested @8", "Bench Press").label).toBe(
+      "Capped · 70% of Bench Press (tested max), stop at RPE 8",
+    );
+    expect(describeLoad(null, "Bench Press").label).toBe("No load · a percentage here is of Bench Press");
+    expect(describeLoad("@8", "Bench Press").label).toBe("RPE 8 · athlete picks the weight");
+    expect(describeLoad("70%").label).toBe("Percent · 70% of training max");
+  });
+
+  describe("the warning on a percentage the athlete gets no kilos for", () => {
+    const names = new Map([
+      ["bench", "Bench Press"],
+      ["tempo", "Tempo Bench"],
+    ]);
+    const max = (exerciseId: string, valueKg: number, kind: "training" | "tested" = "training") => ({
+      id: `${exerciseId}-${kind}`,
+      exerciseId,
+      kind,
+      valueKg,
+      effectiveFrom: "2026-10-01T00:00:00Z",
+      recordedBy: "ruairi",
+    });
+    const warn = (l: Prescription, entries: ReturnType<typeof max>[] | null) =>
+      unresolvedWarning(l, {
+        maxes: entries ? { entries, estimated: new Map() } : null,
+        nameOf: (id) => names.get(id),
+        athleteName: "Joey",
+        asOf: new Date("2026-10-15T00:00:00Z"),
+      });
+
+    it("names the missing reference max, and ignores the variation's own", () => {
+      expect(warn(tempo({ referenceExerciseId: "bench" }), [max("tempo", 120)])).toBe(
+        'No Bench Press training max for Joey · they see "70% of Bench Press"',
+      );
+      expect(warn(tempo({ referenceExerciseId: "bench" }), [max("bench", 150)])).toBeNull();
+      expect(warn(tempo({ referenceExerciseId: "bench", load: "70% of tested" }), [max("bench", 150)])).toBe(
+        'No Bench Press tested max for Joey · they see "70% of Bench Press"',
+      );
+    });
+
+    it("warns on an own-exercise percentage too, as prescription.ts always said it did", () => {
+      expect(warn(tempo(), [])).toBe('No Tempo Bench training max for Joey · they see "70%"');
+      expect(warn(tempo(), [max("tempo", 120)])).toBeNull();
+    });
+
+    it("says nothing for a non-percentage, or while the maxes are unknown", () => {
+      expect(warn(tempo({ load: "@8", referenceExerciseId: "bench" }), [])).toBeNull();
+      expect(warn(tempo({ referenceExerciseId: "bench" }), null)).toBeNull();
+    });
+  });
+
+  it("remembers the last reference used for the same exercise in the program", () => {
+    const program = (lines: Prescription[][]): ProgramTree =>
+      ({
+        athleteId: "joey",
+        blocks: [
+          {
+            weeks: lines.map((days, w) => ({ id: `w${w}`, days: [{ id: `d${w}`, prescriptions: days }] })),
+          },
+        ],
+      }) as unknown as ProgramTree;
+    expect(rememberedReference(program([[tempo({ referenceExerciseId: "bench" })]]), "tempo")).toBe("bench");
+    expect(rememberedReference(program([[tempo({ referenceExerciseId: "bench" })]]), "squat")).toBeNull();
+    // `of own` on the later line stops the inheritance.
+    expect(
+      rememberedReference(program([[tempo({ referenceExerciseId: "bench" })], [tempo({ referenceExerciseId: null })]]), "tempo"),
+    ).toBeNull();
+    expect(rememberedReference(program([[tempo({ referenceExerciseId: "cgbp" })], [line()]]), "tempo")).toBe("cgbp");
   });
 });

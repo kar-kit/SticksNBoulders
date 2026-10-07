@@ -1,7 +1,9 @@
-import { parsePrescription, type PrescriptionKind } from "./prescription";
+import { parsePrescription, resolvePrescription, type PrescriptionKind } from "./prescription";
 import { describeBackoff, formatBackoff, parseBackoff } from "./backoff";
 import { addDays, type Prescription, type ProgramOpInput, type ProgramTree } from "./program";
-import type { MaxKind } from "@/lib/strength/reference-max";
+import { basisMaxesFor, referenceOf } from "./session-plan";
+import type { EstimatedInput, MaxKind, ReferenceMaxEntry } from "@/lib/strength/reference-max";
+import { rankExercises, type Exercise } from "@/lib/exercises/match";
 
 /**
  * The Program Editor's rules, as pure functions. Order 19.
@@ -39,25 +41,140 @@ const trim = (value: number) => (Number.isInteger(value) ? String(value) : Strin
  * This is the indicator Order 18 owes the coach: parsing never fails, so a
  * mistyped `75%%` or a bare `8` meant as RPE becomes something else silently
  * unless the screen says so. The kind leads, because the kind is the mistake.
+ *
+ * `reference` is the name of the lift a percentage on this line is OF, when it
+ * is not the line's own (docs/reference-lift.md). It shows where it matters:
+ * on a percentage, and on an empty cell -- a new row that inherited it, about
+ * to be typed into. Under `@8` or `142.5` it is kept but means nothing.
  */
-export function describeLoad(text: string | null): { kind: PrescriptionKind | null; label: string } {
+export function describeLoad(
+  text: string | null,
+  reference?: string | null,
+): { kind: PrescriptionKind | null; label: string } {
   const spec = text ? parsePrescription(text) : null;
-  if (!spec) return { kind: null, label: "No load" };
+  if (!spec) return { kind: null, label: reference ? `No load · a percentage here is of ${reference}` : "No load" };
+  const of = (percent: number, basis: MaxKind) =>
+    reference ? `${trim(percent)}% of ${reference} (${BASIS_WORDS[basis]})` : `${trim(percent)}% of ${BASIS_WORDS[basis]}`;
   switch (spec.kind) {
     case "fixed":
       return { kind: "fixed", label: `Fixed · ${trim(spec.loadKg)} kg` };
     case "percent":
-      return { kind: "percent", label: `Percent · ${trim(spec.percent)}% of ${BASIS_WORDS[spec.basis]}` };
+      return { kind: "percent", label: `Percent · ${of(spec.percent, spec.basis)}` };
     case "rpe":
       return { kind: "rpe", label: `RPE ${trim(spec.rpe)} · athlete picks the weight` };
     case "capped":
       return {
         kind: "capped",
-        label: `Capped · ${trim(spec.percent)}% of ${BASIS_WORDS[spec.basis]}, stop at RPE ${trim(spec.rpe)}`,
+        label: `Capped · ${of(spec.percent, spec.basis)}, stop at RPE ${trim(spec.rpe)}`,
       };
     case "freeform":
       return { kind: "freeform", label: "Freeform · shown as written" };
   }
+}
+
+/** The maxes the editor reads for the athlete: the same two sources the logger uses. */
+export interface EditorMaxes {
+  entries: readonly ReferenceMaxEntry[];
+  estimated: ReadonlyMap<string, EstimatedInput>;
+}
+
+/**
+ * The warning beside a percentage that will reach the athlete with no kilos:
+ * "No Bench Press training max for Joey". Null when it resolves, when it is
+ * not a percentage, or when `maxes` is null -- not yet loaded, failed, or a
+ * template with nobody's maxes to read. Unknown is not missing.
+ *
+ * The same resolver as the athlete's phone, with no session max: the editor
+ * cannot know today's top set, and a stored max is what the coach can fix.
+ * For a reference row it names the referenced lift, because that is the max
+ * the coach has to set; the variation's own max is never consulted.
+ */
+export function unresolvedWarning(
+  line: Prescription,
+  context: {
+    maxes: EditorMaxes | null;
+    nameOf: (exerciseId: string) => string | null | undefined;
+    athleteName: string | null;
+    asOf: Date;
+  },
+): string | null {
+  if (!context.maxes) return null;
+  const spec = line.load ? parsePrescription(line.load) : null;
+  if (spec?.kind !== "percent" && spec?.kind !== "capped") return null;
+  const reference = referenceOf(line, spec);
+  const lift = reference ?? line.exerciseId;
+  const name = context.nameOf(lift) || "this lift";
+  const maxes = basisMaxesFor(lift, context.maxes.entries, context.maxes.estimated, context.asOf);
+  const resolved = resolvePrescription(spec, { ...maxes, session: null }, reference ? { name } : undefined);
+  if (!resolved.unresolved) return null;
+  const who = context.athleteName ? ` for ${context.athleteName}` : "";
+  return `No ${name} ${BASIS_WORDS[spec.basis]}${who} · they see "${resolved.display}"`;
+}
+
+/**
+ * The reference a new line on this exercise starts with: the one on the last
+ * line of the same exercise in this program, in program order, or null.
+ *
+ * This is "typed once per variation per program" (docs/reference-lift.md §1):
+ * the coach says `of bench` on the first Tempo Bench line and every Tempo
+ * Bench line added after it inherits it, including through duplicated weeks,
+ * which carry the column. `of own` on the latest line stops the inheritance.
+ * [Inference] Program order rather than edit time: the tree carries no
+ * per-cell history, and coaches write a block forwards.
+ */
+export function rememberedReference(tree: ProgramTree, exerciseId: string): string | null {
+  let last: Prescription | null = null;
+  for (const block of tree.blocks)
+    for (const week of block.weeks)
+      for (const day of week.days)
+        for (const line of day.prescriptions) if (line.exerciseId === exerciseId) last = line;
+  const reference = last?.referenceExerciseId ?? null;
+  return reference && reference !== exerciseId ? reference : null;
+}
+
+/* -------------------------------------------------------------------------
+ * The load cell's `of <lift>` clause
+ * ---------------------------------------------------------------------- */
+
+/** The words `of tested` / `of training max` / `of e1rm` already mean: a KIND, never a lift. */
+const BASIS_WORD = /^(?:tested|training(?:\s+max)?|e1rm|estimated)$/i;
+/** ` of <words>`, up to the next ` of`, an RPE, or the end of the cell. */
+const OF_CLAUSE = /\s*\bof\s+(.+?)(?=\s+of\s|\s*@|\s+rpe\s*\d|\s*$)/gi;
+
+/**
+ * Splits a typed `of <lift>` out of a load cell: `70% of bench` is load `70%`
+ * on the bench's max. The grammar is untouched -- the stored load stays `70%`,
+ * so the athlete's parser, the copy rules and every existing cell are what
+ * they were -- and the lift goes to `referenceExerciseId`.
+ *
+ *   70% of bench          -> 70%, bench
+ *   70% of bench @8       -> 70% @8, bench
+ *   70% of bench of tested-> 70% of tested, bench
+ *   70% of tested         -> untouched: a kind, not a lift
+ *   70% of own            -> 70%, null (back to the line's own max)
+ *   75% of nonsense       -> untouched, so it lands as freeform as it does today
+ *
+ * The lift is matched against the athlete's library with the typeahead's own
+ * ranking, best match first. Returns `reference: undefined` when the cell
+ * names no lift, which leaves the line's reference alone.
+ */
+export function splitReference(
+  text: string,
+  library: readonly Exercise[],
+): { load: string; reference?: string | null } {
+  if (!text.includes("%")) return { load: text };
+  for (const match of text.matchAll(OF_CLAUSE)) {
+    const words = match[1].trim();
+    if (BASIS_WORD.test(words)) continue;
+    const load = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).trim();
+    const spec = parsePrescription(load);
+    // Only a percentage can be OF something. Anything else stays as typed.
+    if (spec?.kind !== "percent" && spec?.kind !== "capped") return { load: text };
+    if (/^own$/i.test(words)) return { load, reference: null };
+    const best = rankExercises(words, library, 1)[0];
+    return best ? { load, reference: best.exercise.id } : { load: text };
+  }
+  return { load: text };
 }
 
 /* -------------------------------------------------------------------------
@@ -151,6 +268,8 @@ export function commitCell(
   line: Prescription,
   column: Exclude<Column, "exercise">,
   text: string,
+  /** The athlete's library, for a load cell naming another lift (`70% of bench`). */
+  library: readonly Exercise[] = [],
 ): { op: ProgramOpInput } | { unchanged: true } | { error: string } {
   if (text.trim() === cellText(line, column).trim()) return { unchanged: true };
   const base = { op: "updatePrescription" as const, prescriptionId: line.id };
@@ -163,10 +282,23 @@ export function commitCell(
       const parsed = parseRepsCell(text);
       return parsed.ok ? { op: { ...base, ...parsed.value } } : { error: parsed.reason };
     }
-    case "load":
+    case "load": {
       // Anything goes: freeform is the escape hatch, and the indicator says
-      // what it landed as.
-      return text.length > 120 ? { error: "Load is 120 characters at most" } : { op: { ...base, load: text } };
+      // what it landed as. A named lift comes off the text into its column.
+      const { load, reference } = splitReference(text, library);
+      if (load.length > 120) return { error: "Load is 120 characters at most" };
+      if (reference === undefined) return { op: { ...base, load } };
+      const loadChanged = load.trim() !== (line.load ?? "").trim();
+      const referenceChanged = reference !== (line.referenceExerciseId ?? null);
+      if (!loadChanged && !referenceChanged) return { unchanged: true };
+      return {
+        op: {
+          ...base,
+          ...(loadChanged ? { load } : {}),
+          ...(referenceChanged ? { referenceExerciseId: reference } : {}),
+        },
+      };
+    }
     case "rest": {
       const parsed = parseRestCell(text);
       return parsed.ok ? { op: { ...base, restSeconds: parsed.value } } : { error: parsed.reason };
@@ -202,6 +334,8 @@ export function applyLineOp(line: Prescription, op: ProgramOpInput): Prescriptio
     notes: op.notes === undefined ? line.notes : op.notes?.trim() || null,
     backoff: op.backoff === undefined ? line.backoff : op.backoff?.trim() || null,
     videoRequired: op.videoRequired ?? line.videoRequired ?? false,
+    referenceExerciseId:
+      op.referenceExerciseId === undefined ? (line.referenceExerciseId ?? null) : op.referenceExerciseId,
   };
 }
 

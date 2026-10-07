@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchExerciseLibrary } from "@/lib/exercises/library";
+import { fetchEstimatedMaxes, fetchReferenceMaxes } from "@/lib/strength/reference-max-store";
 import type { Exercise } from "@/lib/exercises/match";
 import {
   applyLineOp,
@@ -21,8 +22,11 @@ import {
   describeLoad,
   draftWeeks,
   moveCell,
+  rememberedReference,
   suggestDayDate,
+  unresolvedWarning,
   type Column,
+  type EditorMaxes,
 } from "@/lib/programming/editor";
 import type { DayTree, Prescription, ProgramOpInput, ProgramTree } from "@/lib/programming/program";
 import { fetchProgramTree, sendProgramOp } from "@/lib/programming/program-store";
@@ -76,6 +80,8 @@ export function ProgramEditor({ programId }: { programId: string }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [athleteName, setAthleteName] = useState<string | null>(null);
+  /** The athlete's maxes, for the unresolved-percentage warning. Null until read: unknown is not missing. */
+  const [maxes, setMaxes] = useState<EditorMaxes | null>(null);
   const [blockId, setBlockId] = useState<string | null>(null);
   const [weekId, setWeekId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -98,6 +104,12 @@ export function ProgramEditor({ programId }: { programId: string }) {
       void fetchExerciseLibrary(owner)
         .then(setExercises)
         .catch(() => {});
+      if (tree.athleteId) {
+        const athleteId = tree.athleteId;
+        void Promise.all([fetchReferenceMaxes(athleteId), fetchEstimatedMaxes(athleteId)])
+          .then(([entries, estimated]) => setMaxes({ entries, estimated }))
+          .catch(() => {});
+      }
       if (tree.athleteId && tree.athleteId !== tree.coachId) {
         void fetchAthleteNames([tree.athleteId])
           .then((found) => setAthleteName(found[0]?.name ?? null))
@@ -110,6 +122,17 @@ export function ProgramEditor({ programId }: { programId: string }) {
   const block = tree?.blocks.find((b) => b.id === blockId) ?? tree?.blocks[0] ?? null;
   const week = block?.weeks.find((w) => w.id === weekId) ?? block?.weeks[0] ?? null;
   const names = useMemo(() => new Map(exercises.map((e) => [e.id, e.name])), [exercises]);
+  /** Beside each percentage the athlete will get no kilos for: which max is missing. */
+  const warningFor = useCallback(
+    (line: Prescription) =>
+      unresolvedWarning(line, {
+        maxes,
+        nameOf: (id) => names.get(id),
+        athleteName: tree?.athleteId === tree?.coachId ? null : athleteName,
+        asOf: new Date(),
+      }),
+    [maxes, names, athleteName, tree?.athleteId, tree?.coachId],
+  );
 
   /** A structural write: send it, then read the tree back. */
   const run = async (op: ProgramOpInput): Promise<string | null> => {
@@ -385,6 +408,8 @@ export function ProgramEditor({ programId }: { programId: string }) {
                   busy={busy}
                   names={names}
                   exercises={exercises}
+                  warningFor={warningFor}
+                  referenceFor={(exerciseId) => rememberedReference(tree, exerciseId)}
                   run={run}
                   editLine={editLine}
                   createExercise={createExercise}
@@ -439,12 +464,15 @@ interface DayEditorProps {
   busy: boolean;
   names: ReadonlyMap<string, string>;
   exercises: readonly Exercise[];
+  /** docs/reference-lift.md: the missing-max warning, and the reference a new line inherits. */
+  warningFor: (line: Prescription) => string | null;
+  referenceFor: (exerciseId: string) => string | null;
   run: (op: ProgramOpInput) => Promise<string | null>;
   editLine: (line: Prescription, op: ProgramOpInput) => Promise<string | null>;
   createExercise: (name: string) => Promise<Exercise | null>;
 }
 
-function DayEditor({ day, index, editable, busy, names, exercises, run, editLine, createExercise }: DayEditorProps) {
+function DayEditor({ day, index, editable, busy, names, exercises, warningFor, referenceFor, run, editLine, createExercise }: DayEditorProps) {
   const title = day.label ?? `Day ${index + 1}`;
   const grid = useRef<HTMLTableSectionElement>(null);
   const [focusAfter, setFocusAfter] = useState<{ lineId: string; col: Column } | null>(null);
@@ -505,7 +533,7 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
   };
 
   const commit = async (line: Prescription, column: Exclude<Column, "exercise">, text: string) => {
-    const result = commitCell(line, column, text);
+    const result = commitCell(line, column, text, exercises);
     const key = `${line.id}:${column}`;
     if ("unchanged" in result) return;
     if ("error" in result) return setErrors((prev) => ({ ...prev, [key]: result.error }));
@@ -521,7 +549,17 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
   const addLine = async (exercise: Exercise) => {
     // The exercise's video default pre-ticks the box; the coach can untick it.
     const videoRequired = exercise.videoDefault ? true : undefined;
-    const id = await run({ op: "addPrescription", dayId: day.id, exerciseId: exercise.id, setCount: 1, videoRequired });
+    // Typed once per variation per program: a new Tempo Bench line inherits
+    // the last Tempo Bench line's reference lift. Sent only when there is one.
+    const referenceExerciseId = referenceFor(exercise.id) ?? undefined;
+    const id = await run({
+      op: "addPrescription",
+      dayId: day.id,
+      exerciseId: exercise.id,
+      setCount: 1,
+      videoRequired,
+      referenceExerciseId,
+    });
     if (id) setFocusAfter({ lineId: id, col: "sets" });
   };
 
@@ -569,7 +607,11 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
         <tbody ref={grid}>
           {lines.map((line, row) => {
             const name = names.get(line.exerciseId) ?? "Exercise";
-            const loadKind = describeLoad(line.load);
+            const loadKind = describeLoad(
+              line.load,
+              line.referenceExerciseId ? (names.get(line.referenceExerciseId) ?? "another lift") : null,
+            );
+            const warning = warningFor(line);
             return (
               <tr key={line.id} aria-label={`${title} line ${row + 1}: ${name}`} className="align-top">
                 <td className="w-64 px-1 py-0.5">
@@ -656,7 +698,9 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
                         aria-invalid={errors[key] ? true : undefined}
                         disabled={!editable}
                         defaultValue={text}
-                        key={text}
+                        // The reference is part of what the load cell shows, so
+                        // `70% of bench` over a stored `70%` puts the cell back.
+                        key={column === "load" ? `${text}|${line.referenceExerciseId ?? ""}` : text}
                         onKeyDown={(e) => onKey(e, row, col)}
                         onBlur={(e) => void commit(line, column as Exclude<Column, "exercise">, e.target.value)}
                         className={cn(
@@ -670,6 +714,13 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
                         // are caught here or not at all.
                         <span className="block px-1 pt-0.5 text-caption text-muted" data-kind={loadKind.kind ?? "none"}>
                           {loadKind.label}
+                        </span>
+                      ) : null}
+                      {column === "load" && warning ? (
+                        // The athlete will get the bare percentage. Said here,
+                        // where the coach can still set the max.
+                        <span className="block px-1 pt-0.5 text-caption text-danger-line" data-kind="unresolved">
+                          {warning}
                         </span>
                       ) : null}
                       {column === "backoff" && line.backoff ? (
