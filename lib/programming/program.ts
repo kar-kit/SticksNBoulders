@@ -431,6 +431,15 @@ const removePrescription = z.object({ op: z.literal("removePrescription"), presc
 const publishProgram = z.object({ op: z.literal("publishProgram"), programId: rowId });
 
 /**
+ * Puts one week on the athlete's Today. If its program is not live yet the
+ * program goes live with it -- a published week under a draft program reaches
+ * nobody, so without that the first week of a week-at-a-time block could not
+ * be released. Pulling a week back is the existing `updateWeek` with
+ * `status: "draft"`; the program stays published.
+ */
+const publishWeek = z.object({ op: z.literal("publishWeek"), weekId: rowId });
+
+/**
  * Structural removals. Each cascades to the rows beneath it, children first,
  * so a removal that fails halfway leaves orphans `assembleProgram` already
  * drops rather than a parent pointing at nothing. None of them can reach a
@@ -511,6 +520,7 @@ export const programOp = z.discriminatedUnion("op", [
   removePrescription,
   reorder,
   publishProgram,
+  publishWeek,
   removeBlock,
   removeWeek,
   removeDay,
