@@ -62,6 +62,19 @@ describe("ExportLog", () => {
     expect(exporter.deliverFile).not.toHaveBeenCalled();
   });
 
+  it("claims nothing was exported when the share sheet is dismissed", async () => {
+    exporter.buildTrainingLogExport.mockResolvedValue(built());
+    exporter.deliverFile.mockResolvedValue(false);
+    render(<ExportLog athleteId="ath" athleteName="Joey" audience="athlete" />);
+    await userEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => expect(exporter.deliverFile).toHaveBeenCalled());
+    // Settled and ready to try again, with no success line for a file that
+    // never left the phone.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Export your training log" })).toBeEnabled());
+    expect(screen.getByRole("status")).not.toHaveTextContent("Exported");
+  });
+
   it("reports rows it could not read", async () => {
     exporter.buildTrainingLogExport.mockResolvedValue(built({ skipped: 1 }));
     render(<ExportLog athleteId="ath" athleteName="Joey" audience="athlete" />);
