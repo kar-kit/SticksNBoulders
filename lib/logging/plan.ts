@@ -27,8 +27,8 @@ export interface PlannedRow {
   /**
    * The athlete asked for this row with Add set, or it sits behind one they
    * did. Planned rows survive moving to another exercise; the automatic row
-   * that follows every confirm does not, which is how the screen behaved
-   * before and keeps a trail of untouched rows off every exercise.
+   * that tapping an exercise's name opens does not, which keeps a trail of
+   * untouched rows off every exercise.
    */
   planned: boolean;
   /**
@@ -108,45 +108,44 @@ export const headOf = (rows: readonly PlannedRow[], exerciseId: string): Planned
  * a back-off is one number changed. Everything already planned for the
  * exercise is marked planned too: the athlete has committed to that sequence,
  * and it should not vanish if they glance at another lift.
+ *
+ * The suggestion only counts when nothing is planned, so the new row follows
+ * the last logged set directly -- that set is what the engine priced it from.
+ * Behind a planned row it would be pricing the wrong set, and the row above is
+ * the athlete's own numbers, which a suggestion never overwrites.
  */
 export function addRow(
   rows: readonly PlannedRow[],
   exerciseId: string,
   lastLogged: LoggedValues | null,
   newId: () => string,
+  suggestion: Suggestion | null = null,
 ): PlannedRow[] {
   const mine = rowsOf(rows, exerciseId);
   const above = mine.at(-1) ?? lastLogged;
   const marked = rows.map((row) => (row.exerciseId === exerciseId ? { ...row, planned: true } : row));
-  return [...marked, rowAfter(exerciseId, above ?? null, newId, true)];
+  return [...marked, rowAfter(exerciseId, above ?? null, newId, true, mine.length === 0 ? suggestion : null)];
 }
 
 /**
  * The plan once a row has been logged.
  *
  * The confirmed row leaves. If the exercise still has rows waiting, the next
- * one becomes the head and nothing new is added -- the athlete already said
- * what comes next, and a suggestion never overwrites numbers they typed. If it
- * has none, a new row takes its place: the suggestion if the coach's switch
- * let one through, otherwise a repeat of the set just logged, which is the
- * one-tap straight set the logger was built around.
+ * one becomes the head. If it has none, nothing takes its place: confirming
+ * means "done", and a fresh row appearing under every tick read as the app
+ * adding a set the athlete never asked for. Add set is the one way to get
+ * another row, and it carries the prefill and the suggestion this used to.
  */
 export function afterConfirm(
   rows: readonly PlannedRow[],
   confirmedId: string,
-  logged: LoggedValues,
-  newId: () => string,
-  suggestion: Suggestion | null = null,
-): { rows: PlannedRow[]; next: PlannedRow } {
+): { rows: PlannedRow[]; next: PlannedRow | null } {
   const confirmed = rows.find((row) => row.clientSetId === confirmedId);
   const rest = rows.filter((row) => row.clientSetId !== confirmedId);
   if (!confirmed) {
     throw new Error(`afterConfirm: no planned row ${confirmedId}`);
   }
-  const waiting = headOf(rest, confirmed.exerciseId);
-  if (waiting) return { rows: rest, next: waiting };
-  const next = rowAfter(confirmed.exerciseId, logged, newId, false, suggestion);
-  return { rows: [...rest, next], next };
+  return { rows: rest, next: headOf(rest, confirmed.exerciseId) };
 }
 
 /** Drops a planned row. The athlete changed their mind about a set not yet done. */

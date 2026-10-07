@@ -339,7 +339,7 @@ describe("prefilling a backoff row", () => {
 
   it("the row after the top set holds the backoff load, as the coach's number, saying where it came from", () => {
     const logged = [set(185, 3, 8)];
-    // The row afterConfirm builds: a repeat of the set just logged.
+    // The row Add set builds after the top set: a repeat of the set just logged.
     const [next] = prescribeNewRows([], [row("r2", { loadKg: 185, reps: 3 })], context(logged));
     expect(next).toMatchObject({
       loadKg: 165,

@@ -76,8 +76,9 @@ import { useSuggestionMode } from "@/lib/coach/use-suggestion-mode";
  *
  * An athlete touches the set row twenty to forty times a session, one-handed,
  * breathing hard. Everything here bends to that: no keyboard ever appears, the
- * common case of repeating the previous set is one tap on the confirm square,
- * and exactly one row on the screen carries that square.
+ * common case of repeating the previous set is Add set then the confirm square
+ * with nothing typed, and exactly one row per exercise carries that square.
+ * Confirming means done: it never conjures the next row.
  */
 type Phase = "logging" | "confirming" | "finished";
 
@@ -333,13 +334,13 @@ export function LogScreen() {
    * Rows that just appeared, given the coach's target for the set they will
    * be (rule 1 of the prefill order, and rule 2 for a weight priced off
    * today's top set). Rows already on screen keep whatever the athlete typed.
-   * `justLogged` is the set the confirm path has not seen land in state yet.
+   * Rows only appear from Add set or an exercise being opened, never in the
+   * same tick as a confirm, so the logged sets are always already in state.
    */
   const prescribe = useCallback(
-    (before: readonly PlannedRow[], after: PlannedRow[], justLogged?: LoggedForTarget & { exerciseId: string }) =>
+    (before: readonly PlannedRow[], after: PlannedRow[]) =>
       prescribeNewRows(before, after, (exerciseId) => {
         const logged: LoggedForTarget[] = setsOf(exerciseId);
-        if (justLogged?.exerciseId === exerciseId) logged.push(justLogged);
         return { logged, targets: targetsOf(exerciseId, logged) };
       }),
     [setsOf, targetsOf],
@@ -395,7 +396,29 @@ export function LogScreen() {
   };
 
   /**
-   * Writes down another set for later.
+   * The next-set load suggestion for an exercise, from its last logged set
+   * toward the prescribed set that comes next (Order 28).
+   *
+   * The coach's switch is applied here, at the one place a suggestion can
+   * enter: held means none, whatever the engine would say. Read when the
+   * athlete asks for the row with Add set, not when the set before it was
+   * confirmed -- confirming no longer builds a row to put it in.
+   */
+  const suggestionFor = (exerciseId: string) => {
+    const logged = setsOf(exerciseId);
+    const last = logged.at(-1);
+    if (!last) return null;
+    const targets = targetsOf(exerciseId, logged);
+    const prescribedNext = targets ? nextTarget(targets, logged) : null;
+    return nextSetSuggestion(
+      suggestionMode,
+      { loadKg: last.loadKg, reps: last.reps, rpe: last.rpe ?? null, isWarmup: last.isWarmup },
+      setTargetFor(prescribedNext),
+    );
+  };
+
+  /**
+   * Writes down another set, and after a confirm, the only way to get one.
    *
    * It does not move the pad: the row being entered stays the row being
    * entered, so an athlete mid-set who plans the back-off loses nothing. The
@@ -403,7 +426,10 @@ export function LogScreen() {
    */
   const addSet = (exerciseId: string) => {
     setSelectedId(null);
-    const next = prescribe(plans, addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId));
+    const next = prescribe(
+      plans,
+      addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId, suggestionFor(exerciseId)),
+    );
     setPlans(next);
     // Nothing was being entered anywhere, so the new row's exercise is now
     // the one in hand.
@@ -468,33 +494,11 @@ export function LogScreen() {
       loggedAt: new Date(),
     };
     setLocal((prev) => [...prev, optimistic]);
-    // The next row is either the one the athlete already planned, or -- with
-    // nothing planned -- a repeat of this one. Built from the set just logged
-    // rather than from state: the optimistic append has not landed yet, and
-    // reading it back would give an empty row where the one-tap repeat goes.
-    // The coach's switch is applied here, at the one place a suggestion can
-    // enter: held means none, whatever the engine would say.
-    // The target is the prescribed set the next row will be (Order 22),
-    // counted with the set just logged.
-    const loggedNow: LoggedForTarget[] = [...setsOf(row.exerciseId), optimistic];
-    const prescribedNext = (() => {
-      const targets = targetsOf(row.exerciseId, loggedNow);
-      return targets ? nextTarget(targets, loggedNow) : null;
-    })();
-    const suggestion = nextSetSuggestion(
-      suggestionMode,
-      { loadKg: optimistic.loadKg, reps: optimistic.reps, rpe: row.rpe, isWarmup: row.isWarmup },
-      setTargetFor(prescribedNext),
-    );
-    const { rows, next } = afterConfirm(
-      plans,
-      rowId,
-      { loadKg: optimistic.loadKg, reps: optimistic.reps },
-      newClientSetId,
-      suggestion,
-    );
-    setPlans(prescribe(plans, rows, optimistic));
-    setFocusId(next.clientSetId);
+    // A row the athlete already planned becomes the head; with none, the
+    // exercise simply shows what was logged and Add set. No row is invented.
+    const { rows, next } = afterConfirm(plans, rowId);
+    setPlans(rows);
+    setFocusId(next?.clientSetId ?? null);
     closeSheets();
     // Warm-ups start it too. Anything else is a rule an athlete has to learn,
     // and the feature list is explicit that this is the part Strong keeps
@@ -518,8 +522,11 @@ export function LogScreen() {
       });
     } catch {
       // Only reachable if the device cannot write to its own storage at all.
-      // Then the set genuinely is not logged, and saying so beats a lie.
+      // Then the set genuinely is not logged, and saying so beats a lie. The
+      // row goes back to the head of its exercise with the athlete's numbers:
+      // nothing else on screen holds them now that a confirm adds no row.
       setLocal((prev) => prev.filter((s) => s.clientSetId !== row.clientSetId));
+      setPlans((prev) => (prev.some((each) => each.clientSetId === row.clientSetId) ? prev : [row, ...prev]));
     } finally {
       setBusy(false);
     }
@@ -832,6 +839,32 @@ export function LogScreen() {
           ))}
         </div>
       )}
+
+      {/*
+        The finish control nobody has to discover. The clock still works, but
+        a tappable timer is a convention an athlete has to be told about.
+        Outlined rather than filled, and spaced off the last exercise, so a
+        thumb reaching for Add set or a confirm square does not end the
+        session. Gone while the confirm panel asks: one finish control at a
+        time. It closes the pad and the RPE sheet first, because both outrank
+        the panel for the bottom of the screen and it would otherwise wait
+        unseen behind them.
+      */}
+      {bottom !== "confirm" ? (
+        <Button
+          variant="secondary"
+          size="lg"
+          block
+          className="mt-2"
+          onClick={() => {
+            closeSheets();
+            setPhase("confirming");
+          }}
+          aria-label="End session"
+        >
+          End session
+        </Button>
+      ) : null}
 
       <div className="mt-auto flex flex-col gap-3">
         {/*

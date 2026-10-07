@@ -256,10 +256,12 @@ try {
   await page.getByRole("button", { name: "Set 1 RPE" }).click();
   await page.getByRole("button", { name: "8", exact: true }).click();
   await page.getByRole("button", { name: "Log Set 1" }).click();
+  // Confirming adds no row; the backoff arrives with the one Add set makes.
+  await squat.getByRole("button", { name: "Add a set to Squat" }).click();
   const set2 = squat.getByRole("group", { name: "Set 2" });
   await set2.waitFor({ timeout: 10000 }).catch(() => {});
   const set2Text = (await set2.innerText().catch(() => "")) ?? "";
-  check("offline, the next row holds 90% of the ACTUAL top set: 165", set2Text.includes("165"), set2Text.replace(/\s+/g, " "));
+  check("offline, the Add set row holds 90% of the ACTUAL top set: 165", set2Text.includes("165"), set2Text.replace(/\s+/g, " "));
   check(
     "and says where it came from",
     await squat.getByText("backoff from top set 185 × 3").first().waitFor({ timeout: 5000 }).then(() => true).catch(() => false),
