@@ -550,6 +550,11 @@ try {
     // exercise is refused.
     const referenced = await programOp(C, { op: "updatePrescription", prescriptionId: targets.prescriptions, referenceExerciseId: targets["exercises:library"] });
     check("POST /api/program: A's coach may point a line's percentage at a library lift", referenced.status === 200, `${referenced.status} ${JSON.stringify(referenced.body)}`);
+    // A coach's private exercise is stamped read for his own circle, so the
+    // circle has to exist first. The app creates it through /api/circle on
+    // the coach's first write; the fixtures only gave circles to A and B.
+    const coachCircle = await callRoute(circleRoute as Handler, "/api/circle", C);
+    check("POST /api/circle creates A's coach's circle", coachCircle.status === 200, JSON.stringify(coachCircle.body));
     const coachPrivate = await createExercise(C.deps, { userId: C.id }, { name: `Audit Coach Private ${stamp}` });
     createdRows.push({ table: "exercises", id: coachPrivate.$id });
     const refused = await programOp(C, { op: "updatePrescription", prescriptionId: targets.prescriptions, referenceExerciseId: coachPrivate.$id });
