@@ -1,95 +1,45 @@
-## Order 38 — Permission audit + fix row forgery
+## FTP1 — Ruairi's form answers (6 Oct 2026), recorded in the docs
 
-The audit (first half of this PR) found a sev-1: any signed-in user could
-write a row into anybody's data. Every table with `create("users")` accepted a
-row carrying somebody else's `athlete_id`, `owner_id`, `coach_id` or
-`author_id`, stamped `read("users")` — a role every session holds — and every
-read filtered on those columns. Proven on the live instance: a forged 400kg
-set became A's best e1RM through `/api/rollup`, forged coach comments, forged
-"reviewed" marks clearing clips, a forged `is_global` exercise in everyone's
-typeahead. The second half of this PR fixes it, defence in depth, and the
-audit now asserts every one of those is neutralised.
+Docs only. No code, no schema, no scripts. Each answer is recorded as a [Fact]
+sourced "Ruairi form answer, 6 Oct 2026" and touches only the passage it
+resolves.
 
-### The fix
+### What each answer changed
 
-**A row's stamp proves who wrote it.** A session cannot stamp a role it does
-not hold, so `update("user:<athlete_id>")` on a set is proof that athlete
-wrote it; `update("user:<author_id>")` on a comment, `update("user:<coach_id>")`
-on a review. `appwrite/documents/provenance.ts` is that check in one place —
-`ownerProof`, `isAuthentic`, `authenticRows`, `verdictFor` — with
-`expectedStamp` moved in beside it so the readers, the audit and the Function
-share one definition. Tested against every forgery in the finding.
+- **e1RM vs RTS chart: "No preference"** (`docs/e1rm.md`, `docs/rpe-chart.md`).
+  Resolves the [SME to confirm] on parity. Default is no change and no
+  `e1rm:backfill`. [Inference] The answer removes the parity argument without
+  arguing for Brzycki, and does not say whether he is RTS-trained. Moving to the
+  chart (2.7%; 170 x 5 @ RPE 8 is 204.0 vs 209.6 kg) stays Joey's call.
+- **Reuse across athletes: "Sometimes"** (`docs/programs.md`, the template
+  bullet only). Copy to (Order 20) is the answer; no template library for the
+  beta. The publish/draft section is untouched.
+- **Backoffs** (`docs/programs.md`, Backoff rules). He picked RPE target and
+  percentage drop from the top set, wants no fixed-kg kind, and left the example
+  (4b) blank. The mapping onto `percent` / `drop` is [Inference] only; "RPE
+  target" is ambiguous. The load-vs-e1RM and cap-of-5 [SME to confirm] marks
+  stay open. The code comment in `lib/programming/backoff.ts` is not edited.
+- **Video: "Mainly compounds, accessories/variations if you have questions"**
+  (`docs/video.md`). Recorded as the default expectation. [Fact] The code has no
+  compound/accessory concept; only the per-line `video_required` toggle exists.
+- **Beta size: 5 athletes** (`docs/video-upload.md`). Recorded as an input. No
+  capacity numbers added.
 
-**Readers only trust what the owner stamped.** Every store reading a
-client-writable table filters through `authenticRows`; `rebuildRollup` (route
-and repair script) and `e1rm:backfill` skip sets the athlete did not stamp;
-`fetchProfile` reads a squatted row as absent. Selects now carry the owner
-column (`Query.select` keeps `$permissions` but not data columns). Logged sets
-still write locally first and sync through the queue — nothing moved
-server-side.
+### Stale `docs/review-queue.md` claims corrected (checked against code)
 
-**The library carries the server's mark.** A forged `is_global: true` row had
-exactly the stamp a seeded one did. Library rows now also carry
-`update("team:library")`: a team `appwrite:setup` creates with the API key and
-that has no members, so no session can stamp it and nobody can create it
-first. `exercises:seed` re-stamps (56 rows re-stamped live on 6 Oct). Simpler
-than splitting the table; typeahead and create-on-the-fly unchanged.
+- "Prescribed" line: the doc said it needed a programs table that did not exist.
+  Programs shipped (Orders 19, 22) and `sets.prescribed` holds the snapshot;
+  `fetchClips` already receives it but `toClip` drops it and `ClipContext` does
+  not render it. Reworded as "absent but buildable".
+- "Comment & next" is no longer pending Order 33; it shipped.
+- Voice notes: pointer to `docs/comments.md` (recommended against).
+- `e2e:review` count: 11 -> 21 (10 data path, 11 comments), per the script.
 
-**A Function deletes what lands.** `functions/validate-row`, declared in
-`appwrite/functions/index.ts`, deployed by `npm run appwrite:functions`
-(esbuild bundles provenance.ts in — one definition, not a copy). Fires on row
-create *and* update; deletes a row in a client-writable table that names an
-owner and lacks that owner's proof. Delete rather than revert on update: the
-event carries no previous state, and a relabelled row is a false claim whatever
-it said before. Scoped so a bug cannot mass-delete: one row per event, writable
-tables only, never a row without an owner, never for a stale *read* stamp.
-`VALIDATOR_DRY_RUN=true` is the kill switch.
+### Not edited, flagged
 
-**Relabelling and squatting**, the two the finding had not asserted, are
-covered by the same two layers and now asserted by the audit.
-
-### The audit, extended
-
-- A forgery Appwrite accepts shows as `landed*` and counts as refused only if
-  no reader trusts it. 23 land; none is trusted.
-- "What a forged row does once it lands": rollup, coach's queue, review mark,
-  comment thread, typeahead, relabel, squat — all proven inert on the live
-  instance.
-- The validator: every landed row must be deleted within 45s, polled by id;
-  fails outright when the Function is not deployed.
-- Orders 19/22/28/43 from `dev`: rules for the five program tables
-  (server-only; read by coach, athlete, circle), `/api/program` — including
-  `duplicateWeek` and `copyProgram`, with a copy onto an athlete the coach
-  does not link to refused — and `/api/link/suggestions`, exercised with real
-  JWTs for every role, before and after revocation. The
-  stamp scan also checks `isAuthentic` on every row, `suggestions_mode`'s
-  values, and that program children name their program's coach and athlete.
-- Discovery asserts the `library` team exists with no members and the
-  Function is deployed, enabled and subscribed.
-
-### What is not done, and why
-
-**The Function is not live.** [Fact] The instance's builder answers every
-deployment with `Internal server error` within 3 seconds — including a
-redeploy of the probe's own archive that built on 14 Sep — and only `node-22`
-is enabled in `_APP_FUNCTIONS_RUNTIMES`. The host is not reachable from the
-MacBook. On the host: `docker ps | grep -E 'executor|worker-builds'`,
-`docker logs appwrite-worker-builds --tail 100`, `docker logs
-appwrite-executor --tail 100` (or `openruntimes-executor`), `df -h`, then
-`npm run appwrite:functions`. Until then the audit reports exactly two
-failures, both "validate-row is not live"; everything else passes (463/465 on
-6 Oct). Readers already hide every forged row, so the live product is
-protected; the Function is the second layer.
-
-**Sign-ups stay open.** The API key cannot reach `/projects/*` (console
-scope), and Appwrite 1.9 has no invite-only mode — the only control is Auth →
-Security → Users limit, which would stop athletes registering to redeem a
-code. [Inference] Left unchanged; the fix removes what a stranger's account
-could do.
-
-### Verification
-
-`lint` · `typecheck` · **2013 tests, 126 files** · `npm run appwrite:audit`
-live: 463/465, the two validator checks failing as above.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+- `components/coach/clip-context.tsx` header comment repeats the stale "no
+  programs table" claim. Code, so out of scope here.
+- `docs/review-queue.md` "A bound worth writing down" and the `e2e:clip` count
+  (15) were checked and still hold.
+- Not touched by design: `docs/roster.md`, `docs/suggestions.md`, the "Why there
+  is no table" passage in `docs/prescriptions.md`.

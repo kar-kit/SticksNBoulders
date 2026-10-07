@@ -7,6 +7,20 @@ _Order 29. Phase 3. Source: Joey. P0 Blocker._
 The set already carries load, reps, RPE and notes, so the context writes itself
 and the essay-length WhatsApp message disappears.
 
+## Which lifts get filmed
+
+[Fact] Asked which lifts he wants on video, Ruairi answered: *Mainly compounds
+but if you have questions on accessories or variations do record too* (Ruairi
+form answer, 6 Oct 2026). That is the default expectation: compounds filmed,
+accessories and variations when the athlete has a question.
+
+[Fact] Nothing in the code knows the difference. There is no compound or
+accessory classification on an exercise, and the only enforcement is the
+per-line `video_required` toggle a coach flips by hand in the Program Editor
+(Order 30, `docs/programs.md`), which is a nudge and never a gate. The
+expectation lives in the coach's habit and the athlete's briefing, not in the
+product.
+
 ## Two findings that shape everything downstream
 
 ### 1. The instance capped files at 30MB — raised, and where they now live
