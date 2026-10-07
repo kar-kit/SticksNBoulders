@@ -10,6 +10,7 @@ import {
   clearForDeletion,
   referencesIn,
   stillOrphaned,
+  type ClearedOrphan,
   type ClipReference,
   type CoveringDump,
 } from "./orphans";
@@ -206,6 +207,16 @@ describe("finding orphans", () => {
     expect(sweep([], refs(set("s1", "a"))).orphans).toEqual([]);
   });
 });
+
+/**
+ * Checked by `npm run typecheck`, not at run time. The delete takes only a
+ * ClearedOrphan, so the brand is the whole guarantee that nothing a backup has
+ * not cleared can reach it. If the brand stopped excluding a hand-built
+ * object, this directive would be unused and the typecheck would fail.
+ */
+// @ts-expect-error -- lacks the brand only clearForDeletion stamps.
+const handBuilt: ClearedOrphan = { bucketId: VIDEO_BUCKET, $id: "a", sizeOriginal: 4, coveredBy: "dump" };
+void handBuilt;
 
 describe("clearing orphans for deletion", () => {
   const held = (file: SourceFile, overrides: Partial<BackupFile> = {}): BackupFile => ({

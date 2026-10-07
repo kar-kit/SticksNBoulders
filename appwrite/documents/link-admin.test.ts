@@ -16,6 +16,14 @@ interface Row extends Record<string, unknown> {
   $id: string;
 }
 
+/** Appwrite's `equal` and `limit`; nothing else reaches the link table. */
+function matches(row: Row, queries: string[]): boolean {
+  return queries.every((raw) => {
+    const q = JSON.parse(raw) as { method: string; attribute?: string; values?: unknown[] };
+    return q.method === "equal" ? (q.values ?? []).includes(row[q.attribute ?? ""]) : true;
+  });
+}
+
 /** Enough of Appwrite to exercise every branch, including the failures. */
 function harness(options: {
   codes?: Record<string, string>;
@@ -27,14 +35,25 @@ function harness(options: {
   const links: Row[] = [...(options.links ?? [])];
   const members: Record<string, string[]> = { ...(options.members ?? {}) };
   const writes: Array<{ op: string; rowId: string; data: Record<string, unknown>; permissions?: string[] }> = [];
+  const cache = new Map<string, Row[]>();
 
   const tables: LinkTables = {
     async getRow({ tableId, rowId }) {
       if (tableId === "invite_codes" && codes[rowId]) return { $id: rowId, coach_id: codes[rowId] };
       throw Object.assign(new Error("not found"), { code: 404 });
     },
-    async listRows() {
-      return { rows: links };
+    async listRows({ tableId, queries, ttl }) {
+      // Applies the filters, so a read that dropped its athlete_id filter would
+      // see every athlete's links rather than passing because this ignored it.
+      const key = `${tableId}:${queries.join("&")}`;
+      // And caches like Appwrite: a cached page is keyed by the exact query and
+      // a row write does not invalidate it (the ttl docs in node-appwrite's
+      // tables-db.d.ts). The SDK does not say what the server does when ttl is
+      // omitted, so anything but an explicit 0 is treated as cached.
+      if (ttl !== 0 && cache.has(key)) return { rows: cache.get(key)! };
+      const rows = links.filter((row) => matches(row, queries)).map((row) => ({ ...row }));
+      if (ttl !== 0) cache.set(key, rows);
+      return { rows };
     },
     writer: {
       async createRow({ rowId, data, permissions }) {
@@ -380,5 +399,57 @@ describe("withdrawing a coach's access", () => {
   it("refuses to revoke for nobody", async () => {
     const { tables } = harness();
     await expect(revokeCoachAccess(tables, DB, "")).rejects.toThrow(/athleteId/);
+  });
+});
+
+describe("one athlete's links never reach another's", () => {
+  // Every operation here runs with the API key, which reads every row in the
+  // table. The athlete_id filter is the only thing scoping it to the caller.
+  const B = "athlete_bea";
+  const circleB = circleTeamId(B);
+  const twoAthletes = () =>
+    harness({
+      // B's first, so a read that saw both would find B's link before A's.
+      links: [
+        { $id: "row_b", coach_id: OTHER, athlete_id: B, status: "active" },
+        { $id: "row_a", coach_id: COACH, athlete_id: ATHLETE, status: "active" },
+      ],
+      members: { [circle]: [ATHLETE, COACH], [circleB]: [B, OTHER] },
+    });
+
+  it("revoking A's coach leaves B's link and B's coach untouched", async () => {
+    const { tables, links, members, writes } = twoAthletes();
+    expect(await revokeCoachAccess(tables, DB, ATHLETE)).toEqual({ status: "unlinked", coachId: COACH });
+
+    expect(writes.map((w) => w.rowId)).toEqual(["row_a"]);
+    expect(links.find((l) => l.$id === "row_b")?.status).toBe("active");
+    expect(members[circleB]).toEqual([B, OTHER]);
+  });
+
+  it("an athlete with no coach of their own has nothing to revoke", async () => {
+    const { tables, writes } = harness({
+      links: [{ $id: "row_b", coach_id: OTHER, athlete_id: B, status: "active" }],
+      members: { [circleB]: [B, OTHER] },
+    });
+    expect(await revokeCoachAccess(tables, DB, ATHLETE)).toEqual({ status: "not-linked" });
+    expect(writes).toEqual([]);
+  });
+
+  it("another athlete's coach does not block a redemption", async () => {
+    const { tables } = harness({
+      links: [{ $id: "row_b", coach_id: OTHER, athlete_id: B, status: "active" }],
+    });
+    expect(await redeemInviteCode(tables, DB, ATHLETE, CODE)).toMatchObject({ status: "linked", coachId: COACH });
+  });
+});
+
+describe("reading links fresh", () => {
+  it("refuses a second coach's code redeemed straight after the first", async () => {
+    // The first redemption read an empty page. A cached copy of it would tell
+    // the second that the athlete has no coach, and grant another one.
+    const { tables, links } = harness({ codes: { [CODE]: COACH, "SNB-OTHER": OTHER } });
+    await redeemInviteCode(tables, DB, ATHLETE, CODE);
+    expect(await redeemInviteCode(tables, DB, ATHLETE, "SNB-OTHER")).toMatchObject({ status: "other-coach", coachId: COACH });
+    expect(links).toHaveLength(1);
   });
 });
