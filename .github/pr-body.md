@@ -1,47 +1,68 @@
-## docs: beta capacity model for seven athletes
+## feat(coach): from a reviewed clip to the program it changes
 
-Ruairi's form answer (6 Oct) puts five athletes on the December beta; with
-him and Joey logging as athletes that is seven. Nothing in the repo was sized
-to a headcount. `docs/beta-capacity.md` is the model: low/base/high scenarios
-with every formula shown, every invented input marked [Unverified], and the
-five questions to put to Ruairi. No production code changes.
+Ruairi's review day (form, 6 Oct 2026): "Watch videos, analyse weaknesses and
+then adjust program accordingly". Videos already lead the Roster (#47), but
+neither the Review Queue nor Athlete View linked to the editor, and the clip
+context left out the "Prescribed" line. No new writes, no schema change.
 
-### What the numbers say
+### What changes
 
-- **Storage is not the constraint.** Base case (7 athletes × 4 sessions × 4
-  flagged sets × 20 s × 100 MB/min × 1.1 overhead) is 4.1 GB/week: 29 GB by
-  31 Jan 2027, 3 % of the NAS's 941 GB. High case is 208 GB by January and
-  overruns the NAS only at week 32, and only if the Cloud migration slips.
-- **The 200 MB cap is invisible on the iOS default** (1080p30 HEVC reaches it
-  at 185 s) and bites at 30 s on 4K60. Keep it; nudge athletes to 1080p.
-- **Upload on gym wifi:** base clip 33 MB is 13–133 s across 20–2 Mbps,
-  background and resumable. Compression not needed before December.
-- **The first thing that breaks is the review queue, not the disk.** [Fact]
-  `review-queue.tsx` sends every unreviewed id to `POST /api/clip` in one
-  request; the route rejects more than `MAX_FILES = 60` and the component
-  swallows the error, so above **61 unreviewed clips nothing plays**. Base
-  produces 112 clips a week, so a coach reviewing weekly hits it every week.
-  Client-side slice into 60s; should ship with Phase 3.
-- **Ruairi's hour:** 112 clips at 45 s is 84 minutes against a 30–60 minute
-  coach session. `video_required` is the throttle.
-- **Backups:** `appwrite:backup` excludes the bucket (confirmed in
-  `scripts/appwrite-backup.mts`), so the "dump is local only" item stays a
-  few-MB `rclone` line. The clips have no backup at all; offsite is cents a
-  month at these volumes.
-- **Cloud:** Pro $25/project/month, extra storage $2.80/100 GB [Fact,
-  changelog 2025-09-01]; 150 GB included [Unverified]. Base cohort crosses
-  150 GB 8.4 months after migration and pays $1.78/month extra at a year.
-  Four coaches at base cross it in about three months.
+- **Prescribed line.** `toClip` keeps `prescription_id` and `prescribed`;
+  `ClipContext` renders `Prescribed: <snapshot>` under the logged line. It shows
+  the set's stored snapshot (`5 reps · RPE 8`) and never recomputes it from the
+  live line. A free set gets no line.
+- **Adjust program** under each clip (with the set's line) and in Athlete View's
+  "This block" (which used to say "No program yet" for everyone). Both go to
+  `/coach/programs?athlete=<id>[&line=<id>]`, which:
+  1. checks the coach's **active** link row first and reads nothing else
+     without one ("Not one of your athletes" / "No longer linked");
+  2. follows the line to its week and day if it is this athlete's, in one of
+     their non-archived programs;
+  3. else opens their current program (published, updated last), else lists
+     their programs, else shows "No program for <name> yet";
+  4. `router.replace`s to `/coach/programs/<id>?week=&day=&line=`. The editor
+     opens that week in its own block, scrolls to the day and focuses the line.
+- **Queue keeps its place.** [Fact] The queue holds position, Undo, the comment
+  draft and two Realtime subscriptions in component state, and `cacheComponents`
+  is off, so a same-tab navigation would reload it onto the oldest clip. The
+  clip link opens a **new tab**: Cmd+W returns to the same clip with nothing
+  re-read. The Enter-to-clear handler now ignores focused links. Athlete View
+  links in the same tab, since it has no state that a re-read would lose.
+- **Editor change kept small** (`program-editor.tsx`, about 25 lines): an
+  optional `landing` prop, the block found from the landing week, a
+  scroll-and-focus effect that runs once, and an `id` on each day section.
+  Expect a trivial merge against the reference-lift branch.
+- **Stale comments fixed:** the `clip-context.tsx` header ("no programs
+  table") and the `roster-triggers.ts` "Nothing reads program tables yet"
+  paragraph, plus the same claim in that file's other Order 19 comments and the
+  Athlete View page header.
 
-### Recommendation
+### Access
 
-No retention policy before migration; build the orphan sweep. Keep the cap.
-No compression before December. Trigger: 61 unreviewed clips (fix the batch),
-then 84 review minutes/week (Ruairi's call), then 470 GB on the NAS.
+[Fact] `adjust-program.test.tsx` edits the URL to a never-linked athlete and to
+a revoked one whose block the coach wrote (a coach can still read programs they
+wrote after a revoke, per `docs/programs.md`). It asserts the refusal screen, no
+program or line read, and no redirect. A `line` from another athlete's program
+is ignored, and URL ids that are not valid row ids are dropped. The editor URL's
+`week/day/line` only sets where it opens and grants nothing. Writes still go
+through `/api/program`, which re-checks the link.
 
-### Verification
+### For Joey
 
-Docs only. Numbers produced by a script outside the repo and rerunnable from
-the formulas in section 2. No live instance or NAS access.
+- `scripts/e2e-roster.mts:202` still checks "no block until the Program Editor
+  exists". Not edited. [Inference] It should still pass, because the script
+  writes no program for its fixture athlete, but the label is now stale.
+- [Unverified] A new tab cold-loads the coach shell. Nobody has measured whether
+  that fits the 2.5s budget on the beta instance.
+- [Inference] When the coach focuses a queue-rail button and presses Enter, the
+  window handler clears the clip instead of selecting it. This predates this
+  PR, which leaves it alone.
+- [SME to confirm] Should a clip with no traced line (logged freely) land on
+  the current block, or should it say so first?
+
+### Verified offline
+
+`npm test` 134 files / 2096 tests, `npm run lint`, `npm run typecheck` all
+clean. No `appwrite:*` or `e2e:*` scripts were run.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
