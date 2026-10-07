@@ -367,6 +367,10 @@ export function prescribeNewRows(
       // A coach's number replacing an engine suggestion takes its note with
       // it; a load priced off today's top set says where it came from.
       note: fromBackoff ?? (prefill.loadKg === row.loadKg ? (row.note ?? prefill.note) : prefill.note),
+      // Suggested while the load is still an engine's number: a weight priced
+      // off today's top set is one, and so is a suggestion the row already
+      // held. A coach's prescribed load is neither.
+      suggested: prefill.source === "suggested" || (prefill.source !== "prescribed" && row.suggested === true),
       prescriptionId: target.prescriptionId,
       prescribed: target.snapshot,
     };

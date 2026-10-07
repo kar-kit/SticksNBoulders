@@ -432,7 +432,7 @@ export function LogScreen() {
       ...row,
       [next.field === "load" ? "loadKg" : "reps"]: value,
       // Once the athlete types a load it is theirs, not the suggestion's.
-      ...(next.field === "load" ? { note: null } : {}),
+      ...(next.field === "load" ? { note: null, suggested: false } : {}),
     }));
   };
 

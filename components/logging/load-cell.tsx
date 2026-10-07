@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/logging/prefill";
 
@@ -37,6 +38,12 @@ export interface LoadCellProps {
   focused?: boolean;
   onPress?: () => void;
   label: string;
+  /**
+   * A word that sits on the cell's top border, for a value the athlete did not
+   * type ("Suggested"). Editable cells only. It is the cell's accessible
+   * description, so a screen reader hears it without the name changing.
+   */
+  marker?: string;
   className?: string;
 }
 
@@ -49,8 +56,10 @@ export function LoadCell({
   focused = false,
   onPress,
   label,
+  marker,
   className,
 }: LoadCellProps) {
+  const markerId = useId();
   const empty = value === null;
   const text = empty ? placeholder : formatNumber(value);
 
@@ -75,8 +84,9 @@ export function LoadCell({
       type="button"
       onClick={onPress}
       aria-label={label}
+      aria-describedby={marker ? markerId : undefined}
       className={cn(
-        "flex h-12 items-center rounded-chip border bg-surface",
+        "relative flex h-12 items-center rounded-chip border bg-surface",
         align === "left" ? "px-2.5" : "px-1",
         focused ? "border-accent-line" : "border-border",
         "focus-visible:border-accent-line focus-visible:outline-none",
@@ -85,6 +95,18 @@ export function LoadCell({
       )}
     >
       {text}
+      {marker ? (
+        // A filled chip, not an outline: the fill token is the one cleared for
+        // small text (5.68:1 with --on-accent). It straddles the border so the
+        // number keeps the cell to itself, and ignores taps so the whole cell
+        // still opens the pad.
+        <span
+          id={markerId}
+          className="pointer-events-none absolute -top-[7px] left-2 rounded-hairline bg-accent-fill px-1 py-0.5 font-mono text-label font-semibold uppercase text-on-accent"
+        >
+          {marker}
+        </span>
+      ) : null}
     </button>
   );
 }

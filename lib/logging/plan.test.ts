@@ -164,6 +164,18 @@ describe("a suggestion the coach's switch let through (Order 28)", () => {
     expect(next).toMatchObject({ loadKg: 175, reps: 5, note: "suggested from RPE 7 @ 170" });
   });
 
+  it("flags the row as suggested, so the logger can mark it until it is edited", () => {
+    const rows = [rowAfter("squat", null, id)];
+    const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, suggestion);
+    expect(next.suggested).toBe(true);
+  });
+
+  it("does not flag a repeat of the previous set", () => {
+    const rows = [rowAfter("squat", null, id)];
+    const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, null);
+    expect(next.suggested ?? false).toBe(false);
+  });
+
   it("repeats the set just logged when none was let through, with no note", () => {
     const rows = [rowAfter("squat", null, id)];
     const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, null);
