@@ -25,6 +25,7 @@ import {
   type Column,
 } from "@/lib/programming/editor";
 import type { DayTree, Prescription, ProgramOpInput, ProgramTree } from "@/lib/programming/program";
+import type { EditorLanding } from "@/lib/coach/adjust-program";
 import { fetchProgramTree, sendProgramOp } from "@/lib/programming/program-store";
 
 /**
@@ -70,14 +71,15 @@ const COLUMN_LABEL: Record<Column, string> = {
   video: "Video",
 };
 
-export function ProgramEditor({ programId }: { programId: string }) {
+export function ProgramEditor({ programId, landing }: { programId: string; landing?: EditorLanding }) {
   const { state: session } = useSession();
   const viewerId = session.status === "signed-in" ? session.user.id : null;
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [athleteName, setAthleteName] = useState<string | null>(null);
   const [blockId, setBlockId] = useState<string | null>(null);
-  const [weekId, setWeekId] = useState<string | null>(null);
+  // "Adjust program" from a clip opens on the week it was prescribed from.
+  const [weekId, setWeekId] = useState<string | null>(landing?.weekId ?? null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -107,9 +109,29 @@ export function ProgramEditor({ programId }: { programId: string }) {
   }, [reload]);
 
   const tree = load.status === "ready" ? load.tree : null;
-  const block = tree?.blocks.find((b) => b.id === blockId) ?? tree?.blocks[0] ?? null;
+  const block =
+    tree?.blocks.find((b) => b.id === blockId) ??
+    tree?.blocks.find((b) => b.weeks.some((w) => w.id === weekId)) ??
+    tree?.blocks[0] ??
+    null;
   const week = block?.weeks.find((w) => w.id === weekId) ?? block?.weeks[0] ?? null;
   const names = useMemo(() => new Map(exercises.map((e) => [e.id, e.name])), [exercises]);
+
+  // Then to its day, once, with the keyboard on the traced line so arrows
+  // work straight away. A day or line no longer in the tree is not found.
+  const landed = useRef(false);
+  const landDay = landing?.dayId;
+  const landLine = landing?.lineId;
+  useEffect(() => {
+    if (landed.current || !tree || !landDay) return;
+    landed.current = true;
+    const section = document.getElementById(`day-${landDay}`);
+    if (!section) return;
+    section.scrollIntoView({ block: "start" });
+    const day = tree.blocks.flatMap((b) => b.weeks).flatMap((w) => w.days).find((d) => d.id === landDay);
+    const row = day?.prescriptions.findIndex((l) => l.id === landLine) ?? -1;
+    if (row >= 0) section.querySelector<HTMLElement>(`[data-cell="${row}-0"]`)?.focus({ preventScroll: true });
+  }, [tree, landDay, landLine]);
 
   /** A structural write: send it, then read the tree back. */
   const run = async (op: ProgramOpInput): Promise<string | null> => {
@@ -526,7 +548,11 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
   };
 
   return (
-    <section aria-label={title} className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
+    <section
+      id={`day-${day.id}`}
+      aria-label={title}
+      className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4"
+    >
       <header className="flex flex-wrap items-center gap-3">
         <InlineText
           label={`${title} name`}

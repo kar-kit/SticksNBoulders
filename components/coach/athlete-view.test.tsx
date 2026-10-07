@@ -63,10 +63,14 @@ describe("a linked athlete", () => {
     expect(store.fetchLinkRows).toHaveBeenCalledWith("coach", "joey");
   });
 
-  it("holds a place for the program rather than inventing one", async () => {
+  it("links to their program in the editor rather than claiming they have none", async () => {
     store.fetchLinkRows.mockResolvedValue([row()]);
     render(<AthleteView athleteId="joey" />);
-    expect(await screen.findByText("No program yet")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "Adjust program" })).toHaveAttribute(
+      "href",
+      "/coach/programs?athlete=joey",
+    );
+    expect(screen.queryByText("No program yet")).not.toBeInTheDocument();
   });
 
   it("does not show a hex id when they have no profile yet", async () => {
