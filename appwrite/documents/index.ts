@@ -90,6 +90,7 @@ export {
   renameGlobalExercise,
   restampGlobalExercise,
   revokeCoachLink,
+  setGlobalExerciseVideoDefault,
   unmarkSetReviewed,
   updateProfile,
   updateSet,

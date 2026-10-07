@@ -1,4 +1,4 @@
-import { SEED_EXERCISES } from "./seed";
+import { SEED_EXERCISES, VIDEO_DEFAULT_EXERCISES } from "./seed";
 import { rankExercises, type Exercise } from "./match";
 import { normaliseExerciseName } from "@/appwrite/documents";
 
@@ -53,5 +53,17 @@ describe("the shared library", () => {
     // If this ever fails, the question is whether the library grew because a
     // coach asked or because someone was being thorough.
     expect(SEED_EXERCISES.length).toBeLessThan(80);
+  });
+});
+
+describe("the video default", () => {
+  it("covers the three competition lifts and nothing else", () => {
+    // Variations and accessories are Ruairi's call, not a guess: [SME to confirm].
+    expect([...VIDEO_DEFAULT_EXERCISES].sort()).toEqual(["Bench Press", "Deadlift", "Squat"]);
+  });
+
+  it("names only exercises the seed actually holds", () => {
+    const seeded = new Set(SEED_EXERCISES.map(normaliseExerciseName));
+    expect(VIDEO_DEFAULT_EXERCISES.filter((n) => !seeded.has(normaliseExerciseName(n)))).toEqual([]);
   });
 });

@@ -1,56 +1,83 @@
-## Suggested next-set loads carry a "Suggested" marker
+## Video by default for the competition lifts
 
-Ruairi answered "Should the app suggest next-set weights straight to athletes?"
-with "Yes - marked as a suggestion" (form answer, 6 Oct 2026). Set-targets have
-been filled since b15ca3f, so suggestions now reach athletes; the only mark was
-the note "suggested from RPE 7 @ 170", which says where the number came from,
-not that it is an offer the athlete can overrule, and which vanished on the
-first keystroke.
+Ruairi, asked which lifts he wants filmed: "Mainly compounds but if you have
+questions on accessories or variations do record too." This makes "compounds by
+default, coach flags the rest" true with the smallest thing that does it: an
+optional exercise-level default that pre-ticks `video_required` when a coach
+adds a line in the Program Editor.
 
 ### What changed
 
-**A "Suggested" chip on the prefilled load.** It sits on the load cell's top
-border, a filled accent chip with its `on-accent` label (the pairing the palette
-clears for small text). The cell is the same 48px button, still opens the pad
-on one tap, and keeps its accessible name; the chip is its accessible
-description. Nothing blocks logging: the confirm square logs the suggested load
-as it stands. No spinner, toast or request, so it behaves identically offline.
+**`exercises.video_default`**, a nullable boolean in `appwrite/schema/index.ts`.
+No default, so applying it rewrites no row; null reads as false everywhere
+(`toExercise` in `lib/exercises/library.ts`, the seed reconcile).
+`Exercise.videoDefault` is optional, so no existing constructor changes.
 
-**`PlannedRow.suggested`.** Row state, not derived from `note`, because `note`
-also carries a backoff's provenance. Set by `rowAfter` for an engine suggestion
-and by `prescribeNewRows` for a weight priced off today's top set; dropped when
-a coach's prescribed load replaces it.
+**The pre-tick** is one localised change in `components/coach/program-editor.tsx`
+(`addLine`, three lines): a new line for an exercise whose default is on goes
+out with `videoRequired: true`. The coach can untick it with the same
+one-field write as ever, and can tick any accessory or variation by hand.
 
-**Cleared the moment the athlete edits the load** (`applyPad`), together with
-the note. Opening the pad is not an edit; changing reps or RPE leaves it. It
-does not come back if the athlete types the suggested number in.
+**The seed** sets it for Squat, Bench Press and Deadlift only
+(`VIDEO_DEFAULT_EXERCISES` in `lib/exercises/seed.ts`). `exercises:seed`
+reconciles it on existing library rows too, through a new
+`setGlobalExerciseVideoDefault` in the write helper, so every Appwrite write
+still goes through `appwrite/documents/write.ts`. `createGlobalExercise` writes
+the field only when true.
 
-**Docs and comment.** `docs/suggestions.md` said no suggestion reached an
-athlete yet; it now describes when one appears (set-targets), and the marker.
-The `[SME to confirm]` on `DEFAULT_SUGGESTION_MODE` is now a [Fact]: Ruairi
-confirmed `direct` on 6 Oct 2026.
+**`docs/video.md`** gets a delimited subsection appended; nothing else in that
+doc moved.
 
-### Not touched
+### What it does not do
 
-`lib/strength/suggestion.ts`, the per-athlete `direct | held` switch
-(`coach_athlete_links.suggestions_mode`) and its default. Held still shows no
-suggestion and no marker.
+- **It never gates logging.** [Fact] Nothing under `lib/logging` or the logger
+  reads `video_default`; `video_required` stays a nudge.
+- **It never changes an existing line.** [Fact] The pre-tick lives in the
+  editor's add path only. Swapping a line's exercise sends only `exerciseId`
+  (tested). `addPrescription` on the server writes the `videoRequired` it is
+  sent and never reads the exercise (tested), so an API caller sees no change.
+- **`duplicateWeek` and `copyProgram` carry `video_required` as stored.**
+  [Fact] `copyPrescription` copies every non-placement column (`lineContent`,
+  `appwrite/documents/program-write.ts`); the existing test for both paths still
+  passes, and a new one proves an unticked squat line stays unticked on both
+  copies when Squat's default is on.
 
-### Decisions
+### Joey must run `npm run appwrite:setup`
 
-- [Inference] A logged set is not marked. By then the number is what the athlete
-  did; nothing about how a set was prefilled is stored.
-- [Inference] The existing "suggested from RPE 7 @ 170" line stays beneath the
-  row as provenance and clears with the marker.
-- [Unverified] The chip's placement at 390x852 was reasoned from the grid
-  (about 110px load column), not checked on a device. Eyeball it once on the
-  phone.
+[Fact] Schema is code and this PR does not touch the live instance. The
+`video_default` column does not exist there until `npm run appwrite:setup`
+applies it. Order matters: **setup first, then `npm run exercises:seed -- --yes`**.
+Seeding first fails on the three rows that carry the field. Until setup runs,
+`fetchExerciseLibrary` still works (the column reads as absent, so false) and
+the editor simply pre-ticks nothing.
+
+### Candidate compounds, and what is not guessed
+
+[SME to confirm] Whether variations count as compounds is Ruairi's call; his
+quote says to record variations "if you have questions", which reads as
+coach-flagged rather than default. Left off. The seeded exercises that look
+like compounds, for him to say yes or no to:
+
+- Squat family: Front Squat, Pause Squat, Tempo Squat, Box Squat, Safety Bar Squat
+- Bench family: Pause Bench Press, Close Grip Bench Press, Incline Bench Press, Spoto Press, Larsen Press
+- Deadlift family: Sumo Deadlift, Deficit Deadlift, Block Pull, Rack Pull, Romanian Deadlift, Stiff Leg Deadlift
+- Other multi-joint lifts: Overhead Press, Seated Overhead Press, Barbell Row, Pendlay Row, Pull Up, Chin Up, Dip, Bulgarian Split Squat, Hip Thrust, Good Morning
+
+[Inference] Tempo and pause variations of the three are the real question:
+they are the lifts a coach most often has "questions on". Tempo Bench Press is
+not in the seed (the seed's header uses it as an example name); a coach typing
+it creates an athlete-owned row with no default, so it is coach-flagged today.
+Adding a name to `VIDEO_DEFAULT_EXERCISES` and re-running the seed is the whole
+change once Ruairi answers.
+
+[Inference] Custom exercises created on the fly never carry a default; only
+the seed can set one, because there is no UI for it and none was asked for.
 
 ### Verification
 
-`lint` · `typecheck` · **2034 tests, 127 files**. New: marker appears, clears on
-a load edit, survives a reps edit, absent when held, present offline from the
-cached switch, absent on logged rows; `suggested` set and dropped in `plan` and
-`session-plan`. No e2e or appwrite scripts run; no schema or write-path change.
+`lint` · `typecheck` · **2032 tests, 128 files**. No `appwrite:*` or `e2e:*`
+script was run; nothing here touched the live instance. [Unverified] The seed
+script's new reconcile branch is not unit-tested (the script runs against the
+live instance); `setGlobalExerciseVideoDefault` and `createGlobalExercise` are.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

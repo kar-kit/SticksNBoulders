@@ -227,6 +227,20 @@ describe("creating a program top down", () => {
     expect(h.row("prescriptions", withRule)).toMatchObject({ backoff: null });
   });
 
+  it("never reads an exercise's video default: the server writes what the editor sent", async () => {
+    // The pre-tick happens in the Program Editor, so the flag on a line is
+    // always the coach's explicit choice and an API caller gets no surprise.
+    const h = harness();
+    const { dayId } = await skeleton(h);
+    h.row("exercises", "ex-Squat")!.video_default = true;
+    const bare = await h.ok(COACH, { op: "addPrescription", dayId, exerciseId: "ex-Squat", setCount: 1 });
+    expect(h.row("prescriptions", bare)).toMatchObject({ video_required: false });
+    const ticked = await h.ok(COACH, { op: "addPrescription", dayId, exerciseId: "ex-Squat", setCount: 1, videoRequired: true });
+    expect(h.row("prescriptions", ticked)).toMatchObject({ video_required: true });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: ticked, videoRequired: false });
+    expect(h.row("prescriptions", ticked)).toMatchObject({ video_required: false });
+  });
+
   it("refuses a backoff nobody could execute, and writes nothing", async () => {
     const h = harness();
     const { lineId } = await skeleton(h);

@@ -326,6 +326,20 @@ describe("a copied line carries every column, including ones added later", () =>
     expect(all.filter((r) => r.program_id === copyId && r.load !== "80%").every((r) => r.video_required === false)).toBe(true);
   });
 
+  it("does not re-apply an exercise's video default: an unticked line stays unticked on both copies", async () => {
+    const h = harness();
+    const p = await joeysProgram(h);
+    // Squat is on the default list and Joey's squat line was added unticked.
+    h.tableOf("exercises").get("ex-squat")!.video_default = true;
+    const copyId = await h.ok(COACH, { op: "copyProgram", programId: p.programId, athleteId: ANDREA });
+    const weekId = await h.ok(COACH, { op: "duplicateWeek", weekId: p.week1 });
+    const squats = [...h.tableOf("prescriptions").values()].filter(
+      (r) => (r.program_id === copyId || r.week_id === weekId) && r.exercise_id === "ex-squat",
+    );
+    expect(squats).toHaveLength(2);
+    expect(squats.map((r) => r.video_required)).toEqual([false, false]);
+  });
+
   it("copies an unknown column (say, Order 21's backoff rule) without being told about it", async () => {
     const h = harness();
     const p = await joeysProgram(h);

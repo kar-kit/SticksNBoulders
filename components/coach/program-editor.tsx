@@ -519,7 +519,9 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
   };
 
   const addLine = async (exercise: Exercise) => {
-    const id = await run({ op: "addPrescription", dayId: day.id, exerciseId: exercise.id, setCount: 1 });
+    // The exercise's video default pre-ticks the box; the coach can untick it.
+    const videoRequired = exercise.videoDefault ? true : undefined;
+    const id = await run({ op: "addPrescription", dayId: day.id, exerciseId: exercise.id, setCount: 1, videoRequired });
     if (id) setFocusAfter({ lineId: id, col: "sets" });
   };
 
