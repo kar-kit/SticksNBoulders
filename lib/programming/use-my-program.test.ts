@@ -80,6 +80,35 @@ describe("useMyProgram", () => {
     expect(cachedProgram("joey")).toBeNull();
   });
 
+  /**
+   * The same rule as the cache, for what is already on screen: a phone handed
+   * from one athlete to the next must not keep the first one's block because
+   * the second one's fetch failed.
+   */
+  it("drops the previous athlete's program when the athlete changes and the new read fails", async () => {
+    store.program.mockResolvedValueOnce(tree("Joey's block"));
+    const { result, rerender } = renderHook(({ id }) => useMyProgram(id), { initialProps: { id: "joey" } });
+    await waitFor(() => expect(result.current.program?.name).toBe("Joey's block"));
+
+    store.program.mockRejectedValueOnce(new Error("offline"));
+    rerender({ id: "sam" });
+    expect(result.current.program).toBeNull();
+    await waitFor(() => expect(result.current.status).toBe("failed"));
+    expect(result.current.program).toBeNull();
+    expect(result.current.maxes.entries).toEqual([]);
+  });
+
+  it("shows nothing once the athlete id goes away", async () => {
+    store.program.mockResolvedValueOnce(tree("Joey's block"));
+    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useMyProgram(id), {
+      initialProps: { id: "joey" as string | null },
+    });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    rerender({ id: null });
+    expect(result.current).toMatchObject({ status: "loading", program: null });
+  });
+
   it("never shows another athlete's cached block", async () => {
     cacheProgram("someone", tree("Theirs"), { entries: [], estimated: [] });
     store.program.mockRejectedValue(new Error("offline"));

@@ -31,8 +31,16 @@ const NO_MAXES: AthleteMaxes = { entries: [], estimated: new Map() };
 
 const toMaxes = (m: CachedMaxes): AthleteMaxes => ({ entries: m.entries, estimated: new Map(m.estimated) });
 
+const LOADING: MyProgramState = { status: "loading", program: null, maxes: NO_MAXES };
+
 export function useMyProgram(athleteId: string | null): MyProgramState {
-  const [state, setState] = useState<MyProgramState>({ status: "loading", program: null, maxes: NO_MAXES });
+  // Tagged with the athlete it belongs to. Without the tag a change of athlete
+  // (a shared phone, a sign-out) kept the previous athlete's block on screen
+  // whenever the new read failed, and a null id left it there indefinitely.
+  const [state, setState] = useState<{ for: string | null; value: MyProgramState }>({
+    for: null,
+    value: LOADING,
+  });
 
   useEffect(() => {
     if (!athleteId) return;
@@ -42,7 +50,7 @@ export function useMyProgram(athleteId: string | null): MyProgramState {
       await Promise.resolve();
       const cached = cachedProgram(athleteId);
       if (cached && !cancelled) {
-        setState({ status: "ready", program: cached.program, maxes: toMaxes(cached.maxes) });
+        setState({ for: athleteId, value: { status: "ready", program: cached.program, maxes: toMaxes(cached.maxes) } });
       }
       try {
         const [program, entries, estimated] = await Promise.all([
@@ -59,7 +67,7 @@ export function useMyProgram(athleteId: string | null): MyProgramState {
         if (cancelled) return;
         if (!program) {
           forgetProgram();
-          setState({ status: "none", program: null, maxes: NO_MAXES });
+          setState({ for: athleteId, value: { status: "none", program: null, maxes: NO_MAXES } });
           return;
         }
         // A max read that failed keeps the cached max rather than caching "no
@@ -70,12 +78,16 @@ export function useMyProgram(athleteId: string | null): MyProgramState {
           estimated: estimated ?? prior.estimated,
         };
         cacheProgram(athleteId, program, { entries: maxes.entries, estimated: [...maxes.estimated] });
-        setState({ status: "ready", program, maxes });
+        setState({ for: athleteId, value: { status: "ready", program, maxes } });
       } catch {
         if (cancelled) return;
-        // Signal lost, or Appwrite down. Keep what is on screen; with nothing
-        // cached there is nothing to keep.
-        setState((prev) => (prev.status === "ready" ? prev : { status: "failed", program: null, maxes: NO_MAXES }));
+        // Signal lost, or Appwrite down. Keep what is on screen for THIS
+        // athlete; with nothing of theirs shown there is nothing to keep.
+        setState((prev) =>
+          prev.for === athleteId && prev.value.status === "ready"
+            ? prev
+            : { for: athleteId, value: { status: "failed", program: null, maxes: NO_MAXES } },
+        );
       }
     })();
     return () => {
@@ -83,5 +95,5 @@ export function useMyProgram(athleteId: string | null): MyProgramState {
     };
   }, [athleteId]);
 
-  return state;
+  return state.for === athleteId && athleteId ? state.value : LOADING;
 }

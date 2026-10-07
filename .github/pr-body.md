@@ -1,65 +1,50 @@
-## fix(offline): replay a reloaded queue in order, and test the queue and log screen for real
+## fix(strength, programming): same-day max typo beat its correction; stale program across athletes; close mutation-audit gaps
 
 ### Why
 
-A mutation audit (break the source, run the suite) found the offline queue and
-the log screen under-protected: the runner was only ever mocked, the log screen
-mocked `logSet`/`removeSet` whole, and several guards could be deleted with the
-suite staying green. A probe also found a real ordering bug.
+A mutation audit (break the source, run the suite) found behaviours the 2242
+tests did not protect. Two of them hid real bugs.
 
-### The bug fixed
+### Source bugs fixed (failing test written first, watched fail, then fixed)
 
-On reload, IndexedDB's `getAll` returns ops sorted by key, and the key was
-`op-<ms>-<unpadded sequence>`. Ops queued in the same millisecond (a set and its
-rollup refresh always are) came back as `[0, 9, 10, 11, 1, 2, …]`, and the
-forced flush (`attachQueue`, `online`, tab visible) sent them in that order
-because it took the cache unsorted. A set could reach Appwrite ahead of the one
-logged before it.
+1. **`currentMax` let a typo beat its own correction.** Same-day ties broke on
+   list position ("later-listed wins"), but `fetchReferenceMaxes` reads
+   newest-first (`orderDesc("$id")`) while the test fed entries oldest-first.
+   With the store's order, a coach entering 1800 then 180 on the same date got
+   1800, which then priced every percentage, DOTS and the coach panel. Ties now
+   break on the row id: rows are written with `ID.unique()` (route.ts), whose
+   hex seconds + milliseconds prefix sorts in creation order. Tested in both
+   list orders, and end to end through the store; switching the store to
+   `orderAsc` leaves that answer unchanged.
+2. **`useMyProgram` kept the previous athlete's program.** On an athlete change
+   whose read failed, the catch kept any `ready` state (the previous athlete's),
+   and a null id left it on screen. State is now tagged with the athlete it was
+   loaded for; anything else reads as `loading`.
 
-- The forced batch now uses `pendingOps`, which sorts by the stored `sequence`.
-  Queues already on a phone with old unpadded ids replay correctly too.
-- New ids zero-pad the sequence so disk order matches queue order.
-- The failing test came first, against a fake store that sorts like IndexedDB.
+### Tests added or tightened
 
-### Tests added or rewritten
+- backoff: a heavier line BEFORE the backoff line must not price it (M20).
+- `rollupMatches`: drift in each of the 8 fields alone, plus a guard that the
+  list covers every `Rollup` key. The source already compared all 8; the gap
+  was test-only.
+- `personalRecords`: pins current cross-week heaviest-single tie behaviour.
+- Button: variants must produce distinct classes; default equals primary.
+- library fetch: query-applying fake (handles `Query.or`), so dropping the
+  `owner_id` branch fails; also paging and coach-vs-athlete scoping.
+- my-program store: spies on every browser TablesDB write method and asserts
+  none is called (the old test passed a fire-and-forget `upsertRow`).
+- New read-layer tests: `reference-max-store`, `lift-store`, `rollup-client`.
+- dots: corrected the comment. A trailing-digit swap in b/c/d/e moves the
+  score by at most 0.003, inside the band; tolerance unchanged.
 
-- `lib/offline/runner.test.ts` (new, 19 tests): the real write helpers run
-  behind a recording row writer. Covers payload mapping for every op kind,
-  circle-before-write, profile failure never blocking a write, 404 on
-  delete/attach counting as done, and the coach-comment guard.
-- `client.test.ts`: a retryable `session.create` failure stops `set.create`;
-  "writes the op down before it tries to send it" now asserts put-before-send
-  on one event log (it only asserted `writes.length === 1` before).
-- `log-screen.test.tsx`: three tests run the real set-store over an in-memory
-  queue and read the queued op. They cover a warm-up with no prescription link
-  next to a working set that has one, a set index that is not reused after a
-  delete on the page, and a delete whose local write fails bringing the set back.
-- `session-detail.test.tsx`: an incomplete draft cannot save even if its
-  confirm fires, and a failed edit or delete reloads the server copy.
-- `bodyweight.test.ts`: 399/400/401/499 as literals. The old test read the
-  limit back from the module.
+### Mutations
 
-### Removed
-
-- `cancelQueued` and its test. Nothing outside the test called it.
-  `collapsibleCreate` in queue.ts is now unused too. I left it, with its
-  tests, for a follow-up.
-
-### Mutations now caught: 27 / 27
-
-Runner 12 (warm-up forced false, circle removed or not awaited, profile removed
-or awaited, 404 swallow removed on delete and on attach, prescription dropped,
-load or RPE mis-mapped, update warm-up forced false, comment guard inverted).
-Client 4 (keep sending after retry, send before persist, unpadded id, unsorted
-forced flush). Log screen 5 (warm-up carries the link, index counted from the
-shown sets, no restore on failed delete, warm-up forced false in the screen and
-in set-store). History 3. Bodyweight 3.
+38 run, 38 caught (one, rollupFrom's rep tie-break, by an existing test).
 
 ### Not done / for a decision
 
-- History delete has no undo and no pre-check for coach comments on screen.
-  The queue still refuses it (412) when it runs. Whether History should match
-  the log screen is a product decision.
-- The video-required gate (`set.ts`, `set-row.tsx`) is untouched.
-
-`npm test` 2270 / 140 files, `npm run lint` and `npm run typecheck` are clean.
+- **Heaviest-single tie rules disagree.** `rollupFrom` prefers more reps
+  within a week; `personalRecords` keeps the first week listed (`>`), so the
+  all-time record can read 140x3 after a 140x5 week, depending on list order.
+  Documented by a test, not changed.
+- `dots-store.ts` not tested: pure fan-out to five tested readers plus `dotsFor`.
