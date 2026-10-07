@@ -54,7 +54,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
 
-  const secret = ticketSecret();
+  let secret: string;
+  try {
+    secret = ticketSecret();
+  } catch {
+    // Same line as the stream route. Uncaught, this was a 500 with nothing in
+    // the log, and the review screen only said the clip could not be loaded.
+    console.error("clip: VIDEO_TICKET_SECRET is not configured");
+    return NextResponse.json({ error: "unavailable" }, { status: 500 });
+  }
   const expiresAt = Date.now() + TICKET_TTL_MS;
   const urls: Record<string, string> = {};
   for (const fileId of fileIds) {
