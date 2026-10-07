@@ -14,6 +14,10 @@
  *     global squat stays the global squat.
  *   - Once published, her 75% is 75% of HER training max on her Today --
  *     not the source athlete's kilos.
+ *   - A line priced off another lift (the paused bench at 80% of the squat,
+ *     docs/reference-lift.md) keeps that reference through both copies, and
+ *     prices off HER squat; the route refuses pointing it at a lift she
+ *     cannot read.
  *   - The route refuses a copy to someone the coach does not coach, a copy of
  *     a program by someone who did not write it, and no JWT at all.
  *   - A set the source athlete already logged is unchanged by all of it.
@@ -162,7 +166,8 @@ try {
   const dayId = await op({ op: "addDay", weekId, scheduledOn: today, label: "Heavy" });
   const pausedId = await op({ op: "createExercise", programId, name: VARIATION });
   const squatLine = await op({ op: "addPrescription", dayId, exerciseId: squatId, setCount: 3, reps: 5, load: "75%" });
-  await op({ op: "addPrescription", dayId, exerciseId: pausedId, setCount: 4, reps: 4, load: "80% @8", notes: "2s pause", videoRequired: true });
+  // Priced off the squat, not the variation's own max: a reference line.
+  await op({ op: "addPrescription", dayId, exerciseId: pausedId, setCount: 4, reps: 4, load: "80% @8", notes: "2s pause", videoRequired: true, referenceExerciseId: squatId });
   await op({ op: "publishProgram", programId });
   const pausedRow = await db.getRow({ databaseId: D, tableId: "exercises", rowId: pausedId });
   check("the variation sits in Joey's library", pausedRow.owner_id === joey.$id && pausedRow.is_global === false);
@@ -214,7 +219,8 @@ try {
     JSON.stringify(copyDays.map((d) => [d.scheduled_on, d.label])),
   );
   const copiedLines = copyWeek ? await poll(() => rowsOf("prescriptions", "week_id", copyWeek.$id), (r) => r.length === 2) : [];
-  const shape = (r: Row) => [r.exercise_id, r.set_count, r.reps, r.load, r.load_kind, r.notes, r.video_required].join("|");
+  const shape = (r: Row) =>
+    [r.exercise_id, r.set_count, r.reps, r.load, r.load_kind, r.notes, r.video_required, r.reference_exercise_id ?? null].join("|");
   const sourceLines = await rowsOf("prescriptions", "week_id", weekId);
   check(
     "and its lines say exactly what week 1's do",
@@ -269,7 +275,7 @@ try {
       new Set(herPaused.map((r) => r.exercise_id)).size === 1 &&
       herVariation?.owner_id === andrea.$id &&
       herVariation?.name === VARIATION &&
-      herPaused.every((r) => r.load === "80% @8" && r.notes === "2s pause" && r.video_required === true) &&
+      herPaused.every((r) => r.load === "80% @8" && r.notes === "2s pause" && r.video_required === true && r.reference_exercise_id === squatId) &&
       herSquat.every((r) => r.video_required === false),
     JSON.stringify(herVariation && [herVariation.owner_id === andrea.$id, herVariation.name]),
   );
@@ -286,6 +292,14 @@ try {
   check("nor duplicate a week of it", dup.status === 403, JSON.stringify(dup));
   const anonymous = await post(null, { op: "copyProgram", programId, athleteId: andrea.$id });
   check("no JWT is a 401", anonymous.status === 401);
+  const foreignReference = herPaused[0]
+    ? await post(coachJwt, { op: "updatePrescription", prescriptionId: herPaused[0].$id, referenceExerciseId: pausedId })
+    : { status: 0, body: {} };
+  check(
+    "not a reference to a lift she cannot read (Joey's variation, on her copy)",
+    foreignReference.status === 400 && JSON.stringify(foreignReference.body).includes("referenceExerciseId"),
+    JSON.stringify(foreignReference),
+  );
   const toSelf = await post(coachJwt, { op: "copyProgram", programId, athleteId: coach.$id, name: "Mine" });
   if (toSelf.status === 200) created.programs.push(String(toSelf.body.rowId));
   check("but the coach may copy it to themselves", toSelf.status === 200, JSON.stringify(toSelf));
@@ -304,6 +318,10 @@ try {
     await appears(card.getByText("3 × 5 · 90 kg (75%)").waitFor({ timeout: 30000 })),
   );
   check("and nowhere does she see Joey's 150", (await card.getByText("150 kg").count()) === 0);
+  check(
+    "her paused bench at 80% of the squat is 95 kg -- of her squat, named",
+    await appears(card.getByText(/4 × 4 · 95 kg \(80% of Squat\), stop at RPE 8/).waitFor({ timeout: 10000 })),
+  );
   await andreaPage.screenshot({ path: ".shots/copy-today-390.png", fullPage: true });
 
   // --- constraint 5 ----------------------------------------------------------

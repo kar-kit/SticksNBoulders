@@ -543,6 +543,22 @@ try {
     const line = await programOp(C, { op: "addPrescription", dayId: targets.program_days, exerciseId: targets["exercises:library"], setCount: 3, reps: 5, load: "75%" });
     targets.prescriptions = typeof line.body.rowId === "string" ? line.body.rowId : "";
     check("and a block, week, day and line under it", Boolean(targets.program_blocks && targets.program_weeks && targets.program_days && targets.prescriptions));
+    // docs/reference-lift.md: a percentage OF another lift. The reference is
+    // a row id like exercise_id, so the route holds it to the same rule --
+    // global or in A's library -- or A's phone prices a percentage off a row
+    // it cannot read. A library reference is accepted; the coach's private
+    // exercise is refused.
+    const referenced = await programOp(C, { op: "updatePrescription", prescriptionId: targets.prescriptions, referenceExerciseId: targets["exercises:library"] });
+    check("POST /api/program: A's coach may point a line's percentage at a library lift", referenced.status === 200, `${referenced.status} ${JSON.stringify(referenced.body)}`);
+    const coachPrivate = await createExercise(C.deps, { userId: C.id }, { name: `Audit Coach Private ${stamp}` });
+    createdRows.push({ table: "exercises", id: coachPrivate.$id });
+    const refused = await programOp(C, { op: "updatePrescription", prescriptionId: targets.prescriptions, referenceExerciseId: coachPrivate.$id });
+    check(
+      "POST /api/program: A's coach cannot point a line's percentage at his own private exercise (referenceExerciseId: not in the athlete's library)",
+      refused.status === 400 && JSON.stringify(refused.body).includes("referenceExerciseId"),
+      `${refused.status} ${JSON.stringify(refused.body)}`,
+    );
+    await programOp(C, { op: "updatePrescription", prescriptionId: targets.prescriptions, referenceExerciseId: null });
   }
   for (const p of [U, B]) {
     const res = await programOp(p, { op: "createProgram", athleteId: A.id, name: "Forged" });
