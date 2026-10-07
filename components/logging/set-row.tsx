@@ -56,6 +56,12 @@ export interface SetRowProps {
   onFilm?: () => void;
   /** Explains a non-athlete-entered load: "suggested from RPE 7 @ 142.5". */
   note?: string | null;
+  /**
+   * The load is the app's suggestion and still untouched: marks it
+   * "Suggested" until the athlete edits it. Offline-safe, because it is
+   * derived from row state and never from a request.
+   */
+  suggested?: boolean;
   /** The pad is editing this row. Only one row on the screen ever is. */
   focused?: boolean;
   /** Planned rows only: drop it before it is done. */
@@ -84,6 +90,7 @@ export function SetRow({
   onConfirm,
   onFilm,
   note,
+  suggested = false,
   focused = false,
   onDiscard,
   onSelect,
@@ -157,6 +164,7 @@ export function SetRow({
           placeholder={editing ? "KG" : "—"}
           onPress={onPressLoad}
           label={`${setLabel} weight in kilograms`}
+          marker={editing && suggested ? "Suggested" : undefined}
         />
 
         <LoadCell

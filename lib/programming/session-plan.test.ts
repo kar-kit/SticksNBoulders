@@ -270,6 +270,21 @@ describe("stamping the logger's new rows with their targets", () => {
     expect(after[2]).toMatchObject({ prescriptionId: "top", loadKg: 140, reps: 3 });
   });
 
+  it("drops the suggested flag when the coach's number replaces the engine's", () => {
+    const suggested = row("r1", { loadKg: 175, reps: 5, note: "suggested from RPE 7 @ 170", suggested: true });
+    const [stamped] = prescribeNewRows([], [suggested], context([]));
+    // The first squat line prescribes 140 kg: the coach's, not a suggestion.
+    expect(stamped).toMatchObject({ loadKg: 140, suggested: false });
+  });
+
+  it("keeps the flag on a suggestion when the line prescribes RPE and no weight", () => {
+    const logged = [set(140, 5, 8)];
+    const suggested = row("r3", { loadKg: 145, reps: 5, note: "suggested from RPE 7 @ 140", suggested: true });
+    // The third new row is the squat plan's RPE top set: reps and RPE, no load.
+    const [, , kept] = prescribeNewRows([], [row("r1"), row("r2"), suggested], context(logged));
+    expect(kept).toMatchObject({ loadKg: 145, suggested: true, note: "suggested from RPE 7 @ 140" });
+  });
+
   it("never touches a row already on screen, whatever the athlete typed into it", () => {
     const typed = row("r1", { loadKg: 150, reps: 4 });
     expect(prescribeNewRows([typed], [typed], context([]))[0]).toEqual(typed);

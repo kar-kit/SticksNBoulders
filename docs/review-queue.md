@@ -97,6 +97,29 @@ own. Consequences:
 
 The ticket is bound to one file, so swapping the id in a URL opens nothing.
 
+### A queue longer than one request
+
+`POST /api/clip` refuses more than `MAX_FILES` (60, in `lib/video/clip-limits.ts`)
+ids with a 400 for the whole request. The queue used to send every unreviewed
+clip in one, swallowed the error, and showed "Loading the clip…" forever, so a
+coach at 61 clips had no playback at all. [Inference] Five athletes at about 112
+clips a week puts a normal Sunday past that; the 112 is a capacity model's
+figure, not a measured one.
+
+`lib/review/clip-url-batches.ts` slices the ids into batches of at most
+`MAX_FILES` and sends them together. Each batch is merged into the queue as it
+lands, so the first 60 (the clips the coach plays first) never wait on the rest.
+A failed batch is not swallowed: the screen says how many clips could not be
+prepared, offers **Try again**, and the player for an affected clip says so
+instead of loading forever. Batches that landed are untouched, and the clips in
+a failed batch can still be cleared. Realtime is unchanged; a new clip changes
+the queue, which re-mints every batch.
+
+[Unverified] Every queue change re-mints all batches, one `createJWT` each, so
+a long queue now costs two or three per clear rather than one. Whether Appwrite
+rate-limits `createJWT` tightly enough to matter at 100+ clips is not checked;
+reading Appwrite's limits for that endpoint would settle it.
+
 ### Two things that only show up under a proxy
 
 **Range requests.** Forwarded in both directions, because the blueprint wants
@@ -204,6 +227,8 @@ unlinked coach's existing ticket dying immediately.
 | --- | --- |
 | `lib/review/queue.ts` | Pure: what is in the queue, in what order, what is next |
 | `lib/review/queue-store.ts` | The Appwrite reads, the review writes, realtime |
+| `lib/review/clip-url-batches.ts` | Slices a long queue into URL requests the route accepts |
+| `lib/video/clip-limits.ts` | `MAX_FILES`, shared by the route and the queue |
 | `lib/video/ticket.ts` | The signed playback pass |
 | `app/api/clip/route.ts` | Mints URLs for a batch of clips |
 | `app/api/clip/[fileId]/route.ts` | Streams one, as the ticket's user |

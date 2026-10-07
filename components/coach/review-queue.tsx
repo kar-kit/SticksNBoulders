@@ -10,6 +10,7 @@ import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { fetchCoachStatus } from "@/lib/auth/role";
 import { subscribeToLinks } from "@/lib/coach/coach-links-store";
 import { droppedClipsNotice, reconcileDropped, sameAthletes } from "@/lib/coach/link-status";
+import { loadClipUrlBatches } from "@/lib/review/clip-url-batches";
 import { buildQueue, firstItem, groupByAthlete, nextAfter, type QueueItem } from "@/lib/review/queue";
 import { countBySet, type Comment } from "@/lib/review/comments";
 import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
@@ -68,6 +69,9 @@ export function ReviewQueue() {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [urls, setUrls] = useState<Map<string, string>>(new Map());
+  // Files whose playback URL batch failed, and a counter that asks for another go.
+  const [urlsFailed, setUrlsFailed] = useState<ReadonlySet<string>>(new Set());
+  const [urlRetry, setUrlRetry] = useState(0);
   const [loaded, setLoaded] = useState<LoadedDetail | null>(null);
   const [lastCleared, setLastCleared] = useState<QueueItem | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -185,20 +189,31 @@ export function ReviewQueue() {
     }
   }, [coachId, refresh]);
 
-  // Playback URLs for what is on screen, in one request. Re-minted when the
-  // queue changes because the tickets are short-lived by design.
+  // Playback URLs for what is on screen. /api/clip takes at most MAX_FILES ids
+  // a request, so a long queue goes out as several, each merged in as it lands:
+  // the first batch is what the coach plays first and does not wait on the
+  // rest. Re-minted when the queue changes because the tickets are short-lived
+  // by design. A failed batch is named, not swallowed -- see urlsFailed below.
   useEffect(() => {
     if (items.length === 0) return;
     let cancelled = false;
-    void fetchClipUrls(items.map((item) => item.videoFileId))
-      .then((minted) => {
-        if (!cancelled) setUrls(minted);
-      })
-      .catch(() => {});
+    void loadClipUrlBatches(
+      items.map((item) => item.videoFileId),
+      fetchClipUrls,
+      (outcome) => {
+        if (cancelled) return;
+        if (outcome.ok) {
+          setUrls((have) => new Map([...have, ...outcome.urls]));
+          setUrlsFailed((was) => new Set([...was].filter((id) => !outcome.ids.includes(id))));
+        } else {
+          setUrlsFailed((was) => new Set([...was, ...outcome.ids]));
+        }
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [items]);
+  }, [items, urlRetry]);
 
   // The context panel for whatever is selected. The loaded context carries the
   // clip it belongs to, so a slow response for the previous clip can never
@@ -352,6 +367,8 @@ export function ReviewQueue() {
   }
 
   const groups = groupByAthlete(items);
+  const noPlayback = items.filter((item) => urlsFailed.has(item.videoFileId)).length;
+  const currentUrl = urls.get(current.videoFileId) ?? null;
   const commentCounts = countBySet(comments);
 
   return (
@@ -404,7 +421,28 @@ export function ReviewQueue() {
 
       <div className="flex min-h-0 flex-1 gap-8 overflow-y-auto p-8">
         <div className="flex-none">
-          <ClipPlayer src={urls.get(current.videoFileId) ?? null} clipId={current.id} />
+          {noPlayback > 0 ? (
+            // The clips in a failed batch still show in the rail and can still
+            // be cleared; only their video is missing. Said once, with a way
+            // to try again, rather than left as a player that loads forever.
+            <div role="alert" className="mb-3 flex max-w-[420px] items-center justify-between gap-3 text-ui text-muted">
+              <span>
+                {noPlayback === 1
+                  ? "1 clip could not be prepared for playback."
+                  : `${noPlayback} clips could not be prepared for playback.`}
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setUrlRetry((n) => n + 1)}>
+                Try again
+              </Button>
+            </div>
+          ) : null}
+          <ClipPlayer
+            src={currentUrl}
+            clipId={current.id}
+            unavailable={
+              urlsFailed.has(current.videoFileId) ? "The video for this clip could not be loaded. Try again." : undefined
+            }
+          />
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-8">

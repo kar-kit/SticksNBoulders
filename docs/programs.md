@@ -18,9 +18,15 @@ UI question over these rows, not a migration:
 - Each day carries its own `scheduled_on`. A block written in October, a week
   written on Sunday and a session written the night before are the same row.
 - Each week carries its own `status`. `publishProgram` publishes every week
-  (the block-up-front button); `updateWeek {status: "published"}` publishes one
-  (the week-by-week button). Today shows a day only when its program **and** its
-  week are published.
+  (the block-up-front button); `publishWeek {weekId}` publishes one (the
+  week-by-week button) and takes the program live with it if it is still a
+  draft, because a published week under a draft program reaches nobody.
+  `updateWeek {status: "draft"}` pulls a week back; the program stays
+  published, so the other weeks are untouched. Both are buttons beside the week
+  tabs in the editor. Today shows a day only when its program **and** its week
+  are published. [Fact] Server and write helper impose no published-to-draft
+  rule: `updateWeek` takes either status and `updateProgramWeek` passes it
+  through (`program-admin.test.ts`).
 - A program with `athlete_id` null is a template. Templates are not exposed in
   the UI. [Fact] Asked whether he reuses a program across athletes (question
   6/7), Ruairi answered *Sometimes* (Ruairi form answer, 6 Oct 2026). Copy to
@@ -71,11 +77,23 @@ raw API can see a draft of their own program; nobody else can.
   logged and asserts the set is unchanged.
 - A session stores `program_day_id`. Removing that day leaves the session and
   its sets intact; the logger simply stops showing targets for it.
-- Edits to a **published** program are live on save. There is no second draft
-  layer for edits yet. [Inference] The blueprint's "publishing mid-block updates
-  future days only" is satisfied for logged work (snapshots), but a coach
-  mid-edit can briefly show a half-changed day. If Ruairi edits live blocks
-  heavily, a per-week "unpublish while editing" is the cheap fix.
+- Edits to a **published** week are live on save; there is no second draft
+  layer for edits. The way to edit without the athlete seeing a half-changed
+  day is to **Unpublish** the week (back to draft), edit, then **Publish** it
+  again. Rows are neither removed nor re-stamped; only `status` changes, so the
+  athlete's read path stops returning the week (My Program and Today) until it
+  is republished. [Inference] The blueprint's "publishing mid-block updates
+  future days only" is satisfied for logged work (snapshots).
+- **A session already started keeps its targets.** [Fact] The logger asks for
+  its day by id (`fetchPrescribedDayById`) with no published check, so
+  unpublishing the week under an athlete mid-session changes nothing on their
+  screen (`prescribed-day.test.ts`). A device that reloads the program picks up
+  the coach's current lines for that day, as it does after any live edit.
+  [Inference] A session not yet started from that week simply does not find it
+  on Today.
+- Publishing and unpublishing a week never read or write `sessions` or `sets`
+  (asserted in `program-admin.test.ts`, with a logged set and its snapshot left
+  unchanged).
 
 ## Variations
 

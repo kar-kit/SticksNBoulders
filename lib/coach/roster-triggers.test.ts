@@ -117,7 +117,7 @@ describe("visibility", () => {
   });
 });
 
-describe("ordering [Inference: urgency]", () => {
+describe("ordering [Fact: videos first; Inference: the rest]", () => {
   it("groups by kind in KIND_ORDER, then by name", () => {
     const items = needsYou(
       [
@@ -135,15 +135,19 @@ describe("ordering [Inference: urgency]", () => {
       NOW,
     );
     expect(items.map((i) => `${i.kind}:${i.athleteName}`)).toEqual([
-      "unprompted-max:Cy",
-      "missed-sessions:Cy",
       "videos:Al",
       "videos:Bea",
+      "unprompted-max:Cy",
+      "missed-sessions:Cy",
       "no-bodyweight:Bea",
     ]);
   });
 
-  it("orders unprompted maxes first, as Ruairi's named complaint", () => {
-    expect(KIND_ORDER[0]).toBe("unprompted-max");
+  it("orders videos first, as Ruairi's review day starts with them", () => {
+    expect(KIND_ORDER[0]).toBe("videos");
+  });
+
+  it("leaves the other kinds in their earlier relative order", () => {
+    expect(KIND_ORDER).toEqual(["videos", "unprompted-max", "missed-sessions", "no-bodyweight"]);
   });
 });
