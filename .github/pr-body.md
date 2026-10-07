@@ -1,31 +1,56 @@
-## FTP1 — publish and unpublish one week at a time
+## Suggested next-set loads carry a "Suggested" marker
 
-Ruairi writes "a mix depending on the athlete": a whole block up front for some, a week at a time for others. The data model already carried it (per-week `status`, per-day `scheduled_on`), but the editor only had the whole-program Publish button and nothing called `updateWeek {status}`. This adds a per-week Publish / Unpublish button beside the week tabs.
+Ruairi answered "Should the app suggest next-set weights straight to athletes?"
+with "Yes - marked as a suggestion" (form answer, 6 Oct 2026). Set-targets have
+been filled since b15ca3f, so suggestions now reach athletes; the only mark was
+the note "suggested from RPE 7 @ 170", which says where the number came from,
+not that it is an offer the athlete can overrule, and which vanished on the
+first keystroke.
 
 ### What changed
 
-- **`publishWeek {weekId}`** (new op, `program-admin.ts`): publishes one week and, if the program is still a draft, publishes the program with it. Without that, the first week of a week-at-a-time block would be "published" under a draft program and reach nobody. Week first, program second, as `publishProgram` does, so a failure between the two shows the athlete nothing and a second press finishes it. Templates are refused, as for `publishProgram`.
-- **Unpublish is the existing `updateWeek {status: "draft"}`.** [Fact] The server op and write helper already allowed published to draft: the schema enum is `draft | published`, there is no transition guard, and `updateProgramWeek` passes `status` through. Not widened; now tested. The program stays published, so the other weeks are untouched. Rows are not removed or re-stamped.
-- **Program Editor**: one ghost button next to Duplicate, labelled "Publish week N" or "Unpublish week N". Insert-only diff (19 lines) in `program-editor.tsx`. Read-only for non-coaches, as the rest of the grid.
-- **Permission audit** (`scripts/appwrite-audit.mts`, `docs/permission-audit.md`): coach round-trips a week; unlinked coach, B, A and anon are refused; the ex-coach is refused after revocation. Not run live.
-- **`docs/programs.md`**: publish/draft bullets updated, including the edit-while-unpublished workflow.
+**A "Suggested" chip on the prefilled load.** It sits on the load cell's top
+border, a filled accent chip with its `on-accent` label (the pairing the palette
+clears for small text). The cell is the same 48px button, still opens the pad
+on one tap, and keeps its accessible name; the chip is its accessible
+description. Nothing blocks logging: the confirm square logs the suggested load
+as it stands. No spinner, toast or request, so it behaves identically offline.
 
-### Constraint 5
+**`PlannedRow.suggested`.** Row state, not derived from `note`, because `note`
+also carries a backoff's provenance. Set by `rowAfter` for an engine suggestion
+and by `prescribeNewRows` for a weight priced off today's top set; dropped when
+a coach's prescribed load replaces it.
 
-- Program writes still never touch `sessions` or `sets`. New test publishes, unpublishes, edits a line and republishes with a logged session and set present, asserts no write to either table, and that both rows are unchanged (`prescription_id` and the `prescribed` snapshot included).
-- Mid-session: [Fact] the logger loads its day by id with no published check (`fetchPrescribedDayById`), so unpublishing under an athlete changes nothing already on their screen. `prescribed-day.test.ts` covers that and that Today stops offering the day while it is draft.
+**Cleared the moment the athlete edits the load** (`applyPad`), together with
+the note. Opening the pad is not an edit; changing reps or RPE leaves it. It
+does not come back if the athlete types the suggested number in.
 
-### Decisions to confirm
+**Docs and comment.** `docs/suggestions.md` said no suggestion reached an
+athlete yet; it now describes when one appears (set-targets), and the marker.
+The `[SME to confirm]` on `DEFAULT_SUGGESTION_MODE` is now a [Fact]: Ruairi
+confirmed `direct` on 6 Oct 2026.
 
-- [Inference] `publishWeek` on an archived program publishes it again, matching what `publishProgram` does today. No restore flow exists.
-- [Inference] Unpublish has no confirm step: it deletes nothing and Publish reverses it.
-- [Inference] Unpublishing the last published week leaves the program published; Today shows nothing for it.
-- [SME to confirm] Whether Ruairi wants edits to a published week held in draft by default. Not built; not asked for.
+### Not touched
 
-Not added: any session-by-session flow beyond the existing per-day `scheduled_on`.
+`lib/strength/suggestion.ts`, the per-athlete `direct | held` switch
+(`coach_athlete_links.suggestions_mode`) and its default. Held still shows no
+suggestion and no marker.
+
+### Decisions
+
+- [Inference] A logged set is not marked. By then the number is what the athlete
+  did; nothing about how a set was prefilled is stored.
+- [Inference] The existing "suggested from RPE 7 @ 170" line stays beneath the
+  row as provenance and clears with the marker.
+- [Unverified] The chip's placement at 390x852 was reasoned from the grid
+  (about 110px load column), not checked on a device. Eyeball it once on the
+  phone.
 
 ### Verification
 
-`lint` · `typecheck` · **2030 tests, 128 files**. No e2e or appwrite scripts run.
+`lint` · `typecheck` · **2034 tests, 127 files**. New: marker appears, clears on
+a load edit, survives a reps edit, absent when held, present offline from the
+cached switch, absent on logged rows; `suggested` set and dropped in `plan` and
+`session-plan`. No e2e or appwrite scripts run; no schema or write-path change.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

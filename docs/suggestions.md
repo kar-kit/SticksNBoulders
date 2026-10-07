@@ -7,9 +7,10 @@ _Order 27. Phase 2b. Source: Joey. P1 Must._
 Joey already does this by hand, asking Claude between sets. The last set says
 how the day is actually going; the next set's target says where it should go.
 
-**Wired behind the coach's switch since Order 28.** See "The coach's switch"
-below. No suggestion reaches an athlete yet, because the logger does not read
-prescribed targets until Order 22.
+**Wired behind the coach's switch since Order 28, and reaching athletes since
+set-targets were filled (merge b15ca3f).** See "The coach's switch" and "When a
+suggestion appears" below. The athlete sees it marked *Suggested*; see "The
+marker".
 
 ## It is a ratio, which is why it could be built now
 
@@ -99,8 +100,9 @@ cannot wait on one. So the smallest reading that keeps the coach in control
 is taken:
 
 - **direct**: the athlete's logger shows the engine's suggestion, ranked
-  second in prefill and marked *suggested from RPE 7 @ 170*. Always editable,
-  and the note drops the moment the athlete types their own load.
+  second in prefill, marked *Suggested* on the load and annotated *suggested
+  from RPE 7 @ 170* underneath. Always editable, and both drop the moment the
+  athlete edits the load.
 - **held**: the logger shows no suggestion at all, and the next row repeats
   the set just logged (prefill rule 3), as it did before Order 27.
 
@@ -110,9 +112,11 @@ View's RPE curve exists for. The switch sits on the Athlete View; Profile &
 Settings tells an athlete when their coach holds suggestions and tells a
 coach where the switch is.
 
-**Default: direct.** [SME to confirm] The blueprint says to ask Ruairi rather
-than ship a default. Changing it is `DEFAULT_SUGGESTION_MODE` and nothing
-else; links from before Order 28 carry no value and read through it.
+**Default: direct.** [Fact] Ruairi confirmed it on 6 Oct 2026. Asked "Should
+the app suggest next-set weights straight to athletes?", his form answer was
+"Yes - marked as a suggestion". The first half is the default; the second is
+"The marker" below. Changing the default is `DEFAULT_SUGGESTION_MODE` and
+nothing else; links from before Order 28 carry no value and read through it.
 
 This is not an AI coach. The switch exists so the coach decides whether
 arithmetic on the athlete's own RPE reaches them at all.
@@ -162,14 +166,54 @@ is the failure this switch exists to prevent; withholding one costs the
 athlete one number typed, and the first read with signal corrects it.
 Profile does not claim the coach held anything in that case.
 
-### Why nothing appears yet
+### When a suggestion appears
 
-The engine has no default target on purpose (above). Targets come from
-prescriptions, which reach the logger at Order 22.
-`lib/logging/set-targets.ts` is that seam and returns null today. Everything
-downstream (the switch, the gate, the engine, the prefill note) is wired and
-tested now, so when a target exists the suggestion appears for athletes whose
-coach allows it, and for nobody else.
+The engine has no default target on purpose (above). The target comes from the
+coach's prescription for the set about to be done, and
+`lib/logging/set-targets.ts` is the seam: `setTargetFor` takes that prescribed
+target and keeps its reps and RPE. [Fact] It has done so since merge b15ca3f
+(6 Oct 2026); before that it returned null and nothing reached an athlete.
+
+It still returns null, and so there is no suggestion, when the line names no
+RPE (a fixed weight or a bare percentage has nothing to autoregulate toward),
+names no rep count, or is a backoff set (its load is the coach's rule, and its
+RPE is where the run stops, not a target). A prescribed load also outranks a
+suggestion in prefill, so the marker never sits on the coach's own number.
+
+So a suggestion appears for an athlete whose coach allows it (direct), when the
+set just logged was a working set with an RPE, and the next prescribed set
+asks for an RPE within `MAX_SUGGESTION_SPAN` of it. For nobody else.
+
+## The marker
+
+[Fact] The mark is Ruairi's condition: "Yes - marked as a suggestion". The
+`from RPE 7 @ 170` note says where the number came from; it does not say the
+number is the app's to offer and the athlete's to overrule. So the load itself
+carries a *Suggested* chip.
+
+- **Where.** On the load cell of the prefilled row, straddling its top border
+  (`marker` on `LoadCell`, `suggested` on `SetRow`). It sits on the border so
+  the number keeps the cell, and ignores taps so the whole cell still opens
+  the pad. The chip is a filled accent token with its `on-accent` label (the
+  pairing the palette clears for small text), mono, upper-cased by CSS.
+- **State, not a request.** `PlannedRow.suggested` is set when the row is built
+  from a suggestion (`rowAfter`) or priced off today's top set
+  (`prescribeNewRows`), so it works with no signal and shows no spinner,
+  toast or dialog. It is separate from `note`, which also carries a backoff's
+  provenance.
+- **One tap overrides it.** The cell is the same 48px button as before and its
+  accessible name is unchanged; the chip is its accessible description.
+  Confirming the row logs the suggested load as it stands.
+- **Cleared on edit.** The first change to the load clears `suggested` and the
+  note together (`applyPad`). Opening the pad is not an edit; changing reps or
+  RPE is not an edit of the load, so the marker stays. It does not return if
+  the athlete types the suggested number back: it is theirs by then.
+- **Drops when the coach's number arrives.** A prescribed load replacing a
+  suggestion clears the flag, and a logged row never shows it.
+
+[Inference] A logged set is not marked. By then the number is what the athlete
+did, and the mark belongs to the prefill, not the record. Nothing about how a
+set was prefilled is stored.
 
 ## Files
 
@@ -179,7 +223,9 @@ coach allows it, and for nobody else.
 | `lib/strength/plates.ts` | `LOADABLE_INCREMENT_KG`, `roundToLoadable` (moved here) |
 | `lib/coach/suggestion-mode.ts` | Order 28: the two modes, the default, the athlete's fold over links |
 | `lib/logging/suggestion-gate.ts` | The one place a suggestion enters the logger, and the switch on it |
-| `lib/logging/set-targets.ts` | The seam Order 22 fills; null today |
+| `lib/logging/set-targets.ts` | The seam: the prescribed target's reps and RPE, null when there is nothing to aim at |
+| `lib/logging/plan.ts` | `PlannedRow.suggested`, set when a row is built from a suggestion |
+| `components/logging/set-row.tsx`, `load-cell.tsx` | The *Suggested* chip on the load cell |
 | `lib/coach/suggestion-mode-store.ts`, `use-suggestion-mode.ts` | Reads, the device cache, the coach's write |
 | `appwrite/documents/suggestion-mode-admin.ts` | Who may set it: the coach on an active link, nobody else |
 | `app/api/link/suggestions/route.ts` | POST, caller from the JWT only |

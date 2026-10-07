@@ -171,6 +171,50 @@ describe("SetRow — suggestion note", () => {
   });
 });
 
+describe("SetRow — suggested marker", () => {
+  it("marks an untouched suggested load, on the load and nowhere else", () => {
+    render(<SetRow index={4} set={set({ loadKg: 150 })} state="active" suggested />);
+    expect(screen.getAllByText("Suggested")).toHaveLength(1);
+    // The marker belongs to the load cell: it is that button's description.
+    expect(screen.getByRole("button", { name: "Set 4 weight in kilograms" })).toHaveAccessibleDescription(
+      "Suggested",
+    );
+    expect(screen.getByRole("button", { name: "Set 4 reps" })).not.toHaveAccessibleDescription();
+  });
+
+  it("shows no marker for a load that is not a suggestion", () => {
+    render(<SetRow index={4} set={set({ loadKg: 150 })} state="active" note="from your last session" />);
+    expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+  });
+
+  it("marks a planned row waiting behind the active one", () => {
+    render(<SetRow index={5} set={set({ loadKg: 150 })} state="planned" suggested />);
+    expect(screen.getByText("Suggested")).toBeInTheDocument();
+  });
+
+  it("never marks a logged set, whatever it was prefilled from", () => {
+    render(<SetRow index={4} set={set({ loadKg: 150 })} state="logged" suggested />);
+    expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+  });
+
+  it("leaves the cell tappable and its name unchanged, so the pad opens as before", async () => {
+    const onPressLoad = vi.fn();
+    render(<SetRow index={4} set={set({ loadKg: 150 })} state="active" suggested onPressLoad={onPressLoad} />);
+    await userEvent.click(screen.getByRole("button", { name: "Set 4 weight in kilograms" }));
+    expect(onPressLoad).toHaveBeenCalledTimes(1);
+    // Nothing else appears: no spinner, no status, no alert.
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("drops the marker as soon as the row is no longer suggested", () => {
+    const { rerender } = render(<SetRow index={4} set={set({ loadKg: 150 })} state="active" suggested />);
+    expect(screen.getByText("Suggested")).toBeInTheDocument();
+    rerender(<SetRow index={4} set={set({ loadKg: 155 })} state="active" suggested={false} />);
+    expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+  });
+});
+
 describe("SetRow — column alignment", () => {
   it("left-aligns logged values so they sit under their column headers", () => {
     render(<SetRow index={1} set={set()} state="logged" />);
