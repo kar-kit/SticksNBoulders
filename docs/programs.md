@@ -28,7 +28,11 @@ UI question over these rows, not a migration:
   rule: `updateWeek` takes either status and `updateProgramWeek` passes it
   through (`program-admin.test.ts`).
 - A program with `athlete_id` null is a template. Templates are not exposed in
-  the UI ([SME to confirm] question 6/7: does Ruairi reuse skeletons?).
+  the UI. [Fact] Asked whether he reuses a program across athletes (question
+  6/7), Ruairi answered *Sometimes* (Ruairi form answer, 6 Oct 2026). Copy to
+  (Order 20, below) is the answer, and a template library is not needed for
+  the beta. [Inference] "Sometimes" is occasional reuse, which a copy plus a
+  read-before-publish covers; it does not argue for a library.
 
 ## Who can do what
 
@@ -177,6 +181,19 @@ is left unfed from prescriptions, so the logger never gates.
 ## Backoff rules (Order 21)
 
 _Source: Inferred. Every formula below is [Inference] until Ruairi confirms._
+
+[Fact] Asked which backoff kinds he uses, Ruairi picked *RPE target* and
+*Percentage drop from the top set*, and wanted no fixed-kg kind (Ruairi form
+answer, 6 Oct 2026). He left the worked example (question 4b) blank.
+[Inference] His two kinds map onto the existing ones: *percentage drop from the
+top set* onto `percent` (`3 x -10%`) or `drop`, and *RPE target* onto the
+`drop` stop RPE (`repeat until @9`). The mapping rests on the label alone, and
+"RPE target" could also mean sets worked at a target RPE with the load chosen
+by feel, which no kind expresses. No fixed-kg kind is built or needed.
+
+**Still open [SME to confirm]:** whether the drop is measured on load or on
+e1RM (`lib/programming/backoff.ts`, `BackoffRule`), and whether the cap of 5
+(`DEFAULT_DROP_CAP`) is right. Both wait on his example.
 
 A line can carry a backoff rule in its **Backoff** cell (after Note). The rule
 is the coach's, executed on the phone against the top set the athlete

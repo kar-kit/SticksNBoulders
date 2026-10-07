@@ -85,6 +85,11 @@ at Order 13 must, or an edit that changes reps leaves a stale estimate behind.
 [Unverified] Neither formula has a documented empirical derivation and both
 predate RPE-based training. Order 26 revisits this against the RTS chart.
 
+[Fact] Asked whether he wants e1RM to match the RTS chart, Ruairi answered *No
+preference* (Ruairi form answer, 6 Oct 2026). The default therefore stands:
+Brzycki stays and `e1rm:backfill` is not run. Moving to the chart remains
+Joey's decision alone; the numbers it turns on are in `docs/rpe-chart.md`.
+
 That revision is a script run, not a migration:
 
 ```

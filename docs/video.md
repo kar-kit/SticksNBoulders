@@ -7,6 +7,24 @@ _Order 29. Phase 3. Source: Joey. P0 Blocker._
 The set already carries load, reps, RPE and notes, so the context writes itself
 and the essay-length WhatsApp message disappears.
 
+## Which lifts get filmed
+
+[Fact] Asked which lifts he wants on video, Ruairi answered: *Mainly compounds
+but if you have questions on accessories or variations do record too* (Ruairi
+form answer, 6 Oct 2026). That is the default expectation: compounds filmed,
+accessories and variations when the athlete has a question.
+
+[Fact] The code has no compound or accessory classification on an exercise.
+What it has is a per-exercise default, `exercises.video_default`, seeded on
+for Squat, Bench Press and Deadlift only, which pre-ticks the per-line
+`video_required` box when a coach adds a line in the Program Editor (Order 30,
+`docs/programs.md`); the coach can untick it, or tick it by hand on any
+accessory or variation. `video_required` is a nudge and never a gate. The
+mechanism is described in "Which lifts get video: compounds by default, the
+coach flags the rest" at the end of this document. Beyond that default, the
+expectation lives in the coach's habit and the athlete's briefing, not in the
+product.
+
 ## Two findings that shape everything downstream
 
 ### 1. The instance capped files at 30MB — raised, and where they now live
