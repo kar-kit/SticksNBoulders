@@ -9,6 +9,8 @@ import {
   setForNewClip,
   type AttachableSet,
 } from "./clip";
+import { schema } from "@/appwrite/schema";
+import { VIDEO_BUCKET } from "./bucket";
 
 const SQUAT = "ex-squat";
 const BENCH = "ex-bench";
@@ -45,7 +47,7 @@ describe("what can be attached", () => {
   });
 
   /**
-   * The instance caps files at 30,000,000 bytes and storage rejects anything
+   * The instance caps files at MAX_VIDEO_BYTES and storage rejects anything
    * larger outright, so this has to be caught here -- an athlete on gym wifi
    * must not wait two minutes to be told no.
    */
@@ -135,5 +137,24 @@ describe("replacing a clip", () => {
     expect(isReplacement({ hasVideo: true })).toBe(true);
     expect(isReplacement({ hasVideo: false })).toBe(false);
     expect(isReplacement({})).toBe(false);
+  });
+});
+
+/**
+ * The client check and the bucket are two statements of one limit. Comparing
+ * the check to its own constant cannot notice them drifting apart; this does.
+ * Above the bucket, an athlete waits out a full upload to be refused by
+ * storage. Below it, a clip the server would take is refused on the phone.
+ */
+describe("agreeing with the bucket", () => {
+  const bucket = schema.buckets.find((b) => b.id === VIDEO_BUCKET);
+
+  it("uses the bucket's own maximum file size", () => {
+    expect(bucket).toBeDefined();
+    expect(MAX_VIDEO_BYTES).toBe(bucket!.maximumFileSizeBytes);
+  });
+
+  it("accepts exactly the extensions the bucket allows", () => {
+    expect([...VIDEO_EXTENSIONS].sort()).toEqual([...bucket!.allowedFileExtensions].sort());
   });
 });
