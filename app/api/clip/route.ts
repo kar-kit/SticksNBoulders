@@ -1,6 +1,7 @@
 import { Account, Client } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { serverAppwriteConfig } from "@/appwrite/env";
+import { MAX_FILES } from "@/lib/video/clip-limits";
 import { clipUrl, mintTicket, ticketSecret, TICKET_TTL_MS } from "@/lib/video/ticket";
 
 /**
@@ -19,9 +20,6 @@ import { clipUrl, mintTicket, ticketSecret, TICKET_TTL_MS } from "@/lib/video/ti
  */
 
 export const runtime = "nodejs";
-
-/** A coach clearing a queue, not a script enumerating a bucket. */
-const MAX_FILES = 60;
 
 export async function POST(request: Request) {
   const header = request.headers.get("authorization") ?? "";
