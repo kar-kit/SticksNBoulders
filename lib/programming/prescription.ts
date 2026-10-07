@@ -51,11 +51,12 @@ export type PrescriptionKind = "fixed" | "percent" | "rpe" | "capped" | "freefor
  * training max and can be changed per row." That is which *kind* of max -- the
  * prescription's own exercise supplies it either way.
  *
- * Deliberately not a pointer at another exercise's max. Order 18's notes reject
- * "a single reference max standing in for lifts that move different weights",
- * which is exactly what tempo bench at a percentage of competition bench would
- * be. Whether Ruairi wants that anyway is still [SME to confirm]; if he does it
- * is one added field, not a reshaped union.
+ * Which EXERCISE supplies it is not part of the spec. Ruairi answered the
+ * question this comment used to leave open (7 Oct 2026): "Tempo Bench at 70%"
+ * is 70% of the competition bench max. That pointer is the prescription row's
+ * `reference_exercise_id`, one added field as predicted here, and the grammar
+ * is unchanged -- the editor strips a typed `of Bench Press` into the column
+ * before the load is stored. See docs/reference-lift.md.
  */
 export const DEFAULT_BASIS: MaxKind = "training";
 
@@ -207,12 +208,21 @@ export interface ResolvedPrescription {
   display: string;
   /**
    * True when this is a percentage that could not be resolved because the
-   * athlete has no max for the lift yet. The editor warns the coach; the
-   * athlete just sees the percentage and picks a weight.
+   * athlete has no max for the lift yet. The Program Editor warns the coach
+   * beside the load cell (`unresolvedWarning` in editor.ts); the athlete just
+   * sees the percentage and picks a weight.
    */
   unresolved: boolean;
   /** Which number the percentage was resolved against, if any. */
   basisUsed: BasisUsed | null;
+  /** The kilos that number held, so a snapshot can say what the 70% was OF. */
+  basisKg: number | null;
+  /**
+   * The line as the logged set records it, when that differs from `display`.
+   * Only a reference row sets it: "105 kg (70% of Bench Press, training 150)".
+   * Absent everywhere else, so an own-exercise snapshot reads exactly as before.
+   */
+  record?: string;
   /**
    * True when the weight came from today's first working set rather than from
    * a stored max.
@@ -297,11 +307,33 @@ function chooseBasis(basis: MaxKind, maxes: BasisMaxes): { kg: number; used: Bas
   return usable(stored) ? { kg: stored, used: basis } : null;
 }
 
+/** "training 150", "e1RM 160": the basis a reference row's snapshot records. */
+const basisNote = (used: BasisUsed, kg: number): string =>
+  `${used === "estimated" ? "e1RM" : used} ${trimZero(kg)}`;
+
+/**
+ * The lift a percentage is OF, when it is not the line's own exercise. Its
+ * name is shown, because "70% of Bench Press" on a Tempo Bench row is what
+ * makes the number explain itself; own-exercise rows stay "105 kg (70%)".
+ */
+export interface ReferenceLift {
+  name: string;
+}
+
+/**
+ * One prescription, resolved. (The no-max rule is above `usable`.)
+ *
+ * `reference` is set only for a row whose percentage is of another lift. The
+ * caller passes THAT lift's maxes, and passes them without a session max: a
+ * tempo bench set measures tempo bench, not comp bench (docs/reference-lift.md
+ * §2). It changes the words and nothing else about how the number is reached.
+ */
 export function resolvePrescription(
   spec: PrescriptionSpec,
   maxes: BasisMaxes = {},
+  reference?: ReferenceLift,
 ): ResolvedPrescription {
-  const none = { basisUsed: null, synced: false } as const;
+  const none = { basisUsed: null, basisKg: null, synced: false } as const;
 
   switch (spec.kind) {
     case "fixed":
@@ -329,10 +361,12 @@ export function resolvePrescription(
     case "capped": {
       const chosen = chooseBasis(spec.basis, maxes);
       const cap = spec.kind === "capped" ? spec.rpe : null;
-      const percentLabel = `${trimZero(spec.percent)}%`;
+      const percentLabel = `${trimZero(spec.percent)}%${reference ? ` of ${reference.name}` : ""}`;
       const capLabel = cap === null ? "" : `, stop at RPE ${trimZero(cap)}`;
 
       if (!chosen) {
+        // With a reference the lift is named, so the athlete knows WHICH max
+        // is missing: "70% of Bench Press", never the tempo max in its place.
         return {
           loadKg: null,
           rpe: cap,
@@ -353,7 +387,13 @@ export function resolvePrescription(
         display: `${kgLabel(loadKg)} (${percentLabel})${capLabel}`,
         unresolved: false,
         basisUsed: chosen.used,
+        basisKg: chosen.kg,
         synced,
+        // A reference row's set records the basis too: when the bench max
+        // moves from 150 to 155, "105 kg (70%)" could not say what it was of.
+        ...(reference
+          ? { record: `${kgLabel(loadKg)} (${percentLabel}, ${basisNote(chosen.used, chosen.kg)})${capLabel}` }
+          : {}),
       };
     }
   }

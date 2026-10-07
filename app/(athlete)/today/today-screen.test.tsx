@@ -234,6 +234,18 @@ describe("Today, with a prescribed day", () => {
     expect(screen.getByText("4 × 6 · 85 kg (72.5%), stop at RPE 8")).toBeInTheDocument();
   });
 
+  it("prices a line referencing another lift off that lift's max, and names it", () => {
+    // docs/reference-lift.md: 70% of the bench's 120 is 84, rounded down to
+    // 82.5 -- on a squat line here only because the fixture library is small.
+    const state = ready() as Extract<Prescribed, { status: "ready" }>;
+    state.day.prescriptions.push(
+      line({ id: "l3", exerciseId: "squat", position: 2, setCount: 3, load: "70%", loadKind: "percent", referenceExerciseId: "bench" }),
+    );
+    prescribed.value = state;
+    setup();
+    expect(screen.getByText("3 × 5 · 82.5 kg (70% of Bench Press)")).toBeInTheDocument();
+  });
+
   it("shows the coach's note for the day under the card", () => {
     prescribed.value = ready();
     setup();
