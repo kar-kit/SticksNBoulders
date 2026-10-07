@@ -19,6 +19,7 @@ const set = (over: Partial<ExportSet>): ExportSet => ({
   e1rmKg: null,
   loggedAt: new Date("2026-09-14T18:00:00Z"),
   notes: null,
+  prescribed: null,
   ...over,
 });
 
