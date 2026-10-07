@@ -516,6 +516,76 @@ describe("variations typed into the editor", () => {
   });
 });
 
+describe("a percentage of another lift (docs/reference-lift.md)", () => {
+  /** Tempo Bench in the athlete's own library, the variation the coach references off. */
+  const tempo = (h: ReturnType<typeof harness>) =>
+    h.tableOf("exercises").set("ex-tempo", { $id: "ex-tempo", name: "Tempo Bench", is_global: false, owner_id: ATHLETE });
+
+  it("stores the reference on add and on update, and only when there is one", async () => {
+    const h = harness();
+    const { dayId, lineId } = await skeleton(h);
+    tempo(h);
+    expect(h.row("prescriptions", lineId)).not.toHaveProperty("reference_exercise_id");
+    const line = await h.ok(COACH, {
+      op: "addPrescription",
+      dayId,
+      exerciseId: "ex-tempo",
+      setCount: 3,
+      reps: 5,
+      load: "70%",
+      referenceExerciseId: "ex-Bench-Press",
+    });
+    expect(h.row("prescriptions", line)).toMatchObject({ load: "70%", load_kind: "percent", reference_exercise_id: "ex-Bench-Press" });
+    // A load edit leaves it alone; `of own` clears it.
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: line, load: "@8" });
+    expect(h.row("prescriptions", line)).toMatchObject({ load_kind: "rpe", reference_exercise_id: "ex-Bench-Press" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: line, referenceExerciseId: null });
+    expect(h.row("prescriptions", line)).toMatchObject({ reference_exercise_id: null });
+  });
+
+  it("normalises a reference to the line's own exercise to null, however it arises", async () => {
+    const h = harness();
+    const { dayId } = await skeleton(h);
+    tempo(h);
+    const self = await h.ok(COACH, { op: "addPrescription", dayId, exerciseId: "ex-tempo", setCount: 1, load: "70%", referenceExerciseId: "ex-tempo" });
+    expect(h.row("prescriptions", self)).not.toHaveProperty("reference_exercise_id");
+    const line = await h.ok(COACH, { op: "addPrescription", dayId, exerciseId: "ex-tempo", setCount: 1, load: "70%", referenceExerciseId: "ex-Bench-Press" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: line, referenceExerciseId: "ex-tempo" });
+    expect(h.row("prescriptions", line)).toMatchObject({ reference_exercise_id: null });
+    // Swapping the line onto the lift it referenced leaves it on its own max.
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: line, referenceExerciseId: "ex-Bench-Press" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: line, exerciseId: "ex-Bench-Press" });
+    expect(h.row("prescriptions", line)).toMatchObject({ exercise_id: "ex-Bench-Press", reference_exercise_id: null });
+  });
+
+  it("refuses a reference the athlete cannot read, or that does not exist, and writes nothing", async () => {
+    const h = harness();
+    const { dayId, lineId } = await skeleton(h);
+    h.tableOf("exercises").set("ex-coach-only", { $id: "ex-coach-only", name: "Secret", is_global: false, owner_id: COACH });
+    const before = h.writes.length;
+    expect(
+      await h.run(COACH, { op: "addPrescription", dayId, exerciseId: "ex-Squat", setCount: 1, load: "70%", referenceExerciseId: "ex-coach-only" }),
+    ).toEqual({ status: "invalid", reason: "referenceExerciseId: not in the athlete's library" });
+    expect(
+      await h.run(COACH, { op: "updatePrescription", prescriptionId: lineId, referenceExerciseId: "ex-coach-only" }),
+    ).toEqual({ status: "invalid", reason: "referenceExerciseId: not in the athlete's library" });
+    expect(
+      await h.run(COACH, { op: "updatePrescription", prescriptionId: lineId, referenceExerciseId: "ex-nope" }),
+    ).toEqual({ status: "invalid", reason: "referenceExerciseId: no such exercise" });
+    expect(h.writes.length).toBe(before);
+  });
+
+  it("never writes a session or a set", async () => {
+    const h = harness();
+    const { lineId } = await skeleton(h);
+    h.tableOf("sets").set("set1", { $id: "set1", prescription_id: lineId, prescribed: "5 reps · 105 kg (70% of Bench Press, training 150)" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: lineId, referenceExerciseId: "ex-Bench-Press" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: lineId, referenceExerciseId: null });
+    expect(h.writes.filter((w) => w.tableId === "sets" || w.tableId === "sessions")).toEqual([]);
+    expect(h.row("sets", "set1")).toMatchObject({ prescribed: "5 reps · 105 kg (70% of Bench Press, training 150)" });
+  });
+});
+
 describe("constraint 5: logged work is immutable, prescriptions are not", () => {
   it("never writes a session or a set, whatever the coach does to the program", async () => {
     const h = harness();

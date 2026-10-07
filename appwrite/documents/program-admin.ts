@@ -305,6 +305,7 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
     case "addPrescription": {
       const { row: day, scope } = await childOf(ctx, "program_days", op.dayId, parseDay);
       await requireExercise(ctx, scope, op.exerciseId);
+      if (op.referenceExerciseId) await requireExercise(ctx, scope, op.referenceExerciseId, "referenceExerciseId");
       const position = nextPosition(await siblings(ctx, "prescriptions", "day_id", day.id));
       const row = await createPrescription(ctx.deps, scope, {
         ...op,
@@ -317,6 +318,7 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
     case "updatePrescription": {
       const { row: line, scope } = await childOf(ctx, "prescriptions", op.prescriptionId, parsePrescriptionRow);
       if (op.exerciseId) await requireExercise(ctx, scope, op.exerciseId);
+      if (op.referenceExerciseId) await requireExercise(ctx, scope, op.referenceExerciseId, "referenceExerciseId");
       // The range is checked against what the row will hold afterwards, not
       // just the fields in this request: changing reps alone can invert it.
       const reps = op.reps === undefined ? line.reps : op.reps;
@@ -324,7 +326,7 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
       if (repMax != null && (reps == null || repMax < reps)) {
         refuse({ status: "invalid", reason: "repMax: a rep range needs a bottom, and its top cannot be below it" });
       }
-      await updatePrescription(ctx.deps, scope, line.id, op);
+      await updatePrescription(ctx.deps, scope, line.id, { ...op, referenceExerciseId: referenceAfter(line, op) });
       return line.id;
     }
     case "removePrescription": {
@@ -479,13 +481,39 @@ function requireCalendarFits(scope: ProgramScope, scheduledOn: string | null | u
  * row, or one in their own library. A coach's private custom exercise would
  * reach the athlete's Today as a line with no name -- they cannot read it --
  * so it is refused here and `createExercise` puts it where it belongs.
+ *
+ * The same check guards a line's reference lift: the athlete's phone prices
+ * "70% of Bench Press" off a row it has to be able to read.
  */
-async function requireExercise(ctx: Ctx, scope: ProgramScope, exerciseId: string) {
+async function requireExercise(
+  ctx: Ctx,
+  scope: ProgramScope,
+  exerciseId: string,
+  field: "exerciseId" | "referenceExerciseId" = "exerciseId",
+) {
   const row = await rowOf(ctx, "exercises", exerciseId);
-  if (!row) return refuse({ status: "invalid", reason: "exerciseId: no such exercise" });
+  if (!row) return refuse({ status: "invalid", reason: `${field}: no such exercise` });
   if (row.is_global !== true && row.owner_id !== libraryOwner(scope)) {
-    refuse({ status: "invalid", reason: "exerciseId: not in the athlete's library" });
+    refuse({ status: "invalid", reason: `${field}: not in the athlete's library` });
   }
+}
+
+/**
+ * The reference an update leaves on a line, judged against what the row will
+ * hold afterwards -- the write helper only sees this request. A reference to
+ * the line's own exercise is stored as null, whichever field made it so:
+ * pointing a Tempo Bench line at itself, or swapping the line's exercise to
+ * the lift it already referenced. Undefined leaves the column alone.
+ */
+function referenceAfter(
+  line: { exerciseId: string; referenceExerciseId?: string | null },
+  op: { exerciseId?: string; referenceExerciseId?: string | null },
+): string | null | undefined {
+  const exerciseId = op.exerciseId ?? line.exerciseId;
+  if (op.referenceExerciseId !== undefined) {
+    return op.referenceExerciseId === exerciseId ? null : op.referenceExerciseId;
+  }
+  return op.exerciseId !== undefined && line.referenceExerciseId === op.exerciseId ? null : undefined;
 }
 
 const REORDER: Record<ReorderLevel, { table: ProgramTable; parentColumn: string }> = {
@@ -562,11 +590,25 @@ async function copyLines(
       copyPrescription(
         ctx.deps,
         scope,
-        { ...to, exerciseId: exerciseFor(String(raw.exercise_id)), position },
+        {
+          ...to,
+          exerciseId: exerciseFor(String(raw.exercise_id)),
+          // Remapped by the same map as the line's exercise, never copied as
+          // stored: the source's reference may be a row the target cannot read.
+          referenceExerciseId: referenceIdOf(raw) ? exerciseFor(referenceIdOf(raw)!) : null,
+          position,
+        },
         raw,
       ),
     ),
   );
+}
+
+/** A stored line's reference lift, or null for its own. */
+function referenceIdOf(raw: RawRow): string | null {
+  return typeof raw.reference_exercise_id === "string" && raw.reference_exercise_id
+    ? raw.reference_exercise_id
+    : null;
 }
 
 /**
@@ -656,13 +698,25 @@ async function copyProgramOp(ctx: Ctx, op: ProgramOpOf<"copyProgram">): Promise<
   // Every exercise, resolved in the target's library before anything is
   // written. A variation is its own exercise with its own max, so the source
   // athlete's "Paused Bench" becomes the target's "Paused Bench" -- found by
-  // name, or created there by the same path the editor uses.
+  // name, or created there by the same path the editor uses. A line's
+  // reference lift is resolved the same way and by the same rules: it is an
+  // exercise the target's phone has to read to price the percentage.
   const target = op.athleteId;
   const exercises = new Map<string, string>();
   const missing: Array<{ id: string; name: string }> = [];
-  for (const id of new Set([...lines.values()].flat().map((row) => String(row.exercise_id)))) {
+  const copied = [...lines.values()].flat();
+  const own = new Set(copied.map((row) => String(row.exercise_id)));
+  const referenced = copied.map(referenceIdOf).filter((id): id is string => id !== null);
+  for (const id of new Set([...own, ...referenced])) {
     const row = await rowOf(ctx, "exercises", id);
-    if (!row) return refuse({ status: "invalid", reason: "exerciseId: a line's exercise no longer exists" });
+    if (!row) {
+      return refuse({
+        status: "invalid",
+        reason: own.has(id)
+          ? "exerciseId: a line's exercise no longer exists"
+          : "referenceExerciseId: a line's reference lift no longer exists",
+      });
+    }
     if (row.is_global === true || row.owner_id === target) exercises.set(id, id);
     else missing.push({ id, name: String(row.name ?? "") });
   }
