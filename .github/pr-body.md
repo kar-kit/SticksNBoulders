@@ -62,7 +62,7 @@ through `/api/program`, which re-checks the link.
 
 ### Verified offline
 
-`npm test` 134 files / 2096 tests, `npm run lint`, `npm run typecheck` all
+`npm test` 138 files / 2183 tests (after merging origin/dev with #55), `npm run lint`, `npm run typecheck` all
 clean. No `appwrite:*` or `e2e:*` scripts were run.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
