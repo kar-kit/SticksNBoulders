@@ -21,6 +21,7 @@ import { ID, Query, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { presetMode } from "./e2e-mode";
 import { circleTeamId } from "../appwrite/documents/circle";
 import { SPLASH_SCREENS, splashPath } from "../lib/pwa/splash";
 
@@ -180,6 +181,7 @@ const teams = new Teams(admin);
 const db = config.databaseId;
 const stamp = Date.now();
 const athlete = await users.create({ userId: ID.unique(), email: `pwa-${stamp}@example.com`, password: "Probe-pass-123!", name: "Joey Pang" });
+await presetMode(users, athlete, "athlete");
 const rowsOf = async (table: "sets" | "sessions", athleteId: string) =>
   (await adminDb.listRows({ databaseId: db, tableId: table, queries: [Query.equal("athlete_id", athleteId), Query.limit(50)], ttl: 0 })).rows;
 

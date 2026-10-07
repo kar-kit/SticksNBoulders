@@ -51,6 +51,13 @@ describe("the audit's rules", () => {
     }
   });
 
+  it("lets a linked coach see A's picture but never change or remove it", () => {
+    const rule = RULES.find((r) => r.key === "avatars")!;
+    expect(rule.kind).toBe("bucket");
+    expect(isAllowed(rule, "read", "coach")).toBe(true);
+    for (const op of ["create", "update", "delete"] as const) expect(isAllowed(rule, op, "coach"), op).toBe(false);
+  });
+
   it("expects a program to be read by its coach and athlete and written by nobody from a session", () => {
     for (const table of ["programs", "program_blocks", "program_weeks", "program_days", "prescriptions"]) {
       const rule = RULES.find((r) => r.resource === table)!;

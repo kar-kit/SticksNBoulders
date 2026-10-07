@@ -1,10 +1,13 @@
 import type { ClearedOrphan } from "../backup/orphans";
 
 /**
- * Deleting a clip nothing points at, server-side.
+ * Deleting a file nothing points at, server-side: a clip, or since v13 a
+ * profile picture whose best-effort delete failed.
  *
- * The one storage delete in the product, and it lives in the write helper for
- * the same reason every row write does: one place to review. It takes a
+ * The one server-side storage delete, and it lives in the write helper for the
+ * same reason every row write does: one place to review. (The browser deletes
+ * one thing itself: the owner's previous profile picture, with the delete their
+ * own stamp grants -- lib/profile/avatar-store.ts.) It takes a
  * `ClearedOrphan` and nothing else, and only `clearForDeletion` in
  * appwrite/backup/orphans.ts makes one -- after checking that a fresh backup
  * holds the file byte for byte. A caller cannot hand this a bare file id.

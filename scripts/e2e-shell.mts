@@ -13,6 +13,7 @@ import { ID, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { presetMode } from "./e2e-mode";
 import { circleTeamId, CIRCLE_ROLES } from "../appwrite/documents/circle";
 import { linkPermissions, profilePermissions } from "../appwrite/documents/policy";
 
@@ -42,6 +43,10 @@ const signIn = async (page: Page, email: string) => {
 
 const coach = await users.create({ userId: ID.unique(), email: `shell-coach-${stamp}@example.com`, password: "Probe-pass-123!", name: "Ruairi Deane" });
 const athlete = await users.create({ userId: ID.unique(), email: `shell-ath-${stamp}@example.com`, password: "Probe-pass-123!", name: "Joey Pang" });
+// The athlete has answered the first-run question. The coach deliberately has
+// not: an account with links and no mode is the migration case, and it must
+// still land on the roster.
+await presetMode(users, athlete, "athlete");
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 390, height: 852 }, colorScheme: "dark" });
@@ -59,8 +64,9 @@ for (const [label, href] of [["Log", "/log"], ["History", "/history"], ["Me", "/
   check(`the ${label} tab reaches ${href}`, page.url().endsWith(href));
 }
 check(
-  "no coach switch, because nobody is linked to them",
-  (await page.getByRole("button", { name: "Coach mode" }).count()) === 0,
+  "no coach switch, because nobody is linked to them and they chose athlete",
+  (await page.getByRole("button", { name: "Coach mode" }).count()) === 0 &&
+    (await page.getByRole("link", { name: "Coach mode" }).count()) === 0,
 );
 await page.goto(`${BASE}/coach/roster`);
 await page.waitForTimeout(2500);
@@ -84,7 +90,11 @@ const link = await adminDb.createRow({
 const coachPage = await ctx.browser()!.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" }).then((c) => c.newPage());
 await signIn(coachPage, coach.email);
 await coachPage.waitForURL("**/coach/roster", { timeout: 20000 }).catch(() => {});
-check("a coach lands on their roster, not on Today", coachPage.url().includes("/coach/roster"));
+check("a coach from before the question lands on their roster, not on Today", coachPage.url().includes("/coach/roster"));
+check(
+  "and is not asked the first-run question",
+  !coachPage.url().includes("/welcome") && (await users.getPrefs({ userId: coach.$id })).snb_mode === "coach",
+);
 // The rail costs two sequential round trips after the session resolves --
 // links, then profiles -- so it is waited for rather than raced.
 // Scoped to the rail: the Roster's own table names the athlete too (Order 24).
@@ -100,6 +110,12 @@ check("the coach nav is present", (await coachPage.locator("nav[aria-label='Coac
 await coachPage.getByRole("button", { name: "Athlete mode" }).click();
 await coachPage.waitForURL("**/today", { timeout: 10000 }).catch(() => {});
 check("athlete mode switches on the same account", coachPage.url().endsWith("/today"));
+check(
+  "the athlete side shows the way back on every screen",
+  await coachPage.getByRole("link", { name: "Coach mode" }).waitFor({ timeout: 10000 }).then(() => true).catch(() => false),
+);
+await coachPage.waitForTimeout(1500);
+check("and remembers athlete as the side last used", (await users.getPrefs({ userId: coach.$id })).snb_mode === "athlete");
 await coachPage.goto(`${BASE}/me`);
 await coachPage.waitForTimeout(2000);
 check(

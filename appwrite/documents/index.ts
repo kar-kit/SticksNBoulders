@@ -25,7 +25,10 @@ export {
 
 export { deleteOrphanClip, type ClipStore } from "./clip-admin";
 
+export { AVATAR_BUCKET, avatarOf, isOwnAvatarFileId, newAvatarFileId } from "./avatar";
+
 export {
+  avatarPermissions,
   exercisePermissions,
   invitePermissions,
   linkPermissions,
@@ -89,6 +92,7 @@ export {
   recordBodyweight,
   reviseBodyweight,
   reactivateCoachLink,
+  setProfileAvatar,
   renameGlobalExercise,
   restampGlobalExercise,
   revokeCoachLink,

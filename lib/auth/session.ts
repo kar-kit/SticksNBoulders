@@ -4,8 +4,10 @@ import { OAuthProvider } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { forgetCircle } from "./circle";
 import { forgetProfile } from "@/lib/profile/profile-store";
+import { forgetAvatars } from "@/lib/profile/avatar-cache";
 import { toAuthFailure, type AuthFailure, type OAuthProviderName } from "./errors";
 import { normaliseEmail } from "./method-hint";
+import { AFTER_SIGN_IN } from "./destinations";
 
 /**
  * Sign in, sign up, sign out.
@@ -58,6 +60,8 @@ export async function signOut() {
   // profile one is worse because it carries a name.
   forgetCircle();
   forgetProfile();
+  // Faces and picture ids, the same reasoning: per page load, keyed to nobody.
+  forgetAvatars();
   return attempt(() => account.deleteSession({ sessionId: "current" }));
 }
 
@@ -66,12 +70,18 @@ const PROVIDERS: Record<OAuthProviderName, OAuthProvider> = {
   apple: OAuthProvider.Apple,
 };
 
-/** Leaves the page. Appwrite returns the browser to `success` or `failure`. */
+/**
+ * Leaves the page. Appwrite returns the browser to `success` or `failure`.
+ *
+ * Success is the root, like every other sign-in. It used to be /today, which
+ * skipped the root's decision entirely: a Google sign-up never saw the
+ * coach-or-athlete question and a coach landed in the athlete app.
+ */
 export function startOAuth(provider: OAuthProviderName, origin: string) {
   const { account } = browserAppwrite();
   account.createOAuth2Session({
     provider: PROVIDERS[provider],
-    success: `${origin}/today`,
+    success: `${origin}${AFTER_SIGN_IN}`,
     failure: `${origin}/sign-in?error=oauth`,
   });
 }

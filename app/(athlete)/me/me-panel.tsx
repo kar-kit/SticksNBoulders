@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { CoachLink } from "@/components/coach/coach-link";
 import { TrainingSettings } from "@/components/profile/training-settings";
+import { PhotoSettings } from "@/components/profile/photo-settings";
 import { SuggestionModeNote } from "@/components/profile/suggestion-mode-note";
 import Link from "next/link";
 import { InviteCodePanel } from "@/components/coach/invite-code";
@@ -10,6 +11,8 @@ import { ExportLog } from "@/components/export/export-log";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth/session";
 import { useSession } from "@/lib/auth/session-context";
+import { COACH_HOME } from "@/lib/auth/destinations";
+import { canCoach } from "@/lib/auth/mode";
 
 /**
  * Profile & Settings.
@@ -41,6 +44,8 @@ export function MePanel() {
         <span className="text-body text-muted">{state.user.email}</span>
       </div>
 
+      <PhotoSettings userId={state.user.id} name={state.user.name} />
+
       <TrainingSettings />
 
       {/* The blueprint puts bodyweight in TRAINING as a row that opens its own
@@ -63,14 +68,17 @@ export function MePanel() {
 
       <ExportLog athleteId={state.user.id} athleteName={state.user.name} audience="athlete" />
 
-      {/* Shown only when athletes are linked. Role is a relationship, so this
-          appears and disappears on its own as links are made and revoked. */}
-      {state.coach.isCoach ? (
-        <Button variant="secondary" onClick={() => router.push("/coach/roster")}>
+      {/* For anyone with athletes linked, and for anyone who has chosen coach
+          -- a coach with none yet needs this to reach the invite code on the
+          roster. It used to need a link, which a new coach does not have. */}
+      {canCoach(state.prefs, state.coach.isCoach) ? (
+        <Button variant="secondary" onClick={() => router.push(COACH_HOME)}>
           Coach mode
-          <span className="ml-2 font-mono text-caption text-muted-2">
-            {state.coach.athleteIds.length}
-          </span>
+          {state.coach.athleteIds.length > 0 ? (
+            <span className="ml-2 font-mono text-caption text-muted-2">
+              {state.coach.athleteIds.length}
+            </span>
+          ) : null}
         </Button>
       ) : null}
 

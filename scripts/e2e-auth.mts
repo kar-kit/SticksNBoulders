@@ -12,7 +12,7 @@
  * Creates throwaway users and removes them. Dev only.
  */
 import { chromium, type Page } from "playwright";
-import { ID, Users } from "node-appwrite";
+import { ID, Query, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
@@ -37,8 +37,20 @@ await page.getByLabel("Name").fill("E2E Athlete");
 await page.getByLabel("Email").fill(email);
 await pwField(page).fill("Probe-pass-123!");
 await page.getByRole("button", { name: "Create account" }).click();
+await page.waitForURL("**/welcome", { timeout: 20000 }).catch(() => {});
+check("creating an account signs you straight in, to the first-run question", page.url().endsWith("/welcome"));
+check(
+  "the name is pre-filled from the account",
+  (await page.getByLabel("Your name").inputValue().catch(() => "")) === "E2E Athlete",
+);
+await page.getByRole("radio", { name: /Athlete/ }).click();
+await page.getByRole("button", { name: "Continue" }).click();
+// The optional photo step. Skipped: this script is about sign-in, not pictures.
+await page.getByRole("button", { name: "Skip for now" }).click({ timeout: 20000 }).catch(() => {});
 await page.waitForURL("**/today", { timeout: 20000 }).catch(() => {});
-check("creating an account signs you straight in", page.url().endsWith("/today"));
+check("answering athlete lands on Today", page.url().endsWith("/today"));
+const signedUp = (await users.list({ queries: [Query.equal("email", email)] })).users[0];
+check("the answer is saved on the account", signedUp?.prefs?.snb_mode === "athlete");
 // Who is signed in, and the way out, both live on Me. Today is the training
 // screen and carries nothing about the account.
 await page.goto(`${BASE}/me`);
@@ -52,7 +64,7 @@ check("Me shows who is signed in", nameShown);
 console.log("\nSession handling");
 await page.goto(`${BASE}/sign-in`);
 await page.waitForURL("**/today", { timeout: 10000 }).catch(() => {});
-check("sign-in is skipped while a session exists", page.url().endsWith("/today"));
+check("sign-in is skipped while a session exists, and the question is not asked twice", page.url().endsWith("/today"));
 await page.goto(`${BASE}/me`);
 await page.getByRole("button", { name: "Sign out" }).click();
 await page.waitForURL("**/sign-in", { timeout: 10000 }).catch(() => {});

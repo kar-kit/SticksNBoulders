@@ -48,6 +48,26 @@ export async function fetchMyCoach(): Promise<MyCoach | null> {
   };
 }
 
+/**
+ * The coach's picture, as something an `<img>` can show, or null.
+ *
+ * Through our own route because the athlete cannot read the coach's file
+ * (app/api/link/coach/avatar/route.ts). Fetched with the JWT rather than
+ * pointed at by an `<img src>`, which could not carry it. Null for no coach,
+ * no picture, or no signal: the initials are always a fine answer.
+ */
+export async function fetchMyCoachPicture(): Promise<string | null> {
+  try {
+    const { account } = browserAppwrite();
+    const { jwt } = await account.createJWT();
+    const response = await fetch("/api/link/coach/avatar", { headers: { authorization: `Bearer ${jwt}` } });
+    if (response.status !== 200) return null;
+    return URL.createObjectURL(await response.blob());
+  } catch {
+    return null;
+  }
+}
+
 export type ResolvedCode =
   | { status: "found"; coachId: string; coachName: string }
   | { status: "unknown-code" }

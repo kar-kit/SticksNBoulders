@@ -16,6 +16,7 @@ import { ID, Query, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
+import { presetMode } from "./e2e-mode";
 import { circleTeamId } from "../appwrite/documents/circle";
 
 dedupeSdkWarnings();
@@ -99,6 +100,7 @@ const athlete = await users.create({
   password: "Probe-pass-123!",
   name: "Joey Pang",
 });
+await presetMode(users, athlete, "athlete");
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 390, height: 852 }, colorScheme: "dark" });

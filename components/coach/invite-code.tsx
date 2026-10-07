@@ -10,14 +10,15 @@ import { fetchMyInviteCode, mintInviteCode } from "@/lib/coach/invite-store";
  * and his first athlete.
  *
  * Shown to everybody, not only to someone the app already considers a coach.
- * Role is a relationship -- `isCoach` is true because athletes are linked to
+ * Access is a relationship -- `isCoach` is true because athletes are linked to
  * you -- so gating this on it would mean a coach with no athletes never sees
  * the code that gets them their first one. An athlete who never taps the
  * button never has a code, and nothing about their account changes.
  *
- * The code is generated on demand rather than at sign-up for the same reason:
- * there is no moment in onboarding where the app knows which kind of user it
- * is talking to, and inventing one would be inventing an account type.
+ * The code is generated on demand rather than at sign-up. The welcome screen
+ * does now ask coach or athlete, but that answer is a landing preference and
+ * can be a mis-tap; minting on the first tap here costs the same and mints
+ * nothing for someone who never needed it. docs/invite-codes.md.
  */
 
 const COPIED_MS = 2_000;

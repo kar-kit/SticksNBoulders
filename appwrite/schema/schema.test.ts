@@ -265,7 +265,7 @@ describe("the video bucket", () => {
 
   it("exists, because infrastructure is not clicked into a console", () => {
     expect(bucket).toBeDefined();
-    expect(schema.buckets).toHaveLength(1);
+    expect(schema.buckets.map((b) => b.id).sort()).toEqual(["avatars", "set_videos"]);
   });
 
   /**
@@ -360,7 +360,7 @@ describe("the program tables (Order 19)", () => {
   });
 
   it("point a percentage at another lift's max with one nullable id, so every existing line keeps its own (v12)", () => {
-    expect(schema.version).toBe(12);
+    expect(schema.version).toBeGreaterThanOrEqual(12);
     expect(table("prescriptions").columns.find((c) => c.key === "reference_exercise_id")).toEqual({
       key: "reference_exercise_id",
       type: "string",
@@ -381,5 +381,35 @@ describe("the program tables (Order 19)", () => {
     for (const [tableId, key] of added) {
       expect(table(tableId).columns.find((c) => c.key === key)?.required, `${tableId}.${key}`).toBe(false);
     }
+  });
+});
+
+describe("profile pictures (v13)", () => {
+  const bucket = schema.buckets.find((b) => b.id === "avatars")!;
+
+  it("point at a file with one nullable id, so every existing profile is untouched", () => {
+    expect(schema.version).toBe(13);
+    expect(table("profiles").columns.find((c) => c.key === "avatar_file_id")).toEqual({
+      key: "avatar_file_id",
+      type: "string",
+      size: 36,
+      required: false,
+    });
+  });
+
+  it("secure each picture per file, with no bucket-wide read", () => {
+    // A bucket-level read would show every face to every signed-in stranger.
+    expect(bucket.fileSecurity).toBe(true);
+    expect(bucket.permissions).toEqual(['create("users")']);
+  });
+
+  it("accept only what the browser re-encodes to, under 2MB", () => {
+    expect([...bucket.allowedFileExtensions].sort()).toEqual(["jpeg", "jpg", "webp"]);
+    expect(bucket.maximumFileSizeBytes).toBe(2_000_000);
+  });
+
+  it("encrypt only because the size cap keeps every file under Appwrite's 20MB encryption cutoff", () => {
+    expect(bucket.encryption).toBe(true);
+    expect(bucket.maximumFileSizeBytes).toBeLessThanOrEqual(20_000_000);
   });
 });

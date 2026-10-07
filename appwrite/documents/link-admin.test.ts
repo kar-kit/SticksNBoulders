@@ -1,4 +1,5 @@
 import {
+  coachPictureFor,
   redeemInviteCode,
   resolveInviteCode,
   revokeCoachAccess,
@@ -399,6 +400,79 @@ describe("withdrawing a coach's access", () => {
   it("refuses to revoke for nobody", async () => {
     const { tables } = harness();
     await expect(revokeCoachAccess(tables, DB, "")).rejects.toThrow(/athleteId/);
+  });
+});
+
+describe("the coach's picture, as an athlete sees it", () => {
+  const COACH_ID = "68e4a1c2003b5f7d9e10";
+  const ownPicture = `${COACH_ID}_abc12345`;
+  const stamped = [`read("user:${COACH_ID}")`, `update("user:${COACH_ID}")`, `delete("user:${COACH_ID}")`];
+
+  function tables(links: Row[], profile: Row | null): LinkTables {
+    return {
+      async getRow({ tableId, rowId }) {
+        if (tableId === "profiles" && profile && profile.$id === rowId) return profile;
+        throw Object.assign(new Error("not found"), { code: 404 });
+      },
+      async listRows({ queries }) {
+        // Same filtering as the shared harness: an athlete_id filter that went
+        // missing would surface another athlete's coach here.
+        return { rows: links.filter((row) => matches(row, queries)) };
+      },
+      writer: {} as never,
+      teams: {} as never,
+      async userName() {
+        return "";
+      },
+    };
+  }
+
+  const link = (status: string): Row => ({ $id: "l1", coach_id: COACH_ID, athlete_id: ATHLETE, status });
+  const profile = (over: Record<string, unknown> = {}): Row => ({
+    $id: COACH_ID,
+    user_id: COACH_ID,
+    display_name: "Ruairi",
+    avatar_file_id: ownPicture,
+    $permissions: stamped,
+    ...over,
+  });
+
+  it("is the active coach's own picture", async () => {
+    expect(await coachPictureFor(tables([link("active")], profile()), DB, ATHLETE)).toEqual({
+      coachId: COACH_ID,
+      fileId: ownPicture,
+    });
+  });
+
+  it("is nothing once the athlete has unlinked", async () => {
+    expect(await coachPictureFor(tables([link("revoked")], profile()), DB, ATHLETE)).toBeNull();
+  });
+
+  it("is nothing for an athlete with no coach", async () => {
+    expect(await coachPictureFor(tables([], profile()), DB, ATHLETE)).toBeNull();
+  });
+
+  it("ignores a squatted profile at the coach's id, even one naming a file in the coach's namespace", async () => {
+    // The real attack: a stranger uploads their own image AT a coach-shaped id
+    // (the bucket lets any session create) and squats the coach's profile
+    // before the coach onboards. The namespace check passes; only provenance
+    // stops the athlete being shown the stranger's picture as their coach.
+    const squat = profile({ $permissions: ['read("users")'], avatar_file_id: `${COACH_ID}_evil1234` });
+    expect(await coachPictureFor(tables([link("active")], squat), DB, ATHLETE)).toBeNull();
+  });
+
+  it("ignores a coach profile pointing at somebody else's picture", async () => {
+    const borrowed = profile({ avatar_file_id: `${ATHLETE}_abc12345` });
+    expect(await coachPictureFor(tables([link("active")], borrowed), DB, ATHLETE)).toBeNull();
+  });
+
+  it("is nothing for a coach with no profile, rather than an error", async () => {
+    expect(await coachPictureFor(tables([link("active")], null), DB, ATHLETE)).toBeNull();
+  });
+
+  it("is nothing when only some other athlete has this coach", async () => {
+    const other: Row = { $id: "l2", coach_id: COACH_ID, athlete_id: "athlete_bea", status: "active" };
+    expect(await coachPictureFor(tables([other], profile()), DB, ATHLETE)).toBeNull();
   });
 });
 

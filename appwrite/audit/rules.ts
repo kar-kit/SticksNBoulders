@@ -255,6 +255,23 @@ export const RULES: readonly ResourceRule[] = [
       "A file names no athlete by itself, so the create cells ask whether an outsider can upload a clip " +
       "stamped with A's permissions -- not whether they can upload at all.",
   },
+  {
+    key: "avatars",
+    kind: "bucket",
+    resource: "avatars",
+    target: "A's profile picture",
+    allow: {
+      // The profile's audience: A and A's circle. Never read("users").
+      read: athleteAndCoach,
+      create: owner,
+      // Whose face appears beside a name is that person's call alone.
+      update: owner,
+      delete: owner,
+    },
+    notes:
+      "As with clips, create asks whether an outsider can upload a picture stamped with A's avatar " +
+      "permissions. Pointing A's profile at it is a separate write only A can make.",
+  },
 ];
 
 /* -------------------------------------------------------------------------

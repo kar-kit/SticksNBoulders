@@ -1,5 +1,6 @@
 import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import { isSuggestionMode, type SuggestionMode } from "@/lib/coach/suggestion-mode";
+import { isOwnAvatarFileId } from "./avatar";
 import { circleTeamId } from "./circle";
 import {
   bodyweightPermissions,
@@ -94,6 +95,31 @@ export async function updateProfile(
     },
     // Re-stamped on every update: a permission set that is only ever written
     // once is a permission set that drifts when the policy changes.
+    permissions: profilePermissions({ athleteId: actor.userId }),
+  });
+}
+
+/**
+ * Points the profile at a picture, or at none.
+ *
+ * Separate from `updateProfile` for the reason `attachVideo` is separate from
+ * `updateSet`: the file is uploaded first, outside this helper, and this is the
+ * small fact that follows it.
+ *
+ * Refuses an id outside the actor's own namespace (avatar.ts). Readers ignore
+ * one anyway, so this is not the only line of defence -- it is the one that
+ * stops the app itself from ever writing a row a reader will distrust. Null
+ * clears, and is null rather than undefined so the old id does not survive.
+ */
+export async function setProfileAvatar(deps: WriteDeps, actor: Actor, input: { fileId: string | null }) {
+  if (input.fileId !== null && !isOwnAvatarFileId(actor.userId, input.fileId)) {
+    throw new Error(`setProfileAvatar: ${JSON.stringify(input.fileId)} is not a picture id of ${actor.userId}`);
+  }
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "profiles",
+    rowId: actor.userId,
+    data: { avatar_file_id: input.fileId },
     permissions: profilePermissions({ athleteId: actor.userId }),
   });
 }

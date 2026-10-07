@@ -17,6 +17,7 @@ import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { adjustProgramHref } from "@/lib/coach/adjust-program";
 import { decideAthleteAccess, shortDate, type AthleteAccess } from "@/lib/coach/athlete-view";
 import { fetchLinkRows } from "@/lib/coach/athlete-view-store";
+import { UserAvatar } from "@/components/profile/user-avatar";
 
 /**
  * Athlete View. Order 25, requested by Ruairi: everything about one person on
@@ -145,7 +146,8 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
   return (
     <div className="flex flex-col gap-6 p-8" aria-busy={!linked}>
       {linked ? (
-        <header className="flex items-baseline gap-4">
+        <header className="flex items-center gap-4">
+          <UserAvatar userId={athleteId} name={displayName ?? "Unnamed athlete"} size={40} />
           <h1 className="m-0 text-display font-semibold">{displayName ?? "Unnamed athlete"}</h1>
           {access.linkedAt ? (
             <span className="text-ui text-muted">linked {shortDate(access.linkedAt)}</span>

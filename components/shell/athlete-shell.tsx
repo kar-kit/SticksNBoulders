@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { TabBar } from "@/components/ui/tab-bar";
+import { COACH_HOME } from "@/lib/auth/destinations";
+import { canCoach } from "@/lib/auth/mode";
 import { useRequireSession } from "@/lib/auth/session-context";
 
 /**
@@ -20,10 +23,25 @@ import { useRequireSession } from "@/lib/auth/session-context";
  */
 export function AthleteShell({ children }: { children: React.ReactNode }) {
   const state = useRequireSession();
+  const coaching = state.status === "signed-in" && canCoach(state.prefs, state.coach.isCoach);
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
       <div className="pt-safe flex-none" />
+      {/* The way back to the roster, on every athlete screen, for anyone who
+          coaches. Not a fifth tab: athletes who never coach never see it.
+          Mirrors the always-visible "Athlete mode" in the coach header; a
+          coach with no athletes yet would otherwise have to type the URL. */}
+      {coaching ? (
+        <div className="flex flex-none justify-end px-4 pt-2">
+          <Link
+            href={COACH_HOME}
+            className="flex h-[30px] items-center rounded-chip border border-border px-3 text-sm text-muted"
+          >
+            Coach mode
+          </Link>
+        </div>
+      ) : null}
       {/* 16px side gutters, per 00 Conventions. min-h-0 lets the scroll
           container actually scroll instead of growing the page. */}
       {/*

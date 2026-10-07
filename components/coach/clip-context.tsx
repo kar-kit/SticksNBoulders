@@ -5,6 +5,7 @@ import { e1rmDelta, setPosition, type QueueItem } from "@/lib/review/queue";
 import type { RecentSet } from "@/lib/review/queue-store";
 import { adjustProgramHref } from "@/lib/coach/adjust-program";
 import { formatWeight } from "@/lib/units";
+import { UserAvatar } from "@/components/profile/user-avatar";
 
 /**
  * Everything to the right of the video.
@@ -53,8 +54,11 @@ export function ClipContext({ item, sessionSets, recent, previousBestKg }: ClipC
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="m-0 text-title font-semibold">
-          {item.athleteName} — {item.exerciseName}
+        <h2 className="m-0 flex items-center gap-2.5 text-title font-semibold">
+          <UserAvatar userId={item.athleteId} name={item.athleteName} size={28} />
+          <span>
+            {item.athleteName} — {item.exerciseName}
+          </span>
         </h2>
         <p className="m-0 text-ui text-muted">
           {dateLabel(item.loggedAt)}, set {position} of {total}
