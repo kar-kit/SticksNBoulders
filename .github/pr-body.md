@@ -1,95 +1,56 @@
-## Order 38 — Permission audit + fix row forgery
+## Suggested next-set loads carry a "Suggested" marker
 
-The audit (first half of this PR) found a sev-1: any signed-in user could
-write a row into anybody's data. Every table with `create("users")` accepted a
-row carrying somebody else's `athlete_id`, `owner_id`, `coach_id` or
-`author_id`, stamped `read("users")` — a role every session holds — and every
-read filtered on those columns. Proven on the live instance: a forged 400kg
-set became A's best e1RM through `/api/rollup`, forged coach comments, forged
-"reviewed" marks clearing clips, a forged `is_global` exercise in everyone's
-typeahead. The second half of this PR fixes it, defence in depth, and the
-audit now asserts every one of those is neutralised.
+Ruairi answered "Should the app suggest next-set weights straight to athletes?"
+with "Yes - marked as a suggestion" (form answer, 6 Oct 2026). Set-targets have
+been filled since b15ca3f, so suggestions now reach athletes; the only mark was
+the note "suggested from RPE 7 @ 170", which says where the number came from,
+not that it is an offer the athlete can overrule, and which vanished on the
+first keystroke.
 
-### The fix
+### What changed
 
-**A row's stamp proves who wrote it.** A session cannot stamp a role it does
-not hold, so `update("user:<athlete_id>")` on a set is proof that athlete
-wrote it; `update("user:<author_id>")` on a comment, `update("user:<coach_id>")`
-on a review. `appwrite/documents/provenance.ts` is that check in one place —
-`ownerProof`, `isAuthentic`, `authenticRows`, `verdictFor` — with
-`expectedStamp` moved in beside it so the readers, the audit and the Function
-share one definition. Tested against every forgery in the finding.
+**A "Suggested" chip on the prefilled load.** It sits on the load cell's top
+border, a filled accent chip with its `on-accent` label (the pairing the palette
+clears for small text). The cell is the same 48px button, still opens the pad
+on one tap, and keeps its accessible name; the chip is its accessible
+description. Nothing blocks logging: the confirm square logs the suggested load
+as it stands. No spinner, toast or request, so it behaves identically offline.
 
-**Readers only trust what the owner stamped.** Every store reading a
-client-writable table filters through `authenticRows`; `rebuildRollup` (route
-and repair script) and `e1rm:backfill` skip sets the athlete did not stamp;
-`fetchProfile` reads a squatted row as absent. Selects now carry the owner
-column (`Query.select` keeps `$permissions` but not data columns). Logged sets
-still write locally first and sync through the queue — nothing moved
-server-side.
+**`PlannedRow.suggested`.** Row state, not derived from `note`, because `note`
+also carries a backoff's provenance. Set by `rowAfter` for an engine suggestion
+and by `prescribeNewRows` for a weight priced off today's top set; dropped when
+a coach's prescribed load replaces it.
 
-**The library carries the server's mark.** A forged `is_global: true` row had
-exactly the stamp a seeded one did. Library rows now also carry
-`update("team:library")`: a team `appwrite:setup` creates with the API key and
-that has no members, so no session can stamp it and nobody can create it
-first. `exercises:seed` re-stamps (56 rows re-stamped live on 6 Oct). Simpler
-than splitting the table; typeahead and create-on-the-fly unchanged.
+**Cleared the moment the athlete edits the load** (`applyPad`), together with
+the note. Opening the pad is not an edit; changing reps or RPE leaves it. It
+does not come back if the athlete types the suggested number in.
 
-**A Function deletes what lands.** `functions/validate-row`, declared in
-`appwrite/functions/index.ts`, deployed by `npm run appwrite:functions`
-(esbuild bundles provenance.ts in — one definition, not a copy). Fires on row
-create *and* update; deletes a row in a client-writable table that names an
-owner and lacks that owner's proof. Delete rather than revert on update: the
-event carries no previous state, and a relabelled row is a false claim whatever
-it said before. Scoped so a bug cannot mass-delete: one row per event, writable
-tables only, never a row without an owner, never for a stale *read* stamp.
-`VALIDATOR_DRY_RUN=true` is the kill switch.
+**Docs and comment.** `docs/suggestions.md` said no suggestion reached an
+athlete yet; it now describes when one appears (set-targets), and the marker.
+The `[SME to confirm]` on `DEFAULT_SUGGESTION_MODE` is now a [Fact]: Ruairi
+confirmed `direct` on 6 Oct 2026.
 
-**Relabelling and squatting**, the two the finding had not asserted, are
-covered by the same two layers and now asserted by the audit.
+### Not touched
 
-### The audit, extended
+`lib/strength/suggestion.ts`, the per-athlete `direct | held` switch
+(`coach_athlete_links.suggestions_mode`) and its default. Held still shows no
+suggestion and no marker.
 
-- A forgery Appwrite accepts shows as `landed*` and counts as refused only if
-  no reader trusts it. 23 land; none is trusted.
-- "What a forged row does once it lands": rollup, coach's queue, review mark,
-  comment thread, typeahead, relabel, squat — all proven inert on the live
-  instance.
-- The validator: every landed row must be deleted within 45s, polled by id;
-  fails outright when the Function is not deployed.
-- Orders 19/22/28/43 from `dev`: rules for the five program tables
-  (server-only; read by coach, athlete, circle), `/api/program` — including
-  `duplicateWeek` and `copyProgram`, with a copy onto an athlete the coach
-  does not link to refused — and `/api/link/suggestions`, exercised with real
-  JWTs for every role, before and after revocation. The
-  stamp scan also checks `isAuthentic` on every row, `suggestions_mode`'s
-  values, and that program children name their program's coach and athlete.
-- Discovery asserts the `library` team exists with no members and the
-  Function is deployed, enabled and subscribed.
+### Decisions
 
-### What is not done, and why
-
-**The Function is not live.** [Fact] The instance's builder answers every
-deployment with `Internal server error` within 3 seconds — including a
-redeploy of the probe's own archive that built on 14 Sep — and only `node-22`
-is enabled in `_APP_FUNCTIONS_RUNTIMES`. The host is not reachable from the
-MacBook. On the host: `docker ps | grep -E 'executor|worker-builds'`,
-`docker logs appwrite-worker-builds --tail 100`, `docker logs
-appwrite-executor --tail 100` (or `openruntimes-executor`), `df -h`, then
-`npm run appwrite:functions`. Until then the audit reports exactly two
-failures, both "validate-row is not live"; everything else passes (463/465 on
-6 Oct). Readers already hide every forged row, so the live product is
-protected; the Function is the second layer.
-
-**Sign-ups stay open.** The API key cannot reach `/projects/*` (console
-scope), and Appwrite 1.9 has no invite-only mode — the only control is Auth →
-Security → Users limit, which would stop athletes registering to redeem a
-code. [Inference] Left unchanged; the fix removes what a stranger's account
-could do.
+- [Inference] A logged set is not marked. By then the number is what the athlete
+  did; nothing about how a set was prefilled is stored.
+- [Inference] The existing "suggested from RPE 7 @ 170" line stays beneath the
+  row as provenance and clears with the marker.
+- [Unverified] The chip's placement at 390x852 was reasoned from the grid
+  (about 110px load column), not checked on a device. Eyeball it once on the
+  phone.
 
 ### Verification
 
-`lint` · `typecheck` · **2013 tests, 126 files** · `npm run appwrite:audit`
-live: 463/465, the two validator checks failing as above.
+`lint` · `typecheck` · **2034 tests, 127 files**. New: marker appears, clears on
+a load edit, survives a reps edit, absent when held, present offline from the
+cached switch, absent on logged rows; `suggested` set and dropped in `plan` and
+`session-plan`. No e2e or appwrite scripts run; no schema or write-path change.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
