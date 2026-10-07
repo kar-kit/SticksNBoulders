@@ -152,13 +152,18 @@ describe("the account-created-with-Google trap", () => {
   });
 
   it("does not ask for a hint on the create-account path", async () => {
-    session.signUpWithPassword.mockResolvedValue({ ok: false, failure: { kind: "email-taken" } });
+    // The same failure kind the sign-in path asks about, so only the mode
+    // guard stands between this and a hint lookup. A failed sign-up is not a
+    // failed password on an existing account, which is the only thing the
+    // hint is allowed to explain.
+    session.signUpWithPassword.mockResolvedValue({ ok: false, failure: { kind: "invalid-credentials" } });
+    session.fetchMethodHint.mockResolvedValue("google");
     setup();
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
     await userEvent.type(screen.getByLabelText("Email"), "joey@example.com");
     await userEvent.type(screen.getByLabelText("Password"), "hunter2222");
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(await screen.findByRole("alert")).toHaveTextContent("That email and password don't match.");
     expect(session.fetchMethodHint).not.toHaveBeenCalled();
   });
 });

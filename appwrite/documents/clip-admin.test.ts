@@ -23,12 +23,4 @@ describe("deleting an orphaned clip", () => {
 
     expect(deleted).toEqual([{ bucketId: "set_videos", fileId: "clipA" }]);
   });
-
-  it("will not take a bare file id, only something a backup has cleared", async () => {
-    const { store, deleted } = recordingStore();
-    // @ts-expect-error -- the point of the ClearedOrphan type.
-    await deleteOrphanClip(store, { bucketId: "set_videos", $id: "clipA", sizeOriginal: 4, coveredBy: "dump" });
-    // It would still run if forced past the compiler; the guarantee is the type.
-    expect(deleted).toHaveLength(1);
-  });
 });

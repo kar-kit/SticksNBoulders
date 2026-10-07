@@ -216,6 +216,18 @@ export function ReviewQueue() {
     };
   }, [items, urlRetry]);
 
+  // One clip's URL, re-minted when the player says its ticket stopped working.
+  // The batch above runs only when the queue changes, so a coach who stays on
+  // a clip, or picks one from the rail, past five minutes would otherwise be
+  // holding an expired ticket. See ClipPlayer's refreshSrc.
+  const refreshUrl = useCallback(async (fileId: string): Promise<boolean> => {
+    const fresh = await fetchClipUrls([fileId]).catch(() => new Map<string, string>());
+    const url = fresh.get(fileId);
+    if (!url) return false;
+    setUrls((have) => new Map(have).set(fileId, url));
+    return true;
+  }, []);
+
   // The context panel for whatever is selected. The loaded context carries the
   // clip it belongs to, so a slow response for the previous clip can never
   // render under this one's name -- the most dangerous kind of wrong on a
@@ -446,6 +458,7 @@ export function ReviewQueue() {
           <ClipPlayer
             src={currentUrl}
             clipId={current.id}
+            refreshSrc={() => refreshUrl(current.videoFileId)}
             unavailable={
               urlsFailed.has(current.videoFileId) ? "The video for this clip could not be loaded. Try again." : undefined
             }

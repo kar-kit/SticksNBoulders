@@ -205,6 +205,35 @@ const many = (count: number): ClipSet[] =>
 
 const mint = async (batch: readonly string[]) => new Map(batch.map((id) => [id, `/api/clip/${id}`]));
 
+describe("a playback url that expires", () => {
+  /**
+   * Batches are minted when the queue changes, and the ticket lasts five
+   * minutes. When the player reports the current clip failing, the queue
+   * mints just that one again rather than leaving the coach on a dead clip.
+   */
+  it("re-mints the current clip's url when the player reports it failing", async () => {
+    queueStore.fetchClipUrls.mockImplementation(async (batch: readonly string[]) =>
+      batch.length === 1
+        ? new Map([[batch[0], `/api/clip/${batch[0]}?t=fresh`]])
+        : new Map(batch.map((id) => [id, `/api/clip/${id}?t=stale`])),
+    );
+    const { container } = render(<ReviewQueue />);
+    await waitFor(() =>
+      expect(container.querySelector("video")).toHaveAttribute("src", "/api/clip/file-joey-1?t=stale"),
+    );
+
+    act(() => {
+      container.querySelector("video")!.dispatchEvent(new Event("error"));
+    });
+
+    await waitFor(() =>
+      expect(container.querySelector("video")).toHaveAttribute("src", "/api/clip/file-joey-1?t=fresh"),
+    );
+    expect(queueStore.fetchClipUrls).toHaveBeenLastCalledWith(["file-joey-1"]);
+    expect(screen.queryByText(/would not play/)).not.toBeInTheDocument();
+  });
+});
+
 describe("playback urls for a long queue", () => {
   it("asks for no more than MAX_FILES a request, so 61 clips still play", async () => {
     queueStore.fetchClips.mockResolvedValue(many(MAX_FILES + 1));

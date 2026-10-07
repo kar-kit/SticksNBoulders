@@ -70,6 +70,10 @@ function isUsable(entry: ReferenceMaxEntry): boolean {
  *
  * Ties break on the later-created row, which is the correction case -- a coach
  * fixing a typo re-enters the same effective date, and the fix must win.
+ * "Later-created" is read from the id, never from list position: rows are
+ * written with Appwrite's ID.unique(), whose hex-timestamp prefix sorts in
+ * creation order, while the store hands entries over newest-first. Breaking
+ * the tie on position let the typo beat its own correction.
  */
 export function currentMax(
   entries: readonly ReferenceMaxEntry[],
@@ -79,7 +83,10 @@ export function currentMax(
   const ceiling = asOf.getTime();
   const eligible = entries
     .filter((e) => e.kind === kind && isUsable(e) && time(e.effectiveFrom) <= ceiling)
-    .sort((a, b) => time(a.effectiveFrom) - time(b.effectiveFrom));
+    .sort(
+      (a, b) =>
+        time(a.effectiveFrom) - time(b.effectiveFrom) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
 
   const winner = eligible.at(-1);
   if (!winner) return null;

@@ -68,8 +68,13 @@ const REFERENCES: readonly Reference[] = [
  * fall in that band -- across 98 rows on these three lifters, 96 did, and the
  * two that did not were pound-converted totals and are excluded above.
  *
- * The band is a few hundredths wide. A transposed digit in any coefficient
- * misses it by whole points.
+ * The band is a few hundredths wide. A transposed digit in the leading figures
+ * of a coefficient misses it by whole points, but not every digit is that
+ * loud: swapping the last two digits of a coefficient moves a 93kg/800kg
+ * score by 0.003 or less for b, c, d and e -- far inside this band -- and
+ * only `a`'s trailing digits move it by points. So this catches
+ * a wrong coefficient, not a wrong last digit; the citation in dots.ts is
+ * what guards those.
  */
 const DISPLAY_EPSILON = 0.006;
 

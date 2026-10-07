@@ -178,4 +178,30 @@ describe("rollupMatches", () => {
     expect(rollupMatches({ ...computed, tonnageKg: 699 }, computed)).toBe(false);
     expect(rollupMatches({ ...computed, bestE1rmKg: null }, computed)).toBe(false);
   });
+
+  /**
+   * Every stored field, one at a time. A field the comparison skipped would be
+   * one the rebuild script reports "already correct" while it is wrong, so its
+   * drift would never be repaired.
+   */
+  const fields = [
+    "setCount",
+    "volumeReps",
+    "tonnageKg",
+    "bestE1rmKg",
+    "bestSingleKg",
+    "bestSingleReps",
+    "bestReps",
+    "bestRepsLoadKg",
+  ] as const satisfies ReadonlyArray<keyof typeof computed>;
+
+  it("covers every field of a rollup", () => {
+    expect([...fields].sort()).toEqual(Object.keys(computed).sort());
+  });
+
+  it.each(fields)("spots drift in %s alone", (field) => {
+    const before = computed[field];
+    expect(before).not.toBeNull();
+    expect(rollupMatches({ ...computed, [field]: (before as number) + 1 }, computed)).toBe(false);
+  });
 });
