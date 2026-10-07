@@ -35,10 +35,12 @@ export const SUGGESTION_MODES: readonly SuggestionMode[] = ["direct", "held"];
 /**
  * What a link with no stored choice means.
  *
- * Direct, as instructed for this ticket, and the Build Plan flags it
- * [SME to confirm] -- the blueprint says to ask Ruairi rather than ship a
- * default. Changing it is this constant and nothing else: rows written before
- * Order 28 carry no value and are read through `parseSuggestionMode`.
+ * Direct. [Fact] Ruairi confirmed it on 6 Oct 2026: asked whether the app
+ * should suggest next-set weights straight to athletes, he answered "Yes -
+ * marked as a suggestion" (form answer). The athlete's logger carries that
+ * mark; see `suggested` on the planned row. Changing the default is this
+ * constant and nothing else: rows written before Order 28 carry no value and
+ * are read through `parseSuggestionMode`.
  */
 export const DEFAULT_SUGGESTION_MODE: SuggestionMode = "direct";
 
