@@ -45,6 +45,16 @@ describe("checkWeight", () => {
     expect(checkWeight(MAX_PLAUSIBLE_KG).ok).toBe(true);
   });
 
+  it("stops at 400 kg exactly", () => {
+    // Literals, not the constant: a test that reads the limit back from the
+    // code it is checking passes whatever the limit drifts to. Above 400 and
+    // below 824 is the band nothing else here exercises.
+    expect(checkWeight(399)).toEqual({ ok: true, weightKg: 399 });
+    expect(checkWeight(400)).toEqual({ ok: true, weightKg: 400 });
+    expect(checkWeight(401)).toEqual({ ok: false, reason: "out-of-range" });
+    expect(checkWeight(499)).toEqual({ ok: false, reason: "out-of-range" });
+  });
+
   it("refuses what is not a number at all", () => {
     expect(checkWeight(Number.NaN)).toEqual({ ok: false, reason: "not-a-number" });
     expect(checkWeight(Number.POSITIVE_INFINITY)).toEqual({ ok: false, reason: "not-a-number" });
