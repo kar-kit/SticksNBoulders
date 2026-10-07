@@ -1,65 +1,65 @@
-## Video upload and playback: tests that fail when the code breaks, plus two fixes
+## fix(offline): replay a reloaded queue in order, and test the queue and log screen for real
 
 ### Why
 
-A mutation audit (break the source, run the suite) found the video path largely
-unguarded: `lib/video/resumable-upload.ts` had no tests, `attachClipToSet` had
-none, two limit tests compared code to itself, and neither `/api/clip` route had
-a test. It also found two real bugs, both fixed here.
+A mutation audit (break the source, run the suite) found the offline queue and
+the log screen under-protected: the runner was only ever mocked, the log screen
+mocked `logSet`/`removeSet` whole, and several guards could be deleted with the
+suite staying green. A probe also found a real ordering bug.
 
-### Source fixes (failing test written first, watched fail, then fixed)
+### The bug fixed
 
-1. **`POST /api/clip` threw on a missing `VIDEO_TICKET_SECRET`.** `ticketSecret()`
-   sat outside any try/catch, so the handler threw: a 500 with nothing in the log.
-   The stream route already logged it. Both now log
-   `clip: VIDEO_TICKET_SECRET is not configured` once and return
-   `500 { error: "unavailable" }`.
-2. **Playback broke after five minutes on one clip.** The stream route checks the
-   ticket on every request, and every seek, frame step or loop past the buffer is
-   a new Range request carrying the same URL. The queue only re-mints when
-   `items` changes, so staying on a clip (or picking one from the rail) past five
-   minutes gave "This clip would not play". The old comment in `ticket.ts`
-   ("the stream, once started, is not interrupted by expiry") was true only for a
-   response already in flight. `ClipPlayer` now takes `refreshSrc`. On a video
-   error it asks once for a fresh URL and resumes at the same time and play
-   state. If a fresh URL fails before it loads, the player treats that as final
-   (revoked access, or the file is still uploading), so it never loops. It is
-   wired into the review queue and the athlete videos list.
+On reload, IndexedDB's `getAll` returns ops sorted by key, and the key was
+`op-<ms>-<unpadded sequence>`. Ops queued in the same millisecond (a set and its
+rollup refresh always are) came back as `[0, 9, 10, 11, 1, 2, …]`, and the
+forced flush (`attachQueue`, `online`, tab visible) sent them in that order
+because it took the cache unsorted. A set could reach Appwrite ahead of the one
+logged before it.
 
-### Tests added, and the mutations they now catch
+- The forced batch now uses `pendingOps`, which sorts by the stored `sequence`.
+  Queues already on a phone with old unpadded ids replay correctly too.
+- New ids zero-pad the sequence so disk order matches queue order.
+- The failing test came first, against a fake store that sorts like IndexedDB.
 
-| Area | Mutation | Caught by |
-|---|---|---|
-| resumable-upload | 4xx marked retryable | 4xx reported permanent, stops sending |
-| | 5xx / dropped connection marked permanent | retryable-failure tests |
-| | resume from 0 instead of `chunksUploaded` | three resume tests |
-| | report success without asking the server (L191-198) | unreadable final response, server not complete |
-| | JWT minted per chunk | clean-upload test |
-| attachClipToSet | forget pending after a retryable failure | keeps pending |
-| | skip `enqueue("set.attachVideo")` | records the clip |
-| | remember after upload / keep refused clip | order + drop tests |
-| ticket | minimum 32→6, 32→33 | 31 throws, 32 passes |
-| clip | `MAX_VIDEO_BYTES` → 300MB; extra extension | compared to `set_videos` in `appwrite/schema` |
-| `/api/clip` | unwrap secret; mint for wrong user; skip JWT check; trust bad JWT | route tests |
-| `/api/clip/[fileId]` | drop file-id comparison (L58); ignore expiry; drop log; drop Range | route tests |
-| ClipPlayer / queue | never refresh; refresh forever; refresh once ever; lose position; lose play state; ignore failed refresh; queue not wired | player + queue tests |
+### Tests added or rewritten
 
-29 mutations run, all 29 caught. The no-JWT test initially survived "drop the
-`!jwt` check" (Appwrite rejects an empty JWT anyway); it now also asserts no
-Appwrite lookup happens.
+- `lib/offline/runner.test.ts` (new, 19 tests): the real write helpers run
+  behind a recording row writer. Covers payload mapping for every op kind,
+  circle-before-write, profile failure never blocking a write, 404 on
+  delete/attach counting as done, and the coach-comment guard.
+- `client.test.ts`: a retryable `session.create` failure stops `set.create`;
+  "writes the op down before it tries to send it" now asserts put-before-send
+  on one event log (it only asserted `writes.length === 1` before).
+- `log-screen.test.tsx`: three tests run the real set-store over an in-memory
+  queue and read the queued op. They cover a warm-up with no prescription link
+  next to a working set that has one, a set index that is not reused after a
+  delete on the page, and a delete whose local write fails bringing the set back.
+- `session-detail.test.tsx`: an incomplete draft cannot save even if its
+  confirm fires, and a failed edit or delete reloads the server copy.
+- `bodyweight.test.ts`: 399/400/401/499 as literals. The old test read the
+  limit back from the module.
 
-### Not done / worth knowing
+### Removed
 
-- **There is no backoff.** `uploadResumable` does not retry. It reports
-  `retryable`, and the retry is `resumeInterruptedUploads` on the next app
-  start, capped at `MAX_UPLOAD_ATTEMPTS`. The tests cover that contract. Adding
-  in-session backoff would be a product change, so I left it out.
-- `athlete-videos.tsx` got the same `refreshSrc` wiring but has no test file.
-  The behaviour lives in `ClipPlayer` and is tested there.
-- The expiry diagnosis comes from reading the route and the media Range
-  behaviour. Nobody reproduced it in a browser. Safari issues many small
-  ranges, so it is the likeliest place to hit it.
+- `cancelQueued` and its test. Nothing outside the test called it.
+  `collapsibleCreate` in queue.ts is now unused too. I left it, with its
+  tests, for a follow-up.
 
-### How to verify
+### Mutations now caught: 27 / 27
 
-`npm test`, `npm run lint`, `npm run typecheck`.
+Runner 12 (warm-up forced false, circle removed or not awaited, profile removed
+or awaited, 404 swallow removed on delete and on attach, prescription dropped,
+load or RPE mis-mapped, update warm-up forced false, comment guard inverted).
+Client 4 (keep sending after retry, send before persist, unpadded id, unsorted
+forced flush). Log screen 5 (warm-up carries the link, index counted from the
+shown sets, no restore on failed delete, warm-up forced false in the screen and
+in set-store). History 3. Bodyweight 3.
+
+### Not done / for a decision
+
+- History delete has no undo and no pre-check for coach comments on screen.
+  The queue still refuses it (412) when it runs. Whether History should match
+  the log screen is a product decision.
+- The video-required gate (`set.ts`, `set-row.tsx`) is untouched.
+
+`npm test` 2270 / 140 files, `npm run lint` and `npm run typecheck` are clean.
