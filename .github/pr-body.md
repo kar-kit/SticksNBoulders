@@ -1,52 +1,65 @@
-## fix(video): fail loudly at startup when VIDEO_TICKET_SECRET is missing
+## Video upload and playback: tests that fail when the code breaks, plus two fixes
 
 ### Why
 
-Clip playback signs its URLs with `VIDEO_TICKET_SECRET`. When it is unset the
-app builds and boots normally, then every coach playback request fails with one
-server log line, and the review screen says only "The video for this clip could
-not be loaded". Nothing points at the cause. It cost real debugging time, and
-the unit tests could not catch it because they inject the secret.
+A mutation audit (break the source, run the suite) found the video path largely
+unguarded: `lib/video/resumable-upload.ts` had no tests, `attachClipToSet` had
+none, two limit tests compared code to itself, and neither `/api/clip` route had
+a test. It also found two real bugs, both fixed here.
 
-### What changes
+### Source fixes (failing test written first, watched fail, then fixed)
 
-- `instrumentation.ts` (new, repo root; there is no `src/`) runs on the Node
-  runtime only and calls `checkVideoTicketSecret`. A production start throws
-  with a message naming `VIDEO_TICKET_SECRET` and `openssl rand -base64 48`.
-  Development logs a single `console.warn`, so `next dev` still works.
-- `lib/video/startup-check.ts` (new) holds the decision as a pure function of
-  `{ env, nodeEnv, phase }`. It asks `ticketSecret()` rather than restating the
-  32-character rule, so there is still one place to change it.
-- `docs/review-queue.md` says a production start refuses to boot without it.
-- `next build` is unaffected. Next skips the instrumentation hook itself while
-  `NEXT_PHASE` is `phase-production-build` (`instrumentation-globals.external.js`,
-  `registerInstrumentation`), and the check repeats that exemption so it does
-  not depend on a framework detail. CI needs no secret.
+1. **`POST /api/clip` threw on a missing `VIDEO_TICKET_SECRET`.** `ticketSecret()`
+   sat outside any try/catch, so the handler threw: a 500 with nothing in the log.
+   The stream route already logged it. Both now log
+   `clip: VIDEO_TICKET_SECRET is not configured` once and return
+   `500 { error: "unavailable" }`.
+2. **Playback broke after five minutes on one clip.** The stream route checks the
+   ticket on every request, and every seek, frame step or loop past the buffer is
+   a new Range request carrying the same URL. The queue only re-mints when
+   `items` changes, so staying on a clip (or picking one from the rail) past five
+   minutes gave "This clip would not play". The old comment in `ticket.ts`
+   ("the stream, once started, is not interrupted by expiry") was true only for a
+   response already in flight. `ClipPlayer` now takes `refreshSrc`. On a video
+   error it asks once for a fresh URL and resumes at the same time and play
+   state. If a fresh URL fails before it loads, the player treats that as final
+   (revoked access, or the file is still uploading), so it never loops. It is
+   wired into the review queue and the athlete videos list.
 
-`register()` is awaited by `NextNodeServer.prepareImpl`, so a throw stops
-`next start` before it accepts requests. That is read from Next's source, not
-observed; see below.
+### Tests added, and the mutations they now catch
+
+| Area | Mutation | Caught by |
+|---|---|---|
+| resumable-upload | 4xx marked retryable | 4xx reported permanent, stops sending |
+| | 5xx / dropped connection marked permanent | retryable-failure tests |
+| | resume from 0 instead of `chunksUploaded` | three resume tests |
+| | report success without asking the server (L191-198) | unreadable final response, server not complete |
+| | JWT minted per chunk | clean-upload test |
+| attachClipToSet | forget pending after a retryable failure | keeps pending |
+| | skip `enqueue("set.attachVideo")` | records the clip |
+| | remember after upload / keep refused clip | order + drop tests |
+| ticket | minimum 32→6, 32→33 | 31 throws, 32 passes |
+| clip | `MAX_VIDEO_BYTES` → 300MB; extra extension | compared to `set_videos` in `appwrite/schema` |
+| `/api/clip` | unwrap secret; mint for wrong user; skip JWT check; trust bad JWT | route tests |
+| `/api/clip/[fileId]` | drop file-id comparison (L58); ignore expiry; drop log; drop Range | route tests |
+| ClipPlayer / queue | never refresh; refresh forever; refresh once ever; lose position; lose play state; ignore failed refresh; queue not wired | player + queue tests |
+
+29 mutations run, all 29 caught. The no-JWT test initially survived "drop the
+`!jwt` check" (Appwrite rejects an empty JWT anyway); it now also asserts no
+Appwrite lookup happens.
+
+### Not done / worth knowing
+
+- **There is no backoff.** `uploadResumable` does not retry. It reports
+  `retryable`, and the retry is `resumeInterruptedUploads` on the next app
+  start, capped at `MAX_UPLOAD_ATTEMPTS`. The tests cover that contract. Adding
+  in-session backoff would be a product change, so I left it out.
+- `athlete-videos.tsx` got the same `refreshSrc` wiring but has no test file.
+  The behaviour lives in `ClipPlayer` and is tested there.
+- The expiry diagnosis comes from reading the route and the media Range
+  behaviour. Nobody reproduced it in a browser. Safari issues many small
+  ranges, so it is the likeliest place to hit it.
 
 ### How to verify
 
-1. `npm test -- lib/video/startup-check` : 10 tests (missing, empty, 31 chars,
-   exactly 32, 64, prod vs dev, build phase, other phases).
-2. Build without the secret, which must still succeed:
-   `env -u VIDEO_TICKET_SECRET npm run build`
-3. Prod refuses: `env -u VIDEO_TICKET_SECRET npx next start -p 3199`
-   should exit non-zero with the message above. Check `.env.local` does not
-   supply one, since Next loads it. [Not run by the author.]
-4. Prod boots with one: `VIDEO_TICKET_SECRET=$(openssl rand -base64 48) npx next start -p 3199`.
-5. Dev warns once: `env -u VIDEO_TICKET_SECRET npx next dev` logs
-   `[startup] VIDEO_TICKET_SECRET is missing...` and carries on.
-
-### Heads-up for deploys
-
-Any production environment without the secret will now fail to start instead of
-starting broken. Set it on the host before this ships.
-
-### Not covered
-
-`instrumentation.ts` itself has no unit test: vitest only collects tests under
-`app/ appwrite/ components/ lib/ scripts/`, and the file is a thin wrapper
-around the tested function. Steps 2 to 5 above are the check on the wiring.
+`npm test`, `npm run lint`, `npm run typecheck`.

@@ -103,6 +103,16 @@ own. Consequences:
 
 The ticket is bound to one file, so swapping the id in a URL opens nothing.
 
+The stream route checks the ticket on every request, and every seek, frame step
+or loop past the buffer is a new Range request on the same URL. So a clip left
+open past five minutes, or opened from a batch minted earlier, fails on its next
+request. `ClipPlayer` handles that: on a video error it asks for one fresh URL
+for that clip and resumes at the same time. A fresh URL that also fails before
+loading is treated as real (access withdrawn, file still uploading).
+
+A missing secret is logged by both `/api/clip` routes as
+`clip: VIDEO_TICKET_SECRET is not configured` and answered with a 500.
+
 ### A queue longer than one request
 
 `POST /api/clip` refuses more than `MAX_FILES` (60, in `lib/video/clip-limits.ts`)
