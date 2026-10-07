@@ -14,7 +14,7 @@ teams. No server key, no new tables, nothing written.
 | This week: sets | `stats_rollups` for this `week_start`, summed across lifts | working sets only, same rule as the rollups |
 | Videos | `sets` with a clip, minus this coach's `set_reviews` | the Review Queue's own two reads |
 | Bodyweight | `bodyweight_entries`, last 21 days; newest-ever for anyone with none | trend from `lib/bodyweight`'s window rule |
-| Block | `fetchProgramSignals` | **Order 19 seam**, returns nothing yet |
+| Block | `fetchProgramSignals` | the athlete's live published program, decided in `lib/coach/program-signals.ts` (Order 19) |
 
 One query per table for every athlete (`equal()` takes an array). The only
 per-athlete calls are the circle check (`canSeeCircle`) and the rare
@@ -25,28 +25,35 @@ weight-class data in the MVP (comp planning is February 2027).
 
 ## The triggers
 
-All in `lib/coach/roster-triggers.ts`, thresholds in `TRIGGER_RULES`. Every one
-is **[Inference]** from Ruairi's complaints, not from watching him work
-(blueprint 10 is blocked on that question).
+All in `lib/coach/roster-triggers.ts`, thresholds in `TRIGGER_RULES`. Every rule
+and threshold is **[Inference]** from Ruairi's complaints, not from watching him
+work. The one **[Fact]** is the order's first place: videos lead, because his
+review day is "Watch videos, analyse weaknesses and then adjust program
+accordingly" (his form answer, 6 Oct 2026). Blueprint 10's question on the rest
+of his review day is still open.
 
 | Trigger | Rule | Live now? |
 | --- | --- | --- |
-| Unprompted RPE 10 | an RPE 10 where the prescription asked for less, in the last 7 days | no, needs Order 19/22 |
-| Missed sessions | ≥1 prescribed session this week whose day passed with nothing logged | no, needs Order 19 |
 | Videos | ≥1 clip this coach hasn't cleared, any age | yes |
+| Unprompted RPE 10 | an RPE 10 where the prescription asked for less, in the last 7 days | yes, from `fetchProgramSignals` |
+| Missed sessions | ≥1 prescribed session this week whose day passed with nothing logged | yes, from `fetchProgramSignals` |
 | No bodyweight | last weigh-in more than 7 days ago; never-logged once linked over 7 days | yes |
 | Weight-class drift near a meet | in the blueprint | not built, no meet data |
 
-Order on screen: unprompted max, missed sessions, videos, bodyweight; then by
-name. An athlete whose circle the coach can't see yet fires nothing, because
-every read for them came back empty and none of that is a fact about them.
+Order on screen (`KIND_ORDER`): videos, unprompted max, missed sessions,
+bodyweight; then by name. Videos first is [Fact] (above); the order of the other
+three is [Inference] and unchanged. An athlete whose circle the coach can't see
+yet fires nothing, because every read for them came back empty and none of that
+is a fact about them.
 
-## Wiring in Order 19
+## Order 19 wiring
 
-Fill in `fetchProgramSignals` in `lib/coach/roster-store.ts` with
-`ProgramSignals` per athlete (block label, missed sessions this week, recent
-unprompted RPE 10 sets), read through the coach's session. The rules and the
-Block column already consume it; the unit tests already cover both rules.
+`fetchProgramSignals` in `lib/coach/roster-store.ts` reads the programs, weeks,
+days, sessions and RPE 10 sets for every athlete at once, through the coach's
+session, and `computeProgramSignals` in `lib/coach/program-signals.ts` turns
+them into one `ProgramSignals` per athlete (block label, missed sessions this
+week, recent unprompted RPE 10 sets). The rules and the Block column consume it;
+the unit tests cover both rules and the computation.
 
 ## Testing
 
