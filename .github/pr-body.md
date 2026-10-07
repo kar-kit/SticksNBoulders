@@ -1,47 +1,73 @@
-## docs: beta capacity model for seven athletes
+## feat: reference lift -- Tempo Bench at 70% of the competition bench
 
-Ruairi's form answer (6 Oct) puts five athletes on the December beta; with
-him and Joey logging as athletes that is seven. Nothing in the repo was sized
-to a headcount. `docs/beta-capacity.md` is the model: low/base/high scenarios
-with every formula shown, every invented input marked [Unverified], and the
-five questions to put to Ruairi. No production code changes.
+Ruairi answered "70% of what?" with **the competition bench max** (6 Oct 2026,
+as reported by Joey). This builds option (A) from `docs/reference-lift.md`: a
+nullable `prescriptions.reference_exercise_id`, with the editor remembering the
+last reference per exercise per program, so `of bench` is typed once per
+variation per program. Null is today's behaviour byte for byte: no column
+written, same display, same snapshot.
 
-### What the numbers say
+### What changes
 
-- **Storage is not the constraint.** Base case (7 athletes × 4 sessions × 4
-  flagged sets × 20 s × 100 MB/min × 1.1 overhead) is 4.1 GB/week: 29 GB by
-  31 Jan 2027, 3 % of the NAS's 941 GB. High case is 208 GB by January and
-  overruns the NAS only at week 32, and only if the Cloud migration slips.
-- **The 200 MB cap is invisible on the iOS default** (1080p30 HEVC reaches it
-  at 185 s) and bites at 30 s on 4K60. Keep it; nudge athletes to 1080p.
-- **Upload on gym wifi:** base clip 33 MB is 13–133 s across 20–2 Mbps,
-  background and resumable. Compression not needed before December.
-- **The first thing that breaks is the review queue, not the disk.** [Fact]
-  `review-queue.tsx` sends every unreviewed id to `POST /api/clip` in one
-  request; the route rejects more than `MAX_FILES = 60` and the component
-  swallows the error, so above **61 unreviewed clips nothing plays**. Base
-  produces 112 clips a week, so a coach reviewing weekly hits it every week.
-  Client-side slice into 60s; should ship with Phase 3.
-- **Ruairi's hour:** 112 clips at 45 s is 84 minutes against a 30–60 minute
-  coach session. `video_required` is the throttle.
-- **Backups:** `appwrite:backup` excludes the bucket (confirmed in
-  `scripts/appwrite-backup.mts`), so the "dump is local only" item stays a
-  few-MB `rclone` line. The clips have no backup at all; offsite is cents a
-  month at these volumes.
-- **Cloud:** Pro $25/project/month, extra storage $2.80/100 GB [Fact,
-  changelog 2025-09-01]; 150 GB included [Unverified]. Base cohort crosses
-  150 GB 8.4 months after migration and pays $1.78/month extra at a year.
-  Four coaches at base cross it in about three months.
+- **Schema v12**: one nullable string column, no index, no backfill (null =
+  the line's own exercise, which every existing row already means).
+- **Write helper** (`program-write.ts`): writes the column only when set;
+  a self-reference is stored as null; `reference_exercise_id` joins
+  `LINE_PLACEMENT` and `copyPrescription` takes it from the remap.
+- **Admin** (`program-admin.ts`): `requireExercise` on the reference (global or
+  in the athlete's library); `copyProgram` resolves `exercise_id ∪
+  reference_exercise_id` in the target's library (kept / found by name /
+  created) and refuses before any write if a reference is gone;
+  `duplicateWeek` keeps it.
+- **Resolver**: a reference row reads only the referenced lift's stored maxes,
+  never its own exercise's sets (not `synced`), never the variation's max.
+  Display `105 kg (70% of Bench Press)`; snapshot `5 reps · 105 kg (70% of
+  Bench Press, training 150)`; no max reads `70% of Bench Press`.
+- **Editor**: `70% of bench` strips into the column (stored load stays `70%`),
+  `of own` clears, `of tested` stays a kind, an unknown lift stays freeform.
+  Indicator: `Percent · 70% of Bench Press (training max)`. New lines inherit
+  the last reference for that exercise. **Audit finding closed:** the editor
+  now loads the athlete's maxes and warns beside any percentage that would
+  resolve to nothing, e.g. `No Bench Press training max for Joey · they see
+  "70% of Bench Press"`.
 
-### Recommendation
+### Where it departs from the design (also `docs/reference-lift.md` §9)
 
-No retention policy before migration; build the orphan sweep. Keep the cap.
-No compression before December. Trigger: 61 unreviewed clips (fix the batch),
-then 84 review minutes/week (Ruairi's call), then 470 GB on the NAS.
+- §6 example 3's snapshot (`105 kg (70%)`) contradicted §4. Built to §4.
+- `schema.test.ts` did not pin the version as §5 claimed; it does now.
+- The warning covers own-exercise rows too. [Inference] Otherwise the
+  `prescription.ts` comment stays false for the common case.
+- `targetsFor` takes an optional `ReferenceLookup` 4th argument, not a
+  replacement `maxesFor`, so existing callers are untouched.
+- The design dated the answer 7 Oct; the brief says 6 Oct. [Unverified] Joey
+  to confirm.
+
+### Run live, in this order
+
+1. `npm run appwrite:setup -- --dry-run`. Expect exactly one `create-column`
+   (`prescriptions.reference_exercise_id`).
+2. `npm run appwrite:setup`. No backfill: null is today's semantics.
+3. `npm run appwrite:audit`. New checks: the coach may reference a library lift
+   and may not reference his own private exercise.
+4. `E2E_BASE_URL=… npm run e2e:copy` (with `next dev` running). Its paused
+   bench is now 80% of the squat, carried through both copies, and
+   Andrea's Today should read `95 kg (80% of Squat)`.
+
+Deploy the app after step 2. Until the column exists, a write carrying a
+reference would fail; rows without one never send the column.
+
+### Not built
+
+Task 9 (own-row snapshots gain the basis) and task 10 (phase 2, pricing off
+the comp single logged earlier in the session: **[SME to confirm]** with
+Ruairi). `e2e:program` is not extended; `e2e:copy` covers Today pricing.
 
 ### Verification
 
-Docs only. Numbers produced by a script outside the repo and rerunnable from
-the formulas in section 2. No live instance or NAS access.
+`npm test` 2112 passed (130 files), `npm run lint` clean, `npm run typecheck`
+clean, all offline. The design's §6 numbers are unit tests: 150 → 105,
+`of tested` 157.5 → 110, 155 mid-block → 107.5 with the 105 snapshot kept, no
+max → null, 145×1@9 → 102.5 vs the wrong 90, rounding via `roundToLoadable`.
+Audit and e2e not run.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
