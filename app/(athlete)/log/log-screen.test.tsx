@@ -281,18 +281,54 @@ describe("logging a set", () => {
     });
   });
 
-  it("prefills the next row from the set just logged, so a straight set is one tap", async () => {
+  it("marks the set done and adds no row below it", async () => {
+    // Joey: "It should be 'mark as completed' and that's it, no adding new sets."
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await enterSet(user, "140", "5");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
+    expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Log / })).not.toBeInTheDocument();
+    // The pad closed with the confirm; nothing is left half-entered.
+    expect(screen.queryByRole("button", { name: "Decimal point" })).not.toBeInTheDocument();
+    // The way on is still right there, and the rest started as always.
+    expect(screen.getByRole("button", { name: "Add a set to Squat" })).toBeInTheDocument();
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+  });
+
+  it("prefills the Add set row from the set just logged, so a straight set needs nothing typed", async () => {
     // Rule 3 of the prefill order, and the blueprint calls it the one that
     // matters most: straight sets are the norm.
     const { user } = setup({ active: session() });
     await addSquat(user);
     await enterSet(user, "140", "5");
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
 
-    const next = await screen.findByRole("group", { name: "Set 2" });
+    const next = screen.getByRole("group", { name: "Set 2" });
     expect(next).toHaveTextContent("140");
     expect(next).toHaveTextContent("5");
-    expect(screen.getByRole("button", { name: "Log Set 2" })).toBeEnabled();
+    // It is the exercise's head, so its square logs it.
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+    expect(logSet.mock.calls[1][0]).toMatchObject({ loadKg: 140, reps: 5, setIndex: 2 });
+    expect(screen.queryByRole("group", { name: "Set 3" })).not.toBeInTheDocument();
+  });
+
+  it("goes back to the name after deleting the only set, rather than stranding the exercise", async () => {
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await enterSet(user, "140", "5");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Delete Set 1" }));
+
+    expect(screen.getByText(/No sets yet/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Squat" }));
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeInTheDocument();
   });
 
   it("marks a row as a warm-up from the pad, not a hidden gesture", async () => {
@@ -354,7 +390,12 @@ describe("logging a set", () => {
     await enterSet(user, "140", "5");
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
 
-    await waitFor(() => expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument());
+    await waitFor(() => expect(logSet).toHaveBeenCalled());
+    // Not logged, so not shown as logged -- but the numbers come back as the
+    // row to confirm, rather than vanishing with the set.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled());
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
+    expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
   });
 });
 
@@ -392,6 +433,49 @@ describe("finishing", () => {
     expect(await screen.findByText("Session done")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Back to Today" }));
     expect(push).toHaveBeenCalledWith("/today");
+  });
+
+  it("has a dedicated End session button that opens the same confirm", async () => {
+    // Joey: "There's no way to end a session at the moment that's obvious."
+    // The clock still works; this is the control nobody has to be told about.
+    const { user, finish } = setup({ active: session() });
+    const end = screen.getByRole("button", { name: "End session" });
+    expect(end).toHaveTextContent("End session");
+
+    await user.click(end);
+    expect(screen.getByText(/Finish this session\?/)).toBeInTheDocument();
+    // The panel replaces it: one finish control at a time.
+    expect(screen.queryByRole("button", { name: "End session" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Keep going" }));
+    expect(screen.getByRole("button", { name: "End session" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "End session" }));
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+    expect(finish).toHaveBeenCalledWith("s1", { setCount: 0, tonnageKg: 0 });
+    expect(await screen.findByText("Session done")).toBeInTheDocument();
+  });
+
+  it("sits below the last exercise", async () => {
+    storedSets.value = [
+      { exerciseId: "squat", clientSetId: "a", loadKg: 140, reps: 5, rpe: null, isWarmup: false, loggedAt: new Date() },
+    ];
+    setup({ active: session() });
+    const block = await screen.findByRole("region", { name: "Squat" });
+    const end = screen.getByRole("button", { name: "End session" });
+    expect(block.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("closes the pad when End session is tapped, so the confirm is not hidden behind it", async () => {
+    const { user } = setup({ active: session() });
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+    await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+    expect(screen.getByRole("button", { name: "Decimal point" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "End session" }));
+    expect(screen.queryByRole("button", { name: "Decimal point" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Finish this session\?/)).toBeInTheDocument();
   });
 
   it("lets an athlete finish a session they logged nothing into", async () => {
@@ -518,6 +602,9 @@ describe("the rest timer", () => {
     await addAndLog(user);
     expect(await screen.findByRole("timer")).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    // Adding the row is not entry; the timer keeps the bottom until a field is.
+    expect(screen.getByRole("timer")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
     expect(screen.queryByRole("timer")).not.toBeInTheDocument();
   });
@@ -834,8 +921,12 @@ describe("queueing the next set before confirming this one", () => {
     await user.click(screen.getByRole("button", { name: "Log Set 3" }));
     await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
     expect(logSet.mock.calls[1][0]).toMatchObject({ loadKg: 160, setIndex: 3 });
-    // Nothing planned any more, so the usual repeat row follows.
+    // Nothing planned any more, so nothing follows until Add set is tapped --
+    // and then it repeats the set just logged.
+    expect(screen.queryByRole("group", { name: "Set 4" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
     expect(screen.getByRole("group", { name: "Set 4" })).toHaveTextContent("160");
+    expect(screen.getByRole("button", { name: "Log Set 4" })).toBeEnabled();
   });
 
   it("drops a planned row with its remove button", async () => {
@@ -929,6 +1020,23 @@ describe("a session started from a prescribed day (Order 22)", () => {
     });
   });
 
+  it("adds no row after a prescribed set, and Add set brings the next one with its target", async () => {
+    // Prescribed rows are not laid out up front either: the athlete asks for
+    // each one, and it arrives priced to the coach's line.
+    const { user } = setup({ active: session({ programDayId: "d1" }) });
+    await screen.findByRole("group", { name: "Set 1" });
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    const squatBlock = screen.getByRole("region", { name: "Squat" });
+    expect(within(squatBlock).queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    expect(within(squatBlock).getByRole("group", { name: "Set 2" })).toHaveTextContent("150");
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+    expect(logSet.mock.calls[1][0]).toMatchObject({ loadKg: 150, reps: 5, prescriptionId: "sq", setIndex: 2 });
+  });
+
   it("gives a free session no targets at all", async () => {
     setup({ active: session() });
     expect(await screen.findByText("Nothing logged yet")).toBeInTheDocument();
@@ -951,6 +1059,10 @@ describe("next-set load suggestions, behind the coach's switch (Order 28)", () =
     await user.click(screen.getByRole("button", { name: "Set 1 RPE" }));
     await user.click(screen.getByRole("button", { name: "7" }));
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    // Confirming builds no row; the suggestion arrives with the one Add set makes.
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
   };
   const coachChose = (mode: "direct" | "held" | null) => {
     linkRead.rows = [{ suggestions_mode: mode }];

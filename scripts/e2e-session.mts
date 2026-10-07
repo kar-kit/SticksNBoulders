@@ -151,16 +151,22 @@ await page.getByRole("switch", { name: "Warm-up" }).click();
 await page.getByRole("button", { name: "Log Warm-up set" }).click();
 await page.getByRole("group", { name: "Warm-up set" }).waitFor({ timeout: 10000 }).catch(() => {});
 check("a warm-up logs and shows as W", await page.getByRole("group", { name: "Warm-up set" }).isVisible());
+// Confirming means done: no row appears under it. Add set is the way on.
+check("confirming adds no row below", (await page.getByRole("group", { name: "Set 1" }).count()) === 0);
+await page.getByRole("button", { name: "Add a set to Squat" }).click();
 
 await enter("140", "5");
 await page.getByRole("button", { name: "Set 1 RPE" }).click();
 await page.getByRole("button", { name: "8", exact: true }).click();
 await page.getByRole("button", { name: "Log Set 1" }).click();
+await until(async () => (await setsOf(athlete.$id)).length === 2);
+check("no Set 2 row until one is asked for", (await page.getByRole("group", { name: "Set 2" }).count()) === 0);
+await page.getByRole("button", { name: "Add a set to Squat" }).click();
 await page.getByRole("group", { name: "Set 2" }).waitFor({ timeout: 10000 }).catch(() => {});
 
-// The second working set needs no typing at all: it repeats the first.
+// The second working set needs no typing at all: Add set repeats the first.
 const prefilled = await page.getByRole("group", { name: "Set 2" }).innerText();
-check("the next row prefills from the set just logged", prefilled.includes("140"));
+check("the Add set row prefills from the set just logged", prefilled.includes("140"));
 await page.getByRole("button", { name: "Log Set 2" }).click();
 await until(async () => (await setsOf(athlete.$id)).length === 3);
 
@@ -310,7 +316,9 @@ check("Resume reopens the logger", page.url().endsWith("/log"));
 await page.getByRole("group", { name: "Warm-up set" }).waitFor({ timeout: 15000 }).catch(() => {});
 
 console.log("\nFinishing");
-await page.getByRole("button", { name: "Finish session" }).click();
+// The dedicated button under the exercises; the clock is a shortcut to the same confirm.
+check("End session sits under the exercises", await page.getByRole("button", { name: "End session" }).isVisible());
+await page.getByRole("button", { name: "End session" }).click();
 await page.getByRole("button", { name: "Finish", exact: true }).click();
 await page.getByText("Session done").waitFor({ timeout: 15000 }).catch(() => {});
 check("shows a summary", await page.getByText("Session done").isVisible());

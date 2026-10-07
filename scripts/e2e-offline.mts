@@ -165,11 +165,14 @@ await enter(page, "60", "5");
 await page.getByRole("switch", { name: "Warm-up" }).click();
 await page.getByRole("button", { name: "Log Warm-up set" }).click();
 await page.getByRole("group", { name: "Warm-up set" }).waitFor({ timeout: 10000 }).catch(() => {});
+// Confirming adds no row; Add set is the way to the next one.
+await page.getByRole("button", { name: "Add a set to Squat" }).click();
 
 await enter(page, "140", "5");
 await page.getByRole("button", { name: "Set 1 RPE" }).click();
 await page.getByRole("button", { name: "8", exact: true }).click();
 await page.getByRole("button", { name: "Log Set 1" }).click();
+await page.getByRole("button", { name: "Add a set to Squat" }).click();
 await page.getByRole("group", { name: "Set 2" }).waitFor({ timeout: 10000 }).catch(() => {});
 await page.getByRole("button", { name: "Log Set 2" }).click();
 await page.waitForTimeout(1000);
@@ -288,6 +291,7 @@ console.log("\nDeleting a set that had synced, with no signal");
 // has to queue, survive a reload, and land -- with the rollup recomputed
 // behind it -- when the signal comes back.
 const inventedBlock = page.getByRole("region", { name: invented });
+await inventedBlock.getByRole("button", { name: `Add a set to ${invented}` }).click();
 await inventedBlock.getByRole("button", { name: /^Log Set 2$/ }).click();
 await until(async () => (await rowsOf("sets", athlete.$id)).length === 5);
 check("a fifth set lands with signal", (await rowsOf("sets", athlete.$id)).length === 5);

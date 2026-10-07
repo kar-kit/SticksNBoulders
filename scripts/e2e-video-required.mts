@@ -212,6 +212,8 @@ try {
   check("and says nothing yet", (await squat.getByText("Your coach asked for a clip of this one.").count()) === 0);
   await athletePage_shot(page, "video-required-emphasised-390");
 
+  // Confirming adds no row; Add set brings set 2, prefilled from set 1.
+  await squat.getByRole("button", { name: "Add a set to Squat" }).click();
   await page.getByRole("group", { name: "Set 2" }).waitFor({ timeout: 10000 });
   await logSet(2, false);
   const nudge = squat.getByText("Your coach asked for a clip of this one.");
@@ -231,6 +233,7 @@ try {
   // --- never blocking ----------------------------------------------------------
   console.log("\nSkipping it is fine");
   check("Finish session is available regardless", await page.getByRole("button", { name: "Finish session" }).isEnabled());
+  check("and so is End session", await page.getByRole("button", { name: "End session" }).isEnabled());
 } catch (error) {
   check("ran without throwing", false, String(error));
 } finally {

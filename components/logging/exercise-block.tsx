@@ -45,7 +45,11 @@ export interface ExerciseBlockProps {
   onFocus?: (clientSetId: string, field: "load" | "reps" | "rpe") => void;
   onConfirm?: (clientSetId: string) => void;
   onDiscard?: (clientSetId: string) => void;
-  /** Writes down another set for later, prefilled from the one above it. */
+  /**
+   * Another row, prefilled from the one above it. Confirming a set adds none,
+   * so this is the only way to the next one: it shows whenever the exercise
+   * has a logged set or a row, including once every row is confirmed.
+   */
   onAddSet?: () => void;
   /** Makes this the exercise being logged into. */
   onActivate?: () => void;

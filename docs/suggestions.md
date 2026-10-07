@@ -106,6 +106,13 @@ is taken:
 - **held**: the logger shows no suggestion at all, and the next row repeats
   the set just logged (prefill rule 3), as it did before Order 27.
 
+Either way the "next row" is the one the athlete asks for with **Add set**.
+Confirming a set only logs it; it builds no row (changed Oct 2026, after Joey
+found the auto-row read as the app adding sets). The suggestion is computed
+when Add set is tapped, from the last logged set, and only when nothing is
+already planned for that exercise -- behind a planned row it would be pricing
+the wrong set.
+
 [Inference] **Per linked athlete**, not one switch per coach. A coach may
 trust a veteran's RPE and not a novice's, which is the scepticism the Athlete
 View's RPE curve exists for. The switch sits on the Athlete View; Profile &

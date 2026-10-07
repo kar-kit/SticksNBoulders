@@ -65,6 +65,14 @@ describe("addRow", () => {
     const next = addRow([bench], "squat", null, ids());
     expect(next.find((r) => r.clientSetId === "b1")).toEqual(bench);
   });
+
+  it("after the last row was confirmed, the new row is the exercise's head", () => {
+    // Nothing planned for squat any more, only bench waiting: Add set has to
+    // produce the row the confirm square belongs to.
+    const bench = row({ exerciseId: "bench", clientSetId: "b1", planned: true });
+    const next = addRow([bench], "squat", { loadKg: 170, reps: 3 }, ids());
+    expect(headOf(next, "squat")).toMatchObject({ loadKg: 170, reps: 3, planned: true });
+  });
 });
 
 describe("afterConfirm", () => {
@@ -73,34 +81,29 @@ describe("afterConfirm", () => {
       row({ clientSetId: "a", planned: true }),
       row({ clientSetId: "b", loadKg: 120, planned: true }),
     ];
-    const { rows: next, next: head } = afterConfirm(rows, "a", { loadKg: 140, reps: 5 }, ids());
+    const { rows: next, next: head } = afterConfirm(rows, "a");
     expect(next.map((r) => r.clientSetId)).toEqual(["b"]);
-    expect(head.clientSetId).toBe("b");
-    expect(head.loadKg).toBe(120);
+    expect(head?.clientSetId).toBe("b");
+    expect(head?.loadKg).toBe(120);
   });
 
-  it("adds a repeat of the logged set when nothing else is planned", () => {
-    const { rows: next, next: head } = afterConfirm([row({ clientSetId: "a" })], "a", { loadKg: 145, reps: 4 }, ids());
-    expect(next).toHaveLength(1);
-    expect(head).toMatchObject({ loadKg: 145, reps: 4, planned: false });
-    expect(head.clientSetId).not.toBe("a");
-  });
-
-  it("uses what was logged, not what the row said, for the repeat", () => {
-    // The row and the set are the same values today; the rule is still the
-    // logged set, so a future suggestion that rewrites the row cannot leak.
-    const { next } = afterConfirm([row({ clientSetId: "a", loadKg: 1 })], "a", { loadKg: 150, reps: 5 }, ids());
-    expect(next.loadKg).toBe(150);
+  it("adds nothing when the confirmed row was the last one -- confirming means done", () => {
+    const { rows: next, next: head } = afterConfirm([row({ clientSetId: "a" })], "a");
+    expect(next).toEqual([]);
+    expect(head).toBeNull();
+    expect(headOf(next, "squat")).toBeNull();
   });
 
   it("only touches the confirmed exercise", () => {
     const rows = [row({ clientSetId: "a" }), row({ exerciseId: "bench", clientSetId: "b", planned: true })];
-    const { rows: next } = afterConfirm(rows, "a", { loadKg: 140, reps: 5 }, ids());
-    expect(next.some((r) => r.clientSetId === "b")).toBe(true);
+    const { rows: next, next: head } = afterConfirm(rows, "a");
+    expect(next.map((r) => r.clientSetId)).toEqual(["b"]);
+    // Another exercise's waiting row is not this one's next set.
+    expect(head).toBeNull();
   });
 
   it("refuses a row that is not in the plan", () => {
-    expect(() => afterConfirm([], "nope", { loadKg: 1, reps: 1 }, ids())).toThrow();
+    expect(() => afterConfirm([], "nope")).toThrow();
   });
 });
 
@@ -158,35 +161,39 @@ describe("a suggestion the coach's switch let through (Order 28)", () => {
   let n = 0;
   const id = () => `id-${++n}`;
 
-  it("fills the fresh row after a confirm, marked as a suggestion", () => {
-    const rows = [rowAfter("squat", null, id)];
-    const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, suggestion);
-    expect(next).toMatchObject({ loadKg: 175, reps: 5, note: "suggested from RPE 7 @ 170" });
+  // The row the athlete asks for with Add set once the last one is confirmed.
+  const added = (s: typeof suggestion | null) => addRow([], "squat", { loadKg: 170, reps: 5 }, id, s)[0];
+
+  it("fills the Add set row after the last confirm, marked as a suggestion", () => {
+    expect(added(suggestion)).toMatchObject({ loadKg: 175, reps: 5, note: "suggested from RPE 7 @ 170" });
   });
 
   it("flags the row as suggested, so the logger can mark it until it is edited", () => {
-    const rows = [rowAfter("squat", null, id)];
-    const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, suggestion);
-    expect(next.suggested).toBe(true);
+    expect(added(suggestion).suggested).toBe(true);
   });
 
   it("does not flag a repeat of the previous set", () => {
-    const rows = [rowAfter("squat", null, id)];
-    const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, null);
-    expect(next.suggested ?? false).toBe(false);
+    expect(added(null).suggested ?? false).toBe(false);
   });
 
   it("repeats the set just logged when none was let through, with no note", () => {
-    const rows = [rowAfter("squat", null, id)];
-    const { next } = afterConfirm(rows, rows[0].clientSetId, { loadKg: 170, reps: 5 }, id, null);
-    expect(next).toMatchObject({ loadKg: 170, reps: 5 });
-    expect(next.note ?? null).toBeNull();
+    expect(added(null)).toMatchObject({ loadKg: 170, reps: 5 });
+    expect(added(null).note ?? null).toBeNull();
   });
 
-  it("never overwrites a row the athlete already planned", () => {
-    const head = rowAfter("squat", null, id);
+  it("never overwrites a row the athlete already planned, or prices the row behind it", () => {
+    // The suggestion was priced from the last logged set; the new row follows
+    // the athlete's planned 150 x 8, not that set, so it repeats their numbers.
     const planned = { ...rowAfter("squat", null, id, true), loadKg: 150, reps: 8 };
-    const { next } = afterConfirm([head, planned], head.clientSetId, { loadKg: 170, reps: 5 }, id, suggestion);
-    expect(next).toEqual(planned);
+    const next = addRow([planned], "squat", { loadKg: 170, reps: 5 }, id, suggestion);
+    expect(next[0]).toEqual(planned);
+    expect(next[1]).toMatchObject({ loadKg: 150, reps: 8 });
+    expect(next[1].suggested ?? false).toBe(false);
+    expect(next[1].note ?? null).toBeNull();
+  });
+
+  it("is never applied by a confirm, which builds no row to hold it", () => {
+    const rows = [rowAfter("squat", null, id)];
+    expect(afterConfirm(rows, rows[0].clientSetId).next).toBeNull();
   });
 });

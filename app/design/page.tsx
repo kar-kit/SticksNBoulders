@@ -369,6 +369,10 @@ export default function DesignSystemPage() {
                   Add note
                 </Button>
               </div>
+              {/* The finish control nobody has to discover; the clock is a shortcut to it. */}
+              <Button variant="secondary" size="lg" block className="mt-2">
+                End session
+              </Button>
             </div>
             <TabBar />
           </div>

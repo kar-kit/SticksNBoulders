@@ -243,7 +243,8 @@ fallback: a rule that does not parse is refused on the cell and by the route.
   time; the set that reaches the stop RPE ends it; a set logged without RPE
   cannot end it; the cap ends it regardless.
 - In the logger (`targetsFor`), backoff slots follow the line's own sets and
-  carry `backoff: { rule, topSet }`. New rows get the load as the coach's
+  carry `backoff: { rule, topSet }`. New rows (Add set, or opening an
+  exercise; a confirm adds none) get the load as the coach's
   number (prefill rule 1) with the note "backoff from top set 185 × 3";
   `setTargetFor` keeps them away from the suggestion engine. Rows already on
   screen are never re-priced -- a row planned with Add set *before* the top
