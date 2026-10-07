@@ -1,52 +1,65 @@
-## fix(video): fail loudly at startup when VIDEO_TICKET_SECRET is missing
+## fix(offline): replay a reloaded queue in order, and test the queue and log screen for real
 
 ### Why
 
-Clip playback signs its URLs with `VIDEO_TICKET_SECRET`. When it is unset the
-app builds and boots normally, then every coach playback request fails with one
-server log line, and the review screen says only "The video for this clip could
-not be loaded". Nothing points at the cause. It cost real debugging time, and
-the unit tests could not catch it because they inject the secret.
+A mutation audit (break the source, run the suite) found the offline queue and
+the log screen under-protected: the runner was only ever mocked, the log screen
+mocked `logSet`/`removeSet` whole, and several guards could be deleted with the
+suite staying green. A probe also found a real ordering bug.
 
-### What changes
+### The bug fixed
 
-- `instrumentation.ts` (new, repo root; there is no `src/`) runs on the Node
-  runtime only and calls `checkVideoTicketSecret`. A production start throws
-  with a message naming `VIDEO_TICKET_SECRET` and `openssl rand -base64 48`.
-  Development logs a single `console.warn`, so `next dev` still works.
-- `lib/video/startup-check.ts` (new) holds the decision as a pure function of
-  `{ env, nodeEnv, phase }`. It asks `ticketSecret()` rather than restating the
-  32-character rule, so there is still one place to change it.
-- `docs/review-queue.md` says a production start refuses to boot without it.
-- `next build` is unaffected. Next skips the instrumentation hook itself while
-  `NEXT_PHASE` is `phase-production-build` (`instrumentation-globals.external.js`,
-  `registerInstrumentation`), and the check repeats that exemption so it does
-  not depend on a framework detail. CI needs no secret.
+On reload, IndexedDB's `getAll` returns ops sorted by key, and the key was
+`op-<ms>-<unpadded sequence>`. Ops queued in the same millisecond (a set and its
+rollup refresh always are) came back as `[0, 9, 10, 11, 1, 2, …]`, and the
+forced flush (`attachQueue`, `online`, tab visible) sent them in that order
+because it took the cache unsorted. A set could reach Appwrite ahead of the one
+logged before it.
 
-`register()` is awaited by `NextNodeServer.prepareImpl`, so a throw stops
-`next start` before it accepts requests. That is read from Next's source, not
-observed; see below.
+- The forced batch now uses `pendingOps`, which sorts by the stored `sequence`.
+  Queues already on a phone with old unpadded ids replay correctly too.
+- New ids zero-pad the sequence so disk order matches queue order.
+- The failing test came first, against a fake store that sorts like IndexedDB.
 
-### How to verify
+### Tests added or rewritten
 
-1. `npm test -- lib/video/startup-check` : 10 tests (missing, empty, 31 chars,
-   exactly 32, 64, prod vs dev, build phase, other phases).
-2. Build without the secret, which must still succeed:
-   `env -u VIDEO_TICKET_SECRET npm run build`
-3. Prod refuses: `env -u VIDEO_TICKET_SECRET npx next start -p 3199`
-   should exit non-zero with the message above. Check `.env.local` does not
-   supply one, since Next loads it. [Not run by the author.]
-4. Prod boots with one: `VIDEO_TICKET_SECRET=$(openssl rand -base64 48) npx next start -p 3199`.
-5. Dev warns once: `env -u VIDEO_TICKET_SECRET npx next dev` logs
-   `[startup] VIDEO_TICKET_SECRET is missing...` and carries on.
+- `lib/offline/runner.test.ts` (new, 19 tests): the real write helpers run
+  behind a recording row writer. Covers payload mapping for every op kind,
+  circle-before-write, profile failure never blocking a write, 404 on
+  delete/attach counting as done, and the coach-comment guard.
+- `client.test.ts`: a retryable `session.create` failure stops `set.create`;
+  "writes the op down before it tries to send it" now asserts put-before-send
+  on one event log (it only asserted `writes.length === 1` before).
+- `log-screen.test.tsx`: three tests run the real set-store over an in-memory
+  queue and read the queued op. They cover a warm-up with no prescription link
+  next to a working set that has one, a set index that is not reused after a
+  delete on the page, and a delete whose local write fails bringing the set back.
+- `session-detail.test.tsx`: an incomplete draft cannot save even if its
+  confirm fires, and a failed edit or delete reloads the server copy.
+- `bodyweight.test.ts`: 399/400/401/499 as literals. The old test read the
+  limit back from the module.
 
-### Heads-up for deploys
+### Removed
 
-Any production environment without the secret will now fail to start instead of
-starting broken. Set it on the host before this ships.
+- `cancelQueued` and its test. Nothing outside the test called it.
+  `collapsibleCreate` in queue.ts is now unused too. I left it, with its
+  tests, for a follow-up.
 
-### Not covered
+### Mutations now caught: 27 / 27
 
-`instrumentation.ts` itself has no unit test: vitest only collects tests under
-`app/ appwrite/ components/ lib/ scripts/`, and the file is a thin wrapper
-around the tested function. Steps 2 to 5 above are the check on the wiring.
+Runner 12 (warm-up forced false, circle removed or not awaited, profile removed
+or awaited, 404 swallow removed on delete and on attach, prescription dropped,
+load or RPE mis-mapped, update warm-up forced false, comment guard inverted).
+Client 4 (keep sending after retry, send before persist, unpadded id, unsorted
+forced flush). Log screen 5 (warm-up carries the link, index counted from the
+shown sets, no restore on failed delete, warm-up forced false in the screen and
+in set-store). History 3. Bodyweight 3.
+
+### Not done / for a decision
+
+- History delete has no undo and no pre-check for coach comments on screen.
+  The queue still refuses it (412) when it runs. Whether History should match
+  the log screen is a product decision.
+- The video-required gate (`set.ts`, `set-row.tsx`) is untouched.
+
+`npm test` 2270 / 140 files, `npm run lint` and `npm run typecheck` are clean.
