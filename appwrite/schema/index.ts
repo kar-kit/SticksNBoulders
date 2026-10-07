@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 11,
+  version: 12,
   tables: [
     {
       id: "profiles",
@@ -304,9 +304,10 @@ export const schema: DatabaseSpec = {
         { key: "athlete_id", type: "string", size: 36, required: true },
         // Per exercise, not per base lift: the Order 17 ticket is explicit
         // that "a variation is its own exercise, so a max is held per
-        // exercise". Whether a percentage ON a variation may point at the base
-        // lift's max is [SME to confirm] with Ruairi, and belongs to the
-        // prescription at Order 18 -- not modelled here.
+        // exercise". A percentage ON a variation may still be priced off the
+        // base lift's max -- Ruairi, 7 Oct 2026: Tempo Bench at 70% is 70% of
+        // the competition bench -- and that pointer is the prescription's
+        // `reference_exercise_id`, not anything here.
         { key: "exercise_id", type: "string", size: 36, required: true },
         // Deliberately two values, not three. "Estimated" is the best e1RM in
         // stats_rollups; making it writable here would be a second
@@ -494,6 +495,13 @@ export const schema: DatabaseSpec = {
         // Order 30. The coach asks for a clip of this line. Only ever a nudge
         // in the logger -- nothing blocks on it. Null on rows written before.
         { key: "video_required", type: "boolean", required: false, default: false },
+        // The exercise whose max this percentage is OF, when it is not the
+        // line's own: "Tempo Bench 70%" of the competition bench (Ruairi,
+        // 7 Oct 2026). Null means the line's own exercise, which is every row
+        // written before this, so it needs no backfill. Placement on a copy:
+        // remapped into the target's library like exercise_id. No index --
+        // nothing queries by it. docs/reference-lift.md.
+        { key: "reference_exercise_id", type: "string", size: 36, required: false },
         { key: "updated_at", type: "datetime", required: true },
       ],
       indexes: [

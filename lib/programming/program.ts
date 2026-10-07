@@ -141,6 +141,13 @@ export interface Prescription {
    * gate. Absent means false; optional so a fixture need not spell it out.
    */
   videoRequired?: boolean;
+  /**
+   * The exercise whose max a percentage on this line is OF, when it is not the
+   * line's own: Tempo Bench at 70% of the competition bench (Ruairi, 7 Oct
+   * 2026). Null means the line's own exercise, which is every row written
+   * before the column. Optional so a fixture need not spell it out.
+   */
+  referenceExerciseId?: string | null;
   updatedAt: string;
 }
 
@@ -257,6 +264,7 @@ const prescriptionRow = z
     notes: nullableString,
     backoff: nullableString,
     video_required: z.boolean().nullish().transform((v) => v ?? false),
+    reference_exercise_id: nullableString,
     updated_at: z.string(),
   })
   .transform(
@@ -276,6 +284,7 @@ const prescriptionRow = z
       notes: r.notes,
       backoff: r.backoff,
       videoRequired: r.video_required,
+      referenceExerciseId: r.reference_exercise_id,
       updatedAt: r.updated_at,
     }),
   );
@@ -395,6 +404,11 @@ const lineFields = {
     if (!parsed.ok) ctx.addIssue({ code: "custom", message: parsed.reason });
   }),
   videoRequired: z.boolean().optional(),
+  /**
+   * The lift a percentage is OF, when it is not the line's own. Null clears
+   * it; absent leaves it alone. The server checks the athlete can read it.
+   */
+  referenceExerciseId: rowId.nullable().optional(),
 };
 
 /** A range must run upwards. "8-6 reps" is a typo, not a prescription. */
@@ -418,6 +432,7 @@ const updatePrescription = z.object({
   notes: lineFields.notes,
   backoff: lineFields.backoff,
   videoRequired: lineFields.videoRequired,
+  referenceExerciseId: lineFields.referenceExerciseId,
 });
 
 const removePrescription = z.object({ op: z.literal("removePrescription"), prescriptionId: rowId });
