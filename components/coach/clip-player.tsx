@@ -35,11 +35,21 @@ export interface ClipPlayerProps {
   unavailable?: string;
   /** The keyboard line under the controls. The queue's default names its clearing keys. */
   hint?: string;
+  /**
+   * Swaps in a freshly minted `src` for this clip. Resolves false when there
+   * is none to give.
+   *
+   * The URL is a five-minute ticket, and the stream route checks it on every
+   * request -- each seek, frame step or loop past what is buffered is a new
+   * Range request carrying the same URL. A clip left open, or opened from a
+   * queue minted a while ago, fails on the first request after expiry.
+   */
+  refreshSrc?: () => Promise<boolean>;
 }
 
 const QUEUE_HINT = "Space plays, arrows step a frame. Enter skips; ⌘/Ctrl + Enter comments and moves on.";
 
-export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT }: ClipPlayerProps) {
+export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refreshSrc }: ClipPlayerProps) {
   const video = useRef<HTMLVideoElement>(null);
   const [speed, setSpeed] = useState<number>(0.5);
   const [loop, setLoop] = useState(true);
@@ -49,6 +59,38 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT }: Clip
   // failed on answers the question directly.
   const [failedClip, setFailedClip] = useState<string | null>(null);
   const failed = failedClip === clipId;
+  // The clip whose src is a refresh that has not loaded yet. An error then is
+  // not expiry -- revoked access, a file still uploading -- so it is final.
+  // Cleared once the fresh src loads, so the next expiry gets its own refresh.
+  const refreshing = useRef<string | null>(null);
+  // Where the coach was, so a refresh lands back on the same frame.
+  const resumeAt = useRef<{ time: number; playing: boolean } | null>(null);
+
+  const onError = () => {
+    if (!refreshSrc || refreshing.current === clipId) {
+      setFailedClip(clipId);
+      return;
+    }
+    const element = video.current;
+    refreshing.current = clipId;
+    resumeAt.current = element ? { time: element.currentTime, playing: !element.paused } : null;
+    const forClip = clipId;
+    void refreshSrc()
+      .catch(() => false)
+      .then((ok) => {
+        if (!ok) setFailedClip(forClip);
+      });
+  };
+
+  const onLoadedMetadata = () => {
+    refreshing.current = null;
+    const element = video.current;
+    const resume = resumeAt.current;
+    resumeAt.current = null;
+    if (!element || !resume) return;
+    element.currentTime = resume.time;
+    if (resume.playing) void element.play().catch(() => {});
+  };
 
   useEffect(() => {
     if (video.current) video.current.playbackRate = speed;
@@ -106,7 +148,8 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT }: Clip
             loop={loop}
             playsInline
             preload="metadata"
-            onError={() => setFailedClip(clipId)}
+            onError={onError}
+            onLoadedMetadata={onLoadedMetadata}
           />
         ) : (
           <div className="flex size-full items-center justify-center p-6 text-center text-ui text-muted">
