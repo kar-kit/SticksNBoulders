@@ -160,6 +160,13 @@ describe("permission invariants", () => {
   });
 });
 
+describe("exercises' video default", () => {
+  it("is a nullable boolean with no default, so applying it rewrites no row", () => {
+    const column = table("exercises").columns.find((c) => c.key === "video_default");
+    expect(column).toEqual({ key: "video_default", type: "boolean", required: false });
+  });
+});
+
 describe("invite codes", () => {
   it("holds no code column, because the code is the row id", () => {
     // Uniqueness then comes from the primary key rather than from an index

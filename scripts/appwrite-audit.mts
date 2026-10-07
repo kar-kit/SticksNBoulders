@@ -566,6 +566,17 @@ try {
   }
   check("POST /api/program duplicateWeek with no session is refused", (await programOp(anon, { op: "duplicateWeek", weekId: targets.program_weeks })).status === 401);
   check("POST /api/program copyProgram with no session is refused", (await programOp(anon, { op: "copyProgram", programId: targets.programs, athleteId: A.id })).status === 401);
+  // Per-week release: publishWeek and the way back (updateWeek to draft). The
+  // coach round-trips A's week and leaves it published for what follows.
+  const pulled = await programOp(C, { op: "updateWeek", weekId: targets.program_weeks, status: "draft" });
+  check("POST /api/program updateWeek: A's coach pulls a week of A's program back to draft", pulled.status === 200, `${pulled.status} ${JSON.stringify(pulled.body)}`);
+  const released = await programOp(C, { op: "publishWeek", weekId: targets.program_weeks });
+  check("POST /api/program publishWeek: A's coach publishes it again", released.status === 200, `${released.status} ${JSON.stringify(released.body)}`);
+  for (const p of [U, B, A]) {
+    check(`POST /api/program publishWeek: ${ACTOR_LABELS[p.actor]} cannot publish A's week`, (await programOp(p, { op: "publishWeek", weekId: targets.program_weeks })).status === 403);
+    check(`POST /api/program updateWeek: ${ACTOR_LABELS[p.actor]} cannot pull A's week back to draft`, (await programOp(p, { op: "updateWeek", weekId: targets.program_weeks, status: "draft" })).status === 403);
+  }
+  check("POST /api/program publishWeek with no session is refused", (await programOp(anon, { op: "publishWeek", weekId: targets.program_weeks })).status === 401);
   check("POST /api/program with no session is refused", (await programOp(anon, { op: "createProgram", athleteId: A.id, name: "x" })).status === 401);
 
   // B's own training, so isolation is tested against real data both ways.
@@ -1025,6 +1036,8 @@ try {
   check("or edit the program he wrote for A", lateEdit.status === 403, `${lateEdit.status} ${JSON.stringify(lateEdit.body)}`);
   check("or duplicate a week of it", (await programOp(C, { op: "duplicateWeek", weekId: targets.program_weeks })).status === 403);
   check("or copy it to A again", (await programOp(C, { op: "copyProgram", programId: targets.programs, athleteId: A.id })).status === 403);
+  check("or publish a week of it", (await programOp(C, { op: "publishWeek", weekId: targets.program_weeks })).status === 403);
+  check("or pull a week of it back to draft", (await programOp(C, { op: "updateWeek", weekId: targets.program_weeks, status: "draft" })).status === 403);
   check(
     "[by policy] the ex-coach still reads the program he wrote: it is his work product, like a comment",
     (await attempt(() => C.tables.getRow({ databaseId: D, tableId: "programs", rowId: targets.programs }))).kind === "allowed",

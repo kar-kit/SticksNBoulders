@@ -19,6 +19,12 @@ export interface Exercise {
   normalisedName: string;
   isGlobal: boolean;
   ownerId?: string | null;
+  /**
+   * The Program Editor pre-ticks "video required" on a new line for this
+   * exercise. A starting point the coach can untick, never a rule: nothing
+   * that logs reads it. Absent and false mean the same.
+   */
+  videoDefault?: boolean;
 }
 
 /**

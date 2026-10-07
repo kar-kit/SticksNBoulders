@@ -339,6 +339,25 @@ export function ProgramEditor({ programId }: { programId: string }) {
                   Duplicate {week.label ?? `week ${weekNumber(week.id)}`}
                 </Button>
               ) : null}
+              {editable && week ? (
+                // Week-at-a-time release, and the way back while editing it.
+                // Nothing the athlete already logged moves either way.
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() =>
+                    void run(
+                      week.status === "published"
+                        ? { op: "updateWeek", weekId: week.id, status: "draft" }
+                        : { op: "publishWeek", weekId: week.id },
+                    )
+                  }
+                >
+                  {week.status === "published" ? "Unpublish" : "Publish"}{" "}
+                  {week.label ?? `week ${weekNumber(week.id)}`}
+                </Button>
+              ) : null}
             </div>
             {editable && week ? (
               <ConfirmButton
@@ -500,7 +519,9 @@ function DayEditor({ day, index, editable, busy, names, exercises, run, editLine
   };
 
   const addLine = async (exercise: Exercise) => {
-    const id = await run({ op: "addPrescription", dayId: day.id, exerciseId: exercise.id, setCount: 1 });
+    // The exercise's video default pre-ticks the box; the coach can untick it.
+    const videoRequired = exercise.videoDefault ? true : undefined;
+    const id = await run({ op: "addPrescription", dayId: day.id, exerciseId: exercise.id, setCount: 1, videoRequired });
     if (id) setFocusAfter({ lineId: id, col: "sets" });
   };
 

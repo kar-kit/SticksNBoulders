@@ -34,6 +34,7 @@ interface ExerciseRow {
   normalised_name?: unknown;
   is_global?: unknown;
   owner_id?: unknown;
+  video_default?: unknown;
 }
 
 /** Skips a row rather than throwing: one malformed row must not empty the list. */
@@ -46,6 +47,7 @@ function toExercise(row: ExerciseRow): Exercise | null {
     normalisedName: row.normalised_name,
     isGlobal: row.is_global === true,
     ownerId: typeof row.owner_id === "string" ? row.owner_id : null,
+    videoDefault: row.video_default === true,
   };
 }
 

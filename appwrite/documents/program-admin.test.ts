@@ -227,6 +227,20 @@ describe("creating a program top down", () => {
     expect(h.row("prescriptions", withRule)).toMatchObject({ backoff: null });
   });
 
+  it("never reads an exercise's video default: the server writes what the editor sent", async () => {
+    // The pre-tick happens in the Program Editor, so the flag on a line is
+    // always the coach's explicit choice and an API caller gets no surprise.
+    const h = harness();
+    const { dayId } = await skeleton(h);
+    h.row("exercises", "ex-Squat")!.video_default = true;
+    const bare = await h.ok(COACH, { op: "addPrescription", dayId, exerciseId: "ex-Squat", setCount: 1 });
+    expect(h.row("prescriptions", bare)).toMatchObject({ video_required: false });
+    const ticked = await h.ok(COACH, { op: "addPrescription", dayId, exerciseId: "ex-Squat", setCount: 1, videoRequired: true });
+    expect(h.row("prescriptions", ticked)).toMatchObject({ video_required: true });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: ticked, videoRequired: false });
+    expect(h.row("prescriptions", ticked)).toMatchObject({ video_required: false });
+  });
+
   it("refuses a backoff nobody could execute, and writes nothing", async () => {
     const h = harness();
     const { lineId } = await skeleton(h);
@@ -357,6 +371,79 @@ describe("publishing", () => {
   });
 });
 
+describe("releasing and pulling back one week", () => {
+  it("publishes one week and leaves the others draft, taking the program live with the first", async () => {
+    const h = harness();
+    const { programId, blockId, weekId } = await skeleton(h);
+    const second = await h.ok(COACH, { op: "addWeek", blockId });
+    h.writes.length = 0;
+    await h.ok(COACH, { op: "publishWeek", weekId });
+    expect(h.row("program_weeks", weekId)!.status).toBe("published");
+    expect(h.row("program_weeks", second)!.status).toBe("draft");
+    expect(h.row("programs", programId)!.status).toBe("published");
+    // Program last, as publishProgram does: a failure between the two shows the athlete nothing.
+    expect(h.writes.map((w) => w.tableId)).toEqual(["program_weeks", "programs"]);
+  });
+
+  it("does not touch the program again once it is live, so the next week is one write", async () => {
+    const h = harness();
+    const { blockId, weekId } = await skeleton(h);
+    const second = await h.ok(COACH, { op: "addWeek", blockId });
+    await h.ok(COACH, { op: "publishWeek", weekId });
+    h.writes.length = 0;
+    await h.ok(COACH, { op: "publishWeek", weekId: second });
+    expect(h.writes.map((w) => w.tableId)).toEqual(["program_weeks"]);
+  });
+
+  it("pulls a published week back to draft and leaves the program and the other weeks published", async () => {
+    const h = harness();
+    const { programId, blockId, weekId, dayId, lineId } = await skeleton(h);
+    const second = await h.ok(COACH, { op: "addWeek", blockId });
+    await h.ok(COACH, { op: "publishProgram", programId });
+    const stamped = h.row("program_weeks", weekId)!.$permissions;
+
+    await h.ok(COACH, { op: "updateWeek", weekId, status: "draft" });
+
+    expect(h.row("program_weeks", weekId)!.status).toBe("draft");
+    expect(h.row("program_weeks", second)!.status).toBe("published");
+    expect(h.row("programs", programId)!.status).toBe("published");
+    // Content is hidden by status, not removed or re-stamped.
+    expect(h.row("program_days", dayId)).toBeDefined();
+    expect(h.row("prescriptions", lineId)).toBeDefined();
+    expect(h.row("program_weeks", weekId)!.$permissions).toEqual(stamped);
+  });
+
+  it("edits a pulled-back week and releases it again", async () => {
+    const h = harness();
+    const { programId, weekId, lineId } = await skeleton(h);
+    await h.ok(COACH, { op: "publishProgram", programId });
+    await h.ok(COACH, { op: "updateWeek", weekId, status: "draft" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: lineId, load: "80%" });
+    await h.ok(COACH, { op: "publishWeek", weekId });
+    expect(h.row("program_weeks", weekId)!.status).toBe("published");
+    expect(h.row("prescriptions", lineId)).toMatchObject({ load: "80%" });
+  });
+
+  it("refuses a template's week, a stranger, and a coach whose link was revoked", async () => {
+    const h = harness();
+    const template = await skeleton(h, null);
+    expect(await h.run(COACH, { op: "publishWeek", weekId: template.weekId })).toMatchObject({ status: "invalid" });
+
+    const { weekId } = await skeleton(h);
+    expect(await h.run(STRANGER, { op: "publishWeek", weekId })).toEqual({ status: "not-allowed" });
+    expect(await h.run(STRANGER, { op: "updateWeek", weekId, status: "draft" })).toEqual({ status: "not-allowed" });
+
+    h.tableOf("coach_athlete_links").get("link1")!.status = "revoked";
+    expect(await h.run(COACH, { op: "publishWeek", weekId })).toEqual({ status: "not-allowed" });
+    expect(await h.run(COACH, { op: "updateWeek", weekId, status: "draft" })).toEqual({ status: "not-allowed" });
+  });
+
+  it("answers not-found for a week that is not there", async () => {
+    const h = harness();
+    expect(await h.run(COACH, { op: "publishWeek", weekId: "nope" })).toEqual({ status: "not-found" });
+  });
+});
+
 describe("removing structure", () => {
   it("removes a day with its lines, children first", async () => {
     const h = harness();
@@ -442,6 +529,30 @@ describe("constraint 5: logged work is immutable, prescriptions are not", () => 
 
     expect(h.writes.filter((w) => w.tableId === "sets" || w.tableId === "sessions")).toEqual([]);
     expect(h.row("sets", "set1")).toMatchObject({ load_kg: 150, prescribed: "5 reps · 150 kg (75%)" });
+  });
+});
+
+describe("releasing a week never reaches logged work", () => {
+  it("leaves the session, its sets and their snapshots alone through publish, unpublish and edit", async () => {
+    const h = harness();
+    const { programId, weekId, dayId, lineId } = await skeleton(h);
+    await h.ok(COACH, { op: "publishWeek", weekId });
+    const session = { $id: "s1", athlete_id: ATHLETE, program_day_id: dayId, status: "finished" };
+    const set = { $id: "set1", session_id: "s1", load_kg: 150, prescription_id: lineId, prescribed: "5 reps · 150 kg (75%)" };
+    h.tableOf("sessions").set("s1", { ...session });
+    h.tableOf("sets").set("set1", { ...set });
+    h.writes.length = 0;
+
+    await h.ok(COACH, { op: "updateWeek", weekId, status: "draft" });
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: lineId, load: "85%", reps: 3 });
+    await h.ok(COACH, { op: "publishWeek", weekId });
+    await h.ok(COACH, { op: "updateWeek", weekId, status: "draft" });
+    await h.ok(COACH, { op: "publishProgram", programId });
+
+    expect(h.writes.length).toBeGreaterThan(0);
+    expect(h.writes.filter((w) => w.tableId === "sets" || w.tableId === "sessions")).toEqual([]);
+    expect(h.row("sessions", "s1")).toEqual(session);
+    expect(h.row("sets", "set1")).toEqual(set);
   });
 });
 

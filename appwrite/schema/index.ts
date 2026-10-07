@@ -65,6 +65,10 @@ export const schema: DatabaseSpec = {
         { key: "is_global", type: "boolean", required: false, default: false },
         // Null on global rows. Present on anything typed in during a session.
         { key: "owner_id", type: "string", size: 36, required: false },
+        // Whether the Program Editor pre-ticks `video_required` when a coach
+        // adds a line for this exercise. Null on every row written before, and
+        // null reads as false: no default, so applying it rewrites nothing.
+        { key: "video_default", type: "boolean", required: false },
         { key: "created_at", type: "datetime", required: true },
       ],
       indexes: [

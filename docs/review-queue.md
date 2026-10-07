@@ -97,6 +97,29 @@ own. Consequences:
 
 The ticket is bound to one file, so swapping the id in a URL opens nothing.
 
+### A queue longer than one request
+
+`POST /api/clip` refuses more than `MAX_FILES` (60, in `lib/video/clip-limits.ts`)
+ids with a 400 for the whole request. The queue used to send every unreviewed
+clip in one, swallowed the error, and showed "Loading the clip…" forever, so a
+coach at 61 clips had no playback at all. [Inference] Five athletes at about 112
+clips a week puts a normal Sunday past that; the 112 is a capacity model's
+figure, not a measured one.
+
+`lib/review/clip-url-batches.ts` slices the ids into batches of at most
+`MAX_FILES` and sends them together. Each batch is merged into the queue as it
+lands, so the first 60 (the clips the coach plays first) never wait on the rest.
+A failed batch is not swallowed: the screen says how many clips could not be
+prepared, offers **Try again**, and the player for an affected clip says so
+instead of loading forever. Batches that landed are untouched, and the clips in
+a failed batch can still be cleared. Realtime is unchanged; a new clip changes
+the queue, which re-mints every batch.
+
+[Unverified] Every queue change re-mints all batches, one `createJWT` each, so
+a long queue now costs two or three per clear rather than one. Whether Appwrite
+rate-limits `createJWT` tightly enough to matter at 100+ clips is not checked;
+reading Appwrite's limits for that endpoint would settle it.
+
 ### Two things that only show up under a proxy
 
 **Range requests.** Forwarded in both directions, because the blueprint wants
@@ -126,9 +149,11 @@ before assuming the athlete revoked access.
 ## Clearing
 
 **Reviewed — next**, or Enter. Skip is the blueprint's own action for clips that
-are simply fine, and in Order 32 it is the only one: "Comment & next" needs
-Order 33's comment table. So this ships as the honest half of the loop — a coach
-can watch everything and mark it seen; saying something about one arrives next.
+are simply fine, and in Order 32 it was the only one: "Comment & next" needed
+Order 33's comment table. That has since landed (`docs/comments.md`): the
+screen now has both exits, and both clear the clip. Order 32 shipped the honest
+half of the loop, a coach could watch everything and mark it seen, and
+saying something about one arrived next.
 
 Advance is decided against the queue **before** the clip leaves it. The other
 way round shows the coach the clip they just cleared when they clear the last
@@ -156,12 +181,21 @@ number beside "Review" and the number of clips on screen cannot disagree.
 
 ## What the blueprint asks for and this does not do
 
-**"Prescribed: 3 @ RPE 8" is absent.** It needs a stored program, and there is no
-programs table until Order 19 — the Program Editor is blocked on Ruairi's
-block-shape question. The blueprint calls the context panel "the product", so
-the missing line is worth knowing about; rendering it empty, or inferring a
-target from what was lifted, would put a number in front of a coach that nobody
-prescribed.
+**"Prescribed: 3 @ RPE 8" is still absent, but it is now buildable.** This
+section used to say it needed a stored program that did not exist. Programs
+shipped at Orders 19 and 22, and a set logged against a prescription carries
+`prescription_id` and a `prescribed` text snapshot of the target at the moment
+of logging (`docs/programs.md`). [Fact] `fetchClips` reads whole `sets` rows
+with no `Query.select`, so `prescribed` already reaches the client;
+`toClip` drops it and `ClipContext` does not render it. Showing the snapshot
+would not infer anything, only display what the coach prescribed. Two limits:
+a set logged freely, outside a prescribed session, has none and the line stays
+absent for it, and [Inference] the snapshot is the target as the logger
+displayed it (reps and load, e.g. `5 x 152.5 kg (75%)`), which may not read
+like the blueprint's `3 @ RPE 8`. The blueprint calls the context panel "the
+product", so the gap is worth closing; rendering an empty line, or inferring a
+target from what was lifted, would still put a number in front of a coach that
+nobody prescribed.
 
 **"Still uploading" is not shown.** A set row carries no trace of a clip that has
 not landed yet: `attachClipToSet` uploads first and records second, so an
@@ -171,14 +205,15 @@ per clip, and a pending state that strands if the athlete never comes back. That
 is a redesign of Order 29 and 31 for a state that only exists while an upload is
 genuinely in flight. A clip that will not play says so in the player instead.
 
-**Voice notes are not built.** They belong with Order 33's comments, and the
-blueprint already marks them `[Inference — not discussed on the call]`.
+**Voice notes are not built.** They belong with Order 33's comments, which
+shipped without them; `docs/comments.md` recommends against building them yet.
+The blueprint already marks them `[Inference — not discussed on the call]`.
 
 ## Verified against the instance
 
-`npm run e2e:review` — 11 checks on the data path, including the one this ticket
-rests on: a coach writing a row stamped with the athlete's circle team, from
-their own session.
+`npm run e2e:review` — 21 checks, ten on the data path (including the one
+this ticket rests on: a coach writing a row stamped with the athlete's circle
+team, from their own session) and eleven on Order 33's comments.
 
 `npm run e2e:clip` — 15 checks on playback, with the app running (`npm run
 build && npm run start`; set `PORT` and `E2E_BASE_URL` together if 3100 is
@@ -192,6 +227,8 @@ unlinked coach's existing ticket dying immediately.
 | --- | --- |
 | `lib/review/queue.ts` | Pure: what is in the queue, in what order, what is next |
 | `lib/review/queue-store.ts` | The Appwrite reads, the review writes, realtime |
+| `lib/review/clip-url-batches.ts` | Slices a long queue into URL requests the route accepts |
+| `lib/video/clip-limits.ts` | `MAX_FILES`, shared by the route and the queue |
 | `lib/video/ticket.ts` | The signed playback pass |
 | `app/api/clip/route.ts` | Mints URLs for a batch of clips |
 | `app/api/clip/[fileId]/route.ts` | Streams one, as the ticket's user |

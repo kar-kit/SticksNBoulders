@@ -80,10 +80,17 @@ reference max, and every percentage Order 18 syncs to a session — on an
 instance being dogfooded from mid-October. That is a live-data migration, so
 it is Joey's call and not this ticket's.
 
-**[SME to confirm]** — the strongest argument for switching is that Ruairi is
-an RTS-trained coach and the chart is the one he has in his head; the Lift
-Detail blueprint already contrasts a personal curve against what "the standard
-chart says". That is a claim about Ruairi, not a fact, and he should be asked.
+The strongest argument for switching was that Ruairi is an RTS-trained coach
+and the chart is the one he has in his head; the Lift Detail blueprint already
+contrasts a personal curve against what "the standard chart says".
+
+[Fact] He was asked whether he wants e1RM to match the chart and answered *No
+preference* (Ruairi form answer, 6 Oct 2026). The default is no change: Brzycki
+stays and `e1rm:backfill` is not run. [Inference] "No preference" removes the
+parity argument without supplying one for Brzycki, and it does not say whether
+he is RTS-trained; it says only that a visible match does not matter to him.
+The decision to move to the chart (2.7% gap; 170 × 5 @ RPE 8 reads 204.0 kg
+today against 209.6 kg) remains Joey's alone, as a live-data migration.
 
 ## Files
 

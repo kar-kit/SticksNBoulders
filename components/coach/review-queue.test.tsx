@@ -2,12 +2,14 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ReviewQueue } from "./review-queue";
 import type { ClipSet } from "@/lib/review/queue";
+import { MAX_FILES } from "@/lib/video/clip-limits";
 
 /**
  * Order 16.6 on the Review Queue: an athlete unlinking is a normal state. Their
  * clips leave with a reason, nothing on screen errors, and a re-link puts them
  * back. The queue's own behaviour (ordering, advancing) is tested in
- * lib/review/queue.test.ts; this covers only what a revoked link does to it.
+ * lib/review/queue.test.ts; this covers what a revoked link does to it, and
+ * playback URLs for a queue longer than /api/clip will mint in one request.
  */
 
 const session = vi.hoisted(() => ({ athleteIds: ["joey", "sam"], refresh: vi.fn() }));
@@ -174,4 +176,70 @@ it("puts the clips back on re-link and clears the notice", async () => {
   act(() => onLinkChange());
   expect(await screen.findByText("3 waiting")).toBeInTheDocument();
   await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+});
+
+/** Joey's clips, oldest first, enough of them to need more than one URL request. */
+const many = (count: number): ClipSet[] =>
+  Array.from({ length: count }, (_, i) =>
+    clip(`n${String(i).padStart(3, "0")}`, "joey", new Date(Date.UTC(2026, 8, 1, 0, i)).toISOString()),
+  );
+
+const mint = async (batch: readonly string[]) => new Map(batch.map((id) => [id, `/api/clip/${id}`]));
+
+describe("playback urls for a long queue", () => {
+  it("asks for no more than MAX_FILES a request, so 61 clips still play", async () => {
+    queueStore.fetchClips.mockResolvedValue(many(MAX_FILES + 1));
+    queueStore.fetchClipUrls.mockImplementation(async (batch: readonly string[]) => {
+      if (batch.length > MAX_FILES) throw new Error("clip urls failed: 400");
+      return mint(batch);
+    });
+    const { container } = render(<ReviewQueue />);
+
+    expect(await screen.findByText("61 waiting")).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector("video")).toHaveAttribute("src", "/api/clip/file-n000"));
+    expect(queueStore.fetchClipUrls.mock.calls.map(([batch]) => batch.length).sort()).toEqual([1, 60]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("plays the first batch while a later one is still in flight", async () => {
+    queueStore.fetchClips.mockResolvedValue(many(130));
+    queueStore.fetchClipUrls.mockImplementation((batch: readonly string[]) =>
+      batch.length === 60 && batch[0] === "file-n000" ? mint(batch) : new Promise(() => {}),
+    );
+    const { container } = render(<ReviewQueue />);
+
+    await screen.findByText("130 waiting");
+    await waitFor(() => expect(container.querySelector("video")).toHaveAttribute("src", "/api/clip/file-n000"));
+  });
+
+  it("names a failed batch, keeps the batches that landed, and retries on request", async () => {
+    queueStore.fetchClips.mockResolvedValue(many(130));
+    let healthy = false;
+    queueStore.fetchClipUrls.mockImplementation(async (batch: readonly string[]) => {
+      // The middle batch of three is the one that fails.
+      if (!healthy && batch[0] === "file-n060") throw new Error("clip urls failed: 500");
+      return mint(batch);
+    });
+    const { container } = render(<ReviewQueue />);
+
+    // The clip on screen is in a batch that landed: it plays, and the failure is still said.
+    expect(await screen.findByRole("alert")).toHaveTextContent("60 clips could not be prepared for playback.");
+    await waitFor(() => expect(container.querySelector("video")).toHaveAttribute("src", "/api/clip/file-n000"));
+    expect(screen.getByText("130 waiting")).toBeInTheDocument();
+
+    healthy = true;
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  });
+
+  it("says so in the player when the current clip is the one that failed", async () => {
+    queueStore.fetchClips.mockResolvedValue(many(3));
+    queueStore.fetchClipUrls.mockRejectedValue(new Error("clip urls failed: 500"));
+    const { container } = render(<ReviewQueue />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("3 clips could not be prepared for playback.");
+    expect(screen.getByText(/video for this clip could not be loaded/)).toBeInTheDocument();
+    expect(screen.queryByText("Loading the clip…")).not.toBeInTheDocument();
+    expect(container.querySelector("video")).toBeNull();
+  });
 });

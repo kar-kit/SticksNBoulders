@@ -28,6 +28,8 @@ export interface PlannedSet extends LoggableSet {
   clientSetId: string;
   /** "suggested from RPE 7 @ 170", when the load came from the RPE engine. */
   note?: string | null;
+  /** The load is the app's suggestion, untouched. Marked "Suggested" on the row. */
+  suggested?: boolean;
 }
 
 export interface ExerciseBlockProps {
@@ -149,6 +151,7 @@ export function ExerciseBlock({
             state={at === 0 ? "active" : "planned"}
             focused={focusedId === row.clientSetId}
             note={row.note ?? null}
+            suggested={row.suggested}
             onPressLoad={() => onFocus?.(row.clientSetId, "load")}
             onPressReps={() => onFocus?.(row.clientSetId, "reps")}
             onPressRpe={() => onFocus?.(row.clientSetId, "rpe")}
