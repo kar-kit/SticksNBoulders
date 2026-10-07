@@ -99,7 +99,9 @@ Every cell is about **athlete A's data**, judged from the attacker's side.
   coach sets A's `suggestions_mode` through `POST /api/link/suggestions`; A,
   the unlinked coach, B and anon are refused. After revocation the ex-coach can
   do neither, still reads the program he wrote (by policy: it is his work
-  product), and A keeps reading it.
+  product), and A keeps reading it. `publishWeek` and `updateWeek` back to
+  draft are covered the same way: the coach round-trips a week; the unlinked
+  coach, B, A and anon are refused, and so is the ex-coach after revocation.
 - **Stored stamps**: every row on the instance, compared with what `policy.ts`
   would stamp on it today. Read-only. This is the "rescan documents for
   missing or wrong permissions" half of the Build Plan's audit (§7). Rows are
