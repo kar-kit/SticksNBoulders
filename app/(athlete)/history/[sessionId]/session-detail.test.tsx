@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SessionDetail } from "./session-detail";
 import type { SessionRecord } from "@/lib/logging/session";
@@ -43,6 +43,21 @@ const removeSet = vi.hoisted(() =>
 );
 vi.mock("@/lib/logging/set-store", () => ({ editSet, removeSet }));
 
+// The real row, with a hand on the active row's confirm. The button is
+// disabled for an incomplete draft, so the only way to reach save() with one
+// is a handler that fires anyway -- which is what the guard inside it is for.
+const activeConfirm = vi.hoisted(() => ({ current: undefined as (() => void) | undefined }));
+vi.mock("@/components/logging/set-row", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/components/logging/set-row")>();
+  return {
+    ...real,
+    SetRow: (props: Parameters<typeof real.SetRow>[0]) => {
+      if (props.state === "active") activeConfirm.current = props.onConfirm;
+      return <real.SetRow {...props} />;
+    },
+  };
+});
+
 const session: SessionRecord = {
   id: "s1",
   clientSessionId: "s1",
@@ -82,6 +97,7 @@ function setup() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  activeConfirm.current = undefined;
   editSet.mockResolvedValue(undefined);
   removeSet.mockResolvedValue(undefined);
   library.exercises = [{ id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true }];
@@ -177,5 +193,47 @@ describe("correcting a set", () => {
       loggedAt: new Date("2026-09-14T09:30:00Z"),
     }));
     await waitFor(() => expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("150"));
+  });
+
+  it("will not save a draft with no weight, even if its confirm fires", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    for (let i = 0; i < 3; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+
+    const confirm = screen.getByRole("button", { name: /^Log Set 1$/ });
+    expect(confirm).toBeDisabled();
+    await user.click(confirm);
+    // A stale handler, as a double tap racing a re-render would fire.
+    await act(async () => activeConfirm.current?.());
+
+    // A null load written over a real set would wipe its tonnage and its e1RM.
+    expect(editSet).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Delete set" })).toBeInTheDocument();
+  });
+
+  it("puts the server's copy back when a correction cannot be written", async () => {
+    // Only the device's own storage failing gets here. The correction exists
+    // nowhere, so the screen must stop showing it.
+    editSet.mockRejectedValueOnce(new DOMException("Quota exceeded", "QuotaExceededError"));
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    for (let i = 0; i < 3; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+    for (const key of ["1", "4", "5"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140"));
+    expect(screen.getByRole("group", { name: "Set 1" })).not.toHaveTextContent("145");
+  });
+
+  it("puts a set back when its delete cannot be written", async () => {
+    removeSet.mockRejectedValueOnce(new DOMException("Quota exceeded", "QuotaExceededError"));
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    await user.click(screen.getByRole("button", { name: "Delete set" }));
+
+    await waitFor(() => expect(removeSet).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("150"));
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
   });
 });
