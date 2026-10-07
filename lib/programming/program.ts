@@ -143,7 +143,7 @@ export interface Prescription {
   videoRequired?: boolean;
   /**
    * The exercise whose max a percentage on this line is OF, when it is not the
-   * line's own: Tempo Bench at 70% of the competition bench (Ruairi, 7 Oct
+   * line's own: Tempo Bench at 70% of the competition bench (Ruairi, 6 Oct
    * 2026). Null means the line's own exercise, which is every row written
    * before the column. Optional so a fixture need not spell it out.
    */

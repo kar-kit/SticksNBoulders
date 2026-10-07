@@ -306,7 +306,7 @@ describe("stamping the logger's new rows with their targets", () => {
 
 /**
  * docs/reference-lift.md §6, ported from the design's scratch script. Ruairi,
- * 7 Oct 2026: "Tempo Bench at 70%" is 70% of the competition bench max.
+ * 6 Oct 2026: "Tempo Bench at 70%" is 70% of the competition bench max.
  */
 describe("a percentage of another lift: the worked examples", () => {
   const max = (over: Partial<ReferenceMaxEntry>): ReferenceMaxEntry => ({

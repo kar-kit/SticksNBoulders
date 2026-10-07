@@ -103,6 +103,16 @@ the athlete can read it, log it and hold a max for it. Lines are refused for an
 exercise the athlete cannot read (a coach's private custom row would reach
 Today with no name).
 
+A percentage on a variation can still be priced off the competition lift:
+Ruairi, 6 Oct 2026, "Tempo Bench at 70%" is 70% of the comp bench max. The
+line's nullable `reference_exercise_id` names that lift (typed as `70% of
+bench` in the load cell; `of own` clears it). It is held to the same rule as
+the line's exercise -- global or in the athlete's library, refused otherwise
+with `referenceExerciseId: not in the athlete's library` -- and a reference to
+the line's own exercise is stored as null. A new line inherits the reference
+of the last line of the same exercise in the program. Resolution, snapshot and
+session rules: `docs/prescriptions.md`, design `docs/reference-lift.md`.
+
 ## In the logger (Order 22)
 
 `lib/programming/session-plan.ts` expands lines into per-set targets, resolves
@@ -143,9 +153,20 @@ variation in the source athlete's library is found by name in the target's
 `createExercise` path the editor uses. A line whose exercise no longer exists
 refuses the copy rather than dropping the line.
 
+**A line's reference lift is re-resolved the same way.** The set of exercises
+resolved in the target's library is `exercise_id ∪ reference_exercise_id`, one
+map for both: a global reference stays, a source-athlete variation is found by
+name or created in the target's library, and a reference whose row is gone
+refuses the copy before any write (`referenceExerciseId: a line's reference
+lift no longer exists`). A created reference has no max yet, so the copied line
+is unresolved until the coach sets one -- the editor says so beside the load
+cell. `duplicateWeek` keeps it as is: same athlete, same library.
+
 **Lines are copied generically.** `copyPrescription` copies every stored column
-except Appwrite's (`$…`) and placement (scope, parents, exercise, position,
-derived `load_kind`, `updated_at`) -- see `lineContent` in `program-write.ts`.
+except Appwrite's (`$…`) and placement (scope, parents, exercise, reference
+exercise, position, derived `load_kind`, `updated_at`) -- see `lineContent` in
+`program-write.ts`. `reference_exercise_id` is the first row id added to
+`LINE_PLACEMENT` under the rule below.
 Order 30's `video_required`, and whatever Order 21 adds, travel without
 changes. **A new column holding a row id must be added to `LINE_PLACEMENT` and
 remapped**, or the copy points at the source's rows.
@@ -160,6 +181,7 @@ built.
 - **Backoff rules (21), built:** see below.
 - **Video required (30), built:** see below.
 - **My Program (23) is built**, see below.
+- **Reference lift, built:** see Variations above and `docs/reference-lift.md`.
 
 ## Video required (Order 30)
 

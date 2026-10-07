@@ -52,11 +52,43 @@ training max and can be changed per row." That is which **kind** of max —
 `training` by default, `tested` or `estimated` if named — resolved against
 Order 17's `reference_maxes`.
 
-It is **not** a pointer at another exercise's max. Order 18's own notes reject
-"a single reference max standing in for lifts that move different weights",
-which is exactly what tempo bench at a percentage of competition bench would
-be. Whether Ruairi wants that anyway is **[SME to confirm]**; if he does, it is
-one nullable field, not a reshaped union.
+Which **exercise** supplies it is a separate question, and Ruairi has answered
+it: "Tempo Bench at 70%" is 70% of **the competition bench max**, by default
+and without a gesture per row. [Fact] — Ruairi, 6 Oct 2026, as reported by
+Joey; the design is `docs/reference-lift.md`.
+
+As predicted here, that is one nullable field and not a reshaped union:
+`prescriptions.reference_exercise_id`. Null — every row written before it — is
+the line's own exercise, exactly as before. Set, it names the lift whose maxes
+the percentage reads:
+
+| Coach types on a Tempo Bench line | Stored | Athlete sees (bench training 150) |
+| --- | --- | --- |
+| `70% of bench` | load `70%`, reference Bench Press | 105 kg (70% of Bench Press) |
+| `70% of tested` (reference already set) | load `70% of tested` | 110 kg (70% of Bench Press), bench tested 157.5 |
+| `70% of own` | load `70%`, reference cleared | the tempo bench's own max, as before |
+
+The grammar is untouched: the editor strips `of <lift>` into the column, so the
+stored load and everything that parses it are what they were. The kind still
+comes from the load text. A reference row:
+
+- reads **only** the referenced lift's maxes — no fallback to the variation's
+  own, because a tempo max standing in for "of bench" is a wrong number on the
+  bar, silently;
+- is **never priced off today's sets of its own exercise**: a tempo set at RPE
+  8 measures tempo bench, not comp bench. It behaves like a named kind and is
+  never `synced`. Pricing it off the comp bench single logged earlier the same
+  session is phase 2 and **[SME to confirm]**;
+- names the lift when it cannot resolve ("70% of Bench Press"), so the
+  athlete knows which max is missing;
+- records lift, kind and basis on the logged set's snapshot — `5 reps · 105 kg
+  (70% of Bench Press, training 150)` — so a moved bench max cannot make the
+  set unexplainable. Own-exercise snapshots are unchanged.
+
+The editor remembers the last reference used for the same exercise in the same
+program and gives it to every new line of that exercise, so it is typed once
+per variation per program. Whether that is acceptable or Ruairi wants an
+exercise-level default is **[SME to confirm]** after a block of real use.
 
 ## Percentages are weight guidance, and they sync to the session
 
@@ -135,23 +167,29 @@ first working set.
 A capped prescription keeps its RPE ceiling even when the percentage cannot
 resolve, because the ceiling is still a real instruction.
 
-## Why there is no table
+The Program Editor shows the coach the same failure before the athlete meets
+it: beside any percentage that would resolve to nothing it reads, for example,
+`No Bench Press training max for Joey · they see "70% of Bench Press"`. It
+loads the athlete's maxes the way the logger does and resolves with no session
+max. No warning while the maxes are unread or failed, or on a template — unknown
+is not missing.
 
-Order 18 is the **model**. A prescription hangs off a block, a week and a day,
-and that container is Order 19 — still blocked on Ruairi's question about
-whether he writes a block up front, week by week, or session by session.
-`schema.test.ts` asserts `prescriptions` is absent on purpose.
+## Where it is stored
 
-`parse` and `format` round-trip exactly, which is what makes the storage
-question safely deferrable: Order 19 can store the typed text or the structured
-fields and derive the other. Freeform forces the raw text to be retained either
-way.
+Order 18 is the **model**; Order 19 stores it. A line is a row of the
+`prescriptions` table, under a program, block, week and day (see
+`docs/programs.md`). The load cell is stored **as typed**, with `load_kind`
+derived beside it by the write helper — `parse` and `format` round-trip
+exactly, and freeform forces the raw text to be kept anyway. The reference
+lift is its own column, `reference_exercise_id`, not part of the text.
 
 ## Files
 
 | File | What it holds |
 | --- | --- |
 | `lib/programming/prescription.ts` | The whole model: parse, format, resolve, round, and the prefill adapter |
+| `lib/programming/session-plan.ts` | A day's lines into set targets; a reference row's maxes via `ReferenceLookup` |
+| `lib/programming/editor.ts` | The load cell's `of <lift>` clause, its indicator, and the missing-max warning |
 
 Consumed by `lib/logging/prefill.ts` (the athlete's set row) and, at Order 19,
 by the Program Editor grid.

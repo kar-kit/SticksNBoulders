@@ -305,7 +305,7 @@ export const schema: DatabaseSpec = {
         // Per exercise, not per base lift: the Order 17 ticket is explicit
         // that "a variation is its own exercise, so a max is held per
         // exercise". A percentage ON a variation may still be priced off the
-        // base lift's max -- Ruairi, 7 Oct 2026: Tempo Bench at 70% is 70% of
+        // base lift's max -- Ruairi, 6 Oct 2026: Tempo Bench at 70% is 70% of
         // the competition bench -- and that pointer is the prescription's
         // `reference_exercise_id`, not anything here.
         { key: "exercise_id", type: "string", size: 36, required: true },
@@ -497,7 +497,7 @@ export const schema: DatabaseSpec = {
         { key: "video_required", type: "boolean", required: false, default: false },
         // The exercise whose max this percentage is OF, when it is not the
         // line's own: "Tempo Bench 70%" of the competition bench (Ruairi,
-        // 7 Oct 2026). Null means the line's own exercise, which is every row
+        // 6 Oct 2026). Null means the line's own exercise, which is every row
         // written before this, so it needs no backfill. Placement on a copy:
         // remapped into the target's library like exercise_id. No index --
         // nothing queries by it. docs/reference-lift.md.

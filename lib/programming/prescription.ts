@@ -52,7 +52,7 @@ export type PrescriptionKind = "fixed" | "percent" | "rpe" | "capped" | "freefor
  * prescription's own exercise supplies it either way.
  *
  * Which EXERCISE supplies it is not part of the spec. Ruairi answered the
- * question this comment used to leave open (7 Oct 2026): "Tempo Bench at 70%"
+ * question this comment used to leave open (6 Oct 2026): "Tempo Bench at 70%"
  * is 70% of the competition bench max. That pointer is the prescription row's
  * `reference_exercise_id`, one added field as predicted here, and the grammar
  * is unchanged -- the editor strips a typed `of Bench Press` into the column
