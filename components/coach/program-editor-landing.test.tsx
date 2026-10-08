@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { ProgramEditor } from "./program-editor";
 import type { DayTree, ProgramTree, WeekTree } from "@/lib/programming/program";
 
@@ -106,9 +106,14 @@ it("opens on the traced week, in its own block, with the traced line focused", a
   const heavy = await screen.findByRole("region", { name: "Heavy squat" });
   expect(screen.getByRole("button", { name: "Block 2" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("tab", { name: "Week 3" })).toHaveAttribute("aria-selected", "true");
-  expect(scrolled).toHaveBeenCalledTimes(1);
-  expect(document.activeElement?.closest("tr")).toHaveAccessibleName("Heavy squat line 2: Squat");
+  // The scroll and focus run in a passive effect, which React's scheduler can
+  // leave for a task after the commit that findByRole resolves on (it yields
+  // once a 5 ms slice is spent, so a busy machine made this fail ~1 run in 25).
+  // Wait for the landing rather than assume it. The exercise name in the row's
+  // label arrives on a separate fetch, so wait for that too.
+  await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1));
   expect(heavy.contains(document.activeElement)).toBe(true);
+  await waitFor(() => expect(document.activeElement?.closest("tr")).toHaveAccessibleName("Heavy squat line 2: Squat"));
 });
 
 it("opens where it always did without a landing, or with one that is not in this program", async () => {
