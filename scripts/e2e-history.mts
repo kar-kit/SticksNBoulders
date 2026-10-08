@@ -148,6 +148,9 @@ check("groups sessions by the week they were done", await page.getByRole("region
 check("and names the one before it", await page.getByRole("region", { name: "Last week" }).isVisible());
 
 const squatCard = page.getByRole("link", { name: /2 sets/ }).first();
+// The card paints from the session row and gains its exercise names when the
+// sets arrive, so reading it the instant it exists reads the half-drawn card.
+await squatCard.getByText("Squat").waitFor({ timeout: 10000 }).catch(() => {});
 check("a card says what the session was", (await squatCard.innerText()).includes("Squat"));
 check("with the totals the finish screen showed", (await squatCard.innerText()).includes("1,400 kg"));
 check("and how long it took", /1h 12m/.test(await squatCard.innerText()));

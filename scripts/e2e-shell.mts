@@ -91,10 +91,14 @@ const coachPage = await ctx.browser()!.newContext({ viewport: { width: 1440, hei
 await signIn(coachPage, coach.email);
 await coachPage.waitForURL("**/coach/roster", { timeout: 20000 }).catch(() => {});
 check("a coach from before the question lands on their roster, not on Today", coachPage.url().includes("/coach/roster"));
-check(
-  "and is not asked the first-run question",
-  !coachPage.url().includes("/welcome") && (await users.getPrefs({ userId: coach.$id })).snb_mode === "coach",
-);
+// The landing saves a pre-existing coach's mode on the way past and never
+// awaits it, so the preference arrives a moment after the page does.
+let savedMode: unknown;
+for (let i = 0; i < 20 && savedMode !== "coach"; i++) {
+  savedMode = (await users.getPrefs({ userId: coach.$id })).snb_mode;
+  if (savedMode !== "coach") await coachPage.waitForTimeout(500);
+}
+check("and is not asked the first-run question", !coachPage.url().includes("/welcome") && savedMode === "coach");
 // The rail costs two sequential round trips after the session resolves --
 // links, then profiles -- so it is waited for rather than raced.
 // Scoped to the rail: the Roster's own table names the athlete too (Order 24).
@@ -128,6 +132,13 @@ for (const [label, href] of [["Review", "/coach/review"], ["Programs", "/coach/p
   await coachPage.goto(`${BASE}/coach/roster`);
   await coachPage.locator("nav[aria-label='Coach']").getByRole("link", { name: label }).click();
   await coachPage.waitForURL(`**${href}`, { timeout: 10000 }).catch(() => {});
+  // A screen that is still saying "Loading" has not shown its empty state yet.
+  await coachPage
+    .waitForFunction(() => {
+      const t = document.querySelector("main")?.textContent?.trim() ?? "";
+      return t.length > 0 && !/^loading/i.test(t);
+    }, undefined, { timeout: 10000 })
+    .catch(() => {});
   const text = await coachPage.locator("main").innerText().catch(() => "");
   check(`${label} reaches ${href} with a real empty state`, coachPage.url().endsWith(href) && text.trim().length > 0);
 }
