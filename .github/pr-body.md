@@ -1,71 +1,53 @@
-## feat(editor): program outline, one publish, dates from the start date
+## feat(editor): Calendar view of the program, beside the week view
 
-The Program Editor had buttons everywhere: block tabs, week tabs, "+ Week", "Duplicate week N", "Publish week N" and "Remove week N" in one row, a second Publish in the header, a date picker on every day plus the program's start date, and blocks that meant nothing. This rebuilds the layout around the shape Ruairi actually writes in (a mix of block-up-front and week-at-a-time) without touching the schema, the ops, permissions or validation.
+**Stacks on the program-editor-outline PR** (#71, `program-editor-outline`). Merge that first; this branch's diff against it is the calendar only.
+
+RTS, TrueCoach and TrainHeroic all show a program as a dated calendar, and coaches think about the cycle in weeks and phases. The editor's outline only showed one week at a time. This adds a **Week | Calendar** toggle to the program header. It is the only new control there. Calendar view shows the whole program as dated weeks. Schema, ops, permissions and validation are unchanged.
 
 ### What changed
 
-**1. Outline column** (`components/coach/program-outline.tsx`). Replaces both tab rows. Between the athlete rail and the week: each block with its name (rename inline), its date range, and its weeks. Each week shows its dates and a state: **Draft**, **Live** (week and program published) or **Logged** (an athlete has started a session from one of its days). Logged comes from `sessions.program_day_id`, read once on the `athlete_id` index, the same column the roster reads. If that read fails, nothing is marked logged. Up/Down walks every week, with one tab stop for the whole list. A block's ⋯ offers Accumulation / Intensity / Peak / Taper / Deload as one-click names, plus Remove (confirmed). The phase is the name, so there is no schema change.
+**1. The toggle and the URL.** The header gets a segmented control (the existing `components/ui/tabs.tsx`) beside Starts. The choice is stored as `?view=calendar` and written with `history.replaceState`, which Next 16 syncs with its router, so it survives a reload and can be linked without adding a history entry. Any other query (`week`, `day`, `line` from "Adjust program") stays as it was. The page reads the view server-side (`editorViewFrom` in `lib/coach/adjust-program.ts`, next to `landingFrom`). Templates have no dates, so they get no toggle and always open in the week view.
 
-**2. "+ Week" and "+ Block" copy by default.** "+ Week" at the end of a block is `duplicateWeek` on that block's **last** week; an empty block gets `addWeek`. "+ Block" adds a block whose first week copies the program's last week, a week later. `duplicateWeek` only appends within its own block, so this is written with the ordinary `addBlock` / `addWeek` / `addDay` / `addPrescription` ops (`copyWeekPlan`, a pure function in `lib/programming/copy.ts`). No new server path: it goes through the same validation and permission checks as typing it in by hand.
+**2. The calendar** (`components/coach/program-calendar.tsx`). A Monday-first grid with one row per program week and one `<tbody>` band per block. The band shows the block name and its date range, and the separator between blocks is thicker. Each row header shows the week name, its dates and its state. The state uses the outline's own `weekState` + `StateMark` (draft / live / logged), now exported from `program-outline.tsx`. Every cell is dated from the same helpers the week view uses (`scheduledOnFor`, `placeDay`, `weekRange`, `blockRange`).
 
-**3. One primary button at a time.** The week header is "Block 2 · Week 3", its dates and state, then **Publish week N** (primary) or **Unpublish week N** (secondary, when live), and a ⋯ with Duplicate and Remove (confirmed). The program header holds the name, athlete · status, Starts and a ⋯ with **Copy to…** (the existing form, now openable from the menu) and **Publish all draft weeks** (`publishProgram`). A day's ⋯ sits next to its title and holds Remove day. The menu is a small accessible one built here (`components/ui/menu.tsx`): menu-button ARIA, arrows, Home/End, Escape returns focus, and Tab or an outside click closes it. No dependency added.
+A scheduled day shows its title, its first 3 distinct exercises and "+N more", plus a tick and a green edge once logged. A top set and its backoffs count as one lift. Its accessible name reads like "Mon 5 Oct, Squat day: Squat, Bench Press, Deadlift, +1, logged".
 
-**4. Dates from the start date** (`lib/programming/calendar.ts`, pure, unit-tested). Week N is the Nth Monday-to-Sunday row from the start date's Monday. A day is a Mon–Sun chip, and `scheduled_on` = that Monday + 7·(N−1) + weekday. The per-day date pickers are gone.
-- With no start date, the editor prompts for one. If days are already dated, the anchor is counted back from them, so the chips still work. If nothing is dated, the chips wait.
-- A day dated outside its week shows "Tue 20 Oct · outside this week" with no chip pressed. It moves only when the coach picks a weekday.
-- Changing the start date moves every day that sits in its week by whole weeks, keeping its weekday. Days an athlete has logged from, and days already outside their week, are not moved. If the sessions couldn't be read, only the start date is saved, and the editor says so.
+A day dated outside its week, or not dated at all, is listed under its week's label rather than dropped.
 
-**5. Nothing logged changes.** Every write is an existing program op, and none of them touch `sessions` or `sets` (asserted in `program-admin.test.ts`).
+**3. Click-through.** Clicking a day switches to Week view on that week, scrolls to the day and puts the keyboard on its first line. A day with no lines, or a read-only one, gets focus on the day itself. This reuses the existing landing effect, generalised from "once, from the URL" to "whenever a landing is pending and the week view is showing".
 
-### The publish decision
+**4. "+ Day" on empty cells.** It appears on hover or focus and sends the existing `addDay` op with `scheduledOn = anchor + 7·week + weekday`. That is the date a weekday chip would store. The view stays on the calendar and the cell becomes the new day.
 
-[Fact] `publishWeek` already takes a draft program live with the week (`publishWeekOp` in `program-admin.ts`; `docs/programs.md`). A week published under a draft program reaches nobody, because `isLiveDay` needs both. So **Publish week N** alone always does the right thing, and the coach never needs a second publish to make a week reach Today. "Live" in the UI means week **and** program published. A week stored as published under a draft program therefore still shows Publish, and pressing it takes both live. Publishing every draft week at once moves into the program ⋯ for block-up-front writing.
+**5. No start date.** The calendar shows the same prompt as the week view. If nothing is dated, there is no grid. If some days are already dated, the anchor is counted back from them, as the week view already does.
 
-### Skipped
+**6. Read-only** for anyone but the program's coach. There is no "+ Day", days still open, and empty cells are focusable and say "no session".
 
-- **Clear week.** There is no clear op. It would be a `removeDay` per day, and Remove week plus "+ Week" covers the same need.
-- **Calendar month view.** This is the follow-up. `calendar.ts` already gives the Monday-aligned anchor, `weekRange`, `scheduledOnFor` and `placeDay`, so a month grid is a render over the same helpers.
+**7. Accessibility.** The table has `role="grid"` with column headers (Week, Mon–Sun), row headers named like "Accumulation · Week 2, draft" and block row-group headers. There is one tab stop for the whole grid. Arrows walk the cells, Home and End jump to the ends of a row, and Enter activates.
 
-### Check by eye
+**Nothing logged can move.** The calendar only reads, plus `addDay`. No existing day is redated.
 
-- Width at 1440 with the 1.2× coach zoom. The outline is 224px and the grid narrowed (exercise 192, load 192, backoff 144), but it scrolls sideways rather than squeezing if it still doesn't fit.
-- The outline scrolls with the page rather than sticking, because a long program's outline is taller than the screen.
-- A program starting mid-week: week 1's Monday chip is dated before the start. [Inference] This is deliberate, so a coach's "Monday squat" stays in one column.
+### Layout choice
+
+[Inference] In Calendar view the outline column is hidden. The calendar rows carry the same block, week and state information, and dropping the 224 px rail gives each day column about 145 px at the coach side's ~1200 px effective width. Without that, columns would be about 115 px, and three exercise names truncate badly at that width. The side effect is that "+ Week", "+ Block" and block renames are only available in Week view.
 
 ### Tests
 
-New tests cover outline selection and arrow keys, the week states, "+ Week" copying the last week, "+ Block" copying op for op (plus a blank block and a halfway failure), the single publish button and its Unpublish swap, the program/week/day/block ⋯ menus, chip → `scheduled_on`, off-week days, the start-date move (including logged days and an unreadable sessions read), and pure tests for the calendar, `copyWeekPlan` and `weekState`. Mutation spot-checks were run on 24 lines across the new code, and every mutation was caught.
+- `components/coach/program-calendar.test.tsx`: 17 tests. They cover the toggle and URL param (other params kept), opening on `?view=calendar`, no toggle on templates, column and row headers with state, block bands with ranges, cell dates across weeks and blocks, summary truncation, logged and unlabelled days, off-week and undated days, arrow-key walking with a single tab stop, click-through (week, scroll, focus on the line or the day), "+ Day" dates in two blocks, "+ Day" only on empty cells, "+ Day" with no start date but dated days, read-only mode, and the no-start-date prompt.
+- `lib/coach/adjust-program.test.ts`: `editorViewFrom`.
+- Mutation-checked: each of 21 deliberate breaks across the editor, the calendar and the view parser fails at least one test.
+- `scripts/e2e-calendar.mts` (`npm run e2e:calendar`) at 1440×900 covers `?view=calendar` and reload, the toggle writing and clearing the param, Monday-first headers, rows for both blocks, the summary with "+1 more", no horizontal scroll, click-through to the right week with focus inside the day, and "+ Day" on an empty cell. For "+ Day" it asserts both the stored `scheduled_on` and the cell turning into the new day. It writes the program through `program-fixtures.ts` ops and deletes only its own rows. **Not run yet.**
 
-- `npx vitest run`: 168 files, 2612 tests passed (was 166 / 2556).
-- `npx eslint .`: clean.
-- `npx next build --webpack`: passed. `npx tsc --noEmit` passed after it.
+`npx vitest run` passes 2630 of 2630. `npx eslint .`, `npx next build --webpack` and `npx tsc --noEmit` are all clean.
 
-### E2E
+### Check by eye
 
-The Playwright scripts drive the real UI, so the ones that touched removed editor controls are moved onto the new accessible names (read from the components, not guessed). They have not been run against the live instance yet. Each one type-checks and lints.
+- Cell density at 1440 with the coach-side 1.2× zoom: whether three exercise lines plus the title read comfortably at about 145 px.
+- Whether the hover-only "+ Day" is discoverable enough, or should show faintly at rest.
+- Whether hiding the outline in Calendar view is right, or whether Joey wants it kept.
+- The block band separator weight in dark mode.
 
-- `e2e-program.mts`: tab "Week 1" becomes the outline button "Week 1, draft" (`aria-current`) and the heading "Block 1 · Week 1". "a new day is dated from the start date" now checks that the start weekday's chip is pressed and that the day shows today's date. "Publish" becomes **Publish week 1**, and Status reads "Live" with the outline showing "Week 1, live".
-- `e2e-copy.mts`: Duplicate goes through the "Week 1 actions" ⋯ menu, and the new week is checked as the outline's current "Week 2, draft" plus the heading "Volume · Week 2". Copy to… goes through the "Program actions" ⋯ menu.
-- `e2e-backoff.mts`, `e2e-video-required.mts`: **Publish week 1**, then Status "Live".
-- Not changed, because none of them touch the editor: `e2e-my-program` (the athlete's own week list), `e2e-athlete-view`, `e2e-suggestions`, `e2e-roster`, `e2e-shell` (only follows the Programs link).
-
-New: `npm run e2e:editor` (`scripts/e2e-editor.mts`, default `http://localhost:3100`, coach at 1440×900, throwaway users with `presetMode`). It covers:
-
-- The outline shows the block, Week 1 as draft and selected, and the week's date range.
-- Weekday chips date the day from the start date, a different chip moves it, and `scheduled_on` matches in the rows.
-- "+ Week" opens Week 2 with week 1's line in it, stored a week on.
-- Week selection works by click, and by Down/Up then Enter (focus checked).
-- A block can be renamed inline, then named "Intensity" from the block ⋯.
-- "+ Block" opens Block 2 / Week 3, copied from week 2 and a week on.
-- Moving the start date a week later moves every unlogged day by a week, and moving it back restores them.
-- **Publish week 1**: outline "live", Status "Live", "2 draft weeks" count, rows published. The athlete sees the day on Today. Unpublish puts it back to draft.
-- Week ⋯ Duplicate (appended as Week 3, next block's week becomes Week 4) and Remove with its confirm. Day ⋯ Remove Day 2 with confirm.
-- Program ⋯ Copy to… opens and closes the form. "Publish all draft weeks" publishes every week, and no draft is left in the outline.
-- At 1440 the coach zoom causes no horizontal page scroll. This check only runs once `coach-scale` is in `app/globals.css`; it is skipped on this branch.
-
-
-### E2E run (live instance, Turbopack dev server)
-- `e2e:editor` 45/45, `e2e:program` 31/31, `e2e:copy` 22/22, `e2e:backoff` 15/15.
-- `e2e:video-required` 16/18: the two failures ("the toggle starts off", "ArrowRight from the Note cell lands on the toggle") fail identically on unmodified `dev`, so they predate this PR. This PR fixes its third failure (two "Publish" buttons).
+### E2E (live instance, Turbopack dev server, this branch)
+- New `npm run e2e:calendar` (`scripts/e2e-calendar.mts`, coach at 1440×900): 21/21. Covers the toggle and `?view=calendar`, grid rows and dates, day summaries, click-through to Week view, and + Day from an empty cell.
+- Re-run on this branch for regressions: `e2e:editor` 45/45, `e2e:program` 31/31, `e2e:copy` 22/22.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
