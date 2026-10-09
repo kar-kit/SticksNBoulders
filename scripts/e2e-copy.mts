@@ -6,12 +6,13 @@
  *
  * What only the instance can prove:
  *
- *   - Duplicate week in the editor appends a DRAFT week whose day sits seven
- *     days on and whose lines say exactly what the source's do.
- *   - Copy to… puts the program on a second linked athlete as a new DRAFT,
- *     every row stamped for her and not for the source athlete. Her copy of
- *     the source athlete's private variation is a row in HER library; the
- *     global squat stays the global squat.
+ *   - Duplicate week, from the week's ⋯ menu, appends a DRAFT week whose
+ *     day sits seven days on and whose lines say exactly what the source's do.
+ *   - Copy to…, from the program's ⋯ menu, puts the program on a second
+ *     linked athlete as a new DRAFT, every row stamped for her and not for
+ *     the source athlete. Her copy of the source athlete's private
+ *     variation is a row in HER library; the global squat stays the global
+ *     squat.
  *   - Once published, her 75% is 75% of HER training max on her Today --
  *     not the source athlete's kilos.
  *   - A line priced off another lift (the paused bench at 80% of the squat,
@@ -201,10 +202,15 @@ try {
   const coachPage = await coachCtx.newPage();
   await signIn(coachPage, coach.email);
   await coachPage.goto(`${BASE}/coach/programs/${programId}`);
-  await coachPage.getByRole("button", { name: "Duplicate week 1" }).click({ timeout: 30000 });
+  // Duplicate sits in the week's ⋯ menu now, beside "Publish week 1".
+  await coachPage.getByRole("button", { name: "Week 1 actions", exact: true }).click({ timeout: 30000 });
+  await coachPage.getByRole("menuitem", { name: "Duplicate week 1", exact: true }).click();
+  const week2 = coachPage.getByRole("navigation", { name: "Program outline" }).getByRole("button", { name: "Week 2, draft", exact: true });
   check(
     "the copy opens as Week 2, marked draft on a published block",
-    await appears(coachPage.getByRole("tab", { name: "Week 2 · draft", selected: true }).waitFor({ timeout: 20000 })),
+    (await appears(week2.waitFor({ timeout: 20000 }))) &&
+      (await week2.getAttribute("aria-current")) === "true" &&
+      (await appears(coachPage.getByRole("heading", { name: "Volume · Week 2", exact: true }).waitFor({ timeout: 10000 }))),
   );
   const weeks = await poll(
     () => rowsOf("program_weeks", "program_id", programId),
@@ -231,8 +237,10 @@ try {
 
   // --- Copy to Andrea, in the editor -----------------------------------------
   console.log("\nThe coach copies the program to Andrea");
-  await coachPage.getByRole("button", { name: "Copy to…" }).click();
-  await coachPage.getByLabel("Copy to").fill("andr");
+  // Copy to… is an item in the program's ⋯ menu.
+  await coachPage.getByRole("button", { name: "Program actions", exact: true }).click();
+  await coachPage.getByRole("menuitem", { name: "Copy to…", exact: true }).click();
+  await coachPage.getByRole("form", { name: "Copy program" }).getByLabel("Copy to", { exact: true }).fill("andr");
   await coachPage.getByRole("button", { name: "Andrea Copy" }).click({ timeout: 20000 });
   await coachPage.screenshot({ path: ".shots/copy-form-1440.png", fullPage: true });
   await coachPage.getByRole("button", { name: "Copy", exact: true }).click();
