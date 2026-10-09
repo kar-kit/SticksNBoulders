@@ -40,4 +40,27 @@ New tests cover outline selection and arrow keys, the week states, "+ Week" copy
 - `npx eslint .`: clean.
 - `npx next build --webpack`: passed. `npx tsc --noEmit` passed after it.
 
+### E2E
+
+The Playwright scripts drive the real UI, so the ones that touched removed editor controls are moved onto the new accessible names (read from the components, not guessed). They have not been run against the live instance yet. Each one type-checks and lints.
+
+- `e2e-program.mts`: tab "Week 1" becomes the outline button "Week 1, draft" (`aria-current`) and the heading "Block 1 · Week 1". "a new day is dated from the start date" now checks that the start weekday's chip is pressed and that the day shows today's date. "Publish" becomes **Publish week 1**, and Status reads "Live" with the outline showing "Week 1, live".
+- `e2e-copy.mts`: Duplicate goes through the "Week 1 actions" ⋯ menu, and the new week is checked as the outline's current "Week 2, draft" plus the heading "Volume · Week 2". Copy to… goes through the "Program actions" ⋯ menu.
+- `e2e-backoff.mts`, `e2e-video-required.mts`: **Publish week 1**, then Status "Live".
+- Not changed, because none of them touch the editor: `e2e-my-program` (the athlete's own week list), `e2e-athlete-view`, `e2e-suggestions`, `e2e-roster`, `e2e-shell` (only follows the Programs link).
+
+New: `npm run e2e:editor` (`scripts/e2e-editor.mts`, default `http://localhost:3100`, coach at 1440×900, throwaway users with `presetMode`). It covers:
+
+- The outline shows the block, Week 1 as draft and selected, and the week's date range.
+- Weekday chips date the day from the start date, a different chip moves it, and `scheduled_on` matches in the rows.
+- "+ Week" opens Week 2 with week 1's line in it, stored a week on.
+- Week selection works by click, and by Down/Up then Enter (focus checked).
+- A block can be renamed inline, then named "Intensity" from the block ⋯.
+- "+ Block" opens Block 2 / Week 3, copied from week 2 and a week on.
+- Moving the start date a week later moves every unlogged day by a week, and moving it back restores them.
+- **Publish week 1**: outline "live", Status "Live", "2 draft weeks" count, rows published. The athlete sees the day on Today. Unpublish puts it back to draft.
+- Week ⋯ Duplicate (appended as Week 3, next block's week becomes Week 4) and Remove with its confirm. Day ⋯ Remove Day 2 with confirm.
+- Program ⋯ Copy to… opens and closes the form. "Publish all draft weeks" publishes every week, and no draft is left in the outline.
+- At 1440 the coach zoom causes no horizontal page scroll. This check only runs once `coach-scale` is in `app/globals.css`; it is skipped on this branch.
+
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

@@ -176,8 +176,8 @@ try {
   check("not even the coach, directly: writes are server-only", directCoach === "refused");
   check("still on", (await rowsOf("prescriptions", "program_id", created.programId))[0]?.video_required === true);
 
-  await coachPage.getByRole("button", { name: "Publish" }).click();
-  await coachPage.getByLabel("Status").getByText("Published").waitFor({ timeout: 20000 });
+  await coachPage.getByRole("button", { name: "Publish week 1", exact: true }).click();
+  await coachPage.getByLabel("Status").getByText("Live", { exact: true }).waitFor({ timeout: 20000 });
 
   // --- the athlete -----------------------------------------------------------
   console.log("\nThe athlete, at 390×852");
