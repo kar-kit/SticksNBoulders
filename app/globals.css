@@ -213,3 +213,19 @@ body {
 @utility pb-safe-nav {
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
 }
+
+/*
+ * The coach side is read on a laptop at 100% browser zoom, where the type
+ * scale above (10px labels, 14px UI) reads as small print. The scale is in px
+ * and @theme inline bakes it into each utility, so it cannot be re-pointed per
+ * section; zoom scales type, spacing and borders together and leaves the
+ * phone-first athlete side untouched.
+ *
+ * Under standardised zoom a viewport unit inside the zoomed box is multiplied
+ * too, so the height is divided back down or the shell would always scroll.
+ */
+@utility coach-scale {
+  --coach-zoom: 1.2;
+  zoom: var(--coach-zoom);
+  min-height: calc(100dvh / var(--coach-zoom));
+}
