@@ -63,4 +63,9 @@ New: `npm run e2e:editor` (`scripts/e2e-editor.mts`, default `http://localhost:3
 - Program ⋯ Copy to… opens and closes the form. "Publish all draft weeks" publishes every week, and no draft is left in the outline.
 - At 1440 the coach zoom causes no horizontal page scroll. This check only runs once `coach-scale` is in `app/globals.css`; it is skipped on this branch.
 
+
+### E2E run (live instance, Turbopack dev server)
+- `e2e:editor` 45/45, `e2e:program` 31/31, `e2e:copy` 22/22, `e2e:backoff` 15/15.
+- `e2e:video-required` 16/18: the two failures ("the toggle starts off", "ArrowRight from the Note cell lands on the toggle") fail identically on unmodified `dev`, so they predate this PR. This PR fixes its third failure (two "Publish" buttons).
+
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
