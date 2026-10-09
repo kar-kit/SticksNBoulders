@@ -44,13 +44,13 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
   const router = useRouter();
 
   if (state.status !== "signed-in") {
-    return <div className="min-h-dvh bg-background" aria-busy={state.status === "loading"} />;
+    return <div className="coach-scale bg-background" aria-busy={state.status === "loading"} />;
   }
 
   const { user } = state;
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
+    <div className="coach-scale flex flex-col bg-background">
       <header className="flex h-14 flex-none items-center justify-between gap-7 border-b border-border px-5">
         <div className="flex items-center gap-7">
           <Link href="/coach/roster" className="flex items-center gap-2.5">
