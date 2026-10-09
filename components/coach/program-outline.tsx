@@ -30,7 +30,7 @@ import type { BlockTree, ProgramTree } from "@/lib/programming/program";
 /** Quick names for a block. [Inference] The four Calgary Barbell phases, plus deload. */
 export const PHASES = ["Accumulation", "Intensity", "Peak", "Taper", "Deload"] as const;
 
-const STATE_LABEL: Record<WeekState, string> = { draft: "Draft", live: "Live", logged: "Logged" };
+export const STATE_LABEL: Record<WeekState, string> = { draft: "Draft", live: "Live", logged: "Logged" };
 
 export interface ProgramOutlineProps {
   tree: ProgramTree;
@@ -188,7 +188,7 @@ export function ProgramOutline({
 }
 
 /** Draft is hollow, live is filled, logged is ticked. The word is there too: colour never carries it alone. */
-function StateMark({ state }: { state: WeekState }) {
+export function StateMark({ state }: { state: WeekState }) {
   return (
     <span aria-hidden="true" data-state={state} className="flex flex-none items-center gap-1 text-caption">
       {state === "logged" ? (

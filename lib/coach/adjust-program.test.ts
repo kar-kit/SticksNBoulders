@@ -1,6 +1,7 @@
 import {
   adjustProgramHref,
   editorHref,
+  editorViewFrom,
   idParam,
   landingFrom,
   resolveAdjustTarget,
@@ -144,5 +145,12 @@ describe("URLs", () => {
     expect(idParam("")).toBeNull();
     expect(idParam("a".repeat(37))).toBeNull();
     expect(idParam("joey")).toBe("joey");
+  });
+
+  it("reads the editor's view: calendar only when asked for, week otherwise", () => {
+    expect(editorViewFrom({ view: "calendar" })).toBe("calendar");
+    expect(editorViewFrom({ view: ["calendar", "week"] })).toBe("calendar");
+    expect(editorViewFrom({ view: "month" })).toBe("week");
+    expect(editorViewFrom({})).toBe("week");
   });
 });
