@@ -53,6 +53,13 @@ const NETWORK_TIMEOUT_MS = 2000;
 /** Every hashed asset a page references: chunks, CSS, fonts. */
 const ASSET = /\/_next\/static\/[^"'\s\\)<>]+/g;
 
+/** The asset URLs in a page's HTML, as the browser would request them. */
+function assetsIn(html) {
+  const assets = new Set();
+  for (const match of html.matchAll(ASSET)) assets.add(match[0]);
+  return assets;
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
@@ -65,7 +72,7 @@ self.addEventListener("install", (event) => {
           const response = await fetch(path, { cache: "no-store", credentials: "same-origin" });
           if (!response.ok || !isShareable(response)) throw new Error(`shell page ${path}: ${response.status}`);
           const html = await response.clone().text();
-          for (const match of html.matchAll(ASSET)) assets.add(match[0]);
+          for (const asset of assetsIn(html)) assets.add(asset);
           await shell.put(path, response);
         }),
       );
