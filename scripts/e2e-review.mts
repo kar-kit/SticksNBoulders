@@ -430,4 +430,5 @@ try {
 
 const failed = results.filter((r) => !r).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);
-if (failed > 0 || failure) process.exit(1);
+// exitCode, not exit(): scripts/e2e-run.mts still has to run its crash net.
+if (failed > 0 || failure) process.exitCode = 1;

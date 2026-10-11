@@ -14,7 +14,7 @@
  * script, which is also how a real backfill would arrive at them.
  */
 import { execFileSync } from "node:child_process";
-import { chromium, type Page } from "playwright";
+import { chromium, type Browser, type Page } from "playwright";
 import { ID, Query, TablesDB, Teams, Users } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
@@ -59,150 +59,163 @@ const deadliftId = await (async () => {
   return row.$id as string;
 })();
 
-const athlete = await users.create({
-  userId: ID.unique(),
-  email: `lift-${stamp}@example.com`,
-  password: "Probe-pass-123!",
-  name: "Joey Pang",
-});
-await presetMode(users, athlete, "athlete");
+// Assigned inside the try, so a throw while creating it still reaches the
+// finally that deletes it.
+let athlete: Awaited<ReturnType<typeof users.create>> | undefined;
+let browser: Browser | undefined;
 
-const WEEK = 7 * 24 * 60 * 60_000;
-const thisMonday = weekStart(new Date()).getTime();
-
-let n = 0;
-/** One session of deadlifts, `weeksAgo` weeks back, on the Wednesday. */
-const seedWeek = async (weeksAgo: number, sets: Array<{ l: number; r: number; rpe?: number; w?: boolean }>) => {
-  const at = new Date(thisMonday - weeksAgo * WEEK + 2 * 24 * 60 * 60_000 + 10 * 60 * 60_000);
-  const sessionId = `cs-l-${stamp}-${n++}`;
-  const working = sets.filter((s) => !s.w);
-  await db.createRow({
-    databaseId: D, tableId: "sessions", rowId: sessionId,
-    data: {
-      athlete_id: athlete.$id, client_session_id: sessionId,
-      started_at: at.toISOString(), finished_at: new Date(at.getTime() + 60 * 60_000).toISOString(),
-      set_count: working.length,
-      tonnage_kg: working.reduce((t, s) => t + s.l * s.r, 0),
-    },
-    permissions: sessionPermissions({ athleteId: athlete.$id }),
+try {
+  athlete = await users.create({
+    userId: ID.unique(),
+    email: `lift-${stamp}@example.com`,
+    password: "Probe-pass-123!",
+    name: "Joey Pang",
   });
-  let i = 0;
-  for (const s of sets) {
-    const id = `st-l-${stamp}-${n}-${i++}`;
+  await presetMode(users, athlete, "athlete");
+
+  const WEEK = 7 * 24 * 60 * 60_000;
+  const thisMonday = weekStart(new Date()).getTime();
+
+  let n = 0;
+  /** One session of deadlifts, `weeksAgo` weeks back, on the Wednesday. */
+  const seedWeek = async (weeksAgo: number, sets: Array<{ l: number; r: number; rpe?: number; w?: boolean }>) => {
+    const at = new Date(thisMonday - weeksAgo * WEEK + 2 * 24 * 60 * 60_000 + 10 * 60 * 60_000);
+    const sessionId = `cs-l-${stamp}-${n++}`;
+    const working = sets.filter((s) => !s.w);
     await db.createRow({
-      databaseId: D, tableId: "sets", rowId: id,
+      databaseId: D, tableId: "sessions", rowId: sessionId,
       data: {
-        session_id: sessionId, athlete_id: athlete.$id, exercise_id: deadliftId,
-        set_index: i, load_kg: s.l, reps: s.r, rpe: s.rpe, is_warmup: s.w ?? false,
-        e1rm_kg: estimateOneRepMax({ loadKg: s.l, reps: s.r, rpe: s.rpe ?? null, isWarmup: s.w }) ?? undefined,
-        logged_at: new Date(at.getTime() + i * 60_000).toISOString(),
-        client_set_id: id,
+        athlete_id: athlete!.$id, client_session_id: sessionId,
+        started_at: at.toISOString(), finished_at: new Date(at.getTime() + 60 * 60_000).toISOString(),
+        set_count: working.length,
+        tonnage_kg: working.reduce((t, s) => t + s.l * s.r, 0),
       },
-      permissions: setPermissions({ athleteId: athlete.$id }),
+      permissions: sessionPermissions({ athleteId: athlete!.$id }),
     });
-  }
-};
+    let i = 0;
+    for (const s of sets) {
+      const id = `st-l-${stamp}-${n}-${i++}`;
+      await db.createRow({
+        databaseId: D, tableId: "sets", rowId: id,
+        data: {
+          session_id: sessionId, athlete_id: athlete!.$id, exercise_id: deadliftId,
+          set_index: i, load_kg: s.l, reps: s.r, rpe: s.rpe, is_warmup: s.w ?? false,
+          e1rm_kg: estimateOneRepMax({ loadKg: s.l, reps: s.r, rpe: s.rpe ?? null, isWarmup: s.w }) ?? undefined,
+          logged_at: new Date(at.getTime() + i * 60_000).toISOString(),
+          client_set_id: id,
+        },
+        permissions: setPermissions({ athleteId: athlete!.$id }),
+      });
+    }
+  };
 
-/*
- * Five weeks of deadlifting, arranged so no two records come from the same
- * week and none of them is simply the latest number:
- *
- *   16w  140 x 12 @ 8   rep record. Fourteen reps to failure, past the cutoff,
- *                       so it earns NO estimate -- which is the cutoff working.
- *    8w  200 x 1  @ 10  heaviest single. e1RM exactly 200, by definition.
- *    4w  180 x 3  @ 8   best estimated: 202.5
- *    2w  170 x 3  @ 7   197.4
- *    0w  175 x 3  @ 8   current: 196.9, deliberately below the best, so the
- *                       headline change is negative and "best" cannot be read
- *                       off the newest row.
- */
-await seedWeek(16, [{ l: 140, r: 12, rpe: 8 }]);
-await seedWeek(8, [{ l: 60, r: 5, w: true }, { l: 200, r: 1, rpe: 10 }]);
-await seedWeek(4, [{ l: 180, r: 3, rpe: 8 }]);
-await seedWeek(2, [{ l: 170, r: 3, rpe: 7 }]);
-await seedWeek(0, [{ l: 175, r: 3, rpe: 8 }]);
+  /*
+   * Five weeks of deadlifting, arranged so no two records come from the same
+   * week and none of them is simply the latest number:
+   *
+   *   16w  140 x 12 @ 8   rep record. Fourteen reps to failure, past the cutoff,
+   *                       so it earns NO estimate -- which is the cutoff working.
+   *    8w  200 x 1  @ 10  heaviest single. e1RM exactly 200, by definition.
+   *    4w  180 x 3  @ 8   best estimated: 202.5
+   *    2w  170 x 3  @ 7   197.4
+   *    0w  175 x 3  @ 8   current: 196.9, deliberately below the best, so the
+   *                       headline change is negative and "best" cannot be read
+   *                       off the newest row.
+   */
+  await seedWeek(16, [{ l: 140, r: 12, rpe: 8 }]);
+  await seedWeek(8, [{ l: 60, r: 5, w: true }, { l: 200, r: 1, rpe: 10 }]);
+  await seedWeek(4, [{ l: 180, r: 3, rpe: 8 }]);
+  await seedWeek(2, [{ l: 170, r: 3, rpe: 7 }]);
+  await seedWeek(0, [{ l: 175, r: 3, rpe: 8 }]);
 
-console.log("\nBuilding the rollups");
-execFileSync("npm", ["run", "rollups:rebuild", "--", "--yes"], { encoding: "utf8" });
-const rollups = (await rowsOf("stats_rollups", athlete.$id)).filter((r) => r.exercise_id === deadliftId);
-check("one rollup per week trained", rollups.length === 5);
-const repWeek = rollups.find((r) => r.best_reps === 12);
-check("the rep record is stored on its week", repWeek?.best_reps_load_kg === 140);
+  console.log("\nBuilding the rollups");
+  // --athlete: this athlete's buckets only. Instance-wide, --yes rewrites every
+  // athlete's rollups on the shared instance -- Joey's real ones and any a
+  // parallel run is halfway through asserting on.
+  execFileSync("npm", ["run", "rollups:rebuild", "--", "--athlete", athlete.$id, "--yes"], { encoding: "utf8" });
+  const rollups = (await rowsOf("stats_rollups", athlete.$id)).filter((r) => r.exercise_id === deadliftId);
+  check("one rollup per week trained", rollups.length === 5);
+  const repWeek = rollups.find((r) => r.best_reps === 12);
+  check("the rep record is stored on its week", repWeek?.best_reps_load_kg === 140);
 
-const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 390, height: 852 }, colorScheme: "dark" });
-const page: Page = await ctx.newPage();
+  browser = await chromium.launch();
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 852 }, colorScheme: "dark" });
+  const page: Page = await ctx.newPage();
 
-await page.goto(`${BASE}/sign-in`);
-await page.getByLabel("Email").fill(athlete.email);
-await page.getByLabel("Password", { exact: true }).fill("Probe-pass-123!");
-await page.getByRole("button", { name: "Sign in" }).click();
-await page.waitForURL("**/today", { timeout: 20000 }).catch(() => {});
+  await page.goto(`${BASE}/sign-in`);
+  await page.getByLabel("Email").fill(athlete.email);
+  await page.getByLabel("Password", { exact: true }).fill("Probe-pass-123!");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL("**/today", { timeout: 20000 }).catch(() => {});
 
-console.log("\nGetting there from History");
-await page.goto(`${BASE}/history`);
-await page.getByRole("link", { name: /1 set/ }).first().waitFor({ timeout: 15000 }).catch(() => {});
-await page.getByRole("link", { name: /1 set/ }).first().click();
-await page.getByRole("link", { name: "Deadlift progression" }).waitFor({ timeout: 15000 }).catch(() => {});
-check("a session's lift links to its detail", await page.getByRole("link", { name: "Deadlift progression" }).isVisible());
-await page.getByRole("link", { name: "Deadlift progression" }).click();
-await page.waitForURL(`**/lift/${deadliftId}`, { timeout: 15000 }).catch(() => {});
-check("which opens Lift Detail", page.url().includes(`/lift/${deadliftId}`));
+  console.log("\nGetting there from History");
+  await page.goto(`${BASE}/history`);
+  await page.getByRole("link", { name: /1 set/ }).first().waitFor({ timeout: 15000 }).catch(() => {});
+  await page.getByRole("link", { name: /1 set/ }).first().click();
+  await page.getByRole("link", { name: "Deadlift progression" }).waitFor({ timeout: 15000 }).catch(() => {});
+  check("a session's lift links to its detail", await page.getByRole("link", { name: "Deadlift progression" }).isVisible());
+  await page.getByRole("link", { name: "Deadlift progression" }).click();
+  await page.waitForURL(`**/lift/${deadliftId}`, { timeout: 15000 }).catch(() => {});
+  check("which opens Lift Detail", page.url().includes(`/lift/${deadliftId}`));
 
-console.log("\nThe headline");
-await page.getByRole("heading", { name: "Deadlift" }).waitFor({ timeout: 15000 }).catch(() => {});
-// By role, because the chart's own label also starts "Estimated 1RM".
-const headline = page.getByRole("region", { name: "Estimated 1RM" });
-// 175 x 3 @ RPE 8 is five reps to failure: 175 x 36 / 32 = 196.9.
-check("shows the current estimate", (await headline.innerText()).includes("196.9 kg"));
-// Down from 200 eight weeks ago. A screen that only ever showed a plus sign
-// would pass a test built on a rising line.
-check("and how far it has moved, including downward", (await headline.innerText()).includes("−3.1"));
+  console.log("\nThe headline");
+  await page.getByRole("heading", { name: "Deadlift" }).waitFor({ timeout: 15000 }).catch(() => {});
+  // By role, because the chart's own label also starts "Estimated 1RM".
+  const headline = page.getByRole("region", { name: "Estimated 1RM" });
+  // 175 x 3 @ RPE 8 is five reps to failure: 175 x 36 / 32 = 196.9.
+  check("shows the current estimate", (await headline.innerText()).includes("196.9 kg"));
+  // Down from 200 eight weeks ago. A screen that only ever showed a plus sign
+  // would pass a test built on a rising line.
+  check("and how far it has moved, including downward", (await headline.innerText()).includes("−3.1"));
 
-console.log("\nThe chart");
-check("draws one line", (await page.getByRole("img").count()) === 1);
-check(
-  "named for a screen reader, which cannot read a polyline",
-  ((await page.getByRole("img").getAttribute("aria-label")) ?? "").includes("Deadlift"),
-);
-check("offers the four ranges", (await page.getByRole("group", { name: "Chart range" }).getByRole("button").count()) === 4);
+  console.log("\nThe chart");
+  check("draws one line", (await page.getByRole("img").count()) === 1);
+  check(
+    "named for a screen reader, which cannot read a polyline",
+    ((await page.getByRole("img").getAttribute("aria-label")) ?? "").includes("Deadlift"),
+  );
+  check("offers the four ranges", (await page.getByRole("group", { name: "Chart range" }).getByRole("button").count()) === 4);
 
-await page.getByRole("button", { name: "8w" }).click();
-check("switching range re-labels the change", (await headline.innerText()).includes("(8w)"));
+  await page.getByRole("button", { name: "8w" }).click();
+  check("switching range re-labels the change", (await headline.innerText()).includes("(8w)"));
 
-console.log("\nPersonal records");
-const records = page.getByRole("region", { name: "Personal records" });
-const text = (await records.innerText()).replace(/\s+/g, " ");
-// Each of these is from a different week, so none of them can be an accident
-// of reading one row.
-check("heaviest single, all-time", text.includes("200 × 1"));
-// 202.5, from four weeks ago -- not the newest week and not the heaviest
-// single, so it cannot be read off either.
-check("best estimated, all-time", text.includes("202.5 kg"));
-check("most reps, with the weight it was done at", text.includes("140 × 12"));
-check(
-  "records stay all-time after narrowing the range to 8 weeks",
-  text.includes("140 × 12"),
-);
+  console.log("\nPersonal records");
+  const records = page.getByRole("region", { name: "Personal records" });
+  const text = (await records.innerText()).replace(/\s+/g, " ");
+  // Each of these is from a different week, so none of them can be an accident
+  // of reading one row.
+  check("heaviest single, all-time", text.includes("200 × 1"));
+  // 202.5, from four weeks ago -- not the newest week and not the heaviest
+  // single, so it cannot be read off either.
+  check("best estimated, all-time", text.includes("202.5 kg"));
+  check("most reps, with the weight it was done at", text.includes("140 × 12"));
+  check(
+    "records stay all-time after narrowing the range to 8 weeks",
+    text.includes("140 × 12"),
+  );
 
-console.log("\nRecent sets");
-const recent = page.getByRole("region", { name: "Recent sets" });
-const recentText = (await recent.innerText()).replace(/\s+/g, " ");
-check("lists the sets as they were logged", recentText.includes("180 × 3"));
-check("with their RPE", recentText.includes("RPE 8"));
-// The 8-weeks-ago session warmed up with 60 x 5. It is not in this list,
-// because warm-ups count toward nothing anywhere in the product.
-check("and leaves warm-ups out, as every other total does", !recentText.includes("60 × 5"));
-
-// --- teardown ---------------------------------------------------------
-await browser.close();
-for (const table of ["sets", "sessions", "stats_rollups"] as const) {
-  for (const row of await rowsOf(table, athlete.$id)) {
-    await db.deleteRow({ databaseId: D, tableId: table, rowId: String(row.$id) });
+  console.log("\nRecent sets");
+  const recent = page.getByRole("region", { name: "Recent sets" });
+  const recentText = (await recent.innerText()).replace(/\s+/g, " ");
+  check("lists the sets as they were logged", recentText.includes("180 × 3"));
+  check("with their RPE", recentText.includes("RPE 8"));
+  // The 8-weeks-ago session warmed up with 60 x 5. It is not in this list,
+  // because warm-ups count toward nothing anywhere in the product.
+  check("and leaves warm-ups out, as every other total does", !recentText.includes("60 × 5"));
+} catch (error) {
+  check(`ran without throwing — ${String(error)}`, false);
+} finally {
+  await browser?.close();
+  if (athlete) {
+    for (const table of ["sets", "sessions", "stats_rollups"] as const) {
+      for (const row of await rowsOf(table, athlete.$id).catch(() => [])) {
+        await db.deleteRow({ databaseId: D, tableId: table, rowId: String(row.$id) }).catch(() => {});
+      }
+    }
+    await teams.delete({ teamId: circleTeamId(athlete.$id) }).catch(() => {});
+    await users.delete({ userId: athlete.$id }).catch(() => {});
   }
 }
-await teams.delete({ teamId: circleTeamId(athlete.$id) }).catch(() => {});
-await users.delete({ userId: athlete.$id });
 
 const failed = results.filter((ok) => !ok).length;
 console.log(
