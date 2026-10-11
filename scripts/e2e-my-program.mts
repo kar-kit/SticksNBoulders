@@ -58,8 +58,11 @@ const check = (label: string, ok: boolean, detail = "") => {
 
 const mkUser = (tag: string, name: string) =>
   users.create({ userId: ID.unique(), email: `myprog-${tag}-${stamp}@example.com`, password: PASSWORD, name });
-const athlete = await mkUser("a", "Joey Pang");
-const coach = await mkUser("c", "Ruairi Deane");
+type Fixture = Awaited<ReturnType<typeof mkUser>>;
+// Assigned inside the try, so a throw while creating them still reaches the
+// finally that deletes them.
+let athlete!: Fixture;
+let coach!: Fixture;
 const created = { link: "", programId: "", sessionId: "", exercises: [] as string[] };
 
 const signIn = async (page: Page, email: string) => {
@@ -75,12 +78,24 @@ const rowsOf = async (tableId: string, column: string, value: string) =>
   (await db.listRows({ databaseId: D, tableId, queries: [Query.equal(column, value), Query.limit(100)], ttl: 0 }))
     .rows as unknown as Array<Record<string, unknown> & { $id: string }>;
 
+const poll = async <T,>(read: () => Promise<T>, done: (value: T) => boolean, ms = 20000): Promise<T> => {
+  const until = Date.now() + ms;
+  let value = await read();
+  while (!done(value) && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 1000));
+    value = await read();
+  }
+  return value;
+};
+
 /** A week header, not a day whose coach-written label starts "Week 2 ·". */
 const weekBtn = (page: Page, n: number) => page.getByRole("button", { name: new RegExp(`^Week ${n}( Current)?$`) });
 
 const browser = await chromium.launch();
 
 try {
+  athlete = await mkUser("a", "Joey Pang");
+  coach = await mkUser("c", "Ruairi Deane");
   for (const [user, name] of [[athlete, "Joey Pang"], [coach, "Ruairi Deane"]] as const) {
     await db.createRow({
       databaseId: D,
@@ -249,9 +264,19 @@ try {
   await page.getByRole("button", { name: "Start this session" }).click();
   await page.waitForURL(/\/log$/, { timeout: 30000 });
   check("Start opens the logger on the prescribed squat", await page.getByRole("region", { name: "Squat" }).waitFor({ timeout: 20000 }).then(() => true).catch(() => false));
-  const day2 = written.rows.filter((r) => r.table === "program_days");
-  const session = (await rowsOf("sessions", "athlete_id", athlete.$id)).find((s) => s.$id !== created.sessionId);
-  check("the new session points at that day", Boolean(session) && day2.some((r) => r.id === session?.program_day_id), String(session?.program_day_id));
+  // Week 2 Day 1 is today: the day tapped, not just any day of the block.
+  const tapped = written.daysOn.get(addDays(startOn, 7))!;
+  // Start is local-first: the device knows at once, Appwrite once the queue
+  // drains (ensureMyCircle, then createRow). Device first, then poll the server.
+  const onDevice = await page.evaluate(() => JSON.parse(localStorage.getItem("snb.active-session") ?? "null"));
+  check("the device remembers the session on that day", onDevice?.programDayId === tapped, String(onDevice?.programDayId));
+  const sessions = await poll(
+    () => rowsOf("sessions", "athlete_id", athlete.$id),
+    (rows) => rows.some((s) => s.$id !== created.sessionId),
+  );
+  const fresh = sessions.filter((s) => s.$id !== created.sessionId);
+  check("exactly one new session reaches Appwrite", fresh.length === 1, `${fresh.length}`);
+  check("and it points at that day", fresh[0]?.program_day_id === tapped, String(fresh[0]?.program_day_id));
 } catch (error) {
   check("ran without throwing", false, String(error));
 } finally {
@@ -263,12 +288,14 @@ try {
       for (const row of rows) await del(tableId, row.$id);
     }
   }
-  for (const tableId of ["sets", "sessions", "stats_rollups", "reference_maxes"]) {
-    for (const row of await rowsOf(tableId, "athlete_id", athlete.$id).catch(() => [])) await del(tableId, row.$id);
+  if (athlete) {
+    for (const tableId of ["sets", "sessions", "stats_rollups", "reference_maxes"]) {
+      for (const row of await rowsOf(tableId, "athlete_id", athlete.$id).catch(() => [])) await del(tableId, row.$id);
+    }
   }
   if (created.link) await del("coach_athlete_links", created.link);
   for (const id of created.exercises) await del("exercises", id);
-  for (const u of [athlete, coach]) {
+  for (const u of [athlete, coach].filter(Boolean)) {
     await del("profiles", u.$id);
     await teams.delete({ teamId: circleTeamId(u.$id) }).catch(() => {});
     await users.delete({ userId: u.$id }).catch(() => {});
