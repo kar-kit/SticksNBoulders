@@ -18,6 +18,8 @@ import {
 } from "@/lib/strength/lift";
 import { fetchLiftWeeks, fetchRecentSetsFor, type LiftSet } from "@/lib/strength/lift-store";
 import { formatNumber } from "@/lib/logging/prefill";
+import { useUnits } from "@/lib/profile/units-context";
+import { loadNumber } from "@/lib/units";
 import { cn } from "@/lib/cn";
 
 /**
@@ -43,6 +45,9 @@ export function LiftScreen({ exerciseId }: { exerciseId: string }) {
   const router = useRouter();
   const { state: sessionState } = useSession();
   const { state: library } = useExerciseLibrary();
+  /** Rollups are kilos; every figure here is read in the athlete's unit. */
+  const { unit } = useUnits();
+  const w = (kg: number) => loadNumber(kg, unit);
 
   const [weeks, setWeeks] = useState<WeekPoint[] | null>(null);
   const [sets, setSets] = useState<LiftSet[]>([]);
@@ -95,12 +100,12 @@ export function LiftScreen({ exerciseId }: { exerciseId: string }) {
             <h2 className="m-0 font-mono text-label uppercase text-muted-2">Estimated 1RM</h2>
             <p className="m-0 flex items-baseline gap-3">
               <span className="text-display font-semibold tabular-nums">
-                {summary.currentE1rmKg === null ? "—" : `${formatNumber(summary.currentE1rmKg)} kg`}
+                {summary.currentE1rmKg === null ? "—" : `${w(summary.currentE1rmKg)} ${unit}`}
               </span>
               {summary.changeKg !== null ? (
                 <span className="font-mono text-meta text-muted">
                   {summary.changeKg >= 0 ? "+" : "−"}
-                  {formatNumber(Math.abs(summary.changeKg))} ({RANGE_LABEL[range]})
+                  {w(Math.abs(summary.changeKg))} ({RANGE_LABEL[range]})
                 </span>
               ) : null}
             </p>
@@ -147,19 +152,19 @@ export function LiftScreen({ exerciseId }: { exerciseId: string }) {
                 value={
                   records.heaviestSingleKg === null
                     ? null
-                    : `${formatNumber(records.heaviestSingleKg)} × ${records.heaviestSingleReps ?? 1}`
+                    : `${w(records.heaviestSingleKg)} × ${records.heaviestSingleReps ?? 1}`
                 }
               />
               <Record
                 label="Best estimated"
-                value={records.bestE1rmKg === null ? null : `${formatNumber(records.bestE1rmKg)} kg`}
+                value={records.bestE1rmKg === null ? null : `${w(records.bestE1rmKg)} ${unit}`}
               />
               <Record
                 label="Most reps"
                 value={
                   records.mostReps === null
                     ? null
-                    : `${formatNumber(records.mostRepsLoadKg ?? 0)} × ${records.mostReps}`
+                    : `${w(records.mostRepsLoadKg ?? 0)} × ${records.mostReps}`
                 }
               />
             </dl>
@@ -178,7 +183,7 @@ export function LiftScreen({ exerciseId }: { exerciseId: string }) {
                   >
                     <span className="font-mono text-meta text-muted-2">{dayLabel(set.loggedAt)}</span>
                     <span className="flex-1 text-body tabular-nums">
-                      {formatNumber(set.loadKg)} × {set.reps}
+                      {w(set.loadKg)} × {set.reps}
                     </span>
                     <span className="font-mono text-meta text-muted">
                       {set.rpe === null ? "" : `RPE ${formatNumber(set.rpe)}`}

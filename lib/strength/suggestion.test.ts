@@ -3,6 +3,7 @@ import { MAX_SUGGESTION_SPAN, suggestLoad } from "./suggestion";
 import { chartOneRepMax, chartPercent } from "./rpe-chart";
 import { estimateOneRepMax } from "./e1rm";
 import { LOADABLE_INCREMENT_KG } from "./plates";
+import { loadIn } from "@/lib/units";
 
 const logged = (over: Partial<Parameters<typeof suggestLoad>[0]> = {}) => ({
   loadKg: 170,
@@ -125,5 +126,19 @@ describe("the suggestion is a ratio, so the open curve decision does not block i
 
     const backoff = suggestLoad(logged(), { reps: 5, rpe: 8 });
     expect(backoff!.nearMaximal).toBe(false);
+  });
+});
+
+describe("for an athlete who trains in pounds", () => {
+  it("floors the suggestion to pound plates, still stored as kilos", () => {
+    // 170 kg x 5 @ 7 toward 5 @ 8 is 175.9 kg, or 387.7 lb: 385 on pound plates.
+    const suggestion = suggestLoad(logged(), { reps: 5, rpe: 8 }, "lb");
+    expect(suggestion).not.toBeNull();
+    expect(loadIn(suggestion!.loadKg, "lb")).toBe(385);
+    expect(suggestion!.fromLoadKg).toBe(170);
+  });
+
+  it("gives kilo plates by default", () => {
+    expect(suggestLoad(logged(), { reps: 5, rpe: 8 })?.loadKg).toBe(175);
   });
 });

@@ -320,6 +320,13 @@ describe("DOTS for an athlete, and the four ways it can be absent", () => {
     expect(formatTotalBreakdown(result.lifts)).toBe("212.5 / 140 / 200");
   });
 
+  it("writes the total's breakdown in pounds for an athlete who reads them", () => {
+    const result = dotsFor({ ...full, sex: "male", bodyweight: [weighIn("2026-09-16", 82.4)], today: "2026-09-16" });
+    if (result.status !== "ready") throw new Error(result.status);
+    // 212.5 / 140 / 200 kg. The score is the same: DOTS is computed in kilos.
+    expect(formatTotalBreakdown(result.lifts, "lb")).toBe("468.5 / 308.6 / 440.9");
+  });
+
   it("refuses without a sex, because there are two formulas and no default", () => {
     const result = dotsFor({ ...full, sex: null, bodyweight: [weighIn("2026-09-16", 82.4)] });
     expect(result).toEqual({ status: "no-sex" });

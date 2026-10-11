@@ -21,6 +21,8 @@ import {
 } from "@/lib/bodyweight/bodyweight";
 import { fetchBodyweight, logBodyweight } from "@/lib/bodyweight/store";
 import { DotsBlock } from "@/components/strength/dots-block";
+import { useUnits } from "@/lib/profile/units-context";
+import { loadIn } from "@/lib/units";
 import { BodyweightChart } from "./bodyweight-chart";
 
 /**
@@ -60,6 +62,9 @@ const dayLabel = (key: string): string => {
 export function BodyweightScreen() {
   const { state: session } = useSession();
   const athleteId = session.status === "signed-in" ? session.user.id : null;
+  /** Typed and read in the athlete's unit; stored in kilos. The chart's shape is unit-free. */
+  const { unit } = useUnits();
+  const shown = (kg: number) => loadIn(kg, unit).toFixed(1);
 
   const [state, setState] = useState<State>({ status: "loading" });
   const [range, setRange] = useState<Range>(30);
@@ -118,12 +123,12 @@ export function BodyweightScreen() {
     const parsed = Number(draft.trim());
     setSaving(true);
     try {
-      const outcome = await logBodyweight(athleteId, parsed, today);
+      const outcome = await logBodyweight(athleteId, parsed, today, unit);
       if (!outcome.ok) {
         setError(
           outcome.reason === "failed"
             ? "That didn't save. Your number is still here — try again."
-            : weightRejectionMessage(outcome),
+            : weightRejectionMessage(outcome, unit),
         );
         return;
       }
@@ -144,7 +149,7 @@ export function BodyweightScreen() {
       {newest ? (
         <div className="flex flex-col gap-1">
           <p className="m-0 text-display font-bold tabular-nums">
-            {newest.weightKg.toFixed(1)} <span className="text-title font-semibold text-muted">kg</span>
+            {shown(newest.weightKg)} <span className="text-title font-semibold text-muted">{unit}</span>
           </p>
           {summary ? null : (
             // `trend` gives nothing once the last weigh-in falls outside the
@@ -157,12 +162,12 @@ export function BodyweightScreen() {
           )}
           {summary ? (
             <p className="m-0 text-ui text-muted tabular-nums">
-              {AVERAGE_DAYS}-day average {summary.average.kg.toFixed(1)}
+              {AVERAGE_DAYS}-day average {shown(summary.average.kg)}
               {summary.changeKg === null ? null : (
                 <span className={summary.changeKg >= 0 ? "" : "text-muted"}>
                   {" "}
                   {summary.changeKg >= 0 ? "+" : "−"}
-                  {Math.abs(summary.changeKg).toFixed(1)}
+                  {shown(Math.abs(summary.changeKg))}
                 </span>
               )}
               {/* Said plainly rather than implied. A "7-day average" from two
@@ -219,7 +224,7 @@ export function BodyweightScreen() {
             // Prefilled with the last value, per the blueprint: most mornings
             // the number barely moves, and typing it from scratch every day is
             // how a daily habit stops being daily.
-            placeholder={newest ? newest.weightKg.toFixed(1) : "82.4"}
+            placeholder={newest ? shown(newest.weightKg) : unit === "lb" ? "181.6" : "82.4"}
             invalid={Boolean(error)}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -245,7 +250,7 @@ export function BodyweightScreen() {
             {entries.slice(0, RECENT).map((entry) => (
               <li key={entry.id} className="flex justify-between text-body tabular-nums">
                 <span className="text-muted">{dayLabel(entry.measuredOn)}</span>
-                <span>{entry.weightKg.toFixed(1)}</span>
+                <span>{shown(entry.weightKg)}</span>
               </li>
             ))}
           </ul>

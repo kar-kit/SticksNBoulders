@@ -1,3 +1,5 @@
+import { kgToLb, loadFromInput, type UnitPreference } from "@/lib/units";
+
 /**
  * What can actually go on a bar.
  *
@@ -33,8 +35,23 @@ export const LOADABLE_INCREMENT_KG = 2.5;
  * value, about 1% on a heavy squat. [SME to confirm] alongside the increment:
  * if Ruairi wants nearest, it is one word here.
  */
-export const roundToLoadable = (kg: number): number =>
-  Math.floor(kg / LOADABLE_INCREMENT_KG + FLOAT_SLACK) * LOADABLE_INCREMENT_KG;
+export const roundToLoadable = (kg: number, unit: UnitPreference = "kg"): number =>
+  unit === "lb"
+    ? loadFromInput(Math.floor(kgToLb(kg) / LOADABLE_INCREMENT_LB + FLOAT_SLACK) * LOADABLE_INCREMENT_LB, "lb")
+    : Math.floor(kg / LOADABLE_INCREMENT_KG + FLOAT_SLACK) * LOADABLE_INCREMENT_KG;
+
+/**
+ * The same jump in a pound gym: a 2.5lb plate on each side.
+ *
+ * An athlete who logs in pounds trains on pound plates, and 152.5 kg is
+ * 336.2 lb -- a weight nobody can put on that bar. So a derived weight is
+ * floored to a multiple of 5 lb rather than of 2.5 kg, in pounds, and only
+ * then stored as kilos (to the gram, so it reads back as exactly 335). 5 lb is
+ * 2.27 kg, the nearest pound equivalent of the kilo increment, and the 2.5lb
+ * plate is the smallest one a commercial pound gym reliably has.
+ * [SME to confirm] alongside the kilo increment.
+ */
+export const LOADABLE_INCREMENT_LB = 5;
 
 /**
  * Binary floating point cannot hold 0.7 exactly, so 70% of 175 arrives here as

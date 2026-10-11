@@ -1,5 +1,6 @@
 import { resolvePrefill, type Suggestion } from "./prefill";
 import type { RpeValue } from "./set";
+import type { UnitPreference } from "@/lib/units";
 
 /**
  * The rows an athlete has not logged yet.
@@ -71,8 +72,10 @@ export function rowAfter(
   newId: () => string,
   planned = false,
   suggestion: Suggestion | null = null,
+  unit: UnitPreference = "kg",
 ): PlannedRow {
   const prefill = resolvePrefill({
+    unit,
     suggestion,
     previousSetThisSession:
       previous && previous.loadKg !== null && previous.reps !== null
@@ -120,11 +123,12 @@ export function addRow(
   lastLogged: LoggedValues | null,
   newId: () => string,
   suggestion: Suggestion | null = null,
+  unit: UnitPreference = "kg",
 ): PlannedRow[] {
   const mine = rowsOf(rows, exerciseId);
   const above = mine.at(-1) ?? lastLogged;
   const marked = rows.map((row) => (row.exerciseId === exerciseId ? { ...row, planned: true } : row));
-  return [...marked, rowAfter(exerciseId, above ?? null, newId, true, mine.length === 0 ? suggestion : null)];
+  return [...marked, rowAfter(exerciseId, above ?? null, newId, true, mine.length === 0 ? suggestion : null, unit)];
 }
 
 /**

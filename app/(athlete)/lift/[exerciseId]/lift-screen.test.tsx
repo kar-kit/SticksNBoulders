@@ -30,6 +30,12 @@ vi.mock("@/lib/strength/lift-store", () => ({
   fetchRecentSetsFor: async () => data.sets,
 }));
 
+// The athlete's unit. Kilos unless a test says otherwise.
+const units = vi.hoisted(() => ({ unit: "kg" as "kg" | "lb" }));
+vi.mock("@/lib/profile/units-context", () => ({
+  useUnits: () => ({ unit: units.unit, setUnit: vi.fn() }),
+}));
+
 /** Weeks counted back from now, so range filtering is testable without faking time. */
 const WEEK = 7 * 24 * 60 * 60_000;
 const weeksAgo = (n: number) => new Date(Date.now() - n * WEEK);
@@ -61,6 +67,7 @@ const setup = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  units.unit = "kg";
   library.exercises = [{ id: "dead", name: "Deadlift", normalisedName: "deadlift", isGlobal: true }];
   data.weeks = [
     point(6, { bestE1rmKg: 205, bestSingleKg: 190, bestSingleReps: 2, bestReps: 10, bestRepsLoadKg: 130 }),
@@ -162,5 +169,19 @@ describe("recent sets", () => {
     expect(await screen.findByLabelText("Recent sets")).toHaveTextContent(
       "No working sets logged against this lift yet.",
     );
+  });
+});
+
+describe("for an athlete who reads pounds", () => {
+  it("shows the estimate, the records and the recent sets in pounds", async () => {
+    units.unit = "lb";
+    setup();
+    const estimate = await screen.findByRole("region", { name: "Estimated 1RM" });
+    expect(estimate).toHaveTextContent("468.5 lb");
+    const records = screen.getByRole("region", { name: "Personal records" });
+    expect(records).toHaveTextContent("440.9 × 1");
+    expect(records).toHaveTextContent("468.5 lb");
+    expect(records).not.toHaveTextContent("kg");
+    expect(await screen.findByText("396.8 × 3")).toBeInTheDocument();
   });
 });

@@ -83,6 +83,30 @@ and whitespace-collapsed so a rail never shows `Joey    Pang`, and capped at the
 column's 64. Units are a **display preference only** — everything is stored in
 kilograms, so switching never changes a logged number, and the screen says so.
 
+Until 11 Oct 2026 nothing read that preference: an athlete who picked Pounds and
+typed 225 stored 225 kg (test audit 9 Oct 2026, B3). It is now applied at the
+screen boundary and nowhere else, through `UnitsProvider`
+(`lib/profile/units-context.tsx`) and the helpers in `lib/units.ts`:
+
+- **In:** the number pad and the bodyweight field take the athlete's unit, and
+  `loadFromInput` turns it into kilos before anything is stored or queued.
+  Pounds are stored to the gram.
+- **Out:** set rows, History, Lift Detail, the target lines on Today, My
+  Program and the logger, suggestion and backoff notes, bodyweight, DOTS's
+  breakdown and Coach Feedback read kilos through `loadIn`.
+- **No drift:** pounds are typed and shown to one decimal, and a gram is far
+  inside half a tenth of a pound, so 225 lb reads back as 225 lb, always.
+- **Plates:** a weight the app derives (a percentage, a suggestion, a backoff)
+  is floored to 5 lb for a pound athlete rather than to 2.5 kg
+  (`LOADABLE_INCREMENT_LB`). A coach's fixed kilos are shown converted, never
+  re-rounded.
+- **Still kilos:** every coach screen, the prescription snapshot a logged set
+  keeps (the coach reads it back), and the CSV export, whose header names the
+  unit and whose rows a coach's spreadsheet formulas add up.
+
+The unit is cached on the device per account, so a reload with no signal still
+reads pounds.
+
 Writes are optimistic and roll back on failure. A settings screen that lags
 feels broken; a settings screen that claims something the server does not hold
 is worse, and here a wrong sex is a wrong DOTS score later.

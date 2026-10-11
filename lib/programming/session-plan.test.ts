@@ -3,6 +3,7 @@ import { resolvePrefill } from "@/lib/logging/prefill";
 import type { ReferenceMaxEntry } from "@/lib/strength/reference-max";
 import type { Prescription } from "./program";
 import type { PlannedRow } from "@/lib/logging/plan";
+import { loadFromInput, loadIn } from "@/lib/units";
 import {
   basisMaxesFor,
   lineSummaries,
@@ -432,5 +433,81 @@ describe("a percentage of another lift: the worked examples", () => {
       "3 × 5 · 105 kg (70% of Bench Press)",
       "2 × 5 · 82.5 kg (70%)",
     ]);
+  });
+});
+
+describe("for an athlete who reads pounds", () => {
+  const squat = () =>
+    planDay([
+      line({ id: "top", setCount: 1, reps: 5, load: "@8" }),
+      line({ id: "back", setCount: 3, reps: 5, load: "75%" }),
+    ])[0];
+
+  it("floors a percentage to pound plates and shows it in pounds", () => {
+    // 75% of 203 kg is 152.25 kg, or 335.7 lb: 335 on pound plates.
+    const back = targetsFor(squat(), { training: 203 }, [], undefined, "lb")[1];
+    expect(back.display).toBe("335 lb (75%)");
+    expect(loadIn(back.loadKg!, "lb")).toBe(335);
+  });
+
+  it("still writes the snapshot in kilos, which is what the coach reads back", () => {
+    const back = targetsFor(squat(), { training: 203 }, [], undefined, "lb")[1];
+    expect(back.snapshot).toBe("5 reps · 151.95 kg (75%)");
+    expect(targetLine(back)).toBe("Set 2 of 4 · 5 reps · 335 lb (75%)");
+  });
+
+  it("summarises the line in pounds above the rows", () => {
+    expect(lineSummaries(squat(), targetsFor(squat(), { training: 203 }, [], undefined, "lb"))).toEqual([
+      "1 × 5 · RPE 8",
+      "3 × 5 · 335 lb (75%)",
+    ]);
+  });
+
+  it("shows a coach's fixed kilos in pounds without re-rounding the coach's number", () => {
+    const [fixed] = targetsFor(planDay([line({ load: "140" })])[0], {}, [], undefined, "lb");
+    expect(fixed).toMatchObject({ loadKg: 140, display: "308.6 lb", snapshot: "5 reps · 140 kg" });
+  });
+
+  it("names a reference lift's basis in pounds on screen and in kilos on the set", () => {
+    const entries: ReferenceMaxEntry[] = [
+      {
+        id: "m-lb",
+        exerciseId: "bench",
+        kind: "training",
+        valueKg: 150,
+        effectiveFrom: "2026-10-01T00:00:00.000Z",
+        recordedBy: "ruairi",
+      },
+    ];
+    const references = referenceLookup(entries, new Map(), new Date("2026-10-15T09:00:00.000Z"), (id) =>
+      id === "bench" ? "Bench Press" : null,
+    );
+    const plan = planDay([line({ exerciseId: "tempo", reps: 5, load: "70%", referenceExerciseId: "bench" })])[0];
+    const [t] = targetsFor(plan, {}, [], references, "lb");
+    // 70% of 150 kg is 105 kg, or 231.5 lb: 230 on pound plates.
+    expect(t.display).toBe("230 lb (70% of Bench Press)");
+    expect(t.snapshot).toBe("5 reps · 104.33 kg (70% of Bench Press, training 150)");
+    expect(targetLine(t)).toBe("Set 1 of 1 · 5 reps · 230 lb (70% of Bench Press, training 330.7)");
+  });
+
+  it("explains a suggestion priced off today's top set in pounds", () => {
+    const row: PlannedRow = {
+      exerciseId: "squat",
+      clientSetId: "r2",
+      loadKg: null,
+      reps: null,
+      rpe: null,
+      isWarmup: false,
+      planned: false,
+    };
+    const topSet = set(loadFromInput(405, "lb"), 5, 8);
+    const [stamped] = prescribeNewRows(
+      [],
+      [row],
+      () => ({ logged: [topSet], targets: targetsFor(squat(), {}, [topSet], undefined, "lb") }),
+      "lb",
+    );
+    expect(stamped.note).toBe("suggested from RPE 8 @ 405");
+    expect(Number.isInteger(loadIn(stamped.loadKg!, "lb") / 5)).toBe(true);
   });
 });

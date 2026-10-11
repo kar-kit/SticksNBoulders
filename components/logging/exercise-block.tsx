@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SetRow, SetRowHeader } from "./set-row";
 import type { LoggableSet, RpeValue } from "@/lib/logging/set";
 import { plannedIndex } from "@/lib/logging/plan";
+import type { UnitPreference } from "@/lib/units";
 
 /**
  * One exercise inside a running session: its logged sets, then the rows not
@@ -69,6 +70,8 @@ export interface ExerciseBlockProps {
    * Absent for an exercise nobody prescribed.
    */
   target?: readonly string[] | null;
+  /** The athlete's unit, for every load in the block. Kilos when absent. */
+  unit?: UnitPreference;
 }
 
 /**
@@ -99,6 +102,7 @@ export function ExerciseBlock({
   onDelete,
   camera,
   target = null,
+  unit = "kg",
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const open = planned.length > 0;
@@ -130,7 +134,7 @@ export function ExerciseBlock({
         </ul>
       ) : null}
 
-      {sets.length > 0 || open ? <SetRowHeader /> : null}
+      {sets.length > 0 || open ? <SetRowHeader unit={unit} /> : null}
 
       <div className="flex flex-col gap-1.5">
         {sets.map((set, at) => (
@@ -144,6 +148,7 @@ export function ExerciseBlock({
             onSelect={onSelect ? () => onSelect(set.clientSetId) : undefined}
             onDelete={onDelete ? () => onDelete(set.clientSetId) : undefined}
             deleteBlocked={set.deleteBlocked ?? null}
+            unit={unit}
           />
         ))}
 
@@ -161,6 +166,7 @@ export function ExerciseBlock({
             onPressRpe={() => onFocus?.(row.clientSetId, "rpe")}
             onConfirm={() => onConfirm?.(row.clientSetId)}
             onDiscard={() => onDiscard?.(row.clientSetId)}
+            unit={unit}
           />
         ))}
       </div>

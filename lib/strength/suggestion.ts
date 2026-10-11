@@ -1,6 +1,7 @@
 import { MAX_REPS_TO_FAILURE, repsToFailure, type SetForEstimate } from "./e1rm";
 import { roundToLoadable } from "./plates";
 import type { RpeValue } from "@/lib/logging/set";
+import type { UnitPreference } from "@/lib/units";
 
 /**
  * "Log RPE 7 at 170 and the app suggests the next step."
@@ -96,7 +97,11 @@ const NEAR_MAXIMAL_REPS_FROM_FAILURE = 3;
  * toward -- prefill's rule 3, repeat the previous set, is already the right
  * answer and a manufactured suggestion would outrank it while saying less.
  */
-export function suggestLoad(logged: LoggedSet, target: SetTarget): LoadSuggestion | null {
+export function suggestLoad(
+  logged: LoggedSet,
+  target: SetTarget,
+  unit: UnitPreference = "kg",
+): LoadSuggestion | null {
   if (logged.isWarmup) return null;
   if (logged.rpe === null || !Number.isFinite(logged.rpe)) return null;
   if (!Number.isFinite(logged.loadKg) || logged.loadKg <= 0) return null;
@@ -113,7 +118,9 @@ export function suggestLoad(logged: LoggedSet, target: SetTarget): LoadSuggestio
   // The ratio of the curve at the two points. Brzycki's percentage of 1RM at
   // n reps from failure is (37 - n) / 36, so the 36s and the estimated max
   // both cancel and only the shape of the curve survives.
-  const loadKg = roundToLoadable(logged.loadKg * ((37 - to) / (37 - from)));
+  // Floored to the plates the athlete actually trains on: kilo plates, or
+  // pound plates for an athlete who logs in pounds (plates.ts).
+  const loadKg = roundToLoadable(logged.loadKg * ((37 - to) / (37 - from)), unit);
   if (loadKg <= 0) return null;
 
   return {

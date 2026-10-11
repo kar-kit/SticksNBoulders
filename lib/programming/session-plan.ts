@@ -3,6 +3,7 @@ import { resolveMaxes, type EstimatedInput, type ReferenceMaxEntry } from "@/lib
 import type { RpeValue } from "@/lib/logging/set";
 import { resolvePrefill } from "@/lib/logging/prefill";
 import type { PlannedRow } from "@/lib/logging/plan";
+import { loadNumber, type UnitPreference } from "@/lib/units";
 import { byPosition, type Prescription } from "./program";
 import {
   backoffDisplay,
@@ -99,8 +100,15 @@ export interface SetTarget {
    * The target in words, stored on the logged set: "5 reps · 152.5 kg (75%)".
    * This is the half of constraint 5 that lives on the athlete's side -- the
    * set remembers what it was an answer to, whatever the plan says later.
+   *
+   * Always in kilos: the coach reads it back, and storage is kilos.
    */
   snapshot: string;
+  /**
+   * The snapshot in the athlete's unit, for the logger's "Next:" line. Only
+   * set when that unit is not kilos; everywhere else the snapshot is it.
+   */
+  shown?: string;
 }
 
 /**
@@ -193,13 +201,20 @@ function snapshotOf(reps: number | null, repMax: number | null, display: string)
  * bench. Phase 1 of docs/reference-lift.md §2 -- it behaves like a named kind,
  * never `synced`. Without `references` such a line resolves to nothing rather
  * than falling back to this exercise's max: the coach said "of bench".
+ *
+ * `unit` is the athlete's display unit: it picks the plates a derived weight
+ * is floored to and the words `display` uses. The snapshot is kilos regardless.
  */
 export function targetsFor(
   exercise: PlannedExercise,
   maxes: BasisMaxes,
   logged: readonly SetForEstimate[] = [],
   references?: ReferenceLookup,
+  unit: UnitPreference = "kg",
 ): SetTarget[] {
+  // The athlete-unit snapshot, on the targets of an athlete who reads pounds.
+  const shownOf = (reps: number | null, repMax: number | null, words: string) =>
+    unit === "kg" ? {} : { shown: snapshotOf(reps, repMax, words) };
   type Slot =
     | { line: Prescription; spec: PrescriptionSpec | null; backoff?: undefined; reference?: string | null }
     | { line: Prescription; spec: null; backoff: { rule: BackoffRule; topSet: TopSet | null }; reference?: undefined };
@@ -227,7 +242,7 @@ export function targetsFor(
     .filter((slot) => !slot.reference)
     .map((slot) => slot.spec)
     .filter((spec): spec is PrescriptionSpec => spec !== null);
-  const resolved = resolveExercise(specs, maxes, logged);
+  const resolved = resolveExercise(specs, maxes, logged, unit);
   const anchor = topSet(logged);
 
   let next = 0;
@@ -247,8 +262,8 @@ export function targetsFor(
       // suggestion, so not `synced`. No top set yet means no load -- the
       // athlete reads the rule and the row falls back to repeating.
       const { rule, topSet } = slot.backoff;
-      const loadKg = topSet ? backoffLoad(rule, topSet.loadKg) : null;
-      const display = backoffDisplay(rule, loadKg);
+      const loadKg = topSet ? backoffLoad(rule, topSet.loadKg, unit) : null;
+      const display = backoffDisplay(rule, loadKg, unit);
       return {
         ...base,
         loadKg,
@@ -259,13 +274,14 @@ export function targetsFor(
         unresolved: loadKg === null,
         anchor: null,
         backoff: { rule, topSet },
-        snapshot: snapshotOf(line.reps, line.repMax, display),
+        snapshot: snapshotOf(line.reps, line.repMax, backoffDisplay(rule, loadKg)),
+        ...shownOf(line.reps, line.repMax, display),
       };
     }
     if (slot.reference && spec) {
       const name = references?.nameOf(slot.reference) || UNNAMED_REFERENCE;
       const own = references?.maxesFor(slot.reference) ?? {};
-      const r = resolvePrescription(spec, { ...own, session: null }, { name });
+      const r = resolvePrescription(spec, { ...own, session: null }, { name }, unit);
       return {
         ...base,
         loadKg: r.loadKg,
@@ -276,6 +292,7 @@ export function targetsFor(
         unresolved: r.unresolved,
         anchor: null,
         snapshot: snapshotOf(line.reps, line.repMax, r.record ?? r.display),
+        ...shownOf(line.reps, line.repMax, r.shown ?? r.display),
       };
     }
     const r = spec === null ? null : resolved[next++];
@@ -289,7 +306,8 @@ export function targetsFor(
       synced: r?.synced ?? false,
       unresolved: r?.unresolved ?? false,
       anchor: r?.synced ? anchor : null,
-      snapshot: snapshotOf(line.reps, line.repMax, display),
+      snapshot: snapshotOf(line.reps, line.repMax, r?.record ?? display),
+      ...shownOf(line.reps, line.repMax, display),
     };
   });
 }
@@ -357,7 +375,7 @@ function backoffSummary(line: Prescription, targets: readonly SetTarget[]): stri
 export function targetLine(target: SetTarget): string {
   // A drop-until-RPE run has no fixed length, so it has no "of".
   const of = target.backoff?.rule.kind === "drop" ? "" : ` of ${target.totalSets}`;
-  return `Set ${target.setNumber}${of} · ${target.snapshot}`;
+  return `Set ${target.setNumber}${of} · ${target.shown ?? target.snapshot}`;
 }
 
 /**
@@ -404,6 +422,7 @@ export function prescribeNewRows(
   before: readonly PlannedRow[],
   after: readonly PlannedRow[],
   context: (exerciseId: string) => { logged: readonly LoggedForTarget[]; targets: readonly SetTarget[] | null },
+  unit: UnitPreference = "kg",
 ): PlannedRow[] {
   const seen = new Set(before.map((row) => row.clientSetId));
   if (after.every((row) => seen.has(row.clientSetId))) return [...after];
@@ -423,12 +442,13 @@ export function prescribeNewRows(
     if (!target) return row;
     const prefill = resolvePrefill({
       ...prefillFrom(target),
+      unit,
       previousSetThisSession:
         row.loadKg !== null && row.reps !== null ? { loadKg: row.loadKg, reps: row.reps } : null,
     });
     // A backoff load says which set it was priced off, so the athlete can
     // see the coach's rule rather than an unexplained number.
-    const fromBackoff = prefill.source === "prescribed" ? backoffNote(target) : null;
+    const fromBackoff = prefill.source === "prescribed" ? backoffNote(target, unit) : null;
     return {
       ...row,
       loadKg: prefill.loadKg,
@@ -447,9 +467,14 @@ export function prescribeNewRows(
 }
 
 /** "backoff from top set 180 × 3": why a backoff row holds the load it does. */
-export function backoffNote(target: SetTarget): string | null {
+export function backoffNote(target: SetTarget, unit: UnitPreference = "kg"): string | null {
   const top = target.backoff?.topSet;
   if (!top || target.loadKg === null) return null;
-  const kg = Number.isInteger(top.loadKg) ? String(top.loadKg) : String(Number(top.loadKg.toFixed(2)));
+  const kg =
+    unit !== "kg"
+      ? loadNumber(top.loadKg, unit)
+      : Number.isInteger(top.loadKg)
+        ? String(top.loadKg)
+        : String(Number(top.loadKg.toFixed(2)));
   return `backoff from top set ${kg} × ${top.reps}`;
 }

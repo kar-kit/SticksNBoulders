@@ -1,4 +1,5 @@
 import { nextSetSuggestion } from "./suggestion-gate";
+import { loadIn } from "@/lib/units";
 
 // 170 x 5 @ RPE 7 is eight reps from failure; 5 @ RPE 8 is seven. The ratio
 // lands on 175.9, rounded down to 175 -- the same worked example as
@@ -28,5 +29,13 @@ describe("the coach's gate on next-set suggestions", () => {
   it("still applies every refusal the engine makes", () => {
     expect(nextSetSuggestion("direct", { ...logged, rpe: null }, target)).toBeNull();
     expect(nextSetSuggestion("direct", { ...logged, isWarmup: true }, target)).toBeNull();
+  });
+});
+
+describe("for an athlete who trains in pounds", () => {
+  it("hands the unit to the engine, so the suggestion lands on pound plates", () => {
+    // 175.9 kg is 387.7 lb: 385 on pound plates, where kilo plates give 175 kg (385.8 lb).
+    const suggestion = nextSetSuggestion("direct", logged, target, "lb");
+    expect(loadIn(suggestion!.loadKg, "lb")).toBe(385);
   });
 });

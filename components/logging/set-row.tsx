@@ -8,6 +8,7 @@ import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
 import { LoadCell } from "./load-cell";
 import { canComplete, completionBlocker, type LoggableSet } from "@/lib/logging/set";
 import { formatNumber } from "@/lib/logging/prefill";
+import { loadIn, loadLabel, unitName, type UnitPreference } from "@/lib/units";
 
 /**
  * The set row. An athlete touches this 20 to 40 times a session, one-handed.
@@ -76,6 +77,11 @@ export interface SetRowProps {
   onDelete?: () => void;
   /** Why this logged set cannot be deleted, shown in place of the button. */
   deleteBlocked?: string | null;
+  /**
+   * The athlete's unit. `set.loadKg` is always kilos; the cell shows it in
+   * this unit. Kilos when absent.
+   */
+  unit?: UnitPreference;
 }
 
 export function SetRow({
@@ -97,6 +103,7 @@ export function SetRow({
   selected = false,
   onDelete,
   deleteBlocked = null,
+  unit = "kg",
 }: SetRowProps) {
   const planned = state === "planned";
   const active = state === "active";
@@ -157,13 +164,13 @@ export function SetRow({
         </span>
 
         <LoadCell
-          value={set.loadKg}
+          value={set.loadKg === null ? null : loadIn(set.loadKg, unit)}
           size={size}
           align="left"
           editable={editing}
-          placeholder={editing ? "KG" : "—"}
+          placeholder={editing ? unit.toUpperCase() : "—"}
           onPress={onPressLoad}
-          label={`${setLabel} weight in kilograms`}
+          label={`${setLabel} weight in ${unitName(unit)}`}
           marker={editing && suggested ? "Suggested" : undefined}
         />
 
@@ -344,14 +351,14 @@ function useSwipeToDelete(onDelete?: () => void) {
 }
 
 /** Column headers above a block of set rows. Mono, 9px, never a real table. */
-export function SetRowHeader() {
+export function SetRowHeader({ unit = "kg" }: { unit?: UnitPreference } = {}) {
   return (
     <div
       style={{ gridTemplateColumns: GRID, "--set-row-last": "34px" } as React.CSSProperties}
       className="grid items-center gap-2 px-2.5 font-mono text-label-xs text-muted-2"
     >
       <span>#</span>
-      <span>KG</span>
+      <span>{unit.toUpperCase()}</span>
       <span>REPS</span>
       <span>RPE</span>
       <span />
@@ -363,9 +370,11 @@ export function SetRowHeader() {
 export function ExerciseTarget({
   scheme,
   resolvedKg,
+  unit = "kg",
 }: {
   scheme: string;
   resolvedKg?: number | null;
+  unit?: UnitPreference;
 }) {
   return (
     <div className="text-sm text-muted">
@@ -374,7 +383,9 @@ export function ExerciseTarget({
         <>
           {" · "}
           {/* Resolved here so nobody does arithmetic between sets. */}
-          <span className="font-semibold text-foreground">{formatNumber(resolvedKg)} kg</span>
+          <span className="font-semibold text-foreground">
+            {unit === "kg" ? `${formatNumber(resolvedKg)} kg` : loadLabel(resolvedKg, unit)}
+          </span>
         </>
       ) : null}
     </div>
