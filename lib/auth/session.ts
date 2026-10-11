@@ -5,6 +5,7 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 import { forgetCircle } from "./circle";
 import { forgetProfile } from "@/lib/profile/profile-store";
 import { forgetAvatars } from "@/lib/profile/avatar-cache";
+import { detachQueue } from "@/lib/offline/client";
 import { toAuthFailure, type AuthFailure, type OAuthProviderName } from "./errors";
 import { normaliseEmail } from "./method-hint";
 import { AFTER_SIGN_IN } from "./destinations";
@@ -62,6 +63,10 @@ export async function signOut() {
   forgetProfile();
   // Faces and picture ids, the same reasoning: per page load, keyed to nobody.
   forgetAvatars();
+  // The offline queue stops sending as this athlete. Anything still in it stays
+  // on the phone, held for them: on a shared phone the next person to sign in
+  // must never inherit it, and it sends when this athlete signs back in here.
+  detachQueue();
   return attempt(() => account.deleteSession({ sessionId: "current" }));
 }
 

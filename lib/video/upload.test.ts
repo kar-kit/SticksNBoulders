@@ -41,7 +41,7 @@ beforeEach(() => {
 
 describe("picking up an interrupted upload", () => {
   it("does nothing when there is nothing pending", async () => {
-    expect(await resumeInterruptedUploads()).toEqual({ resumed: 0, failed: 0 });
+    expect(await resumeInterruptedUploads("joey")).toEqual({ resumed: 0, failed: 0 });
     expect(transport.uploadResumable).not.toHaveBeenCalled();
   });
 
@@ -53,7 +53,7 @@ describe("picking up an interrupted upload", () => {
     store.pendingUploads.mockResolvedValue([pending()]);
     transport.uploadResumable.mockResolvedValue({ ok: true, fileId: "file-1" });
 
-    expect(await resumeInterruptedUploads()).toEqual({ resumed: 1, failed: 0 });
+    expect(await resumeInterruptedUploads("joey")).toEqual({ resumed: 1, failed: 0 });
     expect(offline.enqueue).toHaveBeenCalledWith("set.attachVideo", {
       setId: "set-1",
       videoFileId: "file-1",
@@ -65,7 +65,7 @@ describe("picking up an interrupted upload", () => {
     store.pendingUploads.mockResolvedValue([pending()]);
     transport.uploadResumable.mockResolvedValue({ ok: true, fileId: "file-1" });
 
-    await resumeInterruptedUploads();
+    await resumeInterruptedUploads("joey");
     expect(store.recordAttempt).toHaveBeenCalledWith("file-1");
     expect(store.recordAttempt.mock.invocationCallOrder[0]).toBeLessThan(
       transport.uploadResumable.mock.invocationCallOrder[0],
@@ -81,7 +81,7 @@ describe("picking up an interrupted upload", () => {
       uploadedCount: 2,
     });
 
-    expect(await resumeInterruptedUploads()).toEqual({ resumed: 0, failed: 1 });
+    expect(await resumeInterruptedUploads("joey")).toEqual({ resumed: 0, failed: 1 });
     expect(store.forgetUpload).not.toHaveBeenCalled();
     expect(offline.enqueue).not.toHaveBeenCalled();
   });
@@ -99,17 +99,28 @@ describe("picking up an interrupted upload", () => {
       uploadedCount: 0,
     });
 
-    expect(await resumeInterruptedUploads()).toEqual({ resumed: 0, failed: 1 });
+    expect(await resumeInterruptedUploads("joey")).toEqual({ resumed: 0, failed: 1 });
     expect(store.forgetUpload).toHaveBeenCalledWith("file-1");
   });
 
   it("abandons a clip that has already failed too many times", async () => {
     store.pendingUploads.mockResolvedValue([pending({ attempts: MAX_UPLOAD_ATTEMPTS })]);
 
-    expect(await resumeInterruptedUploads()).toEqual({ resumed: 0, failed: 1 });
+    expect(await resumeInterruptedUploads("joey")).toEqual({ resumed: 0, failed: 1 });
     // Not even attempted -- tens of megabytes should not be re-sent forever.
     expect(transport.uploadResumable).not.toHaveBeenCalled();
     expect(store.forgetUpload).toHaveBeenCalledWith("file-1");
+  });
+
+  it("leaves another athlete's clip alone on a shared phone, for when they sign back in", async () => {
+    // Resumed under this athlete's session, it would upload as them and queue
+    // a write against a set that is not theirs.
+    store.pendingUploads.mockResolvedValue([pending({ athleteId: "someone-else" })]);
+
+    expect(await resumeInterruptedUploads("joey")).toEqual({ resumed: 0, failed: 0 });
+    expect(transport.uploadResumable).not.toHaveBeenCalled();
+    expect(store.recordAttempt).not.toHaveBeenCalled();
+    expect(store.forgetUpload).not.toHaveBeenCalled();
   });
 
   it("carries on through the rest when one clip fails", async () => {
@@ -121,7 +132,7 @@ describe("picking up an interrupted upload", () => {
       .mockResolvedValueOnce({ ok: false, retryable: true, message: "x", uploadedCount: 1 })
       .mockResolvedValueOnce({ ok: true, fileId: "good" });
 
-    expect(await resumeInterruptedUploads()).toEqual({ resumed: 1, failed: 1 });
+    expect(await resumeInterruptedUploads("joey")).toEqual({ resumed: 1, failed: 1 });
     expect(offline.enqueue).toHaveBeenCalledWith("set.attachVideo", {
       setId: "set-b",
       videoFileId: "good",
