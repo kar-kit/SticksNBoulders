@@ -1,5 +1,6 @@
 import type { SuggestionMode } from "@/lib/coach/suggestion-mode";
 import { suggestLoad, type LoggedSet, type SetTarget } from "@/lib/strength/suggestion";
+import type { UnitPreference } from "@/lib/units";
 import type { Suggestion } from "./prefill";
 
 /**
@@ -27,10 +28,11 @@ export function nextSetSuggestion(
   mode: SuggestionMode,
   logged: LoggedSet,
   target: SetTarget | null,
+  unit: UnitPreference = "kg",
 ): Suggestion | null {
   if (mode !== "direct") return null;
   if (!target) return null;
-  const suggestion = suggestLoad(logged, target);
+  const suggestion = suggestLoad(logged, target, unit);
   if (!suggestion) return null;
   return {
     loadKg: suggestion.loadKg,

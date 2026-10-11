@@ -1,3 +1,5 @@
+import { loadNumber, type UnitPreference } from "@/lib/units";
+
 /**
  * Prefill precedence for a set row.
  *
@@ -42,6 +44,8 @@ export interface CompletedSet {
 }
 
 export interface PrefillInputs {
+  /** The athlete's display unit, for the note. Loads stay kilos either way. */
+  unit?: UnitPreference;
   prescription?: Prescription | null;
   suggestion?: Suggestion | null;
   previousSetThisSession?: CompletedSet | null;
@@ -77,7 +81,7 @@ function isUsableReps(value: number | null | undefined): value is number {
  * load is what the annotation explains.
  */
 export function resolvePrefill(inputs: PrefillInputs = {}): Prefill {
-  const { prescription, suggestion, previousSetThisSession, sameExerciseLastSession } = inputs;
+  const { prescription, suggestion, previousSetThisSession, sameExerciseLastSession, unit = "kg" } = inputs;
 
   const repsChain = [
     prescription?.reps,
@@ -96,7 +100,9 @@ export function resolvePrefill(inputs: PrefillInputs = {}): Prefill {
       loadKg: suggestion.loadKg,
       reps,
       source: "suggested",
-      note: `suggested from RPE ${formatNumber(suggestion.fromRpe)} @ ${formatNumber(suggestion.fromLoadKg)}`,
+      note: `suggested from RPE ${formatNumber(suggestion.fromRpe)} @ ${
+        unit === "kg" ? formatNumber(suggestion.fromLoadKg) : loadNumber(suggestion.fromLoadKg, unit)
+      }`,
     };
   }
 

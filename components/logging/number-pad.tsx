@@ -32,7 +32,9 @@ const KEYS: PadKey[][] = [
   [".", "0", "back"],
 ];
 
-const FIELD_LABEL = { load: "Weight, kg", reps: "Reps" } as const;
+/** The load is labelled in the unit it is being typed in, which is the athlete's. */
+const fieldLabel = (state: PadState): string =>
+  state.field === "load" ? `Weight, ${state.unit ?? "kg"}` : "Reps";
 
 export function NumberPad({
   state,
@@ -47,11 +49,11 @@ export function NumberPad({
 
   return (
     <section
-      aria-label={`${FIELD_LABEL[state.field]} keypad`}
+      aria-label={`${fieldLabel(state)} keypad`}
       className="flex flex-none flex-col gap-3 border-t border-border bg-surface px-3 pt-3.5 pb-[22px]"
     >
       <div className="flex items-center justify-between px-1">
-        <span className="font-mono text-label uppercase text-muted-2">{FIELD_LABEL[state.field]}</span>
+        <span className="font-mono text-label uppercase text-muted-2">{fieldLabel(state)}</span>
         <output className="text-value-lg font-semibold tabular-nums text-foreground">
           {padDisplay(state)}
         </output>

@@ -4,6 +4,7 @@ import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
 import { authenticRows, recordBodyweight, reviseBodyweight, type Actor } from "@/appwrite/documents";
+import type { UnitPreference } from "@/lib/units";
 import { checkWeight, type BodyweightEntry, type WeightRejection } from "./bodyweight";
 
 /**
@@ -95,8 +96,10 @@ export async function logBodyweight(
   athleteId: string,
   weight: number,
   measuredOn: string,
+  /** The unit `weight` was typed in. What is written is kilos. */
+  unit: UnitPreference = "kg",
 ): Promise<LogOutcome> {
-  const checked = checkWeight(weight);
+  const checked = checkWeight(weight, unit);
   if (!checked.ok) return checked;
 
   const actor: Actor = { userId: athleteId };

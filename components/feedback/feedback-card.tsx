@@ -13,6 +13,7 @@ import {
 } from "@/lib/review/comments";
 import { isUnread, type FeedbackCard as Card, type FeedbackSet } from "@/lib/review/feedback";
 import { formatWeight } from "@/lib/units";
+import { useUnits } from "@/lib/profile/units-context";
 
 /**
  * One set, what was said about it, and a way to answer.
@@ -54,13 +55,14 @@ const shortDate = (iso: string): string => {
 };
 
 export function SetContext({ set, exerciseName }: { set: FeedbackSet; exerciseName: string }) {
+  const { unit } = useUnits();
   return (
     <div className="flex flex-col gap-0.5">
       <p className="m-0 text-ui text-muted">
         {exerciseName} · {dateLabel(set.loggedAt)} · {set.isWarmup ? "Warm-up" : `Set ${set.setIndex}`}
       </p>
       <p className="m-0 text-title font-bold tabular-nums">
-        {formatWeight(set.loadKg, "kg")} × {set.reps}{" "}
+        {formatWeight(set.loadKg, unit)} × {set.reps}{" "}
         <span className="text-body font-semibold text-muted">
           {set.rpe === null ? "RPE —" : `RPE ${set.rpe}`}
         </span>

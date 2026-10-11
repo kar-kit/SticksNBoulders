@@ -12,8 +12,10 @@ import {
   rollingAverage,
   sortedByDay,
   trend,
+  weightRejectionMessage,
   type BodyweightEntry,
 } from "./bodyweight";
+import { loadIn } from "@/lib/units";
 
 const on = (measuredOn: string, weightKg: number): BodyweightEntry => ({
   id: `e-${measuredOn}`,
@@ -249,5 +251,35 @@ describe("averageSeries", () => {
 
   it("leaves out a point with nothing to average", () => {
     expect(averageSeries([], [{ measuredOn: "2026-09-10" }], 7)).toEqual([]);
+  });
+});
+
+describe("a weight typed in pounds", () => {
+  it("is stored as its kilos, and reads back as the number on the scale", () => {
+    const checked = checkWeight(180, "lb");
+    expect(checked).toEqual({ ok: true, weightKg: 81.647 });
+    if (!checked.ok) return;
+    expect(loadIn(checked.weightKg, "lb")).toBe(180);
+  });
+
+  it("never drifts a tenth on the way through kilos, as rounding to 0.1 kg would", () => {
+    // 180 lb rounded to 81.6 kg reads back as 179.9 lb.
+    const drifted: number[] = [];
+    for (let tenths = 450; tenths <= 8800; tenths++) {
+      const typed = tenths / 10;
+      const checked = checkWeight(typed, "lb");
+      if (checked.ok && loadIn(checked.weightKg, "lb") !== typed) drifted.push(typed);
+    }
+    expect(drifted).toEqual([]);
+  });
+
+  it("applies the same plausible range, in kilos, and says it in pounds", () => {
+    expect(checkWeight(40, "lb")).toEqual({ ok: false, reason: "out-of-range" });
+    expect(checkWeight(900, "lb")).toEqual({ ok: false, reason: "out-of-range" });
+    // 40 would be a fine weight in kilos: the unit is what makes it implausible.
+    expect(checkWeight(40, "kg").ok).toBe(true);
+    expect(weightRejectionMessage({ ok: false, reason: "out-of-range" }, "lb")).toBe(
+      "A weight should be between 44.1 and 881.8 lb — check the decimal point.",
+    );
   });
 });

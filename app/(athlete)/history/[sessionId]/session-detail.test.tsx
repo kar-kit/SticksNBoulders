@@ -58,6 +58,12 @@ vi.mock("@/components/logging/set-row", async (importOriginal) => {
   };
 });
 
+// The athlete's unit. Kilos unless a test says otherwise.
+const units = vi.hoisted(() => ({ unit: "kg" as "kg" | "lb" }));
+vi.mock("@/lib/profile/units-context", () => ({
+  useUnits: () => ({ unit: units.unit, setUnit: vi.fn() }),
+}));
+
 const session: SessionRecord = {
   id: "s1",
   clientSessionId: "s1",
@@ -98,6 +104,7 @@ function setup() {
 beforeEach(() => {
   vi.clearAllMocks();
   activeConfirm.current = undefined;
+  units.unit = "kg";
   editSet.mockResolvedValue(undefined);
   removeSet.mockResolvedValue(undefined);
   library.exercises = [{ id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true }];
@@ -236,5 +243,31 @@ describe("correcting a set", () => {
     await waitFor(() => expect(removeSet).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("150"));
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
+  });
+});
+
+describe("for an athlete who reads pounds", () => {
+  beforeEach(() => {
+    units.unit = "lb";
+  });
+
+  it("shows the logged kilos in pounds", async () => {
+    setup();
+    expect(await screen.findByRole("group", { name: "Set 1" })).toHaveTextContent("308.6");
+    expect(screen.getAllByText("LB").length).toBeGreaterThan(0);
+  });
+
+  it("takes a correction typed in pounds and writes it as kilos", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    expect(screen.getByRole("status")).toHaveTextContent("308.6");
+    // "308.6" on the pad: five presses clear it.
+    for (let i = 0; i < 5; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+    for (const key of ["3", "1", "5"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 142.882, reps: 5, rpe: 8, isWarmup: false });
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("315");
   });
 });

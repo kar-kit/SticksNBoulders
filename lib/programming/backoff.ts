@@ -1,5 +1,6 @@
 import type { SetForEstimate } from "@/lib/strength/e1rm";
 import { roundToLoadable } from "@/lib/strength/plates";
+import { loadLabel, type UnitPreference } from "@/lib/units";
 import { RPE_VALUES, type RpeValue } from "@/lib/logging/set";
 
 /**
@@ -200,11 +201,11 @@ const factorOf = (rule: BackoffRule): number =>
  * Null when the rounded load would be nothing (a top set too light to take a
  * percentage of), rather than a target of 0 kg.
  */
-export function backoffLoad(rule: BackoffRule, topLoadKg: number): number | null {
+export function backoffLoad(rule: BackoffRule, topLoadKg: number, unit: UnitPreference = "kg"): number | null {
   if (!(Number.isFinite(topLoadKg) && topLoadKg > 0)) return null;
   const factor = factorOf(rule);
   if (factor === 1) return topLoadKg;
-  const kg = roundToLoadable(topLoadKg * factor);
+  const kg = roundToLoadable(topLoadKg * factor, unit);
   return kg > 0 ? kg : null;
 }
 
@@ -233,9 +234,13 @@ export function backoffRun(rule: BackoffRule, after: readonly SetForEstimate[]):
   return logged >= cap ? { sets: logged, done: true } : { sets: logged + 1, done: false };
 }
 
-/** What a backoff set's load reads as: "162.5 kg (90% of top set)", or the rule alone with no top set yet. */
-export function backoffDisplay(rule: BackoffRule, loadKg: number | null): string {
-  const kg = loadKg === null ? "" : `${trim(loadKg)} kg `;
+/**
+ * What a backoff set's load reads as: "162.5 kg (90% of top set)", or the rule
+ * alone with no top set yet. In the athlete's unit when one is given; the
+ * snapshot a logged set keeps is always written in kilos.
+ */
+export function backoffDisplay(rule: BackoffRule, loadKg: number | null, unit: UnitPreference = "kg"): string {
+  const kg = loadKg === null ? "" : `${unit === "kg" ? `${trim(loadKg)} kg` : loadLabel(loadKg, unit)} `;
   const what =
     rule.kind === "percent"
       ? `${trim(rule.percent)}% of top set`

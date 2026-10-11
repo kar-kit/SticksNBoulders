@@ -1,5 +1,6 @@
 import type { PlannedRow } from "@/lib/logging/plan";
 import { roundToLoadable } from "@/lib/strength/plates";
+import { loadFromInput, loadIn } from "@/lib/units";
 import {
   DEFAULT_DROP_CAP,
   backoffDisplay,
@@ -430,5 +431,39 @@ describe("the editor's backoff cell", () => {
   it("says what the rule will do beside the cell", () => {
     expect(describeBackoffCell("3 x 90%")).toBe("3 sets at 90% of today's top set");
     expect(describeBackoffCell("")).toBe("No backoff");
+  });
+});
+
+describe("backoffs for an athlete who reads pounds", () => {
+  const plan = planDay([line({ id: "top", backoff: "3 x 90%" })])[0];
+  const topSet = set(loadFromInput(405, "lb"), 3, 8);
+
+  it("floors the backoff to pound plates, shows it in pounds and records it in kilos", () => {
+    // 90% of 405 lb is 364.5 lb: 360 on pound plates.
+    const back = targetsFor(plan, {}, [topSet], undefined, "lb")[1];
+    expect(loadIn(back.loadKg!, "lb")).toBe(360);
+    expect(back.display).toBe("360 lb (90% of top set)");
+    expect(back.snapshot).toBe("3 reps · 163.29 kg (90% of top set)");
+    expect(targetLine(back)).toBe("Set 2 of 4 · 3 reps · 360 lb (90% of top set)");
+  });
+
+  it("says which top set it was priced off in pounds", () => {
+    const row: PlannedRow = {
+      exerciseId: "squat",
+      clientSetId: "r2",
+      loadKg: topSet.loadKg,
+      reps: 3,
+      rpe: null,
+      isWarmup: false,
+      planned: false,
+    };
+    const [next] = prescribeNewRows(
+      [],
+      [row],
+      () => ({ logged: [topSet], targets: targetsFor(plan, {}, [topSet], undefined, "lb") }),
+      "lb",
+    );
+    expect(next.note).toBe("backoff from top set 405 × 3");
+    expect(loadIn(next.loadKg!, "lb")).toBe(360);
   });
 });

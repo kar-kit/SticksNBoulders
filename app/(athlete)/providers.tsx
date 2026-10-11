@@ -3,10 +3,12 @@
 import { useRecordMode, useSession } from "@/lib/auth/session-context";
 import { ExerciseLibraryProvider } from "@/lib/exercises/library-context";
 import { TrainingSessionProvider } from "@/lib/logging/session-context";
+import { UnitsProvider } from "@/lib/profile/units-context";
 
 /**
- * The two things every athlete screen needs loaded once, not per screen: the
- * exercise library and whether a session is running.
+ * The things every athlete screen needs loaded once, not per screen: the
+ * exercise library, whether a session is running, and the weight unit every
+ * load is typed and read in.
  *
  * Mounted inside the shell rather than in it, so the shell stays a layout
  * component with nothing to fetch -- and so its tests keep rendering without a
@@ -22,8 +24,10 @@ export function AthleteProviders({ children }: { children: React.ReactNode }) {
   const athleteId = state.status === "signed-in" ? state.user.id : null;
 
   return (
-    <ExerciseLibraryProvider userId={athleteId}>
-      <TrainingSessionProvider athleteId={athleteId}>{children}</TrainingSessionProvider>
-    </ExerciseLibraryProvider>
+    <UnitsProvider userId={athleteId}>
+      <ExerciseLibraryProvider userId={athleteId}>
+        <TrainingSessionProvider athleteId={athleteId}>{children}</TrainingSessionProvider>
+      </ExerciseLibraryProvider>
+    </UnitsProvider>
   );
 }

@@ -1,45 +1,62 @@
-## fix(video): never lose a clip to an expired session, and pin the clip stream's auth
+## fix(units): apply the athlete's kg/lb preference
 
-Two findings from the 9 Oct test audit.
+The Pounds setting on Me was saved to the profile and nothing ever read it. An athlete who picked Pounds and typed 225 stored **225 kg**. This is finding B3 in the 9 Oct test audit, which calls it the most likely way a wrong load gets into the system.
 
-### 1. A clip was deleted when the session expired mid-upload (audit B4, confirmed)
+### Semantics (Joey's decision, pending confirmation)
 
-The audit guessed this from reading the code. A test confirmed it. `sendChunk` treated every 4xx as permanent, 401 included. `attachClipToSet` and `resumeInterruptedUploads` then called `forgetUpload`, which deleted the blob from IndexedDB. The JWT is minted once per attempt and lasts 15 minutes, so a 150 MB clip on slow gym wifi could outlive its token and be lost. The new transport test "mints one fresh JWT and resends the refused chunk" failed on `dev` with `{ ok: false, retryable: false }`.
+- **Storage stays kilograms everywhere.** There is no schema change, no migration, and nothing changes for the coach.
+- **Athletes type and read weights in their chosen unit.** The conversion happens at the screen boundary and nowhere else. A typed number becomes kilos on its way in (`loadFromInput`), and kilos become the athlete's unit on the way out (`loadIn`), both in `lib/units.ts`.
+- **No round-trip drift.** In pounds the pad takes one decimal and the screen shows one decimal. Stored kilos are rounded to the gram, which is 0.0022 lb and well inside the 0.05 lb that would change a one-decimal display. A test checks every tenth from 0 to 1,500 lb, and each one reads back exactly as typed. Kilos keep the two decimals the logger has always used, and the kilo path is unchanged.
+- **Plate rounding in pounds: 5 lb, rounded down.** A weight the app works out for the athlete (a percentage, an RPE suggestion, a backoff) is floored to a multiple of 5 lb for a pound athlete, instead of 2.5 kg. That is the 2.5 lb plate pair, the smallest a commercial pound gym reliably has, and the nearest pound equivalent of the 2.5 kg step (5 lb = 2.27 kg). It rounds down for the same reason the kilo version does. Example: 75% of a 203 kg training max is 152.25 kg, which is 335.7 lb, so the target is 335 lb, stored as 151.953 kg.
 
-**Changes**
-- `lib/video/resumable-upload.ts`: on a 401, mint **one** fresh JWT per attempt and resend the refused chunk.
-  - If no JWT can be minted (signed out), the result is `{ retryable: true, authExpired: true }` and the clip is kept.
-  - If the **fresh** JWT is refused as well, the 401 was never about the session, so the result is a permanent refusal (`retryable: false`) and the clip is dropped as before. This is the athlete-with-no-circle case in `scripts/e2e-video.mts:139-158`: Appwrite returns a 401 about permissions on the first chunk, whatever the token. The first version of this fix held that clip as pending forever, which failed `e2e:video` (7/8).
-  - A 401 on a later chunk, after an earlier refresh worked, is kept as pending without a second mint. 408 and 429 are now retryable as well, matching the offline queue's `classify`. Other 4xx (wrong type, too large) are still permanent.
-- `lib/video/upload.ts`: a kept clip now returns `reason: "pending"` instead of `"failed"`. When sign-in is the blocker, the message says signing in will send it. On resume, a sign-in failure refunds its attempt (`refundAttempt`, new in `pending-store.ts`). Without that, five app starts while signed out would reach `MAX_UPLOAD_ATTEMPTS` and delete a clip the server never refused.
-- `components/logging/attach-video.tsx`: a pending clip shows **"Video pending"** with the message (`data-upload="pending"`) and counts as on its way, so the coach's nudge stops. A refused clip is still shown as a failure.
-- Signing back in already re-runs `resumeInterruptedUploads()` (the `athleteId` effect in `session-context.tsx`), which picks up from the last confirmed chunk. The Feedback screen already lists pending uploads from IndexedDB.
-- `docs/video-upload.md`: the retry policy is updated.
+### What changed
 
-### 2. Clip stream auth had no test that could fail (audit C07, C03–C06)
+**Plumbing**
+- `lib/profile/units-context.tsx` (new): `UnitsProvider` plus `useUnits()`, mounted in the athlete providers. It starts from the unit this device last cached for the account, so a reload with no signal still reads pounds. Then it reads the profile with a plain read (`fetchProfile`, not `ensureMyProfile`, because opening a screen should not write a row). A failed read leaves the cached unit in place. A unit picked on Me applies everywhere at once, and a slower read that arrives afterwards cannot undo it. Outside the provider, which covers every coach screen and the existing tests, the unit is kg.
+- `lib/units.ts`: adds `loadIn`, `loadFromInput`, `loadNumber`, `loadLabel`, `unitName` and `LOAD_DECIMALS`. The existing helpers are untouched.
+- `lib/strength/plates.ts`: `roundToLoadable(kg, unit = "kg")` and `LOADABLE_INCREMENT_LB = 5`.
+- An optional `unit` parameter, defaulting to kg, is threaded through `suggestLoad`, `nextSetSuggestion`, `resolvePrescription`, `resolveExercise`, `targetsFor`, `backoffLoad`, `backoffDisplay`, `backoffNote`, `prescribeNewRows`, `resolvePrefill`, `rowAfter` and `addRow`.
 
-`app/api/clip/[fileId]/route.ts` is correct today. Before this change, though, adding `x-appwrite-key` to the storage read would have turned it into an unauthenticated admin read of every clip, and every test would still have passed. I checked this against `dev`: that mutation **survived** the old tests. The fake storage served any file to any caller, and the header check used `toMatchObject`.
+**Every athlete surface that enters or shows a weight**
 
-**Changes (tests only, no route change)**
-- The fake storage now models Appwrite permissions. The API key reads everything; a JWT reads only that user's files.
-- Upstream headers are checked with exact equality, and `x-appwrite-key` must be absent.
-- A valid ticket for a clip its holder can't read streams nothing: 404, with no upstream body leaked.
-- Missing, expired, forged, payload-edited, malformed and wrong-file tickets never create the admin client and never mint a JWT.
-- The JWT is minted only for the ticket's user. Query params such as `u`, `user` and `userId` are ignored.
-- `Cache-Control: no-store, private`, `nosniff`, and the forward allowlist (`set-cookie` and `x-appwrite-session` dropped).
+| Surface | In | Out |
+|---|---|---|
+| Log Session: set rows, column header, number pad (label, decimals) | ✓ | ✓ |
+| Log Session: target lines, "Next:" line, suggestion and backoff notes, Session done tonnage | | ✓ |
+| History list (tonnage) and session detail (rows, edit pad, tonnage) | ✓ | ✓ |
+| Lift Detail: e1RM, change, PRs, recent sets | | ✓ |
+| Today and My Program target lines | | ✓ |
+| Bodyweight: entry, headline, 7-day average and change, placeholder, recent list, range-error message | ✓ | ✓ |
+| DOTS block: total breakdown and stale bodyweight (athlete only, through the provider) | | ✓ |
+| Coach Feedback: the set the comment is on | | ✓ |
+
+On bodyweight, `checkWeight(value, unit)` keeps a pound reading to one decimal in pounds and stores it to the gram. The old rounding to 0.1 kg would have turned 180 lb into 179.9 lb on read-back. The plausible range is still 20 to 400 kg, which the message gives as 44.1 to 881.8 lb.
+
+### Still in kilograms, and why
+
+- **Every coach screen** (roster, athlete view, current maxes, review queue, clip context, program editor). The coach side has no provider, so it renders kg as before. Applying a coach's own preference there was not trivial: those screens mix the coach's profile with the athlete's data, and nobody has asked for it.
+- **The prescription snapshot a logged set keeps** (`prescribed`). The coach reads it back in clip context and the CSV, and storage is in kilos. A pound athlete's "Next:" line uses a separate `shown` field in pounds, so the athlete never sees the kilo version.
+- **CSV export.** The header says `Load (kg)` and `e1RM (kg)`, so the unit is never ambiguous. The file is shaped for Ruairi's spreadsheet, and switching columns by athlete would break his formulas. The snapshot text in it is also in kilos.
+- **DOTS itself** is calculated in kilos. Only what the athlete reads is converted.
+- **Charts** (e1RM, bodyweight) have no axis numbers, and a linear rescale does not change their shape.
 
 ### Testing
-- Tests were written first. The transport and upload tests failed on `dev` and pass with the fix.
-- Mutation-checked. All 11 upload-path mutations were killed: no refresh, 401 classed as permanent, 408/429 dropped, no resend, no refund, forgetting on auth, wrong message, refresh per chunk instead of per attempt, and two UI mutations. Three more for the persistent-401 follow-up were killed as well: no reclassification after a fresh JWT is refused, the reclassification left retryable, and signed-out-on-refresh treated as permanent. All 9 clip-route mutations were killed: admin key added, admin key instead of JWT, fileId check removed, admin client created eagerly, upstream body passed through, `set-cookie` forwarded, nosniff removed, Cache-Control changed, and JWT user taken from the query.
-- `npm test` passed (169 files). `npm run lint` and `npx tsc --noEmit` are clean.
-- Not run here: `e2e:video` against the live instance. It reported 7/8 on the first version, failing the no-circle check. The follow-up commit targets that check and needs a rerun.
+
+- `npm test`: 171 files, **2,680 passed** (2,630 before, plus 50 new). `npm run lint` is clean, and so is `npx tsc --noEmit` after `npx next typegen`.
+- **Unit tests:** conversion helpers, including the exhaustive pound round trip and gram storage; pound plates; the suggestion engine and gate; the pad's pound decimals; targets, snapshots and `targetLine` in pounds, including a reference lift and backoffs; the prefill note; bodyweight's check, its no-drift sweep and its message; the DOTS breakdown; and the provider's cache, account isolation and the race with a slow read.
+- **Component tests:** the real `UnitsProvider` wrapped around `LogScreen` shows that **225 lb typed on the pad reaches `logSet` as `loadKg: 102.058`** and reads back as 225, including on the prefilled next set and on its pad. Further tests cover a History correction typed in pounds and written as kilos, a set row and header in pounds, a Bodyweight entry passed as pounds, and Lift Detail, Today and History tonnage in pounds.
+- **Failing first:** with the logger, set row, pad and block reverted to `dev`, all three pound tests on the log screen fail.
+- **Mutation check:** 26 one-site mutations, each reverted after its run, and **26 killed**. They include the original bug (pad entry not converted), the pad opening on stored kilos, pounds stored to 0.1 kg, pound plates on the kilo increment, the gate dropping the unit, the snapshot losing its kilos, `targetLine` showing kilos, the backoff note in kilos, the bodyweight screen dropping the unit, the provider ignoring its cache, a stale read winning, and Lift Detail, DOTS, History tonnage and Today targets left in kilos. History tonnage and Today targets survived the first pass, so I added tests for both in the second commit.
+- **Not pinned by a test:** the DOTS block and Coach Feedback card components (`formatTotalBreakdown` underneath is pinned), the My Program screen (it makes the same `targetsFor` call as Today), and the Session done tonnage.
 
 ### Decisions for Joey
-- **A 401 is told apart by behaviour, not by Appwrite's error `type`.** A 401 that a JWT minted a moment ago also gets is treated as a refusal. That doesn't depend on Appwrite's error-type strings, which aren't pinned anywhere in the repo. The trade-off: a session revoked in the instant between the fresh mint and the resend would drop the clip instead of keeping it. I judged that unlikely enough to accept.
-- **Refused tickets still return 404, not 401/403.** The brief asked for 401/403 on expired or forged tickets. The route and `ticket.ts` deliberately give one opaque 404 for every refusal, and the player's refresh fires on any error status, so I pinned the existing 404. Switching would be a one-line change per branch plus test updates. Say if you want it.
-- **403 on an upload chunk is still permanent.** The queue retries 403, but on a storage create Appwrite's 403 means the bucket refused the file. Retrying it would loop until the attempt cap.
-- **`refundAttempt` has no unit test.** It is raw IndexedDB glue, like the rest of `pending-store.ts` (audit Q2: always mocked). The `upload.test.ts` mock pins that it is called. Adding `fake-indexeddb` would cover it, but that is a new dependency.
-- **The 15-minute JWT lifetime is still [Unverified]** against the instance's configured TTL. The fix doesn't depend on the exact value.
-- **"Video pending" stays on that camera only until the screen reloads.** After a reload, pending clips still show on Feedback (from IndexedDB), but the Log screen's camera goes back to "Add video". A per-set pending marker on the Log screen would be a follow-up.
+
+1. **Confirm the semantics above.** They are your call, and I have treated them as pending.
+2. **Existing data [Unverified].** If any athlete already picked Pounds and logged sets before this merges, those sets hold pound numbers in kilo columns. After this fix they will show about 2.2× too heavy. To check: list `profiles` with `units = "lb"` and compare their sets' `logged_at` against the merge date. I did not run anything against the live instance. If any turn up, the fix is a one-off `÷ 2.2046` on those rows plus `rollups:rebuild`.
+3. **5 lb, rounded down** for derived weights in pounds. [SME to confirm] with Ruairi, alongside the existing 2.5 kg increment. Micro-plates would argue for 2.5 lb.
+4. **A coach's fixed kilos are converted, not re-rounded.** For example, 140 kg reads as 308.6 lb, and the athlete loads whatever their plates allow. The alternative would floor it to 305 lb, which quietly changes the coach's number.
+5. **Pound entry takes one decimal, not two.** Pound totals move in 0.5 lb steps even with micro-plates, and this restriction is what makes the round trip exact.
+6. **Switching unit mid-session.** Rows already on screen keep their stored kilos and display converted. Only new rows are priced on the new plates. I think this is right, because re-pricing a row under the athlete's thumb is what `prescribeNewRows` already refuses to do.
+7. **The 7-day bodyweight average** is still worked out on weigh-ins rounded to 0.1 kg and then converted. It can sit up to about 0.1 lb from an average taken in pounds. [Inference] This is a display-only difference and not worth reworking `rollingAverage` for.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

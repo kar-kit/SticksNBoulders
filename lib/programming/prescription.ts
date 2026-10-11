@@ -7,6 +7,7 @@ import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import type { RpeValue } from "@/lib/logging/set";
 import { RPE_VALUES } from "@/lib/logging/set";
 import type { MaxKind } from "@/lib/strength/reference-max";
+import { loadLabel, loadNumber, type UnitPreference } from "@/lib/units";
 
 /**
  * What a coach writes in the load cell.
@@ -219,10 +220,18 @@ export interface ResolvedPrescription {
   basisKg: number | null;
   /**
    * The line as the logged set records it, when that differs from `display`.
-   * Only a reference row sets it: "105 kg (70% of Bench Press, training 150)".
-   * Absent everywhere else, so an own-exercise snapshot reads exactly as before.
+   * A reference row sets it: "105 kg (70% of Bench Press, training 150)". So
+   * does any line resolved for an athlete who reads pounds, because the record
+   * is always written in kilos -- it is what the coach reads back later.
+   * Absent otherwise, so an own-exercise kilo snapshot reads exactly as before.
    */
   record?: string;
+  /**
+   * The record in the athlete's own unit, when that is not kilos and the
+   * record says more than `display` (a reference row's basis). What the
+   * logger's "Next:" line shows.
+   */
+  shown?: string;
   /**
    * True when the weight came from today's first working set rather than from
    * a stored max.
@@ -308,8 +317,12 @@ function chooseBasis(basis: MaxKind, maxes: BasisMaxes): { kg: number; used: Bas
 }
 
 /** "training 150", "e1RM 160": the basis a reference row's snapshot records. */
-const basisNote = (used: BasisUsed, kg: number): string =>
-  `${used === "estimated" ? "e1RM" : used} ${trimZero(kg)}`;
+const basisNote = (used: BasisUsed, kg: number, unit: UnitPreference = "kg"): string =>
+  `${used === "estimated" ? "e1RM" : used} ${unit === "kg" ? trimZero(kg) : loadNumber(kg, unit)}`;
+
+/** A load in words in the given unit. Kilos keep their exact historical form. */
+const labelIn = (kg: number, unit: UnitPreference): string =>
+  unit === "kg" ? kgLabel(kg) : loadLabel(kg, unit);
 
 /**
  * The lift a percentage is OF, when it is not the line's own exercise. Its
@@ -327,22 +340,30 @@ export interface ReferenceLift {
  * caller passes THAT lift's maxes, and passes them without a session max: a
  * tempo bench set measures tempo bench, not comp bench (docs/reference-lift.md
  * §2). It changes the words and nothing else about how the number is reached.
+ *
+ * `unit` is the athlete's display unit. It changes `display`, and the plates a
+ * percentage is floored to (plates.ts); `record` stays in kilos whatever it
+ * is. A fixed load is the coach's exact number and is never re-rounded: 140
+ * kg reads as 308.6 lb, and the athlete loads what their plates allow.
  */
 export function resolvePrescription(
   spec: PrescriptionSpec,
   maxes: BasisMaxes = {},
   reference?: ReferenceLift,
+  unit: UnitPreference = "kg",
 ): ResolvedPrescription {
   const none = { basisUsed: null, basisKg: null, synced: false } as const;
+  const inKilos = unit === "kg";
 
   switch (spec.kind) {
     case "fixed":
       return {
         loadKg: spec.loadKg,
         rpe: null,
-        display: kgLabel(spec.loadKg),
+        display: labelIn(spec.loadKg, unit),
         unresolved: false,
         ...none,
+        ...(inKilos ? {} : { record: kgLabel(spec.loadKg) }),
       };
 
     case "rpe":
@@ -376,15 +397,17 @@ export function resolvePrescription(
         };
       }
 
-      const loadKg = roundToLoadable((spec.percent / 100) * chosen.kg);
+      const loadKg = roundToLoadable((spec.percent / 100) * chosen.kg, unit);
       const synced = chosen.used === "session";
+      const withBasis = (u: UnitPreference) =>
+        `${labelIn(loadKg, u)} (${percentLabel}, ${basisNote(chosen.used, chosen.kg, u)})${capLabel}`;
       return {
         // The resolved kilos lead, because that is what goes on the bar. The
         // percentage stays visible so an athlete can see what it was a
         // percentage of when their max moves next block.
         loadKg,
         rpe: cap,
-        display: `${kgLabel(loadKg)} (${percentLabel})${capLabel}`,
+        display: `${labelIn(loadKg, unit)} (${percentLabel})${capLabel}`,
         unresolved: false,
         basisUsed: chosen.used,
         basisKg: chosen.kg,
@@ -392,8 +415,10 @@ export function resolvePrescription(
         // A reference row's set records the basis too: when the bench max
         // moves from 150 to 155, "105 kg (70%)" could not say what it was of.
         ...(reference
-          ? { record: `${kgLabel(loadKg)} (${percentLabel}, ${basisNote(chosen.used, chosen.kg)})${capLabel}` }
-          : {}),
+          ? { record: withBasis("kg"), ...(inKilos ? {} : { shown: withBasis(unit) }) }
+          : inKilos
+            ? {}
+            : { record: `${kgLabel(loadKg)} (${percentLabel})${capLabel}` }),
       };
     }
   }
@@ -438,13 +463,14 @@ export function resolveExercise(
   specs: readonly PrescriptionSpec[],
   maxes: BasisMaxes = {},
   loggedSoFar: readonly SetForEstimate[] = [],
+  unit: UnitPreference = "kg",
 ): ResolvedPrescription[] {
   const estimates = loggedSoFar
     .map((set) => sessionMaxFrom(set))
     .filter((kg): kg is number => kg !== null);
   const session = estimates.length > 0 ? Math.max(...estimates) : null;
   const withSession: BasisMaxes = { ...maxes, session: session ?? maxes.session ?? null };
-  return specs.map((spec) => resolvePrescription(spec, withSession));
+  return specs.map((spec) => resolvePrescription(spec, withSession, undefined, unit));
 }
 
 /**

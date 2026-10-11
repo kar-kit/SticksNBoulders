@@ -70,6 +70,12 @@ const set = (over: Partial<HistorySet> = {}): HistorySet => ({
   ...over,
 });
 
+// The athlete's unit. Kilos unless a test says otherwise.
+const units = vi.hoisted(() => ({ unit: "kg" as "kg" | "lb" }));
+vi.mock("@/lib/profile/units-context", () => ({
+  useUnits: () => ({ unit: units.unit, setUnit: vi.fn() }),
+}));
+
 function setup(sessions: SessionRecord[] = [session()]) {
   training.value = {
     state: { status: "ready", sessions },
@@ -85,6 +91,7 @@ function setup(sessions: SessionRecord[] = [session()]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  units.unit = "kg";
   library.exercises = exercises;
   loaded.sets = [set()];
 });
@@ -110,6 +117,13 @@ describe("the list", () => {
     expect(card).toHaveTextContent("Squat");
     expect(card).toHaveTextContent("8 sets");
     expect(card).toHaveTextContent("4,200 kg");
+  });
+
+  it("gives the tonnage in pounds to an athlete who reads them", async () => {
+    units.unit = "lb";
+    setup();
+    const card = await screen.findByRole("link", { name: /8 sets/ });
+    expect(card).toHaveTextContent("9,259 lb");
   });
 
   it("takes its totals from the session, not from the sets on screen", async () => {

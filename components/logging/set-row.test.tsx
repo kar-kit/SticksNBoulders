@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SetRow } from "./set-row";
+import { SetRow, SetRowHeader } from "./set-row";
 import type { LoggableSet } from "@/lib/logging/set";
 
 function set(overrides: Partial<LoggableSet> = {}): LoggableSet {
@@ -230,5 +230,23 @@ describe("SetRow — column alignment", () => {
     expect(screen.getByRole("button", { name: "Set 4 weight in kilograms" })).toHaveClass(
       "justify-start",
     );
+  });
+});
+
+describe("SetRow — an athlete who reads pounds", () => {
+  it("shows the stored kilos in pounds and says so", () => {
+    render(<SetRow index={1} set={set({ loadKg: 102.058 })} state="logged" unit="lb" />);
+    expect(screen.getByLabelText("Set 1 weight in pounds")).toHaveTextContent("225");
+  });
+
+  it("asks for pounds on an empty active row", () => {
+    render(<SetRow index={1} set={set({ loadKg: null })} state="active" unit="lb" />);
+    expect(screen.getByRole("button", { name: "Set 1 weight in pounds" })).toHaveTextContent("LB");
+  });
+
+  it("heads the column in pounds", () => {
+    render(<SetRowHeader unit="lb" />);
+    expect(screen.getByText("LB")).toBeInTheDocument();
+    expect(screen.queryByText("KG")).not.toBeInTheDocument();
   });
 });
