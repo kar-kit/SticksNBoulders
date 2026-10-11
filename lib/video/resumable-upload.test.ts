@@ -32,6 +32,7 @@ const server = vi.hoisted(() => ({
     number,
     | "refuse"
     | "expired"
+    | "no-circle"
     | "timeout"
     | "throttled"
     | "error"
@@ -84,6 +85,13 @@ const fakeFetch = vi.fn(async (_url: string, init: RequestInit) => {
     case "expired":
       // The JWT ran out partway through a long upload on slow wifi.
       return json(401, { message: "Failed to verify JWT. Expired token", type: "user_jwt_invalid" });
+    case "no-circle":
+      // An athlete with no circle team cannot stamp the clip's read role.
+      // Appwrite says so with a 401, whatever JWT carries the request.
+      return json(401, {
+        message: 'Permissions must be one of: (any, users, user:joey)',
+        type: "user_unauthorized",
+      });
     case "timeout":
       return json(408, { message: "Request timeout" });
     case "throttled":
@@ -194,16 +202,44 @@ describe("when the session runs out partway through", () => {
     expect(server.posts).toHaveLength(2);
   });
 
+  /**
+   * A 401 is not always the token's age. An athlete with no circle team is
+   * refused on the first chunk with a 401 about permissions (scripts/
+   * e2e-video.mts). The tell is that a JWT minted a moment ago is refused
+   * too: that is a verdict on the upload, not on the session, and holding the
+   * clip as pending would retry it forever.
+   */
+  it("treats a 401 that a freshly minted JWT also gets as a refusal", async () => {
+    server.script.set(1, "no-circle");
+    server.script.set(2, "no-circle");
+    const result = await uploadResumable(blob(), target);
+
+    expect(result).toEqual({
+      ok: false,
+      retryable: false,
+      message: "Permissions must be one of: (any, users, user:joey)",
+      uploadedCount: 0,
+    });
+    expect(server.jwts).toEqual(["jwt-1", "jwt-2"]);
+    expect(server.posts).toHaveLength(2);
+  });
+
   it("refreshes once, not in a loop, when the fresh JWT is refused too", async () => {
     server.script.set(2, "expired");
     server.script.set(3, "expired");
     const result = await uploadResumable(blob(), target);
 
-    expect(result).toMatchObject({ ok: false, retryable: true, authExpired: true, uploadedCount: 1 });
+    expect(result).toMatchObject({ ok: false, retryable: false, uploadedCount: 1 });
+    expect(result).not.toHaveProperty("authExpired");
     expect(server.jwtCalls).toBe(2);
     expect(server.posts).toHaveLength(3);
   });
 
+  /**
+   * A later chunk refused after an earlier refresh worked is the session
+   * running out again (a very slow upload), not a refusal of a file the server
+   * was already accepting. Kept, without a second mint.
+   */
   it("refreshes once per attempt, not once per chunk", async () => {
     server.script.set(2, "expired");
     server.script.set(4, "expired");

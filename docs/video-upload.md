@@ -63,9 +63,13 @@ immediately, because retrying a refusal is a loop, not resilience.
 
 An expired session is **not** a refusal. The JWT is minted once per attempt and
 lasts 15 minutes, so a long upload on gym wifi can outlive it. On a 401 the
-transport mints one fresh JWT and resends the refused chunk. If that fails too,
-or no JWT can be minted at all, the clip stays in IndexedDB and the camera shows
-"Video pending". Signing back in re-runs `resumeInterruptedUploads()`, which
+transport mints one fresh JWT and resends the refused chunk. If no JWT can be
+minted (signed out), the clip stays in IndexedDB and the camera shows "Video
+pending". If the fresh JWT is refused as well, the 401 was never about the
+session -- an athlete with no circle team gets a 401 about permissions on the
+first chunk (`e2e:video` asserts it) -- so it is a permanent refusal and the
+clip is dropped like any other. A 401 on a later chunk, after a refresh already
+worked, is kept as pending without a second mint. Signing back in re-runs `resumeInterruptedUploads()`, which
 carries on from the chunk the server last confirmed. A sign-in failure does not
 count towards `MAX_UPLOAD_ATTEMPTS` (`refundAttempt`), because five app starts
 while signed out would otherwise abandon a clip the server never refused. 408

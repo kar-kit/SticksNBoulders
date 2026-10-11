@@ -213,6 +213,13 @@ export async function uploadResumable(
       jwt = fresh;
       // The refused chunk never landed, so it is the one to send again.
       outcome = await sendChunk(blob, fileId, athleteId, name, range, jwt, signal);
+      // Refused again with a JWT minted a moment ago: the 401 was never about
+      // the session. An athlete with no circle team gets exactly this, on the
+      // first chunk, with a message about permissions (scripts/e2e-video.mts).
+      // That is a refusal, and a refusal held as pending is retried forever.
+      if (!outcome.ok && outcome.authExpired) {
+        outcome = { ok: false, retryable: false, message: outcome.message };
+      }
     }
     if (!outcome.ok) {
       return { ...outcome, uploadedCount };
