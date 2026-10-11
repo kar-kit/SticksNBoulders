@@ -1,5 +1,5 @@
 import { weekStart } from "@/lib/strength/rollup";
-import { sessionDateLabel, type SessionRecord } from "./session";
+import { calendarDayLabel, type SessionRecord } from "./session";
 
 /**
  * The History list.
@@ -65,13 +65,16 @@ export function formatDuration(ms: number | null): string {
  * The same Monday-to-Sunday, Europe/London week the rollups use. Two different
  * ideas of a week in one product is how an athlete ends up looking at a chart
  * bar and a History heading that disagree about which session belongs where.
+ *
+ * `week` is a `weekStart` value: the Monday as UTC midnight, so it is labelled
+ * as a calendar day, not as an instant in the viewer's zone.
  */
 export function weekLabel(week: Date, now: Date = new Date()): string {
   const current = weekStart(now).getTime();
   const difference = Math.round((current - week.getTime()) / (7 * 24 * 60 * 60 * 1000));
   if (difference === 0) return "This week";
   if (difference === 1) return "Last week";
-  return `Week of ${sessionDateLabel(week)}`;
+  return `Week of ${calendarDayLabel(week)}`;
 }
 
 /** Newest first, the order someone scanning for "last time" is reading in. */

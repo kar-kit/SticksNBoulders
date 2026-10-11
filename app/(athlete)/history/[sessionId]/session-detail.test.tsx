@@ -148,8 +148,9 @@ describe("correcting a set", () => {
     await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
     expect(editSet.mock.calls[0][0]).toBe("st-1");
     expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 145, reps: 5, rpe: 8, isWarmup: false });
-    // And the exercise and week, so the rollup behind it can be recomputed.
-    expect(editSet.mock.calls[0][2]).toMatchObject({ exerciseId: "squat" });
+    // And the exercise and the set's own logged time, so the rollup for the
+    // week it was logged in is recomputed, not this week's.
+    expect(editSet.mock.calls[0][2]).toEqual({ exerciseId: "squat", loggedAt: new Date("2026-09-14T09:30:00Z") });
   });
 
   it("shows the correction immediately rather than waiting for the write", async () => {

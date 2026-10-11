@@ -143,6 +143,30 @@ describe("personal records", () => {
     await user.click(screen.getByRole("button", { name: "8w" }));
     expect(screen.getByLabelText("Personal records")).toHaveTextContent("Heaviest single200 × 1");
   });
+
+  it("takes personal records from every week, not the charted range", async () => {
+    // 40 weeks back is outside the default 12w and the 8w range alike, and it
+    // holds the athlete's best single and best estimate.
+    data.weeks = [
+      ...(data.weeks as WeekPoint[]),
+      point(40, { bestE1rmKg: 230, bestSingleKg: 215, bestSingleReps: 1, bestReps: 3, bestRepsLoadKg: 200 }),
+    ];
+    const { user } = setup();
+    const records = await screen.findByLabelText("Personal records");
+    expect(records).toHaveTextContent("Heaviest single215 × 1");
+    expect(records).toHaveTextContent("Best estimated230 kg");
+    await user.click(screen.getByRole("button", { name: "8w" }));
+    expect(screen.getByLabelText("Personal records")).toHaveTextContent("Heaviest single215 × 1");
+    expect(screen.getByLabelText("Personal records")).toHaveTextContent("Best estimated230 kg");
+  });
+
+  it("shows the reps the heaviest set was done for", async () => {
+    // A heavy double is a double. Showing "200 × 1" undersells it, and the
+    // default fixture cannot tell because its heaviest week is a single.
+    data.weeks = [point(3, { bestSingleKg: 200, bestSingleReps: 2 }), point(1, { bestSingleKg: 190, bestSingleReps: 1 })];
+    setup();
+    expect(await screen.findByLabelText("Personal records")).toHaveTextContent("Heaviest single200 × 2");
+  });
 });
 
 describe("recent sets", () => {

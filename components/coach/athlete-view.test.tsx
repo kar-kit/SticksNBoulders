@@ -39,7 +39,9 @@ const row = (over: Record<string, unknown> = {}) => ({
   coachId: "coach",
   athleteId: "joey",
   status: "active",
-  linkedAt: "2026-09-02T10:00:00.000Z",
+  // 10:00 local on 2 Sep wherever the suite runs: the header shows the
+  // viewer's calendar day, and a UTC instant is 3 Sep east of +14h.
+  linkedAt: new Date(2026, 8, 2, 10, 0).toISOString(),
   revokedAt: null,
   ...over,
 });

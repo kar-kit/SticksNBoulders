@@ -151,6 +151,15 @@ export function sessionDateLabel(date: Date): string {
   return `${DAYS[date.getDay()]} ${date.getDate()} ${MONTHS[date.getMonth()]}`;
 }
 
+/**
+ * The same label for a calendar day held as UTC midnight, the shape
+ * `weekStart` returns. Read with local getters, Monday 00:00Z is Sunday
+ * anywhere west of Greenwich.
+ */
+export function calendarDayLabel(day: Date): string {
+  return `${DAYS[day.getUTCDay()]} ${day.getUTCDate()} ${MONTHS[day.getUTCMonth()]}`;
+}
+
 /** "Thu, Deadlift" for Today's last-session line; the name is the first exercise. */
 export function lastSessionLabel(session: SessionRecord, firstExercise: string | null): string {
   const day = DAYS[session.startedAt.getDay()].slice(0, 3);

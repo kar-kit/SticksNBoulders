@@ -75,6 +75,13 @@ describe("groupByWeek", () => {
     expect(weeks[1].sessions.map((s) => s.sessionId)).toEqual(["old"]);
   });
 
+  it("dates an older week by its Monday in every time zone", () => {
+    // weekStart hands back the Monday as UTC midnight. Formatted as a local
+    // instant, that is Sunday anywhere west of Greenwich.
+    const weeks = groupByWeek([card({ startedAt: new Date("2026-09-02T09:00:00Z") })], NOW);
+    expect(weeks[0].label).toBe("Week of Monday 31 Aug");
+  });
+
   it("keeps a Sunday session in the week it belongs to", () => {
     // Same Monday-to-Sunday London week the rollups use. Two ideas of a week
     // in one product is how a chart bar and a History heading end up

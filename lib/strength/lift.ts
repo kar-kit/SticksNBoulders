@@ -93,13 +93,22 @@ export function personalRecords(points: readonly WeekPoint[]): PersonalRecords {
     mostRepsLoadKg: null,
   };
 
+  let heaviestWeek = 0;
   for (const point of points) {
     if (point.bestE1rmKg !== null && point.bestE1rmKg > (records.bestE1rmKg ?? -1)) {
       records.bestE1rmKg = point.bestE1rmKg;
     }
-    if (point.bestSingleKg !== null && point.bestSingleKg > (records.heaviestSingleKg ?? -1)) {
+    // On a load tie the most recent week wins (Joey, 11 Oct 2026), whatever
+    // order the list arrives in -- the same rule rollupFrom applies in a week.
+    const weekAt = point.weekStart.getTime();
+    if (
+      point.bestSingleKg !== null &&
+      (point.bestSingleKg > (records.heaviestSingleKg ?? -1) ||
+        (point.bestSingleKg === records.heaviestSingleKg && weekAt > heaviestWeek))
+    ) {
       records.heaviestSingleKg = point.bestSingleKg;
       records.heaviestSingleReps = point.bestSingleReps;
+      heaviestWeek = weekAt;
     }
     if (
       point.bestReps !== null &&
