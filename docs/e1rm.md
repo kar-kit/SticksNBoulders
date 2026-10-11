@@ -95,6 +95,7 @@ That revision is a script run, not a migration:
 ```
 npm run e1rm:backfill              # plans, writes nothing
 npm run e1rm:backfill -- --yes     # applies
+npm run e1rm:backfill -- --athlete <id> [--yes]   # one athlete only (what e2e:e1rm uses)
 ```
 
 It reconciles rather than fills blanks — a set whose estimate has changed is

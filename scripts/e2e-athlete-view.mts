@@ -34,6 +34,8 @@ import {
   sessionPermissions,
   setPermissions,
 } from "../appwrite/documents/policy";
+import { adjustProgramHref } from "../lib/coach/adjust-program";
+import { notLinkedCopy } from "../lib/coach/link-status";
 import { estimateOneRepMax } from "../lib/strength/e1rm";
 import { weekStart } from "../lib/strength/rollup";
 
@@ -73,9 +75,12 @@ const benchId = await globalLift("Bench Press");
 const mkUser = (tag: string, name: string) =>
   users.create({ userId: ID.unique(), email: `av-${tag}-${stamp}@example.com`, password: PASSWORD, name });
 
-const athlete = await mkUser("a", "Joey Pang");
-const coach = await mkUser("c", "Ruairi Deane");
-const stranger = await mkUser("s", "Louis Stranger");
+type Fixture = Awaited<ReturnType<typeof mkUser>>;
+// Assigned inside the try, so a throw while creating them still reaches the
+// finally that deletes them.
+let athlete!: Fixture;
+let coach!: Fixture;
+let stranger!: Fixture;
 
 const created = { sessions: [] as string[], sets: [] as string[], link: "" };
 
@@ -98,6 +103,10 @@ const visible = (page: Page, text: string | RegExp, timeout = 20000) =>
 const browser = await chromium.launch();
 
 try {
+  athlete = await mkUser("a", "Joey Pang");
+  coach = await mkUser("c", "Ruairi Deane");
+  stranger = await mkUser("s", "Louis Stranger");
+
   // --- the athlete, linked -------------------------------------------------
   await ensureCircle(teams, athlete.$id, "Joey Pang");
   await addCoachToCircle(teams, athlete.$id, coach.$id);
@@ -217,7 +226,17 @@ try {
     await sessions.getByText("Knee felt fine today").waitFor({ timeout: 5000 }).then(() => true).catch(() => false),
   );
   check("the filmed set is listed under Videos, waiting", await coachPage.getByRole("region", { name: "Videos" }).getByText("waiting").first().waitFor({ timeout: 10000 }).then(() => true).catch(() => false));
-  check("the block is a placeholder, not invented data", await visible(coachPage, "No program yet"));
+  // THIS BLOCK: a way into the Program Editor, and no progress numbers
+  // inferred from what was lifted -- a number nobody prescribed is worse than
+  // none (components/coach/athlete-view.tsx, ProgramSection).
+  const block = coachPage.getByRole("region", { name: "This block" });
+  check(
+    "the block section offers Adjust program, for this athlete",
+    (await block.getByRole("link", { name: "Adjust program" }).getAttribute("href", { timeout: 20000 }).catch(() => null)) ===
+      adjustProgramHref(athlete.$id),
+  );
+  const blockText = (await block.innerText().catch(() => "")) ?? "";
+  check("and invents no progress numbers", blockText.length > 0 && !/\d/.test(blockText), blockText.replace(/\s+/g, " "));
 
   // --- setting a max inline ------------------------------------------------
   console.log("\nSetting a max inline");
@@ -283,16 +302,20 @@ try {
   const { memberships } = await teams.listMemberships({ teamId: circleTeamId(athlete.$id) });
   const membership = memberships.find((m) => m.userId === coach.$id);
   if (membership) await teams.deleteMembership({ teamId: circleTeamId(athlete.$id), membershipId: membership.$id });
+  const revokedAt = new Date();
   await db.updateRow({
     databaseId: D,
     tableId: "coach_athlete_links",
     rowId: created.link,
-    data: { status: "revoked", revoked_at: new Date().toISOString() },
+    data: { status: "revoked", revoked_at: revokedAt.toISOString() },
     permissions: linkPermissions({ coachId: coach.$id, athleteId: athlete.$id }),
   });
   await coachPage.reload();
   check("the coach sees 'No longer linked', not an error", await visible(coachPage, "No longer linked"));
-  check("with the date it ended", await visible(coachPage, /ended the link on \d+ \w{3}/));
+  // The gate's own sentence, from the function that writes it, so a copy
+  // change cannot break this -- but a missing or wrong date still does.
+  const { body } = notLinkedCopy({ kind: "left", revokedAt });
+  check("with the date it ended", body.includes(" on ") && (await visible(coachPage, body)), body);
   check("and none of the training", (await coachPage.getByText("180 × 3").count()) === 0);
   check("and not the athlete's name", (await coachPage.getByText("Joey Pang").count()) === 0);
   await coachPage.screenshot({ path: ".shots/athlete-view-revoked.png" });
@@ -311,9 +334,11 @@ try {
     for (const row of page.rows) await del(tableId, row.$id);
   }
   if (created.link) await del("coach_athlete_links", created.link);
-  await del("profiles", athlete.$id);
-  await teams.delete({ teamId: circleTeamId(athlete.$id) }).catch(() => {});
-  for (const u of [athlete, coach, stranger]) await users.delete({ userId: u.$id }).catch(() => {});
+  if (athlete) {
+    await del("profiles", athlete.$id);
+    await teams.delete({ teamId: circleTeamId(athlete.$id) }).catch(() => {});
+  }
+  for (const u of [athlete, coach, stranger].filter(Boolean)) await users.delete({ userId: u.$id }).catch(() => {});
 }
 
 const failed = results.filter((ok) => !ok).length;
