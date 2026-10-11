@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ForgotForm } from "./forgot-form";
 
@@ -76,21 +76,75 @@ describe("the confirmation never reveals whether the account exists", () => {
 });
 
 describe("the resend cooldown", () => {
-  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  // The countdown's clock (Date and setInterval) is fully fake: no
+  // shouldAdvanceTime, so it moves only when the test moves it, and every move
+  // is inside act(). setTimeout stays real because Testing Library's async
+  // wrapper waits on it and cannot see Vitest's fake timers.
+  beforeEach(() => vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] }));
   afterEach(() => vi.useRealTimers());
 
-  it("counts down before another can be sent", async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  /** Sends, then lets the (mocked) request settle inside act. */
+  async function sendWithFakeClock() {
+    const user = userEvent.setup();
     render(<ForgotForm />);
     await user.type(screen.getByLabelText("Email"), "joey@example.com");
     await user.click(screen.getByRole("button", { name: "Send reset link" }));
-    await screen.findByText("Check your email");
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Check your email")).toBeInTheDocument();
+  }
 
-    expect(screen.getByRole("button", { name: "Resend link" })).toBeDisabled();
-    expect(screen.getByText(/Resend in 1:00|Resend in 0:5\d/)).toBeInTheDocument();
+  it("counts down before another can be sent", async () => {
+    await sendWithFakeClock();
+    const resend = screen.getByRole("button", { name: "Resend link" });
 
-    await vi.advanceTimersByTimeAsync(61_000);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Resend link" })).toBeEnabled());
+    expect(resend).toBeDisabled();
+    expect(screen.getByText("Resend in 1:00")).toBeInTheDocument();
+
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(resend).toBeDisabled();
+    expect(screen.getByText("Resend in 0:30")).toBeInTheDocument();
+
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(resend).toBeEnabled();
     expect(screen.getByText("You can ask for another one")).toBeInTheDocument();
+  });
+
+  it("starts the cooldown again after a resend", async () => {
+    await sendWithFakeClock();
+    await act(() => vi.advanceTimersByTimeAsync(60_000));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Resend link" }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    expect(session.requestPasswordReset).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Resend link" })).toBeDisabled();
+    expect(screen.getByText("Resend in 1:00")).toBeInTheDocument();
+  });
+
+  it("never shows an enabled Resend, even for one frame", async () => {
+    // The confirmation used to commit once with the cooldown still at 0 and
+    // only disable the button on the next render. A DOM observer sees that
+    // flip as a mutation of the button's `disabled` attribute, however fast
+    // the second render follows.
+    let settle!: (value: unknown) => void;
+    session.requestPasswordReset.mockImplementation(() => new Promise((resolve) => (settle = resolve)));
+    const user = userEvent.setup();
+    render(<ForgotForm />);
+    await user.type(screen.getByLabelText("Email"), "joey@example.com");
+    await user.click(screen.getByRole("button", { name: "Send reset link" }));
+
+    const records: MutationRecord[] = [];
+    const observer = new MutationObserver((batch) => records.push(...batch));
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["disabled"] });
+    await act(async () => {
+      settle({ ok: true, value: {} });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+
+    const resend = screen.getByRole("button", { name: "Resend link" });
+    expect(resend).toBeDisabled();
+    expect(records.filter((r) => r.type === "attributes" && r.target === resend)).toEqual([]);
   });
 });
