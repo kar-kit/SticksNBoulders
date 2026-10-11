@@ -69,7 +69,9 @@ const squat: FeedbackSet = {
   reps: 3,
   rpe: 8,
   isWarmup: false,
-  loggedAt: "2026-09-19T18:00:00.000Z",
+  // 18:00 local on Saturday 19 Sep, whatever TZ the suite runs in. The card
+  // shows the athlete's own calendar day; 18:00Z is already Sunday in Auckland.
+  loggedAt: new Date(2026, 8, 19, 18, 0).toISOString(),
   videoFileId: "clip-1",
   notes: "felt heavy",
 };
