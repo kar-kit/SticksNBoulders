@@ -1,53 +1,57 @@
-## feat(editor): Calendar view of the program, beside the week view
+## fix(offline): set-logging queue integrity (shared phone, full storage, withdrawn sets)
 
-**Stacks on the program-editor-outline PR** (#71, `program-editor-outline`). Merge that first; this branch's diff against it is the calendar only.
+Three fixes to the offline set queue, from the 2026-10-09 test audit (Summary items 3 and 4, e2e P0-3, athlete U03 and C02/Q3). Each fix has tests that fail on `dev` and pass here. Each test was mutation-checked: reverting the fix makes it fail again.
 
-RTS, TrueCoach and TrainHeroic all show a program as a dated calendar, and coaches think about the cycle in weeks and phases. The editor's outline only showed one week at a time. This adds a **Week | Calendar** toggle to the program header. It is the only new control there. Calendar view shows the whole program as dated weeks. Schema, ops, permissions and validation are unchanged.
+### 1. Shared phone: A's unsent sets were sent as B (confirmed)
 
-### What changed
+**The bug.** Athlete A logs with no signal and signs out. Athlete B signs in on the same phone, and A's queued session and sets go to Appwrite as B. The runner stamps the attached actor onto every row, so A's training was written into B's account under B's permissions, where B's coach could read it. Queued ops had no owner, `signOut` never touched the queue, and `attachQueue` swapped the actor.
 
-**1. The toggle and the URL.** The header gets a segmented control (the existing `components/ui/tabs.tsx`) beside Starts. The choice is stored as `?view=calendar` and written with `history.replaceState`, which Next 16 syncs with its router, so it survives a reload and can be linked without adding a history entry. Any other query (`week`, `day`, `line` from "Adjust program") stays as it was. The page reads the view server-side (`editorViewFrom` in `lib/coach/adjust-program.ts`, next to `landingFrom`). Templates have no dates, so they get no toggle and always open in the week view.
+**Evidence.** `lib/offline/client.test.ts › a shared phone` uses the real `client.ts` and `queue.ts` with a mocked runner. On `dev` it fails with `expected [ 'athlete-b:session.create', 'athlete-b:set.create', 'athlete-b:set.create' ] to deeply equal []`, in the same tab and after a reload.
 
-**2. The calendar** (`components/coach/program-calendar.tsx`). A Monday-first grid with one row per program week and one `<tbody>` band per block. The band shows the block name and its date range, and the separator between blocks is thicker. Each row header shows the week name, its dates and its state. The state uses the outline's own `weekState` + `StateMark` (draft / live / logged), now exported from `program-outline.tsx`. Every cell is dated from the same helpers the week view uses (`scheduledOnFor`, `placeDay`, `weekRange`, `blockRange`).
+**The fix.**
+- `QueuedOp.ownerId` is stamped at enqueue. The queue's cache, and so every screen, only holds the attached athlete's ops. Other athletes' ops stay on disk untouched. They are held, not dropped, and flush exactly once, as their owner, when that athlete signs back in on the phone.
+- `detachQueue()` is called from `signOut`: nothing is sent with nobody signed in. A drain stops if the athlete changes under it.
+- `resumeInterruptedUploads(athleteId)` only resumes the signed-in athlete's clips. Before this, A's half-uploaded clip would have finished under B's session.
+- If training is still waiting to sync, Me → Sign out asks first: "Some of your training hasn't synced yet. It stays on this phone and sends the next time you sign in here." The options are Stay signed in and Sign out anyway. Permanently refused ops don't trigger the warning, because they won't send on a later sign-in either.
 
-A scheduled day shows its title, its first 3 distinct exercises and "+N more", plus a tick and a green edge once logged. A top set and its backoffs count as one lift. Its accessible name reads like "Mon 5 Oct, Squat day: Squat, Bench Press, Deadlift, +1, logged".
+### 2. Full storage: a set looked logged and wasn't
 
-A day dated outside its week, or not dated at all, is listed under its week's label rather than dropped.
+**The bug.** `confirmSet` showed the row as logged and started the rest timer before `logSet` had written to IndexedDB. When the write failed, the row went back to "planned" with nothing said, and the rest timer kept running. `writeLocal` swallowing its error was a red herring for the set itself, because localStorage only backs conveniences (rest timer, cached session). Tests now pin that.
 
-**3. Click-through.** Clicking a day switches to Week view on that week, scrolls to the day and puts the keyboard on its first line. A day with no lines, or a read-only one, gets focus on the day itself. This reuses the existing landing effect, generalised from "once, from the URL" to "whenever a landing is pending and the week view is showing".
+**The fix.** `confirmSet` now writes first and shows the result after. It awaits `logSet`, which resolves once the op is on disk and doesn't wait for Appwrite, and only then shows the row as logged and starts the rest. A failed write leaves the row in place with its numbers and shows a `role="alert"`: "That set wasn't saved — this phone couldn't store it. Your numbers are still in the row. Free up some space, then tap it again." The next tap retries with the same client id. A second tap during the write is ignored.
 
-**4. "+ Day" on empty cells.** It appears on hover or focus and sends the existing `addDay` op with `scheduledOn = anchor + 7·week + weekday`. That is the date a weekday chip would store. The view stays on the calendar and the cell becomes the new day.
+`logSet` no longer throws once `set.create` is on disk. Before, a `rollup.refresh` that couldn't be queued made the screen take back a set that would still sync.
 
-**5. No start date.** The calendar shows the same prompt as the week view. If nothing is dated, there is no grid. If some days are already dated, the anchor is counted back from them, as the week view already does.
+### 3. Withdrawn-op test was hollow, and hid a real race
 
-**6. Read-only** for anyone but the program's coach. There is no "+ Day", days still open, and empty cells are focusable and say "no session".
+**The test.** The old test enqueued the set after the drain had taken its snapshot, so it passed even with the snapshot guard deleted. It now seeds both ops before `attachQueue`, so both are in the batch.
 
-**7. Accessibility.** The table has `role="grid"` with column headers (Week, Mon–Sun), row headers named like "Accumulation · Week 2, draft" and block row-group headers. There is one tab stop for the whole grid. Arrows walk the cells, Home and End jump to the ends of a row, and Enter activates.
+**The race.** Writing the test properly exposed a real bug. `withdrawSet` removed ops from IndexedDB first and from the in-memory cache after. A drain that moved on during that delete still found the set and sent it, while `withdrawSet` had already returned `landed: false`, so no `set.delete` was queued behind it. The athlete's deleted set stayed on the coach's side. Now the cache drops the op synchronously, before the disk delete. A new test gates the disk delete to reproduce the race; it fails on the old ordering.
 
-**Nothing logged can move.** The calendar only reads, plus `addDay`. No existing day is redated.
+### Testing
+- `npm test`: 172 files, 2652 tests pass. `npx tsc --noEmit` is clean after `npx next typegen`. `npm run lint` is clean.
+- New and changed tests:
+  - `lib/offline/client.test.ts` (shared phone ×7, withdrawn op ×2)
+  - `lib/auth/session.test.ts`
+  - `app/(athlete)/me/me-panel.test.tsx`
+  - `lib/video/upload.test.ts`
+  - `lib/logging/set-store.test.ts`
+  - `app/(athlete)/log/log-screen.test.tsx` (mocked and real-queue storage-full paths, write-before-show ordering, double tap)
+  - `lib/local-store.test.ts`
+- Mutation checks, each turning at least one test red:
+  - the owner filter, adoption, `owner` assignment, `detachQueue`'s actor clear and the mid-drain actor check
+  - the upload athlete filter and `signOut`'s `detachQueue()`
+  - the sign-out warning branch
+  - the snapshot guard and withdraw ordering
+  - `setUnsaved(true)`, the double-tap guard, the rollup `.catch`, and `writeLocal`'s try/catch
+- Not run: e2e P0-3 against a live instance (offline checks only in this pass).
 
-### Layout choice
-
-[Inference] In Calendar view the outline column is hidden. The calendar rows carry the same block, week and state information, and dropping the 224 px rail gives each day column about 145 px at the coach side's ~1200 px effective width. Without that, columns would be about 115 px, and three exercise names truncate badly at that width. The side effect is that "+ Week", "+ Block" and block renames are only available in Week view.
-
-### Tests
-
-- `components/coach/program-calendar.test.tsx`: 17 tests. They cover the toggle and URL param (other params kept), opening on `?view=calendar`, no toggle on templates, column and row headers with state, block bands with ranges, cell dates across weeks and blocks, summary truncation, logged and unlabelled days, off-week and undated days, arrow-key walking with a single tab stop, click-through (week, scroll, focus on the line or the day), "+ Day" dates in two blocks, "+ Day" only on empty cells, "+ Day" with no start date but dated days, read-only mode, and the no-start-date prompt.
-- `lib/coach/adjust-program.test.ts`: `editorViewFrom`.
-- Mutation-checked: each of 21 deliberate breaks across the editor, the calendar and the view parser fails at least one test.
-- `scripts/e2e-calendar.mts` (`npm run e2e:calendar`) at 1440×900 covers `?view=calendar` and reload, the toggle writing and clearing the param, Monday-first headers, rows for both blocks, the summary with "+1 more", no horizontal scroll, click-through to the right week with focus inside the day, and "+ Day" on an empty cell. For "+ Day" it asserts both the stored `scheduled_on` and the cell turning into the new day. It writes the program through `program-fixtures.ts` ops and deletes only its own rows. **Not run yet.**
-
-`npx vitest run` passes 2630 of 2630. `npx eslint .`, `npx next build --webpack` and `npx tsc --noEmit` are all clean.
-
-### Check by eye
-
-- Cell density at 1440 with the coach-side 1.2× zoom: whether three exercise lines plus the title read comfortably at about 145 px.
-- Whether the hover-only "+ Day" is discoverable enough, or should show faintly at rest.
-- Whether hiding the outline in Calendar view is right, or whether Joey wants it kept.
-- The block band separator weight in dark mode.
-
-### E2E (live instance, Turbopack dev server, this branch)
-- New `npm run e2e:calendar` (`scripts/e2e-calendar.mts`, coach at 1440×900): 21/21. Covers the toggle and `?view=calendar`, grid rows and dates, day summaries, click-through to Week view, and + Day from an empty cell.
-- Re-run on this branch for regressions: `e2e:editor` 45/45, `e2e:program` 31/31, `e2e:copy` 22/22.
+### Decisions for Joey
+1. **Ops queued before this release have no owner, and the first athlete to open the app adopts them.** On a one-athlete phone, which is nearly every phone, that's the right owner. The alternative is stranding sets nobody can ever send. The leak survives only if a phone was shared and still had an unsynced queue at upgrade time. Should we hold unowned ops instead?
+2. **Sign-out warns but doesn't block.** It doesn't try a last flush either. Should we add a short `flush(true)` before the warning, so an online phone usually skips it?
+3. **B never sees that A's ops are being held.** They are invisible to B. P0-3 also allowed a "belongs to another account" notice. Showing one would tell B that someone else has unsynced training on the phone, so it is a privacy trade-off.
+4. **Write-before-show assumes the IndexedDB write is fast.** If IndexedDB hangs (older iOS Safari has had this bug), the confirm now does nothing visible, where before it showed a set that was lost on reload. Should we add a timeout that raises the same alert?
+5. **Still open:** `openQueueStore` falls back to an in-memory store when IndexedDB can't open (private mode, blocked). Sets then show as saved but are lost on reload, and nothing tells the athlete. It's out of scope here and worth a follow-up banner.
+6. **Still open:** two tabs on one phone share a queue (audit B7). Not addressed here.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
