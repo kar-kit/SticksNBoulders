@@ -1,11 +1,58 @@
 import { copyCalendar, copyWeekPlan, daysBetween, duplicateShift, shiftDay } from "./copy";
 import { programOp, type WeekTree } from "./program";
 
+/** `day` plus `n` days, computed independently of the code under test. */
+function utcDay(day: string, n: number): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/** Runs `fn` with the process in `zone`. Node re-reads TZ when it is assigned. */
+function withTimeZone(zone: string, fn: () => void) {
+  const before = process.env.TZ;
+  process.env.TZ = zone;
+  try {
+    fn();
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
+}
+
 describe("daysBetween and shiftDay", () => {
-  it("counts whole calendar days, across a month and a clock change", () => {
+  it("counts whole calendar days, across a month", () => {
     expect(daysBetween("2026-10-05", "2026-10-12")).toBe(7);
-    expect(daysBetween("2026-10-20", "2026-11-03")).toBe(14); // BST ends 25 Oct
+    expect(daysBetween("2026-09-28", "2026-10-05")).toBe(7);
     expect(daysBetween("2026-10-12", "2026-10-05")).toBe(-7);
+  });
+
+  /**
+   * A clock-change day is 23 or 25 hours long. Day arithmetic on local
+   * midnights that floors, or that adds 24 hours per day, is off by one across
+   * it -- but only in a zone that has the change, so each case switches the
+   * process into that zone rather than trusting whatever TZ the suite runs in.
+   * Both directions, both changes: flooring only breaks forward across the
+   * spring change and backward across the autumn one.
+   */
+  it.each([
+    ["Europe/London", "2026-03-29", "2026-10-25"],
+    ["America/Los_Angeles", "2026-03-08", "2026-11-01"],
+    ["Pacific/Auckland", "2026-04-05", "2026-09-27"],
+  ])("counts whole days across both clock changes in %s", (zone, autumnOrSpring, other) => {
+    withTimeZone(zone, () => {
+      for (const change of [autumnOrSpring, other]) {
+        const [y, m, d] = change.split("-").map(Number);
+        // Proves the zone switch took effect: the change day is not 24 hours.
+        expect(new Date(y, m - 1, d + 1).getTime() - new Date(y, m - 1, d).getTime()).not.toBe(86_400_000);
+        for (let start = -3; start <= 0; start++) {
+          const from = utcDay(change, start);
+          for (let n = -10; n <= 10; n++) {
+            expect(daysBetween(from, utcDay(from, n)), `${from} + ${n}`).toBe(n);
+            expect(shiftDay(from, n), `${from} + ${n}`).toBe(utcDay(from, n));
+          }
+        }
+      }
+    });
   });
 
   it("moves a dated day and leaves an undated one alone", () => {

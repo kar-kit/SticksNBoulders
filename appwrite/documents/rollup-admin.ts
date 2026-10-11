@@ -121,6 +121,7 @@ export async function rebuildRollup(
       reps: Number(row.reps) || 0,
       isWarmup: row.is_warmup === true,
       e1rmKg: typeof row.e1rm_kg === "number" ? row.e1rm_kg : null,
+      loggedAt: new Date(String(row.logged_at)),
     }));
 
   const computed = rollupFrom(sets);

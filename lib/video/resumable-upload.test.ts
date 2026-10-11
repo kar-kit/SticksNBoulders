@@ -30,10 +30,23 @@ const server = vi.hoisted(() => ({
   /** Per-call override, by the 1-based number of the chunk POST. */
   script: new Map<
     number,
-    "refuse" | "error" | "drop" | "lose-response" | "unreadable" | "unreadable-unheld"
+    | "refuse"
+    | "expired"
+    | "no-circle"
+    | "timeout"
+    | "throttled"
+    | "error"
+    | "drop"
+    | "lose-response"
+    | "unreadable"
+    | "unreadable-unheld"
   >(),
   posts: [] as string[],
+  /** The JWT each chunk POST carried, in order. */
+  jwts: [] as string[],
   jwtFails: false,
+  /** Mints succeed up to this many calls, then the session is gone. */
+  jwtMintsLeft: Infinity,
   jwtCalls: 0,
 }));
 
@@ -48,8 +61,8 @@ vi.mock("@/appwrite/browser-client", () => ({
     account: {
       async createJWT() {
         server.jwtCalls += 1;
-        if (server.jwtFails) throw new Error("no session");
-        return { jwt: "jwt-joey" };
+        if (server.jwtFails || server.jwtCalls > server.jwtMintsLeft) throw new Error("no session");
+        return { jwt: `jwt-${server.jwtCalls}` };
       },
     },
   }),
@@ -62,12 +75,27 @@ const fakeFetch = vi.fn(async (_url: string, init: RequestInit) => {
   const headers = init.headers as Record<string, string>;
   const range = headers["content-range"];
   server.posts.push(range);
+  server.jwts.push(headers["x-appwrite-jwt"]);
   const [, start, , size] = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(range)!.map(Number);
   server.total = Math.ceil(size / 4);
 
   switch (server.script.get(server.posts.length)) {
     case "refuse":
       return json(400, { message: "File extension not allowed" });
+    case "expired":
+      // The JWT ran out partway through a long upload on slow wifi.
+      return json(401, { message: "Failed to verify JWT. Expired token", type: "user_jwt_invalid" });
+    case "no-circle":
+      // An athlete with no circle team cannot stamp the clip's read role.
+      // Appwrite says so with a 401, whatever JWT carries the request.
+      return json(401, {
+        message: 'Permissions must be one of: (any, users, user:joey)',
+        type: "user_unauthorized",
+      });
+    case "timeout":
+      return json(408, { message: "Request timeout" });
+    case "throttled":
+      return json(429, { message: "Rate limit for the current endpoint has been exceeded" });
     case "error":
       return json(503, { message: "Service unavailable" });
     case "drop":
@@ -97,7 +125,9 @@ beforeEach(() => {
   server.total = 0;
   server.script = new Map();
   server.posts = [];
+  server.jwts = [];
   server.jwtFails = false;
+  server.jwtMintsLeft = Infinity;
   server.jwtCalls = 0;
   fakeFetch.mockClear();
   vi.stubGlobal("fetch", fakeFetch);
@@ -122,7 +152,8 @@ describe("a clean upload", () => {
 
 describe("when the server says no", () => {
   /**
-   * A 4xx is a decision, not a fault: wrong type, too big, expired session.
+   * A 4xx is a decision, not a fault: wrong type, too big. (Not an expired
+   * session, and not a timeout or a rate limit -- those are below.)
    * Reported as permanent so the caller drops it instead of re-sending the
    * same refused bytes on every app start until the attempt cap.
    */
@@ -140,7 +171,106 @@ describe("when the server says no", () => {
   });
 });
 
+describe("when the session runs out partway through", () => {
+  /**
+   * A JWT lasts 15 minutes and a 150MB clip on gym wifi can take longer. The
+   * 401 is the token's age, not a verdict on the file, so the transport mints
+   * one fresh JWT and carries on from the chunk that was refused.
+   */
+  it("mints one fresh JWT and resends the refused chunk, then finishes", async () => {
+    server.script.set(2, "expired");
+    const result = await uploadResumable(blob(), target);
+
+    expect(result).toEqual({ ok: true, fileId: "file-1" });
+    expect(server.posts).toEqual(["bytes 0-3/10", "bytes 4-7/10", "bytes 4-7/10", "bytes 8-9/10"]);
+    expect(server.jwts).toEqual(["jwt-1", "jwt-1", "jwt-2", "jwt-2"]);
+    expect(server.jwtCalls).toBe(2);
+  });
+
+  it("keeps the upload resumable when the session itself is gone", async () => {
+    server.script.set(2, "expired");
+    server.jwtMintsLeft = 1;
+    const result = await uploadResumable(blob(), target);
+
+    expect(result).toEqual({
+      ok: false,
+      retryable: true,
+      authExpired: true,
+      message: "Not signed in",
+      uploadedCount: 1,
+    });
+    expect(server.posts).toHaveLength(2);
+  });
+
+  /**
+   * A 401 is not always the token's age. An athlete with no circle team is
+   * refused on the first chunk with a 401 about permissions (scripts/
+   * e2e-video.mts). The tell is that a JWT minted a moment ago is refused
+   * too: that is a verdict on the upload, not on the session, and holding the
+   * clip as pending would retry it forever.
+   */
+  it("treats a 401 that a freshly minted JWT also gets as a refusal", async () => {
+    server.script.set(1, "no-circle");
+    server.script.set(2, "no-circle");
+    const result = await uploadResumable(blob(), target);
+
+    expect(result).toEqual({
+      ok: false,
+      retryable: false,
+      message: "Permissions must be one of: (any, users, user:joey)",
+      uploadedCount: 0,
+    });
+    expect(server.jwts).toEqual(["jwt-1", "jwt-2"]);
+    expect(server.posts).toHaveLength(2);
+  });
+
+  it("refreshes once, not in a loop, when the fresh JWT is refused too", async () => {
+    server.script.set(2, "expired");
+    server.script.set(3, "expired");
+    const result = await uploadResumable(blob(), target);
+
+    expect(result).toMatchObject({ ok: false, retryable: false, uploadedCount: 1 });
+    expect(result).not.toHaveProperty("authExpired");
+    expect(server.jwtCalls).toBe(2);
+    expect(server.posts).toHaveLength(3);
+  });
+
+  /**
+   * A later chunk refused after an earlier refresh worked is the session
+   * running out again (a very slow upload), not a refusal of a file the server
+   * was already accepting. Kept, without a second mint.
+   */
+  it("refreshes once per attempt, not once per chunk", async () => {
+    server.script.set(2, "expired");
+    server.script.set(4, "expired");
+    const result = await uploadResumable(blob(), target);
+
+    expect(result).toMatchObject({ ok: false, retryable: true, authExpired: true, uploadedCount: 2 });
+    expect(server.jwtCalls).toBe(2);
+  });
+
+  it("can be resumed after signing back in, from the chunk it stopped at", async () => {
+    server.script.set(2, "expired");
+    server.jwtMintsLeft = 1;
+    await uploadResumable(blob(), target);
+    server.posts = [];
+    server.script = new Map();
+    server.jwtMintsLeft = Infinity;
+
+    expect(await uploadResumable(blob(), target)).toEqual({ ok: true, fileId: "file-1" });
+    expect(server.posts).toEqual(["bytes 4-7/10", "bytes 8-9/10"]);
+  });
+});
+
 describe("when the server or the connection fails", () => {
+  it.each(["timeout", "throttled"] as const)("reports a %s (408, 429) as worth another go, not as a refusal", async (kind) => {
+    server.script.set(2, kind);
+    const result = await uploadResumable(blob(), target);
+
+    expect(result).toMatchObject({ ok: false, retryable: true, uploadedCount: 1 });
+    expect(result).not.toHaveProperty("authExpired");
+  });
+
   it("reports a 5xx as worth another go, with what the server confirmed", async () => {
     server.script.set(2, "error");
     const result = await uploadResumable(blob(), target);
@@ -158,7 +288,11 @@ describe("when the server or the connection fails", () => {
 
   it("reports a missing session as worth another go, before sending anything", async () => {
     server.jwtFails = true;
-    expect(await uploadResumable(blob(), target)).toMatchObject({ ok: false, retryable: true });
+    expect(await uploadResumable(blob(), target)).toMatchObject({
+      ok: false,
+      retryable: true,
+      authExpired: true,
+    });
     expect(fakeFetch).not.toHaveBeenCalled();
   });
 });

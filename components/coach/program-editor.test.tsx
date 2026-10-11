@@ -351,6 +351,16 @@ describe("the Program Editor grid", () => {
     expect(screen.getByRole("button", { name: "Wed" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Load, line 1" })).toBeDisabled();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Remove line/ })).not.toBeInTheDocument();
+  });
+
+  it("removes exactly the line whose × was pressed", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Remove line 2" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "removePrescription", prescriptionId: "l2" }));
+    expect(store.send).toHaveBeenCalledTimes(1);
+    expect(store.send).not.toHaveBeenCalledWith(expect.objectContaining({ prescriptionId: "l1" }));
   });
 
   it("says so when the program cannot be read, rather than showing an empty grid", async () => {

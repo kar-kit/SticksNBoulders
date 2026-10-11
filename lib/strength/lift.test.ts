@@ -108,19 +108,20 @@ describe("personalRecords", () => {
     expect(personalRecords(tied).mostRepsLoadKg).toBe(140);
   });
 
-  /**
-   * Documents current behaviour; it is not a decision. Within one week
-   * rollupFrom breaks a heaviest-single tie on more reps (140x5 beats 140x3),
-   * but across weeks this keeps whichever tied week it saw first -- so the
-   * all-time record depends on list order and can show 140x3 after a 140x5
-   * week. The two rules disagree and nobody has picked one; this test exists
-   * so that changing either is deliberate.
-   */
-  it("CURRENT BEHAVIOUR: on a heaviest-single tie across weeks, keeps the first week listed", () => {
-    const three = week("2026-08-03T00:00:00Z", { bestSingleKg: 140, bestSingleReps: 3 });
-    const five = week("2026-08-10T00:00:00Z", { bestSingleKg: 140, bestSingleReps: 5 });
-    expect(personalRecords([three, five]).heaviestSingleReps).toBe(3);
-    expect(personalRecords([five, three]).heaviestSingleReps).toBe(5);
+  // Joey, 11 Oct 2026: a heaviest-single tie goes to the most recent week.
+  it("on a heaviest-single tie across weeks, the later week wins in either input order", () => {
+    const earlier = week("2026-08-03T00:00:00Z", { bestSingleKg: 140, bestSingleReps: 5 });
+    const later = week("2026-08-10T00:00:00Z", { bestSingleKg: 140, bestSingleReps: 3 });
+    expect(personalRecords([earlier, later]).heaviestSingleReps).toBe(3);
+    expect(personalRecords([later, earlier]).heaviestSingleReps).toBe(3);
+  });
+
+  it("a heavier single wins whatever its week, and a lighter later week does not displace it", () => {
+    const heavy = week("2026-08-03T00:00:00Z", { bestSingleKg: 150, bestSingleReps: 1 });
+    const light = week("2026-08-10T00:00:00Z", { bestSingleKg: 140, bestSingleReps: 5 });
+    for (const order of [[heavy, light], [light, heavy]]) {
+      expect(personalRecords(order)).toMatchObject({ heaviestSingleKg: 150, heaviestSingleReps: 1 });
+    }
   });
 
   it("ignores weeks that set no record of that kind", () => {

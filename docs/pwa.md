@@ -25,6 +25,13 @@ On install it caches the athlete shell (`/`, `/today`, `/log`, `/history`,
 font those pages reference. It is all or nothing. If one page fails, the
 install fails and the previous worker keeps serving.
 
+That makes one wrongly extracted asset URL fatal, and silent. Webpack names
+route-group chunks `chunks/app/(athlete)/layout-<hash>.js`, and an extraction
+that stopped at the `)` once broke offline on every webpack build. After a
+build, `npm run check:sw` reads the prerendered shell pages with the worker's
+own extraction and fails if any page or asset is missing from `.next`. It needs
+no server and no browser, and works on webpack and Turbopack builds.
+
 ### Why this cannot leak one account into another
 
 Three rules, each enforced in the worker rather than by convention:

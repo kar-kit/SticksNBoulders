@@ -142,6 +142,49 @@ describe("setting a max inline", () => {
     expect(store.fetchReferenceMaxes).toHaveBeenCalledTimes(2);
   });
 
+  it("holds a future-dated max back until its day, from local midnight", async () => {
+    // Next block's training max. Dropping the date would make it effective
+    // now and re-price every % line on the athlete's phone today. 19 Oct is
+    // still BST, so a UTC midnight would be an hour late in London.
+    store.setReferenceMax.mockResolvedValue("new-row");
+    const user = userEvent.setup();
+    render(<CurrentMaxes athleteId="joey" />);
+
+    await user.click(await screen.findByRole("button", { name: "Set training max for Squat" }));
+    const date = screen.getByLabelText("Takes effect from");
+    await user.clear(date);
+    await user.type(date, "2026-10-19");
+    await user.type(screen.getByLabelText("training max for Squat, kg"), "190{Enter}");
+
+    await waitFor(() => expect(store.setReferenceMax).toHaveBeenCalledTimes(1));
+    const sent = store.setReferenceMax.mock.calls[0][0];
+    expect(sent).toMatchObject({ exerciseId: SQUAT, kind: "training", valueKg: 190 });
+    expect(sent.effectiveFrom).toEqual(new Date(2026, 9, 19));
+  });
+
+  it("defaults to today's date as the athlete's clock reads it, just after midnight", async () => {
+    // 23:30 UTC on Sunday 11 Oct is 00:30 on Monday 12 Oct in London. The
+    // default must be the local day, or a late-night edit lands a day early.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-11T23:30:00Z"));
+    try {
+      store.setReferenceMax.mockResolvedValue("new-row");
+      const user = userEvent.setup();
+      render(<CurrentMaxes athleteId="joey" />);
+
+      await user.click(await screen.findByRole("button", { name: "Set training max for Squat" }));
+      await user.type(screen.getByLabelText("training max for Squat, kg"), "185{Enter}");
+
+      await waitFor(() => expect(store.setReferenceMax).toHaveBeenCalledTimes(1));
+      const now = new Date();
+      expect(store.setReferenceMax.mock.calls[0][0].effectiveFrom).toEqual(
+        new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("refuses something that is not a weight before any round trip", async () => {
     const user = userEvent.setup();
     render(<CurrentMaxes athleteId="joey" />);

@@ -13,6 +13,7 @@ const set = (over: Partial<RollupSet> = {}): RollupSet => ({
   reps: 5,
   isWarmup: false,
   e1rmKg: 120,
+  loggedAt: new Date("2026-09-14T10:00:00Z"),
   ...over,
 });
 
@@ -118,16 +119,105 @@ describe("rollupFrom", () => {
     expect(rollup.bestReps).toBe(5);
   });
 
-  it("takes the heaviest working set, and the most reps at that weight", () => {
-    // 140x5 is a better week than 140x3. A rollup that called them the same
-    // would flatten exactly the progress the chart exists to show.
+  it("on a heaviest-set tie, the most recently logged set wins, whatever the input order", () => {
+    // Joey, 11 Oct 2026. 140x3 logged after 140x5 is the week as it ended.
+    const early = set({ loadKg: 140, reps: 5, loggedAt: new Date("2026-09-14T10:00:00Z") });
+    const late = set({ loadKg: 140, reps: 3, loggedAt: new Date("2026-09-16T10:00:00Z") });
+    const other = set({ loadKg: 120, reps: 8, loggedAt: new Date("2026-09-17T10:00:00Z") });
+    for (const sets of [[early, late, other], [late, early, other], [other, late, early]]) {
+      const rollup = rollupFrom(sets);
+      expect(rollup.bestSingleKg).toBe(140);
+      expect(rollup.bestSingleReps).toBe(3);
+    }
+  });
+
+  it("a heavier set still beats a later, lighter one; no tie, no change", () => {
     const rollup = rollupFrom([
-      set({ loadKg: 140, reps: 3 }),
-      set({ loadKg: 140, reps: 5 }),
-      set({ loadKg: 120, reps: 8 }),
+      set({ loadKg: 150, reps: 1, loggedAt: new Date("2026-09-14T10:00:00Z") }),
+      set({ loadKg: 140, reps: 5, loggedAt: new Date("2026-09-16T10:00:00Z") }),
     ]);
-    expect(rollup.bestSingleKg).toBe(140);
-    expect(rollup.bestSingleReps).toBe(5);
+    expect(rollup.bestSingleKg).toBe(150);
+    expect(rollup.bestSingleReps).toBe(1);
+  });
+
+  it("counts a working single like any other set", () => {
+    // A peaking week is mostly singles. Dropping them would lose the week's
+    // heaviest set, its best e1RM and a share of its tonnage all at once.
+    const rollup = rollupFrom([
+      set({ loadKg: 200, reps: 1, e1rmKg: 200 }),
+      set({ loadKg: 150, reps: 5, e1rmKg: 175 }),
+    ]);
+    expect(rollup).toEqual({
+      setCount: 2,
+      volumeReps: 6,
+      tonnageKg: 950,
+      bestE1rmKg: 200,
+      bestSingleKg: 200,
+      bestSingleReps: 1,
+      bestReps: 5,
+      bestRepsLoadKg: 150,
+    });
+  });
+
+  it("reports a week of only singles in full", () => {
+    const rollup = rollupFrom([
+      set({ loadKg: 180, reps: 1, e1rmKg: 190 }),
+      set({ loadKg: 190, reps: 1, e1rmKg: 195 }),
+      set({ loadKg: 185, reps: 1, e1rmKg: 192.5 }),
+    ]);
+    expect(rollup).toEqual({
+      setCount: 3,
+      volumeReps: 3,
+      tonnageKg: 555,
+      bestE1rmKg: 195,
+      bestSingleKg: 190,
+      bestSingleReps: 1,
+      bestReps: 1,
+      // Every set is one rep, so the rep record is the heaviest of them.
+      bestRepsLoadKg: 190,
+    });
+  });
+
+  it("handles doubles, and a single and a double at the same weight", () => {
+    // Tied on 190: the later set (the double) is the one reported.
+    const rollup = rollupFrom([
+      set({ loadKg: 190, reps: 1, e1rmKg: 195, loggedAt: new Date("2026-09-14T10:00:00Z") }),
+      set({ loadKg: 190, reps: 2, e1rmKg: 200, loggedAt: new Date("2026-09-15T10:00:00Z") }),
+      set({ loadKg: 170, reps: 2, e1rmKg: 180 }),
+    ]);
+    expect(rollup).toMatchObject({
+      setCount: 3,
+      volumeReps: 5,
+      tonnageKg: 910,
+      bestE1rmKg: 200,
+      bestSingleKg: 190,
+      bestSingleReps: 2,
+      bestReps: 2,
+      bestRepsLoadKg: 190,
+    });
+  });
+
+  it("totals a mixed week of singles, doubles, triples and fives in any order", () => {
+    const sets = [
+      set({ loadKg: 60, reps: 5, isWarmup: true, e1rmKg: null }),
+      set({ loadKg: 205, reps: 1, e1rmKg: 210 }),
+      set({ loadKg: 190, reps: 2, e1rmKg: 205 }),
+      set({ loadKg: 175, reps: 3, e1rmKg: 195 }),
+      set({ loadKg: 150, reps: 5, e1rmKg: 175 }),
+    ];
+    const expected = {
+      setCount: 4,
+      volumeReps: 11,
+      // 205 + 380 + 525 + 750
+      tonnageKg: 1860,
+      bestE1rmKg: 210,
+      bestSingleKg: 205,
+      bestSingleReps: 1,
+      bestReps: 5,
+      bestRepsLoadKg: 150,
+    };
+    expect(rollupFrom(sets)).toEqual(expected);
+    expect(rollupFrom([...sets].reverse())).toEqual(expected);
   });
 
   it("is empty rather than wrong for a week with only warm-ups", () => {

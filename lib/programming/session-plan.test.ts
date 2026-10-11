@@ -18,6 +18,14 @@ import {
 } from "./session-plan";
 
 let seq = 0;
+// Production-shaped ids for reference maxes. currentMax breaks an
+// effective-date tie on the later-created row by comparing ids as strings,
+// which is right for Appwrite's fixed-width hex ID.unique() but not for
+// "m9" vs "m10". Fixture ids have to sort the way real ones do.
+const rowId = () => (++seq).toString(16).padStart(20, "0");
+beforeEach(() => {
+  seq = 0;
+});
 const line = (over: Partial<Prescription>): Prescription => ({
   id: `l${++seq}`,
   programId: "p1",
@@ -205,7 +213,7 @@ describe("feeding the set row's prefill", () => {
 
 describe("the maxes a percentage resolves against", () => {
   const entry = (over: Partial<ReferenceMaxEntry>): ReferenceMaxEntry => ({
-    id: `m${++seq}`,
+    id: rowId(),
     exerciseId: "squat",
     kind: "training",
     valueKg: 200,
@@ -292,6 +300,17 @@ describe("stamping the logger's new rows with their targets", () => {
     expect(prescribeNewRows([typed], [typed], context([]))[0]).toEqual(typed);
   });
 
+  it("keeps a typed row untouched when a new row is planned beside it", () => {
+    // The case above exits early because nothing is new. Here one row is new,
+    // so every row goes through the per-row check, and the typed one has to
+    // survive it: 150 x 4 is what the athlete entered, not the coach's 140 x 5.
+    const typed = row("r1", { loadKg: 150, reps: 4 });
+    const [kept, added] = prescribeNewRows([typed], [typed, row("r2")], context([]));
+    expect(kept).toEqual(typed);
+    // The new row is still priced: set 2 of the 3 x 5, since r1 sits ahead of it.
+    expect(added).toMatchObject({ prescriptionId: "work", loadKg: 140, reps: 5 });
+  });
+
   it("leaves extra sets beyond the prescription, warm-ups and unprescribed exercises alone", () => {
     const logged = [set(140, 5, 7), set(140, 5, 7), set(140, 5, 7), set(150, 3, 8)];
     const [extra, warmup, bench] = prescribeNewRows(
@@ -311,7 +330,7 @@ describe("stamping the logger's new rows with their targets", () => {
  */
 describe("a percentage of another lift: the worked examples", () => {
   const max = (over: Partial<ReferenceMaxEntry>): ReferenceMaxEntry => ({
-    id: `m${++seq}`,
+    id: rowId(),
     exerciseId: "bench",
     kind: "training",
     valueKg: 150,
