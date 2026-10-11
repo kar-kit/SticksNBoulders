@@ -6,7 +6,7 @@ Follows the 9 Oct unit-test audit (coach S6/S7/S7b/S7c, backend BD1 to BD5). Two
 
 - **Program store:** the reads already page on a `$id` cursor and refusals already throw. The audit's S6/S7 were surviving mutants, not live bugs. This adds the tests so they stay that way.
 - **History set read (real bug):** `fetchSetsForSessions` read up to 25 sessions' sets in one 500-row page. At ~30 sets per powerlifting session with warm-ups, a beta athlete passes 500 within a few weeks, and History and the coach's Athlete View silently dropped whatever fell past it. It now pages.
-- **Backup driver (real bug):** a blocked user could come back active after a retried restore. `ensureUser` now re-blocks on a 409 too.
+- **Backup driver (two real bugs):** a blocked user could come back active after a retried restore, so `ensureUser` now re-blocks on a 409 too. And a 409 on user create also fires when a *different* account holds the email, which was reported as "existed"; it now refuses the restore.
 
 ### Changes
 
@@ -18,7 +18,8 @@ Follows the 9 Oct unit-test audit (coach S6/S7/S7b/S7c, backend BD1 to BD5). Two
    - success returns the row id, sent with the JWT
 2. `lib/logging/history-store.ts`: `fetchSetsForSessions` pages with `orderAsc($id)` + `cursorAfter`, 500 rows per page. Test in `lib/logging/history-store.test.ts` (new): 25 sessions × 30 sets = 750 rows all return.
 3. `scripts/backup-driver.ts`: a restore stops at its first error (`restore.ts` awaits each user in turn). If a run died after `users.create` and before `updateStatus(false)`, the re-run got a 409, reported "existed", and left the account open. `ensureUser` now passes a re-block as the 409 handler when the dump says the user was blocked. It only ever re-blocks: an existing account is never unblocked, and prefs, labels and verification still apply to new accounts only.
-4. `scripts/backup-driver.test.ts` (new, 11 tests, SDK fakes):
+4. `scripts/backup-driver.ts`: on a 409 for a user, `ensureUser` calls `users.get(dumpedId)`. Found means the same account (existing behaviour, including the re-block). A 404 means another account holds the email, so it throws naming the dumped id, the email and the clashing account's id (looked up read-only with `users.list` on the email; if that lookup fails the error still throws). The restore stops there like any other non-409 error, so none of that user's rows, teams or memberships are written. The clashing account is never modified or deleted. The check keys on the id, not on Appwrite's error type string.
+5. `scripts/backup-driver.test.ts` (new, 17 tests, SDK fakes):
    - dump keeps `$permissions` and puts only non-`$` fields in `data`
    - cursor, `$id` order and `ttl: 0` on rows, users and teams
    - a blocked user is dumped as blocked, with providers deduplicated and no password hash
@@ -26,22 +27,26 @@ Follows the 9 Oct unit-test audit (coach S6/S7/S7b/S7c, backend BD1 to BD5). Two
    - only a 409 counts as existed; 500, 401 and network errors rethrow
    - `ensureUser` re-blocks on create and on 409, and fails a user with no email
    - membership roles go through, and a non-409 rethrows
+   - same-id 409 is existed; an email-clash 409 fails loudly with the three ids, names the holder via an email query, leaves the clashing account untouched, and stops `restoreBackup` before any later user, team or row; a `users.get` failure other than 404 rethrows rather than reading as a clash
 
 ### Other list reads checked
 
 Every other cursor loop in `lib/` and `appwrite/documents/program-admin.ts` (audit G08) is correct. The single-page reads that remain are bounded per session, per week or per coach (`fetchSessionSets` at 100/200, rollup rebuild at 200 sets per lift per week, coach links at 100), and a 5-athlete beta stays well inside those limits.
 
+### Fixed in the last commit
+
+- **Email clash on user create.** Was listed as open. Now fixed as item 4 above. [Unverified] I did not confirm which 409 type Appwrite 1.8 returns for an email clash, which is why the check uses `users.get` rather than the type string.
+
 ### Testing
 
-- Each new test was mutation-checked. Program store: 6/6 killed. History: 4/5, and the survivor (`PAGE = 1000`) is equivalent. Backup driver: 12/12, including all five audit mutants, BD1 to BD5.
+- Each new test was mutation-checked. Program store: 6/6 killed. History: 4/5, and the survivor (`PAGE = 1000`) is equivalent. Backup driver: 12/12, including all five audit mutants, BD1 to BD5; the email-clash fix is covered by six more mutants, all killed.
 - The history and backup tests failed before their fixes (500 of 750 rows; `updateStatus` called 0 times).
-- `npm test`: 172 files, 2651 tests pass. `npm run lint` and `npx tsc --noEmit` are clean.
+- `npm test`: 172 files, 2657 tests pass. `npm run lint` and `npx tsc --noEmit` are clean.
 - No live-instance scripts were run.
 
-### Decisions for Joey
+### Decisions (Joey)
 
-- **Re-block on 409.** A restore into a live instance where an admin has unblocked someone since the dump will block them again. I chose that over the opposite risk, which is a banned account reopening silently. Say if you'd rather it only warn.
-- **A 409 on `users.create` can also mean a different account already holds that email** (`user_email_already_exists`). Today that reports "existed" even though the dumped user id doesn't exist, so their rows' permissions point at nobody. This PR doesn't fix it. A follow-up could confirm with `users.get(userId)` on a 409. [Unverified] I haven't checked which 409 type Appwrite 1.8 returns for an email clash.
+- **Re-block on 409.** Joey: best judgment, kept re-block (11 Oct). A restore into a live instance where an admin has unblocked someone since the dump will block them again, chosen over a banned account reopening silently.
 - **`fetchAthleteNames` uses `limit(athleteIds.length)` and filters forgeries afterwards.** A forged profile row for an athlete could push out the real one, and that athlete would lose their name in the rail. This is a provenance issue rather than truncation, so it's out of scope here.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

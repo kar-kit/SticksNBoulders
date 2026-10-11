@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { AppwriteException, type Storage, type TablesDB, type Teams, type Users } from "node-appwrite";
 import type { BackupUser } from "../appwrite/backup/types";
+import { restoreBackup } from "../appwrite/backup/restore";
+import { BACKUP_FORMAT_VERSION, type Backup } from "../appwrite/backup/types";
 import { appwriteSource, appwriteTarget } from "./backup-driver";
 
 /**
@@ -28,6 +30,9 @@ function fakes() {
     updateLabels: vi.fn(async () => ({})),
     updateEmailVerification: vi.fn(async () => ({})),
     updateStatus: vi.fn(async () => ({})),
+    get: vi.fn(async (params: { userId: string }) => ({ $id: params.userId })),
+    delete: vi.fn(async () => ({})),
+    updateEmail: vi.fn(async () => ({})),
   };
   const teams = {
     list: vi.fn(),
@@ -225,6 +230,104 @@ describe("appwriteTarget (restore)", () => {
     // Prefs, labels and verification are only set on a fresh account: an
     // existing one may have moved on since the dump.
     expect(users.updatePrefs).not.toHaveBeenCalled();
+  });
+
+  it("a 409 for a user whose id exists is the same account, so it counts as existed", async () => {
+    const { users, target } = fakes();
+    users.create.mockRejectedValue(new AppwriteException("User already exists", 409, "user_already_exists"));
+
+    await expect(target.ensureUser(user({ $id: "joey" }))).resolves.toBe("existed");
+    expect(users.get).toHaveBeenCalledWith({ userId: "joey" });
+  });
+
+  describe("when another account already holds the dumped user's email", () => {
+    const clash = () =>
+      new AppwriteException("A user with the same email already exists.", 409, "user_email_already_exists");
+    const notFound = () => new AppwriteException("User not found", 404, "user_not_found");
+
+    function clashFakes() {
+      const f = fakes();
+      f.users.create.mockRejectedValue(clash());
+      f.users.get.mockRejectedValue(notFound());
+      f.users.list.mockResolvedValue({ total: 1, users: [{ $id: "someone-else" }] });
+      return f;
+    }
+
+    it("fails loudly, naming the dumped id, the email and the account holding it", async () => {
+      const { target } = clashFakes();
+
+      const failure = target.ensureUser(user({ $id: "joey", email: "joey@example.com", status: false }));
+      await expect(failure).rejects.toThrow(/joey\b[\s\S]*joey@example\.com[\s\S]*someone-else/);
+    });
+
+    it("still fails when the clashing account cannot be looked up", async () => {
+      const { users, target } = clashFakes();
+      users.list.mockRejectedValue(serverError());
+
+      await expect(target.ensureUser(user({ $id: "joey" }))).rejects.toThrow(/joey/);
+    });
+
+    it("looks the clash up by email, and never writes to or deletes that account", async () => {
+      const { users, target } = clashFakes();
+
+      await expect(target.ensureUser(user({ $id: "joey", status: false }))).rejects.toThrow();
+
+      const queries = parsed((users.list.mock.calls[0][0] as { queries: string[] }).queries);
+      expect(queries).toContainEqual(expect.objectContaining({ method: "equal", attribute: "email", values: ["joey@example.com"] }));
+      expect(users.updateStatus).not.toHaveBeenCalled();
+      expect(users.updatePrefs).not.toHaveBeenCalled();
+      expect(users.updateLabels).not.toHaveBeenCalled();
+      expect(users.updateEmailVerification).not.toHaveBeenCalled();
+      expect(users.updateEmail).not.toHaveBeenCalled();
+      expect(users.delete).not.toHaveBeenCalled();
+    });
+
+    it("stops the restore there: no later user, team or row is written", async () => {
+      const { db, users, teams, target } = clashFakes();
+      const backup: Backup = {
+        manifest: {
+          formatVersion: BACKUP_FORMAT_VERSION,
+          takenAt: "2026-10-11T03:00:00.000Z",
+          endpoint: "https://appwrite.example/v1",
+          projectId: "snb",
+          databaseId: "main",
+          schemaVersion: 1,
+          tables: [{ id: "sets", rows: 1, expectedRows: 1 }],
+          users: 2,
+          teams: 1,
+          memberships: 1,
+          buckets: [],
+          omits: [],
+        },
+        tables: [
+          {
+            id: "sets",
+            expectedRows: 1,
+            rows: [{ $id: "r1", $permissions: ['read("user:joey")'], data: { athlete_id: "joey" } }],
+          },
+        ],
+        users: [user({ $id: "joey" }), user({ $id: "ruairi", email: "ruairi@example.com" })],
+        teams: [
+          { $id: "circle_joey", name: "Circle", memberships: [{ userId: "joey", roles: ["athlete"], confirmed: true }] },
+        ],
+        files: [],
+      };
+
+      await expect(restoreBackup(target, backup)).rejects.toThrow(/joey/);
+
+      expect(users.create).toHaveBeenCalledTimes(1);
+      expect(teams.create).not.toHaveBeenCalled();
+      expect(teams.createMembership).not.toHaveBeenCalled();
+      expect(db.createRow).not.toHaveBeenCalled();
+    });
+
+    it("does not mistake an unreadable users.get for a clash", async () => {
+      const { users, target } = fakes();
+      users.create.mockRejectedValue(clash());
+      users.get.mockRejectedValue(serverError());
+
+      await expect(target.ensureUser(user())).rejects.toThrow("Server error");
+    });
   });
 
   it("ensureUser restores prefs, labels and verification on a new account", async () => {

@@ -207,6 +207,32 @@ async function createOrExisting(
   }
 }
 
+/**
+ * After a 409 on user create: is the account at the dumped id really there?
+ * If not, a different account holds the email (or phone) and the restore has
+ * to stop. Read-only: the clashing account is never touched.
+ */
+async function confirmSameAccount(users: Users, userId: string, email: string): Promise<void> {
+  try {
+    await users.get({ userId });
+    return;
+  } catch (error) {
+    if (!(error instanceof AppwriteException && error.code === 404)) throw error;
+  }
+  let holder = "an account whose id could not be looked up";
+  try {
+    const found = await users.list({ queries: [Query.equal("email", email), Query.limit(1)] });
+    if (found.users[0]) holder = `account ${found.users[0].$id}`;
+  } catch {
+    // The refusal below is the point; the lookup only names the culprit.
+  }
+  throw new Error(
+    `Cannot restore user ${userId}: ${email} is already held by ${holder}, and no account ${userId} exists. ` +
+      `Their rows are permissioned to ${userId}, so restoring them would leave the data readable by nobody. ` +
+      `Nothing was changed on either account. Resolve the clash by hand, then re-run.`,
+  );
+}
+
 export function appwriteTarget(
   db: TablesDB,
   users: Users,
@@ -230,14 +256,24 @@ export function appwriteTarget(
       // the account exists and its owner takes it back through password reset
       // or their OAuth provider. See docs/backups.md.
       const block = () => users.updateStatus({ userId: user.$id, status: false });
+      const email = user.email;
       const outcome = await createOrExisting(
-        () => users.create({ userId: user.$id, email: user.email as string, name: user.name }),
-        // A blocked account is re-blocked even when it already exists. A
-        // restore stops at its first error, so one that died between creating
-        // this user and blocking them meets a 409 on the re-run, and would
-        // otherwise leave the account open. Only ever towards blocked: an
-        // existing account is never unblocked by a dump.
-        user.status ? undefined : block,
+        () => users.create({ userId: user.$id, email, name: user.name }),
+        // A 409 does not say which account clashed. Appwrite also answers 409
+        // when a *different* account holds this email, and calling that
+        // "existed" would leave every row permissioned to this id readable by
+        // nobody. The id is the authority, not the error type string, which
+        // differs between Appwrite versions (user_already_exists,
+        // user_email_already_exists, ...).
+        async () => {
+          await confirmSameAccount(users, user.$id, email);
+          // A blocked account is re-blocked even when it already exists. A
+          // restore stops at its first error, so one that died between creating
+          // this user and blocking them meets a 409 on the re-run, and would
+          // otherwise leave the account open. Only ever towards blocked: an
+          // existing account is never unblocked by a dump.
+          if (!user.status) await block();
+        },
       );
       if (outcome === "created") {
         if (Object.keys(user.prefs).length > 0) {
