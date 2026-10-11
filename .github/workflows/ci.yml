@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# No secrets: lint, types and unit tests only. The unit suite fakes Appwrite;
+# the e2e:* scripts need a live instance and are not run here.
+env:
+  TZ: Europe/London
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  check:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      # next typegen generates the route types tsc needs, then tsc --noEmit.
+      - run: npm run typecheck
+      - run: npx vitest run
+
+  # The product renders local calendar days, and athletes travel. Same suite,
+  # zones either side of London, so a fixture that only passes in London
+  # fails here instead of on someone's laptop.
+  test-timezones:
+    name: Test (TZ=${{ matrix.tz }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        tz: [UTC, America/Los_Angeles, Pacific/Auckland]
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run

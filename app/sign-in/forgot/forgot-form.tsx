@@ -20,7 +20,10 @@ export function ForgotForm() {
   const [email, setEmail] = useState("");
   const [sentAt, setSentAt] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
+  // The clock the cooldown is read against. Set in the same batch as sentAt,
+  // so the first render of the confirmation already has the full cooldown:
+  // deriving it in an effect left "Resend link" enabled for one frame.
+  const [now, setNow] = useState(0);
 
   const send = useCallback(async (address: string) => {
     setBusy(true);
@@ -30,17 +33,22 @@ export function ForgotForm() {
     // Awaited so the button stays busy, but the outcome is deliberately
     // discarded -- see the note above.
     await requestPasswordReset(address, window.location.origin);
-    setSentAt(Date.now());
+    const at = Date.now();
+    setSentAt(at);
+    setNow(at);
     setBusy(false);
   }, []);
 
+  const cooldown = sentAt === null ? 0 : remainingCooldown(sentAt, now);
+  const cooling = cooldown > 0;
+
+  // Only ticks while there is something to count down; once the cooldown is
+  // over nothing on screen depends on the clock.
   useEffect(() => {
-    if (sentAt === null) return;
-    const tick = () => setCooldown(remainingCooldown(sentAt, Date.now()));
-    tick();
-    const id = setInterval(tick, 1000);
+    if (!cooling) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [sentAt]);
+  }, [cooling]);
 
   const valid = looksLikeEmail(normaliseEmail(email));
 
@@ -57,7 +65,7 @@ export function ForgotForm() {
         <Button
           size="xl"
           block
-          disabled={cooldown > 0 || busy}
+          disabled={cooling || busy}
           onClick={() => void send(email)}
         >
           Resend link
@@ -66,7 +74,7 @@ export function ForgotForm() {
           className="flex h-12 items-center justify-center font-mono text-body text-muted-2"
           aria-live="polite"
         >
-          {cooldown > 0 ? `Resend in ${formatCooldown(cooldown)}` : "You can ask for another one"}
+          {cooling ? `Resend in ${formatCooldown(cooldown)}` : "You can ask for another one"}
         </span>
       </Screen>
     );

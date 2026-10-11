@@ -6,10 +6,12 @@
  *
  * What only the instance can prove:
  *
- *   - The coach flags a line "video required" in the Program Editor with the
- *     keyboard (arrow onto the checkbox, Space). The boolean lands on the
- *     prescription row through /api/program, and nowhere else: a stranger is
- *     refused, and a direct client write to the table is refused.
+ *   - Squat carries the seed's video default, so its line starts ticked; a
+ *     lift without one (Romanian Deadlift) starts unticked. The coach walks
+ *     the grid with the keyboard (Note -> Backoff -> the checkbox) and flips
+ *     it both ways with Space. The boolean lands on the prescription row
+ *     through /api/program, and nowhere else: a stranger is refused, and a
+ *     direct client write to the table is refused.
  *   - In Log Session the squat camera is emphasised before the sets are done,
  *     one status line (not an alert) appears once they are logged without a
  *     clip, and the athlete can still finish the session without filming.
@@ -47,20 +49,32 @@ const check = (label: string, ok: boolean, detail = "") => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}${detail ? ` — ${detail}` : ""}`);
 };
 
-const squatRow = await db.listRows({
-  databaseId: D,
-  tableId: "exercises",
-  queries: [Query.equal("is_global", true), Query.equal("name", "Squat"), Query.limit(1)],
-  ttl: 0,
-});
-const squatId = squatRow.rows[0]?.$id as string;
-if (!squatId) throw new Error('No global exercise "Squat". Run npm run exercises:seed first.');
+const globalExercise = async (name: string) => {
+  const page = await db.listRows({
+    databaseId: D,
+    tableId: "exercises",
+    queries: [Query.equal("is_global", true), Query.equal("name", name), Query.limit(1)],
+    ttl: 0,
+  });
+  const row = page.rows[0] as unknown as (Record<string, unknown> & { $id: string }) | undefined;
+  if (!row) throw new Error(`No global exercise "${name}". Run npm run exercises:seed first.`);
+  return row;
+};
+const squat = await globalExercise("Squat");
+const rdl = await globalExercise("Romanian Deadlift");
+// Preconditions, not checks: the seed decides these (lib/exercises/seed.ts,
+// VIDEO_DEFAULT_EXERCISES), and a stale seed is a setup problem, not a bug.
+if (squat.video_default !== true) throw new Error("Squat has no video_default on this instance. Run npm run exercises:seed.");
+if (rdl.video_default === true) throw new Error("Romanian Deadlift is video-by-default here; pick another lift for the off case.");
 
 const mkUser = (tag: string, name: string) =>
   users.create({ userId: ID.unique(), email: `vreq-${tag}-${stamp}@example.com`, password: PASSWORD, name });
-const athlete = await mkUser("a", "Joey Pang");
-const coach = await mkUser("c", "Ruairi Deane");
-const stranger = await mkUser("s", "Louis Stranger");
+type Fixture = Awaited<ReturnType<typeof mkUser>>;
+// Assigned inside the try, so a throw while creating them still reaches the
+// finally that deletes them.
+let athlete!: Fixture;
+let coach!: Fixture;
+let stranger!: Fixture;
 const created = { link: "", programId: "" };
 
 const asUser = async (userId: string) => {
@@ -99,6 +113,9 @@ const waits = (promise: Promise<unknown>) => promise.then(() => true).catch(() =
 
 const browser = await chromium.launch();
 try {
+  athlete = await mkUser("a", "Joey Pang");
+  coach = await mkUser("c", "Ruairi Deane");
+  stranger = await mkUser("s", "Louis Stranger");
   await ensureCircle(teams, athlete.$id, "Joey Pang");
   await ensureCircle(teams, coach.$id, "Ruairi Deane");
   await addCoachToCircle(teams, athlete.$id, coach.$id);
@@ -133,7 +150,7 @@ try {
   await coachPage.getByRole("button", { name: "Create" }).click();
   await coachPage.waitForURL(/\/coach\/programs\/[^/]+$/, { timeout: 30000 });
   created.programId = coachPage.url().split("/").at(-1)!;
-  await coachPage.getByRole("button", { name: "+ Day" }).click();
+  await coachPage.getByRole("button", { name: "+ Day", exact: true }).click();
   const day = coachPage.getByRole("region", { name: "Day 1" });
   await day.waitFor({ timeout: 20000 });
   await day.getByRole("combobox", { name: "Add exercise to Day 1" }).fill("Squat");
@@ -143,17 +160,47 @@ try {
   await sets.fill("2");
   await sets.press("Tab");
 
+  const lines = () => rowsOf("prescriptions", "program_id", created.programId);
+  const squatLine = (rows: Awaited<ReturnType<typeof rowsOf>>) => rows.find((r) => r.exercise_id === squat.$id);
   const toggle = day.getByRole("checkbox", { name: "Video required, line 1" });
-  check("the toggle starts off", !(await toggle.isChecked()));
+  const focused = (target: typeof toggle) => target.evaluate((el) => el === document.activeElement).catch(() => false);
+
+  // --- the default comes from the exercise -----------------------------------
+  check("Squat's line starts ticked: the lift is video-by-default", await toggle.isChecked());
+  const seeded = await poll(lines, (r) => squatLine(r)?.video_required === true);
+  check("and the default is stored, not just drawn", squatLine(seeded)?.video_required === true, String(squatLine(seeded)?.video_required));
+
+  await day.getByRole("combobox", { name: "Add exercise to Day 1" }).fill("Romanian Deadlift");
+  await coachPage.getByRole("option", { name: "Romanian Deadlift", exact: true }).click();
+  const rdlToggle = day.getByRole("checkbox", { name: "Video required, line 2" });
+  await rdlToggle.waitFor({ timeout: 20000 });
+  check("a lift without the default starts unticked", !(await rdlToggle.isChecked()));
+  const withRdl = await poll(lines, (r) => r.some((l) => l.exercise_id === rdl.$id));
+  const rdlLine = withRdl.find((l) => l.exercise_id === rdl.$id);
+  check("and is stored unticked", Boolean(rdlLine) && rdlLine?.video_required !== true, String(rdlLine?.video_required));
+  // One lift on the day keeps the athlete's half about the squat alone.
+  await day.getByRole("button", { name: "Remove line 2", exact: true }).click();
+  const squatOnly = await poll(lines, (r) => r.length === 1);
+  check("the extra line comes off again", squatOnly.length === 1 && squatOnly[0].exercise_id === squat.$id, `${squatOnly.length} lines`);
+
+  // --- the keyboard walk: Note -> Backoff -> the toggle -------------------------
   await day.getByRole("textbox", { name: "Note, line 1" }).focus();
   await coachPage.keyboard.press("ArrowRight");
-  check("ArrowRight from the Note cell lands on the toggle", await toggle.evaluate((el) => el === document.activeElement));
+  check("ArrowRight from the Note cell lands on Backoff", await focused(day.getByRole("textbox", { name: "Backoff, line 1" })));
+  await coachPage.keyboard.press("ArrowRight");
+  check("and once more lands on the toggle", await focused(toggle));
+
+  // Off and back on, so neither direction can pass because it started there.
   await coachPage.keyboard.press("Space");
-  await waits(coachPage.waitForFunction(() => (document.querySelector('[aria-label="Video required, line 1"]') as HTMLInputElement)?.checked === true));
-  check("Space turns it on", await toggle.isChecked());
+  check("Space turns it off", await waits(coachPage.waitForFunction(() => (document.querySelector('[aria-label="Video required, line 1"]') as HTMLInputElement)?.checked === false, null, { timeout: 10000 })));
+  const off = await poll(lines, (r) => squatLine(r)?.video_required === false);
+  check("and false is stored", squatLine(off)?.video_required === false, String(squatLine(off)?.video_required));
+  check("focus stays on the toggle", await focused(toggle));
+  await coachPage.keyboard.press("Space");
+  check("Space turns it back on", await waits(coachPage.waitForFunction(() => (document.querySelector('[aria-label="Video required, line 1"]') as HTMLInputElement)?.checked === true, null, { timeout: 10000 })));
   await coachPage.screenshot({ path: ".shots/video-required-editor-1440.png", fullPage: true });
 
-  const [line] = await poll(() => rowsOf("prescriptions", "program_id", created.programId), (r) => r[0]?.video_required === true);
+  const line = squatLine(await poll(lines, (r) => squatLine(r)?.video_required === true))!;
   check("the boolean is stored on the prescription", line?.video_required === true, String(line?.video_required));
 
   // Reload: the saved state, not an optimistic one.
@@ -174,7 +221,7 @@ try {
     .then(() => "written")
     .catch(() => "refused");
   check("not even the coach, directly: writes are server-only", directCoach === "refused");
-  check("still on", (await rowsOf("prescriptions", "program_id", created.programId))[0]?.video_required === true);
+  check("still on", squatLine(await lines())?.video_required === true);
 
   await coachPage.getByRole("button", { name: "Publish week 1", exact: true }).click();
   await coachPage.getByLabel("Status").getByText("Live", { exact: true }).waitFor({ timeout: 20000 });
@@ -187,8 +234,8 @@ try {
   await page.goto(`${BASE}/today`);
   await page.getByRole("button", { name: "Start today's session" }).click({ timeout: 30000 });
   await page.waitForURL(/\/log$/, { timeout: 20000 });
-  const squat = page.getByRole("region", { name: "Squat" });
-  await squat.waitFor({ timeout: 20000 });
+  const squatRegion = page.getByRole("region", { name: "Squat" });
+  await squatRegion.waitFor({ timeout: 20000 });
 
   /** Taps a number on the pad, as an athlete does. */
   const pad = async (digits: string) => {
@@ -204,28 +251,28 @@ try {
     await page.getByRole("button", { name: `Log Set ${n}` }).click();
   };
 
-  const camera = squat.getByRole("button", { name: /Add video/ });
+  const camera = squatRegion.getByRole("button", { name: /Add video/ });
   // The camera appears with the first logged set.
   await logSet(1, true);
   await camera.waitFor({ timeout: 20000 });
   check("after set 1 of 2 the camera is emphasised", (await camera.getAttribute("data-video-ask")) === "emphasise");
-  check("and says nothing yet", (await squat.getByText("Your coach asked for a clip of this one.").count()) === 0);
+  check("and says nothing yet", (await squatRegion.getByText("Your coach asked for a clip of this one.").count()) === 0);
   await athletePage_shot(page, "video-required-emphasised-390");
 
   // Confirming adds no row; Add set brings set 2, prefilled from set 1.
-  await squat.getByRole("button", { name: "Add a set to Squat" }).click();
+  await squatRegion.getByRole("button", { name: "Add a set to Squat" }).click();
   await page.getByRole("group", { name: "Set 2" }).waitFor({ timeout: 10000 });
   await logSet(2, false);
-  const nudge = squat.getByText("Your coach asked for a clip of this one.");
+  const nudge = squatRegion.getByText("Your coach asked for a clip of this one.");
   check("once both sets are logged, one nudge appears", await waits(nudge.waitFor({ timeout: 15000 })));
-  check("as a status line, never an alert", (await squat.getByRole("alert").count()) === 0 && (await squat.getByRole("status").filter({ hasText: "Your coach asked" }).count()) === 1);
+  check("as a status line, never an alert", (await squatRegion.getByRole("alert").count()) === 0 && (await squatRegion.getByRole("status").filter({ hasText: "Your coach asked" }).count()) === 1);
   await athletePage_shot(page, "video-required-prompt-390");
 
   const stored = await poll(() => rowsOf("sets", "athlete_id", athlete.$id), (r) => r.length >= 2, 30000);
   check("both sets are logged: nothing waited on the clip", stored.length === 2, `${stored.length} sets`);
 
   // Attach a clip: the nudge goes away and the set carries the file.
-  await squat.locator("input[type=file]").setInputFiles({ name: "clip.mp4", mimeType: "video/mp4", buffer: Buffer.alloc(200_000, 1) });
+  await squatRegion.locator("input[type=file]").setInputFiles({ name: "clip.mp4", mimeType: "video/mp4", buffer: Buffer.alloc(200_000, 1) });
   const filmed = await poll(() => rowsOf("sets", "athlete_id", athlete.$id), (r) => r.some((s) => s.video_file_id), 45000);
   check("a clip lands on the most recent set", filmed.some((s) => s.video_file_id), JSON.stringify(filmed.map((s) => s.video_file_id)));
   check("and the nudge is gone", await waits(nudge.waitFor({ state: "detached", timeout: 15000 })));
@@ -245,15 +292,18 @@ try {
       for (const row of rows) await del(tableId, row.$id);
     }
   }
-  for (const tableId of ["sets", "sessions", "stats_rollups"]) {
-    for (const row of await rowsOf(tableId, "athlete_id", athlete.$id).catch(() => [])) await del(tableId, row.$id);
+  if (athlete) {
+    for (const tableId of ["sets", "sessions", "stats_rollups"]) {
+      for (const row of await rowsOf(tableId, "athlete_id", athlete.$id).catch(() => [])) await del(tableId, row.$id);
+    }
   }
   if (created.link) await del("coach_athlete_links", created.link);
-  for (const u of [athlete, coach, stranger]) {
+  const everyone = [athlete, coach, stranger].filter(Boolean);
+  for (const u of everyone) {
     await del("profiles", u.$id);
     await teams.delete({ teamId: circleTeamId(u.$id) }).catch(() => {});
   }
-  for (const u of [athlete, coach, stranger]) await users.delete({ userId: u.$id }).catch(() => {});
+  for (const u of everyone) await users.delete({ userId: u.$id }).catch(() => {});
 }
 
 async function athletePage_shot(page: Page, name: string) {
