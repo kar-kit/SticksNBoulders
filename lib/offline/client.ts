@@ -184,12 +184,16 @@ export async function enqueue(kind: OpKind, payload: Record<string, unknown>): P
 export async function withdrawSet(setId: string): Promise<{ landed: boolean }> {
   const open = await ready();
   const { drop, landed } = opsDroppedByDelete(cache, setId, inFlight);
-  for (const op of drop) await open.remove(op.id);
+  // Out of memory first, synchronously, then off the disk. The drain decides
+  // what to send from the cache, and the disk takes a tick per delete: in that
+  // gap a drain that had moved on would still find the op and send it, after
+  // this has already answered "never landed" and no delete is coming behind.
   const gone = new Set(drop.map((op) => op.id));
   if (gone.size > 0) {
     cache = cache.filter((each) => !gone.has(each.id));
     announce();
   }
+  for (const op of drop) await open.remove(op.id);
   return { landed };
 }
 

@@ -318,16 +318,19 @@ describe("rollup refreshes", () => {
 
 describe("withdrawing a set", () => {
   it("does not send an op that was withdrawn after the batch was taken", async () => {
-    // A set deleted while an earlier op was on the wire. The drain loop holds
-    // a snapshot; without the check it would send the create anyway.
-    const { store } = recordingStore();
+    // A set deleted while an earlier op was on the wire. Both ops are on disk
+    // before the drain starts, so both are in the batch it snapshots; without
+    // the check the create goes out after the session anyway.
+    const { store } = recordingStore([
+      { id: "op-0", kind: "session.create", payload: { sessionId: "cs-1" }, sequence: 0, attempts: 0, nextAttemptAt: 0 },
+      { id: "op-1", kind: "set.create", payload: { setId: "st-1", sessionId: "cs-1" }, sequence: 1, attempts: 0, nextAttemptAt: 0 },
+    ]);
     resetQueueForTests(store);
-    await attachQueue(ACTOR);
-
     let release: () => void = () => {};
     runOp.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
-    await enqueue("session.create", { sessionId: "cs-1" });
-    await enqueue("set.create", { setId: "st-1", sessionId: "cs-1" });
+    await attachQueue(ACTOR);
+    // The drain is holding session.create on the wire, set.create behind it.
+    await vi.waitFor(() => expect(runOp).toHaveBeenCalledTimes(1));
 
     const { withdrawSet } = await import("./client");
     const { landed } = await withdrawSet("st-1");
@@ -335,6 +338,45 @@ describe("withdrawing a set", () => {
     await flush();
 
     expect(landed).toBe(false);
+    expect(runOp.mock.calls.map(([, op]) => op.kind)).toEqual(["session.create"]);
+    expect(await store.all()).toEqual([]);
+  });
+
+  it("does not send a withdrawn op while its removal is still being written down", async () => {
+    // IndexedDB takes a tick to delete. If the in-memory queue only lets go of
+    // the op after the disk has, a drain that moves on in that gap still sees
+    // it and sends it -- and withdrawSet has already told the caller it never
+    // landed, so no delete is queued behind it. The athlete's deleted set
+    // turns up on the coach's side for good.
+    const inner = createMemoryStore([
+      { id: "op-0", kind: "session.create", payload: { sessionId: "cs-1" }, sequence: 0, attempts: 0, nextAttemptAt: 0 },
+      { id: "op-1", kind: "set.create", payload: { setId: "st-1", sessionId: "cs-1" }, sequence: 1, attempts: 0, nextAttemptAt: 0 },
+    ]);
+    let diskCatchesUp: () => void = () => {};
+    const slowDisk = new Promise<void>((resolve) => (diskCatchesUp = resolve));
+    const store: QueueStore = {
+      put: inner.put,
+      all: inner.all,
+      remove: async (id) => {
+        if (id === "op-1") await slowDisk;
+        await inner.remove(id);
+      },
+    };
+    resetQueueForTests(store);
+    let release: () => void = () => {};
+    runOp.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
+    await attachQueue(ACTOR);
+    await vi.waitFor(() => expect(runOp).toHaveBeenCalledTimes(1));
+
+    const { withdrawSet } = await import("./client");
+    const withdrawing = withdrawSet("st-1");
+    release();
+    // Lets the drain move on while the disk is still deleting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    diskCatchesUp();
+    await flush();
+
+    expect((await withdrawing).landed).toBe(false);
     expect(runOp.mock.calls.map(([, op]) => op.kind)).toEqual(["session.create"]);
   });
 
