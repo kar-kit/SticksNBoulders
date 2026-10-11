@@ -1,53 +1,52 @@
-## test: kill the pure-logic critical survivors from the 9 Oct test audit
+## fix: close program-store and backup-driver test gaps (audit 2026-10-09)
 
-The 9 Oct mutation audit (coach.md, athlete.md) listed critical survivors: deliberate bugs the suite let through. This PR closes the ones in pure logic and screen glue. Queue, storage, video and Appwrite store survivors are out of scope because other branches own them.
+Follows the 9 Oct unit-test audit (coach S6/S7/S7b/S7c, backend BD1 to BD5). Two of the gaps hid real bugs; the rest were correct code with nothing proving it.
 
-**One small production change, the heaviest-set tie rule (below).** Every other gap turned out to be a missing test, not a live bug. The code already does the right thing in each case. The suite just could not tell if it stopped.
+### Summary
+
+- **Program store:** the reads already page on a `$id` cursor and refusals already throw. The audit's S6/S7 were surviving mutants, not live bugs. This adds the tests so they stay that way.
+- **History set read (real bug):** `fetchSetsForSessions` read up to 25 sessions' sets in one 500-row page. At ~30 sets per powerlifting session with warm-ups, a beta athlete passes 500 within a few weeks, and History and the coach's Athlete View silently dropped whatever fell past it. It now pages.
+- **Backup driver (two real bugs):** a blocked user could come back active after a retried restore, so `ensureUser` now re-blocks on a 409 too. And a 409 on user create also fires when a *different* account holds the email, which was reported as "existed"; it now refuses the restore.
 
 ### Changes
 
-| Audit ID | Where | What the new test pins |
-|---|---|---|
-| S20 | `lib/programming/session-plan.test.ts` | A row the athlete typed into (150 × 4) is not re-priced when a new row is planned beside it. The new row still gets set 2 of the 3 × 5. The old "never touches a row already on screen" test only hit the all-seen early return. |
-| CM2, CM1 | `components/coach/current-maxes.test.tsx` | A future "Takes effect from" date (19 Oct, still BST) is sent as local midnight. The default date is today's *local* date at 00:30 BST (23:30 UTC). |
-| K12 | `lib/strength/rollup.test.ts` | Singles-only, doubles (190 × 2 beats 190 × 1), a single next to a five, and a mixed 1/2/3/5 week with a warm-up. Exact set count, volume, tonnage and every best, in either order. |
-| Z03, Z04 | `lift-screen.test.tsx` | All-time PRs come from a week 40 weeks back, under 12w and 8w alike. A heavy double renders "200 × 2", not "× 1". |
-| Z05 | new `components/strength/dots-block.test.tsx` | The rendered score (412.3), the breakdown, the stale-bodyweight date line, the athlete and coach empty-state wording, and the silent failure. |
-| G13, G13b | `program-editor.test.tsx` | The × on line 2 sends `removePrescription` for `l2` and nothing else. A non-coach sees no × at all. |
-| X01 | `session-context.test.tsx` | Start → finish → start uses a new client session id. |
-| Z02 | `session-detail.test.tsx` | A History edit passes the set's own `loggedAt`, so the right week's rollup refreshes. |
+1. `lib/programming/program-store.test.ts` (new, 7 tests). This runs against the query-applying `FakeTables`:
+   - a 12-week block (12 × 4 × 6 = 288 lines) reads whole, over three pages with the right cursors
+   - `fetchLoggedDayIds` finds a day past row 300 and ignores another athlete's session
+   - `sendProgramOp` throws the server's `error` on 403, its `reason` on 400, and the status on a 500 with no readable body
+   - an invalid op makes no request
+   - success returns the row id, sent with the JWT
+2. `lib/logging/history-store.ts`: `fetchSetsForSessions` pages with `orderAsc($id)` + `cursorAfter`, 500 rows per page. Test in `lib/logging/history-store.test.ts` (new): 25 sessions × 30 sets = 750 rows all return.
+3. `scripts/backup-driver.ts`: a restore stops at its first error (`restore.ts` awaits each user in turn). If a run died after `users.create` and before `updateStatus(false)`, the re-run got a 409, reported "existed", and left the account open. `ensureUser` now passes a re-block as the 409 handler when the dump says the user was blocked. It only ever re-blocks: an existing account is never unblocked, and prefs, labels and verification still apply to new accounts only.
+4. `scripts/backup-driver.ts`: on a 409 for a user, `ensureUser` calls `users.get(dumpedId)`. Found means the same account (existing behaviour, including the re-block). A 404 means another account holds the email, so it throws naming the dumped id, the email and the clashing account's id (looked up read-only with `users.list` on the email; if that lookup fails the error still throws). The restore stops there like any other non-409 error, so none of that user's rows, teams or memberships are written. The clashing account is never modified or deleted. The check keys on the id, not on Appwrite's error type string.
+5. `scripts/backup-driver.test.ts` (new, 17 tests, SDK fakes):
+   - dump keeps `$permissions` and puts only non-`$` fields in `data`
+   - cursor, `$id` order and `ttl: 0` on rows, users and teams
+   - a blocked user is dumped as blocked, with providers deduplicated and no password hash
+   - `putRow` replays id, data and permissions
+   - only a 409 counts as existed; 500, 401 and network errors rethrow
+   - `ensureUser` re-blocks on create and on 409, and fails a user with no email
+   - membership roles go through, and a non-409 rethrows
+   - same-id 409 is existed; an email-clash 409 fails loudly with the three ids, names the holder via an email query, leaves the clashing account untouched, and stops `restoreBackup` before any later user, team or row; a `users.get` failure other than 404 rethrows rather than reading as a clash
+
+### Other list reads checked
+
+Every other cursor loop in `lib/` and `appwrite/documents/program-admin.ts` (audit G08) is correct. The single-page reads that remain are bounded per session, per week or per coach (`fetchSessionSets` at 100/200, rollup rebuild at 200 sets per lift per week, coach links at 100), and a 5-athlete beta stays well inside those limits.
+
+### Fixed in the last commit
+
+- **Email clash on user create.** Was listed as open. Now fixed as item 4 above. [Unverified] I did not confirm which 409 type Appwrite 1.8 returns for an email clash, which is why the check uses `users.get` rather than the type string.
 
 ### Testing
 
-- `npm test`: 170 files, 2647 tests, all green.
-- `npm run lint`: clean. `npx next typegen && npx tsc --noEmit`: clean.
-- **Mutation-checked.** Each mutation was applied to the source and run against its suite, then reverted. Survivors before vs after:
+- Each new test was mutation-checked. Program store: 6/6 killed. History: 4/5, and the survivor (`PAGE = 1000`) is equivalent. Backup driver: 12/12, including all five audit mutants, BD1 to BD5; the email-clash fix is covered by six more mutants, all killed.
+- The history and backup tests failed before their fixes (500 of 750 rows; `updateStatus` called 0 times).
+- `npm test`: 172 files, 2657 tests pass. `npm run lint` and `npx tsc --noEmit` are clean.
+- No live-instance scripts were run.
 
-| Mutation | Before | After |
-|---|---|---|
-| S20: per-row `seen.has` guard removed | survived | killed |
-| K12: working sets filter `reps > 1` | survived | killed |
-| K12: singles excluded from tonnage | survived | killed |
-| K12: singles excluded from heaviest set | survived | killed |
-| K12: singles excluded from best e1RM | survived | killed |
-| K12: rep-record tie ignores singles | survived | killed |
-| CM2: `effectiveFrom = undefined` | survived | killed |
-| CM1: `Date.UTC` instead of local midnight | survived | killed |
-| Default date a day early | survived | killed |
-| G13: × sends `lines[0].id` | survived | killed |
-| G13b: × shown to a non-coach | survived | killed |
-| X01: `pendingClientId` not cleared | survived | killed |
-| Z03: PRs from the 8w range only | survived | killed |
-| Z04: heaviest set always "× 1" | survived | killed |
-| Z05: score displayed 1% high | survived (audit, full suite) | killed |
-| Z02: History edit sends `new Date()` | survived | killed |
+### Decisions (Joey)
 
-16/16 survivors are now killed. The CM1 kill depends on the host clock being in London. Under `TZ=UTC` that mutation is equivalent, because the vitest config does not pin `TZ` (audit Q1).
-
-### Decisions for Joey
-
-1. **Decided by Joey (11 Oct): most recent wins.** When two heaviest sets tie on load, the most recent is reported, within a week and across weeks. Before, `rollupFrom` preferred more reps (140 x 5 over 140 x 3) and `personalRecords` kept the first tied week in list order, so the all-time record depended on list order. Now `rollupFrom` takes the latest `loggedAt` (equal instants fall back to later in input order), and `personalRecords` takes the latest `weekStart` whatever the input order. `RollupSet` gains a required `loggedAt`, passed by `rollup-admin.ts` and `scripts/rebuild-rollups.mts`. Existing stored rollups with a tied heaviest set may change on the next rebuild. Tests: within-week tie, cross-week tie in both orders, and a non-tie unchanged. Reverting either rule fails them.
-2. **Pin `TZ` in `vitest.config.mts`.** Without it, the BST cases here (and CM1's kill) only bite on a London-time host. This is likely in the scope of whichever branch takes audit Q1.
-3. **Out of scope here, still open:** S6/S7 (`program-store`), U03, L02, C02, C07, I01, Z13, S03 (queue, storage and stores). Other branches own these.
+- **Re-block on 409.** Joey: best judgment, kept re-block (11 Oct). A restore into a live instance where an admin has unblocked someone since the dump will block them again, chosen over a banned account reopening silently.
+- **`fetchAthleteNames` uses `limit(athleteIds.length)` and filters forgeries afterwards.** A forged profile row for an athlete could push out the real one, and that athlete would lose their name in the rail. This is a provenance issue rather than truncation, so it's out of scope here.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
