@@ -2,7 +2,7 @@
 
 The 9 Oct mutation audit (coach.md, athlete.md) listed critical survivors: deliberate bugs the suite let through. This PR closes the ones in pure logic and screen glue. Queue, storage, video and Appwrite store survivors are out of scope because other branches own them.
 
-**No production code changed.** Every gap turned out to be a missing test, not a live bug. The code already does the right thing in each case. The suite just could not tell if it stopped.
+**One small production change, the heaviest-set tie rule (below).** Every other gap turned out to be a missing test, not a live bug. The code already does the right thing in each case. The suite just could not tell if it stopped.
 
 ### Changes
 
@@ -19,7 +19,7 @@ The 9 Oct mutation audit (coach.md, athlete.md) listed critical survivors: delib
 
 ### Testing
 
-- `npm test`: 170 files, 2645 tests, all green.
+- `npm test`: 170 files, 2647 tests, all green.
 - `npm run lint`: clean. `npx next typegen && npx tsc --noEmit`: clean.
 - **Mutation-checked.** Each mutation was applied to the source and run against its suite, then reverted. Survivors before vs after:
 
@@ -46,7 +46,7 @@ The 9 Oct mutation audit (coach.md, athlete.md) listed critical survivors: delib
 
 ### Decisions for Joey
 
-1. **The heaviest-single tie across weeks (`lift.test.ts:119`) is left as it is.** Within one week, `rollupFrom` breaks a tie on more reps (140 × 5 beats 140 × 3). Across weeks, `personalRecords` keeps whichever tied week comes first in the list. So the all-time record depends on list order and can show 140 × 3 after a 140 × 5 week. Pick one rule and the test flips with it.
+1. **Decided by Joey (11 Oct): most recent wins.** When two heaviest sets tie on load, the most recent is reported, within a week and across weeks. Before, `rollupFrom` preferred more reps (140 x 5 over 140 x 3) and `personalRecords` kept the first tied week in list order, so the all-time record depended on list order. Now `rollupFrom` takes the latest `loggedAt` (equal instants fall back to later in input order), and `personalRecords` takes the latest `weekStart` whatever the input order. `RollupSet` gains a required `loggedAt`, passed by `rollup-admin.ts` and `scripts/rebuild-rollups.mts`. Existing stored rollups with a tied heaviest set may change on the next rebuild. Tests: within-week tie, cross-week tie in both orders, and a non-tie unchanged. Reverting either rule fails them.
 2. **Pin `TZ` in `vitest.config.mts`.** Without it, the BST cases here (and CM1's kill) only bite on a London-time host. This is likely in the scope of whichever branch takes audit Q1.
 3. **Out of scope here, still open:** S6/S7 (`program-store`), U03, L02, C02, C07, I01, Z13, S03 (queue, storage and stores). Other branches own these.
 

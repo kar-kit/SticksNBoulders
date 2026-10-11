@@ -13,6 +13,7 @@ const set = (over: Partial<RollupSet> = {}): RollupSet => ({
   reps: 5,
   isWarmup: false,
   e1rmKg: 120,
+  loggedAt: new Date("2026-09-14T10:00:00Z"),
   ...over,
 });
 
@@ -118,16 +119,25 @@ describe("rollupFrom", () => {
     expect(rollup.bestReps).toBe(5);
   });
 
-  it("takes the heaviest working set, and the most reps at that weight", () => {
-    // 140x5 is a better week than 140x3. A rollup that called them the same
-    // would flatten exactly the progress the chart exists to show.
+  it("on a heaviest-set tie, the most recently logged set wins, whatever the input order", () => {
+    // Joey, 11 Oct 2026. 140x3 logged after 140x5 is the week as it ended.
+    const early = set({ loadKg: 140, reps: 5, loggedAt: new Date("2026-09-14T10:00:00Z") });
+    const late = set({ loadKg: 140, reps: 3, loggedAt: new Date("2026-09-16T10:00:00Z") });
+    const other = set({ loadKg: 120, reps: 8, loggedAt: new Date("2026-09-17T10:00:00Z") });
+    for (const sets of [[early, late, other], [late, early, other], [other, late, early]]) {
+      const rollup = rollupFrom(sets);
+      expect(rollup.bestSingleKg).toBe(140);
+      expect(rollup.bestSingleReps).toBe(3);
+    }
+  });
+
+  it("a heavier set still beats a later, lighter one; no tie, no change", () => {
     const rollup = rollupFrom([
-      set({ loadKg: 140, reps: 3 }),
-      set({ loadKg: 140, reps: 5 }),
-      set({ loadKg: 120, reps: 8 }),
+      set({ loadKg: 150, reps: 1, loggedAt: new Date("2026-09-14T10:00:00Z") }),
+      set({ loadKg: 140, reps: 5, loggedAt: new Date("2026-09-16T10:00:00Z") }),
     ]);
-    expect(rollup.bestSingleKg).toBe(140);
-    expect(rollup.bestSingleReps).toBe(5);
+    expect(rollup.bestSingleKg).toBe(150);
+    expect(rollup.bestSingleReps).toBe(1);
   });
 
   it("counts a working single like any other set", () => {
@@ -169,10 +179,10 @@ describe("rollupFrom", () => {
   });
 
   it("handles doubles, and a single and a double at the same weight", () => {
-    // 190x2 beats 190x1 for the heaviest set, the same tie rule as 140x5 vs 140x3.
+    // Tied on 190: the later set (the double) is the one reported.
     const rollup = rollupFrom([
-      set({ loadKg: 190, reps: 1, e1rmKg: 195 }),
-      set({ loadKg: 190, reps: 2, e1rmKg: 200 }),
+      set({ loadKg: 190, reps: 1, e1rmKg: 195, loggedAt: new Date("2026-09-14T10:00:00Z") }),
+      set({ loadKg: 190, reps: 2, e1rmKg: 200, loggedAt: new Date("2026-09-15T10:00:00Z") }),
       set({ loadKg: 170, reps: 2, e1rmKg: 180 }),
     ]);
     expect(rollup).toMatchObject({
