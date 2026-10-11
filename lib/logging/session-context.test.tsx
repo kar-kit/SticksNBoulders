@@ -124,6 +124,29 @@ describe("starting a session", () => {
     await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("recovered"));
   });
 
+  it("gives the next session a new client id once one has started", async () => {
+    // Reusing the finished session's id would make the next session.create
+    // 409 into the old row, and every set of the new session would file under
+    // the finished one.
+    const ids: string[] = [];
+    const start = vi.fn(async (clientId: string) => {
+      ids.push(clientId);
+      return session({ id: `s${ids.length}`, clientSessionId: clientId });
+    });
+    const { user } = setup({ start });
+    await ready();
+
+    await user.click(screen.getByRole("button", { name: "start" }));
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("s1"));
+    await user.click(screen.getByRole("button", { name: "finish" }));
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("none"));
+    await user.click(screen.getByRole("button", { name: "start" }));
+
+    await waitFor(() => expect(screen.getByTestId("active")).toHaveTextContent("s2"));
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
   it("refuses to start without a signed-in athlete rather than writing an orphan", async () => {
     const { user, start } = setup({ athleteId: null });
     await ready();
