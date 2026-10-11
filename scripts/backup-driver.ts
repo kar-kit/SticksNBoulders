@@ -229,8 +229,15 @@ export function appwriteTarget(
       // Created without a password on purpose. The dump holds no hashes, so
       // the account exists and its owner takes it back through password reset
       // or their OAuth provider. See docs/backups.md.
-      const outcome = await createOrExisting(() =>
-        users.create({ userId: user.$id, email: user.email as string, name: user.name }),
+      const block = () => users.updateStatus({ userId: user.$id, status: false });
+      const outcome = await createOrExisting(
+        () => users.create({ userId: user.$id, email: user.email as string, name: user.name }),
+        // A blocked account is re-blocked even when it already exists. A
+        // restore stops at its first error, so one that died between creating
+        // this user and blocking them meets a 409 on the re-run, and would
+        // otherwise leave the account open. Only ever towards blocked: an
+        // existing account is never unblocked by a dump.
+        user.status ? undefined : block,
       );
       if (outcome === "created") {
         if (Object.keys(user.prefs).length > 0) {
@@ -242,7 +249,7 @@ export function appwriteTarget(
         if (user.emailVerification) {
           await users.updateEmailVerification({ userId: user.$id, emailVerification: true });
         }
-        if (!user.status) await users.updateStatus({ userId: user.$id, status: false });
+        if (!user.status) await block();
       }
       return outcome;
     },
