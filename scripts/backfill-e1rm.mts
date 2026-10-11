@@ -3,6 +3,7 @@
  *
  *   npm run e1rm:backfill              # plans, writes nothing
  *   npm run e1rm:backfill -- --yes     # applies
+ *   npm run e1rm:backfill -- --athlete <id> [--yes]   # one athlete only
  *
  * This exists because the formula is not settled. Order 26 revisits it against
  * the RTS chart, and the honest way to ship an unconfirmed number into an
@@ -29,6 +30,19 @@ import { estimateOneRepMax } from "../lib/strength/e1rm";
 dedupeSdkWarnings();
 
 const confirmed = process.argv.includes("--yes");
+/**
+ * One athlete rather than the whole instance, as rollups:rebuild has.
+ *
+ * For the e2e. Without it, the e2e's --yes run rewrites the estimate on every
+ * set on the shared instance -- real training and other runs' fixtures alike
+ * -- and its counts are the instance's, so it can only assert "at least one".
+ */
+const athleteFlag = process.argv.indexOf("--athlete");
+const onlyAthlete = athleteFlag === -1 ? null : process.argv[athleteFlag + 1] ?? null;
+if (athleteFlag !== -1 && (!onlyAthlete || onlyAthlete.startsWith("--"))) {
+  console.error("--athlete needs an id");
+  process.exit(1);
+}
 const config = serverAppwriteConfig();
 const db = new TablesDB(createServerClient(config));
 const PAGE = 100;
@@ -48,6 +62,7 @@ const num = (value: unknown): number | null =>
 
 console.log(`${confirmed ? "Backfilling" : "Planning backfill of"} ${config.endpoint}`);
 console.log(`  project ${config.projectId}, database ${config.databaseId}\n`);
+if (onlyAthlete) console.log(`Only athlete ${onlyAthlete}\n`);
 
 /**
  * Every set, paged by id.
@@ -60,6 +75,7 @@ const rows: SetRow[] = [];
 let cursor: string | null = null;
 for (;;) {
   const queries = [Query.orderAsc("$id"), Query.limit(PAGE)];
+  if (onlyAthlete) queries.push(Query.equal("athlete_id", onlyAthlete));
   if (cursor) queries.push(Query.cursorAfter(cursor));
   const page = await db.listRows({ databaseId: config.databaseId, tableId: "sets", queries, ttl: 0 });
   if (page.rows.length === 0) break;
