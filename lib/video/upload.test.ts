@@ -5,6 +5,7 @@ const store = vi.hoisted(() => ({
   pendingUploads: vi.fn(),
   forgetUpload: vi.fn(),
   recordAttempt: vi.fn(),
+  refundAttempt: vi.fn(),
   rememberUpload: vi.fn(),
 }));
 vi.mock("./pending-store", () => store);
@@ -35,6 +36,7 @@ beforeEach(() => {
   store.pendingUploads.mockResolvedValue([]);
   store.forgetUpload.mockResolvedValue(undefined);
   store.recordAttempt.mockResolvedValue(undefined);
+  store.refundAttempt.mockResolvedValue(undefined);
   store.rememberUpload.mockResolvedValue(undefined);
   offline.enqueue.mockResolvedValue(undefined);
 });
@@ -103,6 +105,34 @@ describe("picking up an interrupted upload", () => {
     expect(store.forgetUpload).toHaveBeenCalledWith("file-1");
   });
 
+  /**
+   * Signed out is not the file's fault. Counting it would let five app starts
+   * without a session delete a clip nobody ever refused.
+   */
+  it("keeps a clip blocked on sign-in, and does not count the attempt against it", async () => {
+    store.pendingUploads.mockResolvedValue([pending({ attempts: MAX_UPLOAD_ATTEMPTS - 1 })]);
+    transport.uploadResumable.mockResolvedValue({
+      ok: false,
+      retryable: true,
+      authExpired: true,
+      message: "Not signed in",
+      uploadedCount: 3,
+    });
+
+    expect(await resumeInterruptedUploads()).toEqual({ resumed: 0, failed: 1 });
+    expect(store.forgetUpload).not.toHaveBeenCalled();
+    expect(store.refundAttempt).toHaveBeenCalledWith("file-1");
+    expect(offline.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("counts a failure that was not about sign-in", async () => {
+    store.pendingUploads.mockResolvedValue([pending()]);
+    transport.uploadResumable.mockResolvedValue({ ok: false, retryable: true, message: "network", uploadedCount: 2 });
+
+    await resumeInterruptedUploads();
+    expect(store.refundAttempt).not.toHaveBeenCalled();
+  });
+
   it("abandons a clip that has already failed too many times", async () => {
     store.pendingUploads.mockResolvedValue([pending({ attempts: MAX_UPLOAD_ATTEMPTS })]);
 
@@ -168,9 +198,32 @@ describe("attaching a fresh clip to a set", () => {
 
     const result = await attachClipToSet("set-1", "joey", clip());
 
-    expect(result).toMatchObject({ ok: false, reason: "failed" });
+    // Pending, not failed: the clip is on the phone and will go by itself.
+    expect(result).toMatchObject({ ok: false, reason: "pending" });
     // Said as reassurance, not the raw transport error: the set is saved.
     expect((result as { message: string }).message).toContain("carry on by itself");
+    expect(store.forgetUpload).not.toHaveBeenCalled();
+    expect(offline.enqueue).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The audit's B4: the session ran out mid-upload. The clip stays on the
+   * phone, the set is not pointed at a file that is not there, and the athlete
+   * is told what will make it go.
+   */
+  it("keeps a clip whose session ran out, and says signing in will send it", async () => {
+    transport.uploadResumable.mockResolvedValue({
+      ok: false,
+      retryable: true,
+      authExpired: true,
+      message: "Not signed in",
+      uploadedCount: 4,
+    });
+
+    const result = await attachClipToSet("set-1", "joey", clip());
+
+    expect(result).toMatchObject({ ok: false, reason: "pending" });
+    expect((result as { message: string }).message).toContain("sign in");
     expect(store.forgetUpload).not.toHaveBeenCalled();
     expect(offline.enqueue).not.toHaveBeenCalled();
   });
