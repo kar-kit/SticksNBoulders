@@ -50,22 +50,8 @@ const OFFLINE_PAGE = "/offline";
  */
 const NETWORK_TIMEOUT_MS = 2000;
 
-/**
- * Every hashed asset a page references: chunks, CSS, fonts. A URL ends at a
- * quote, whitespace, a backslash (the escaped quotes of the inline RSC payload)
- * or an angle bracket. Parentheses are allowed in pairs: webpack names
- * route-group chunks `chunks/app/(athlete)/layout-<hash>.js`, and stopping at
- * the `)` asks for `/app/(athlete`, which 404s and fails the whole install. An
- * unpaired `)` still ends it, so a CSS `url(/_next/static/...)` stays clean.
- */
-const ASSET = /\/_next\/static\/(?:[^"'\s\\()<>]|\([^"'\s\\()<>]*\))+/g;
-
-/** The asset URLs in a page's HTML, as the browser would request them. */
-function assetsIn(html) {
-  const assets = new Set();
-  for (const match of html.matchAll(ASSET)) assets.add(match[0].replace(/&amp;/g, "&"));
-  return assets;
-}
+/** Every hashed asset a page references: chunks, CSS, fonts. */
+const ASSET = /\/_next\/static\/[^"'\s\\)<>]+/g;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -79,7 +65,7 @@ self.addEventListener("install", (event) => {
           const response = await fetch(path, { cache: "no-store", credentials: "same-origin" });
           if (!response.ok || !isShareable(response)) throw new Error(`shell page ${path}: ${response.status}`);
           const html = await response.clone().text();
-          for (const asset of assetsIn(html)) assets.add(asset);
+          for (const match of html.matchAll(ASSET)) assets.add(match[0]);
           await shell.put(path, response);
         }),
       );
