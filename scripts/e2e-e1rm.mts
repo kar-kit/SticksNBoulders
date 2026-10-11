@@ -13,7 +13,10 @@
  * the script has to handle, and checks what it does to them. No browser: this
  * is about rows.
  *
- * Creates a throwaway athlete and removes them and their sets.
+ * Creates a throwaway athlete and removes them and their sets. The backfill
+ * runs with --athlete, so it reads and writes this athlete's sets only: never
+ * the rest of the instance, which is Joey's real training and other runs'
+ * fixtures. That also makes the counts exact.
  */
 import { execFileSync } from "node:child_process";
 import { ID, Query, TablesDB, Teams, Users } from "node-appwrite";
@@ -37,12 +40,10 @@ const check = (label: string, ok: boolean) => {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
 };
 
-const athlete = await users.create({
-  userId: ID.unique(),
-  email: `e1rm-${stamp}@example.com`,
-  password: "Probe-pass-123!",
-  name: "Joey Pang",
-});
+// Assigned inside the try, so a throw while creating it still reaches the
+// finally that deletes it.
+let athlete: Awaited<ReturnType<typeof users.create>> | undefined;
+const athleteId = () => athlete!.$id;
 
 /** Written straight in, wrong on purpose. The script's job is to notice. */
 const seed = async (
@@ -55,86 +56,98 @@ const seed = async (
     rowId: `st-e1rm-${stamp}-${label}`,
     data: {
       session_id: `cs-e1rm-${stamp}`,
-      athlete_id: athlete.$id,
+      athlete_id: athleteId(),
       exercise_id: "squat",
       set_index: 1,
       logged_at: new Date().toISOString(),
       client_set_id: `st-e1rm-${stamp}-${label}`,
       ...data,
     },
-    permissions: setPermissions({ athleteId: athlete.$id }),
+    permissions: setPermissions({ athleteId: athleteId() }),
   });
   return row.$id;
 };
 
-// Nothing stored, an estimate is owed: 140 x 5 @ RPE 8 -> 140 x 36 / 30.
-const missing = await seed("missing", { load_kg: 140, reps: 5, rpe: 8 });
-// A number from some earlier formula. Epley would have written this one.
-const wrong = await seed("wrong", { load_kg: 140, reps: 5, rpe: 8, e1rm_kg: 172.7 });
-// Owed nothing, but carrying a number anyway -- the case a fill-the-blanks
-// script leaves behind forever.
-const warmup = await seed("warmup", { load_kg: 60, reps: 5, rpe: 8, is_warmup: true, e1rm_kg: 72 });
-const noRpe = await seed("norpe", { load_kg: 140, reps: 5, e1rm_kg: 168 });
-// Already right. Must not be rewritten.
-const correct = await seed("correct", { load_kg: 100, reps: 3, rpe: 9, e1rm_kg: 109.1 });
-
-const run = (...args: string[]) =>
-  execFileSync("npm", ["run", "e1rm:backfill", ...args], { encoding: "utf8" });
-
-console.log("\nPlanning");
-// The script reports counts across the whole instance, so these assert that it
-// found work of each kind rather than an exact number. An exact count is a test
-// that fails as soon as the instance has any other data in it -- which is how
-// this one first went red.
-const plan = run();
-const atLeastOne = (label: string) => new RegExp(`([1-9]\\d*) ${label}`).test(plan);
-check("finds the set with no estimate", atLeastOne("to estimate for the first time"));
-check("finds the one carrying a number from another formula", atLeastOne("to correct"));
-check("finds the two that are owed nothing", /([2-9]|\d\d+) to clear/.test(plan));
-check("leaves the correct one alone", atLeastOne("already correct"));
-
-/**
- * Read through listRows rather than getRow, because only listRows takes ttl.
- * A cached read here would let the script report a value the server no longer
- * holds, which is the one way this test could quietly lie.
- */
-const read = async (rowId: string) => {
-  const page = await db.listRows({
-    databaseId: config.databaseId,
-    tableId: "sets",
-    queries: [Query.equal("$id", rowId), Query.limit(1)],
-    ttl: 0,
+try {
+  athlete = await users.create({
+    userId: ID.unique(),
+    email: `e1rm-${stamp}@example.com`,
+    password: "Probe-pass-123!",
+    name: "Joey Pang",
   });
-  return page.rows[0] as unknown as { e1rm_kg?: number | null };
-};
 
-check("and writes nothing while planning", (await read(missing)).e1rm_kg == null);
+  // Nothing stored, an estimate is owed: 140 x 5 @ RPE 8 -> 140 x 36 / 30.
+  const missing = await seed("missing", { load_kg: 140, reps: 5, rpe: 8 });
+  // A number from some earlier formula. Epley would have written this one.
+  const wrong = await seed("wrong", { load_kg: 140, reps: 5, rpe: 8, e1rm_kg: 172.7 });
+  // Owed nothing, but carrying a number anyway -- the case a fill-the-blanks
+  // script leaves behind forever.
+  const warmup = await seed("warmup", { load_kg: 60, reps: 5, rpe: 8, is_warmup: true, e1rm_kg: 72 });
+  const noRpe = await seed("norpe", { load_kg: 140, reps: 5, e1rm_kg: 168 });
+  // Already right. Must not be rewritten.
+  const correct = await seed("correct", { load_kg: 100, reps: 3, rpe: 9, e1rm_kg: 109.1 });
 
-console.log("\nApplying");
-run("--", "--yes");
-check("estimates the set that had none", (await read(missing)).e1rm_kg === 168);
-check("corrects the one that was wrong", (await read(wrong)).e1rm_kg === 168);
-check("clears the warm-up", (await read(warmup)).e1rm_kg == null);
-check("clears the set with no RPE", (await read(noRpe)).e1rm_kg == null);
-check("leaves the already-correct one at its value", (await read(correct)).e1rm_kg === 109.1);
+  const run = (...args: string[]) =>
+    execFileSync("npm", ["run", "e1rm:backfill", "--", "--athlete", athleteId(), ...args], { encoding: "utf8" });
 
-console.log("\nRe-running");
-const second = run();
-check("is safe to run forever: the second pass has nothing to do", /Nothing to do/.test(second));
+  console.log("\nPlanning");
+  // Scoped to this athlete, so the counts are exact. Instance-wide, they could
+  // only ever be "at least one".
+  const plan = run();
+  const says = (pattern: RegExp) => pattern.test(plan);
+  check("reads only this athlete's five sets", says(/^5 sets, 1 already correct$/m) && says(/^Only athlete /m));
+  check("finds the set with no estimate", says(/^ {2}1 to estimate for the first time$/m));
+  check("finds the one carrying a number from another formula", says(/^ {2}1 to correct$/m));
+  check("finds the two that are owed nothing", says(/^ {2}2 to clear\b/m));
 
-// --- teardown ---------------------------------------------------------
-for (const row of (
-  await db.listRows({
-    databaseId: config.databaseId,
-    tableId: "sets",
-    queries: [Query.equal("athlete_id", athlete.$id), Query.limit(50)],
-    ttl: 0,
-  })
-).rows) {
-  await db.deleteRow({ databaseId: config.databaseId, tableId: "sets", rowId: row.$id });
+  /**
+   * Read through listRows rather than getRow, because only listRows takes ttl.
+   * A cached read here would let the script report a value the server no longer
+   * holds, which is the one way this test could quietly lie.
+   */
+  const read = async (rowId: string) => {
+    const page = await db.listRows({
+      databaseId: config.databaseId,
+      tableId: "sets",
+      queries: [Query.equal("$id", rowId), Query.limit(1)],
+      ttl: 0,
+    });
+    return page.rows[0] as unknown as { e1rm_kg?: number | null };
+  };
+
+  check("and writes nothing while planning", (await read(missing)).e1rm_kg == null);
+
+  console.log("\nApplying");
+  run("--yes");
+  check("estimates the set that had none", (await read(missing)).e1rm_kg === 168);
+  check("corrects the one that was wrong", (await read(wrong)).e1rm_kg === 168);
+  check("clears the warm-up", (await read(warmup)).e1rm_kg == null);
+  check("clears the set with no RPE", (await read(noRpe)).e1rm_kg == null);
+  check("leaves the already-correct one at its value", (await read(correct)).e1rm_kg === 109.1);
+
+  console.log("\nRe-running");
+  const second = run();
+  check("is safe to run forever: the second pass has nothing to do", /Nothing to do/.test(second));
+} catch (error) {
+  check(`ran without throwing — ${String(error)}`, false);
+} finally {
+  if (athlete) {
+    for (const row of (
+      await db
+        .listRows({
+          databaseId: config.databaseId,
+          tableId: "sets",
+          queries: [Query.equal("athlete_id", athlete.$id), Query.limit(50)],
+          ttl: 0,
+        })
+        .catch(() => ({ rows: [] as Array<{ $id: string }> }))
+    ).rows) {
+      await db.deleteRow({ databaseId: config.databaseId, tableId: "sets", rowId: row.$id }).catch(() => {});
+    }
+    await teams.delete({ teamId: circleTeamId(athlete.$id) }).catch(() => {});
+    await users.delete({ userId: athlete.$id }).catch(() => {});
+  }
 }
-await teams.delete({ teamId: circleTeamId(athlete.$id) }).catch(() => {});
-await users.delete({ userId: athlete.$id });
 
 const failed = results.filter((ok) => !ok).length;
 console.log(

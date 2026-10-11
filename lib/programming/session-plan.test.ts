@@ -17,6 +17,14 @@ import {
 } from "./session-plan";
 
 let seq = 0;
+// Production-shaped ids for reference maxes. currentMax breaks an
+// effective-date tie on the later-created row by comparing ids as strings,
+// which is right for Appwrite's fixed-width hex ID.unique() but not for
+// "m9" vs "m10". Fixture ids have to sort the way real ones do.
+const rowId = () => (++seq).toString(16).padStart(20, "0");
+beforeEach(() => {
+  seq = 0;
+});
 const line = (over: Partial<Prescription>): Prescription => ({
   id: `l${++seq}`,
   programId: "p1",
@@ -204,7 +212,7 @@ describe("feeding the set row's prefill", () => {
 
 describe("the maxes a percentage resolves against", () => {
   const entry = (over: Partial<ReferenceMaxEntry>): ReferenceMaxEntry => ({
-    id: `m${++seq}`,
+    id: rowId(),
     exerciseId: "squat",
     kind: "training",
     valueKg: 200,
@@ -321,7 +329,7 @@ describe("stamping the logger's new rows with their targets", () => {
  */
 describe("a percentage of another lift: the worked examples", () => {
   const max = (over: Partial<ReferenceMaxEntry>): ReferenceMaxEntry => ({
-    id: `m${++seq}`,
+    id: rowId(),
     exerciseId: "bench",
     kind: "training",
     valueKg: 150,
