@@ -22,6 +22,8 @@ type State =
   | { status: "idle" }
   | { status: "uploading"; percent: number }
   | { status: "done" }
+  /** Did not finish, but kept on the phone and still on its way. */
+  | { status: "pending"; message: string }
   | { status: "failed"; message: string };
 
 export interface AttachVideoProps {
@@ -55,12 +57,24 @@ export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", 
 
     // The message comes from the check that refused it -- "that clip is 48MB,
     // film a shorter one" is actionable on a gym floor; "upload failed" is not.
-    setState(result.ok ? { status: "done" } : { status: "failed", message: result.message });
-    if (result.ok) onAttached?.();
+    // A pending clip is kept on the phone and goes by itself, so it is on its
+    // way like a finished one and not a failure to act on.
+    const pending = !result.ok && result.reason === "pending";
+    setState(
+      result.ok
+        ? { status: "done" }
+        : { status: pending ? "pending" : "failed", message: result.message },
+    );
+    if (result.ok || pending) onAttached?.();
     if (input.current) input.current.value = "";
   };
 
-  const label = state.status === "done" || hasVideo ? "Replace video" : "Add video";
+  const label =
+    state.status === "pending"
+      ? "Video pending"
+      : state.status === "done" || hasVideo
+        ? "Replace video"
+        : "Add video";
 
   const prompting = ask === "prompt" && !putAway && state.status === "idle";
 
@@ -115,8 +129,12 @@ export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", 
         </div>
       ) : null}
 
-      {state.status === "failed" ? (
-        <p role="status" className="m-0 max-w-[220px] text-right text-caption text-muted">
+      {state.status === "failed" || state.status === "pending" ? (
+        <p
+          role="status"
+          data-upload={state.status}
+          className="m-0 max-w-[220px] text-right text-caption text-muted"
+        >
           {state.message}
         </p>
       ) : null}

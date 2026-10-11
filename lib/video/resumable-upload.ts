@@ -43,7 +43,17 @@ export interface UploadHandle {
 
 export type ChunkOutcome =
   | { ok: true; complete: boolean; uploadedCount: number }
-  | { ok: false; retryable: boolean; message: string };
+  | { ok: false; retryable: boolean; authExpired?: true; message: string };
+
+/** What the caller is told when no JWT can be had: the clip waits, it is not refused. */
+const SIGNED_OUT = { ok: false, retryable: true, authExpired: true, message: "Not signed in" } as const;
+
+/**
+ * Statuses that say "not now" rather than "never": an expired token, a
+ * timeout, a rate limit. The same set the offline queue's `classify` retries,
+ * less 403 -- on a create, Appwrite's 403 is the bucket refusing the file.
+ */
+const TRANSIENT_4XX = new Set([401, 408, 429]);
 
 const endpoint = () =>
   publicAppwriteConfig({
@@ -113,13 +123,18 @@ async function sendChunk(
     };
 
     if (!response.ok) {
-      // 4xx is the server saying no -- a file too large, a bad type, an
-      // expired session. Retrying that forever is a loop, not resilience.
-      // 5xx and network failures are worth another go.
+      const message = body.message ?? `Upload failed (${response.status})`;
+      // An expired JWT is the token's age, not a verdict on the file. The
+      // caller mints a fresh one; dropping the clip here is how an athlete
+      // lost a 15-minute upload to a 15-minute token.
+      if (response.status === 401) return { ok: false, retryable: true, authExpired: true, message };
+      // Any other 4xx is the server saying no -- a file too large, a bad
+      // type. Retrying that forever is a loop, not resilience. 5xx, timeouts,
+      // rate limits and network failures are worth another go.
       return {
         ok: false,
-        retryable: response.status >= 500,
-        message: body.message ?? `Upload failed (${response.status})`,
+        retryable: response.status >= 500 || TRANSIENT_4XX.has(response.status),
+        message,
       };
     }
 
@@ -138,7 +153,22 @@ async function sendChunk(
 
 export type UploadResult =
   | { ok: true; fileId: string }
-  | { ok: false; retryable: boolean; message: string; uploadedCount: number };
+  | {
+      ok: false;
+      retryable: boolean;
+      /** No usable session: the clip waits for the athlete to sign back in. */
+      authExpired?: true;
+      message: string;
+      uploadedCount: number;
+    };
+
+async function mintJwt(): Promise<string | null> {
+  try {
+    return (await browserAppwrite().account.createJWT()).jwt;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Uploads what the server does not already have.
@@ -159,13 +189,11 @@ export async function uploadResumable(
   // One JWT for the whole attempt, not one per chunk. Appwrite's JWTs last 15
   // minutes and a 150MB clip is 30 chunks -- minting one each would be 30
   // avoidable round trips before any bytes move, on exactly the connection
-  // this module exists to tolerate.
-  let jwt: string;
-  try {
-    jwt = (await browserAppwrite().account.createJWT()).jwt;
-  } catch {
-    return { ok: false, retryable: true, message: "Not signed in", uploadedCount: 0 };
-  }
+  // this module exists to tolerate. The cost is that a slow upload can
+  // outlive its token, which is what the one refresh below is for.
+  let jwt = await mintJwt();
+  if (!jwt) return { ...SIGNED_OUT, uploadedCount: 0 };
+  let refreshed = false;
 
   let uploadedCount = await uploadedSoFar(fileId);
   onProgress?.(percentDone(uploadedCount, ranges.length));
@@ -175,7 +203,17 @@ export async function uploadResumable(
       return { ok: false, retryable: true, message: "Cancelled", uploadedCount };
     }
 
-    const outcome = await sendChunk(blob, fileId, athleteId, name, range, jwt, signal);
+    let outcome = await sendChunk(blob, fileId, athleteId, name, range, jwt, signal);
+    if (!outcome.ok && outcome.authExpired && !refreshed) {
+      // Once per attempt. A fresh token refused as well means the session is
+      // gone, and minting in a loop would only hammer the server about it.
+      refreshed = true;
+      const fresh = await mintJwt();
+      if (!fresh) return { ...SIGNED_OUT, uploadedCount };
+      jwt = fresh;
+      // The refused chunk never landed, so it is the one to send again.
+      outcome = await sendChunk(blob, fileId, athleteId, name, range, jwt, signal);
+    }
     if (!outcome.ok) {
       return { ...outcome, uploadedCount };
     }
