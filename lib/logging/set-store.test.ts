@@ -40,6 +40,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("logSet", () => {
+  it("fails when the set itself cannot be written to the phone", async () => {
+    resetQueueForTests({ ...store, put: () => Promise.reject(new DOMException("Quota exceeded", "QuotaExceededError")) });
+    await expect(log("st-1")).rejects.toThrow("Quota exceeded");
+  });
+
+  it("reports the set logged once it is on disk, even if the rollup refresh behind it is not", async () => {
+    // Throwing here would make the screen take the row back while the set
+    // still syncs to the coach -- a set the athlete then logs a second time.
+    const full = { ...store, put: async (op: QueuedOp) => {
+      if (op.kind === "rollup.refresh") throw new DOMException("Quota exceeded", "QuotaExceededError");
+      await store.put(op);
+    } };
+    resetQueueForTests(full);
+    await expect(log("st-1")).resolves.toMatchObject({ clientSetId: "st-1" });
+    expect(kinds(await store.all())).toEqual([["set.create", "st-1"]]);
+  });
+});
+
 describe("removeSet", () => {
   it("takes a set that never left the phone straight out of the queue, with no delete", async () => {
     await log("st-1");

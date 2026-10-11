@@ -136,6 +136,8 @@ export function LogScreen() {
   const [rpeOpen, setRpeOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
+  /** A set the phone could not write down. Said out loud: the athlete believes it is logged. */
+  const [unsaved, setUnsaved] = useState(false);
   const [ops, setOps] = useState<QueuedOp[]>([]);
   const [rest, setRest] = useState<RestTimer | null>(null);
   /** The logged set whose Delete is showing. */
@@ -471,47 +473,33 @@ export function LogScreen() {
     if (isWarmup) setRpeOpen(false);
   };
 
+  /** Rows whose write is on its way to the phone's storage, so a second tap is not a second set. */
+  const confirming = useRef(new Set<string>());
+
   const confirmSet = async (rowId: string) => {
     const row = plans.find((each) => each.clientSetId === rowId);
     if (!row || !active || !athleteId || !canComplete(row)) return;
     // Only the head of an exercise's plan is ever offered a confirm square;
     // this makes the rule hold even if a stale handler fires.
     if (headOf(plans, row.exerciseId)?.clientSetId !== rowId) return;
+    if (confirming.current.has(rowId)) return;
+    confirming.current.add(rowId);
     setBusy(true);
     setSelectedId(null);
-    // The row appears logged immediately because it *is* logged: logSet writes
-    // it to the durable queue, and nothing here waits for Appwrite. There is no
-    // rollback path any more, and that is the point -- a set the athlete saw
-    // land never quietly disappears because a lift happened in a basement.
-    const optimistic: UnnamedSet = {
-      exerciseId: row.exerciseId,
-      clientSetId: row.clientSetId,
-      setIndex: nextSetIndex(everything.filter((s) => s.exerciseId === row.exerciseId)),
-      loadKg: row.loadKg as number,
-      reps: row.reps as number,
-      rpe: row.rpe,
-      isWarmup: row.isWarmup,
-      loggedAt: new Date(),
-    };
-    setLocal((prev) => [...prev, optimistic]);
-    // A row the athlete already planned becomes the head; with none, the
-    // exercise simply shows what was logged and Add set. No row is invented.
-    const { rows, next } = afterConfirm(plans, rowId);
-    setPlans(rows);
-    setFocusId(next?.clientSetId ?? null);
-    closeSheets();
-    // Warm-ups start it too. Anything else is a rule an athlete has to learn,
-    // and the feature list is explicit that this is the part Strong keeps
-    // simple on purpose.
-    changeRest(startRest());
+    const setIndex = nextSetIndex(everything.filter((s) => s.exerciseId === row.exerciseId));
 
+    // Written down first, shown second. logSet resolves once the set is in the
+    // durable queue on this phone -- a few milliseconds, and nothing here waits
+    // for Appwrite -- so the row still appears logged at once. What it never
+    // does any more is appear logged and then turn out not to be: a phone with
+    // full storage used to show the set, start the rest, and lose it.
     try {
       await logSet({
         sessionId: active.id,
         exerciseId: row.exerciseId,
-        setIndex: optimistic.setIndex as number,
-        loadKg: optimistic.loadKg,
-        reps: optimistic.reps,
+        setIndex,
+        loadKg: row.loadKg as number,
+        reps: row.reps as number,
         rpe: row.rpe,
         isWarmup: row.isWarmup,
         clientSetId: row.clientSetId,
@@ -521,15 +509,39 @@ export function LogScreen() {
           : {}),
       });
     } catch {
-      // Only reachable if the device cannot write to its own storage at all.
-      // Then the set genuinely is not logged, and saying so beats a lie. The
-      // row goes back to the head of its exercise with the athlete's numbers:
-      // nothing else on screen holds them now that a confirm adds no row.
-      setLocal((prev) => prev.filter((s) => s.clientSetId !== row.clientSetId));
-      setPlans((prev) => (prev.some((each) => each.clientSetId === row.clientSetId) ? prev : [row, ...prev]));
+      // The device could not write to its own storage, so the set genuinely is
+      // not logged. The row stays where it was with the athlete's numbers in
+      // it, and they are told, so the next tap on it is a retry they chose.
+      setUnsaved(true);
+      return;
     } finally {
+      confirming.current.delete(rowId);
       setBusy(false);
     }
+
+    setUnsaved(false);
+    const logged: UnnamedSet = {
+      exerciseId: row.exerciseId,
+      clientSetId: row.clientSetId,
+      setIndex,
+      loadKg: row.loadKg as number,
+      reps: row.reps as number,
+      rpe: row.rpe,
+      isWarmup: row.isWarmup,
+      loggedAt: new Date(),
+    };
+    setLocal((prev) => [...prev, logged]);
+    // A row the athlete already planned becomes the head; with none, the
+    // exercise simply shows what was logged and Add set. No row is invented.
+    // The rows from the latest plans, in case another was touched in the
+    // moment the write took; the next head is the same either way.
+    setPlans((prev) => afterConfirm(prev, rowId).rows);
+    setFocusId(afterConfirm(plans, rowId).next?.clientSetId ?? null);
+    closeSheets();
+    // Warm-ups start it too. Anything else is a rule an athlete has to learn,
+    // and the feature list is explicit that this is the part Strong keeps
+    // simple on purpose.
+    changeRest(startRest());
   };
 
   const discardPlanned = (rowId: string) => {
@@ -880,6 +892,21 @@ export function LogScreen() {
             {failed.length} {failed.length === 1 ? "entry" : "entries"} could not be saved and
             {failed.length === 1 ? " is" : " are"} not on your coach&rsquo;s side. Everything else synced.
           </p>
+        ) : null}
+
+        {unsaved ? (
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-3 rounded-card border border-danger-line bg-surface p-3"
+          >
+            <p className="m-0 text-caption text-foreground">
+              That set wasn&rsquo;t saved &mdash; this phone couldn&rsquo;t store it. Your numbers are still in
+              the row. Free up some space, then tap it again.
+            </p>
+            <Button variant="ghost" size="sm" onClick={() => setUnsaved(false)}>
+              OK
+            </Button>
+          </div>
         ) : null}
 
         {/*
