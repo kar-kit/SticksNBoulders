@@ -127,7 +127,7 @@ for (const row of setRows) {
   const week = weekStart(loggedAt);
   const key = `${athleteId}/${exerciseId}/${week.toISOString()}`;
   const bucket = buckets.get(key) ?? { athleteId, exerciseId, weekStart: week, sets: [] };
-  bucket.sets.push({ loadKg, reps, isWarmup: row.is_warmup === true, e1rmKg: num(row.e1rm_kg) });
+  bucket.sets.push({ loadKg, reps, isWarmup: row.is_warmup === true, e1rmKg: num(row.e1rm_kg), loggedAt });
   buckets.set(key, bucket);
 }
 
