@@ -25,6 +25,7 @@
     "e2e:auth": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-auth.mts",
     "smtp:check": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/smtp-check.mts",
     "perf:check": "tsx scripts/perf-check.mts",
+    "check:sw": "tsx scripts/check-sw.mts",
     "e2e:session": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-session.mts",
     "e2e:history": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-history.mts",
     "e2e:lift": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-lift.mts",
