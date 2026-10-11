@@ -448,7 +448,7 @@ describe("logging a set on a phone that cannot store it", () => {
     expect(await screen.findByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
   });
 
-  it("does not show the set as logged until it is written to the phone", async () => {
+  it("marks the set queued, and starts no rest, until it is written to the phone", async () => {
     let written: () => void = () => {};
     logSet.mockImplementationOnce(() => new Promise<void>((resolve) => (written = resolve)));
     const { user } = setup({ active: session() });
@@ -456,18 +456,15 @@ describe("logging a set on a phone that cannot store it", () => {
     await enter140x5(user);
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
 
-    // The write is under way and has not landed: nothing claims it has.
+    // The write is under way and has not landed: the row carries the queued
+    // mark, and nothing says the set is done.
     await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Queued, will sync")).toBeInTheDocument();
     expect(screen.queryByRole("timer", { name: "Rest timer" })).not.toBeInTheDocument();
 
-    // A second tap while it is writing is not a second set.
-    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
-    expect(logSet).toHaveBeenCalledTimes(1);
-
     await act(async () => written());
-    expect(screen.queryByRole("button", { name: "Log Set 1" })).not.toBeInTheDocument();
     expect(await screen.findByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Queued, will sync")).not.toBeInTheDocument();
   });
 
   it("still queues the set when only localStorage is full", async () => {
@@ -1428,6 +1425,70 @@ describe("a set followed into the queue", () => {
     await user.click(screen.getByRole("button", { name: "Log Set 2" }));
     await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
     expect((await setCreates(store)).map((p) => p.setIndex)).toEqual([1, 3]);
+  });
+
+  describe("tapping on while the write is still reaching the phone", () => {
+    // The e2e session and offline scripts, step for step, over a queue whose
+    // disk takes 50ms a write -- real IndexedDB is slower than a Map, and the
+    // e2e taps land inside that window.
+    const useSlowDisk = () => {
+      const inner = createMemoryStore();
+      return useRealQueue({
+        put: async (op) => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          await inner.put(op);
+        },
+        remove: inner.remove,
+        all: inner.all,
+      });
+    };
+    const warmUpThenWorkingSet = async (user: ReturnType<typeof userEvent.setup>) => {
+      await addSquat(user);
+      await enterSet(user, "60", "5");
+      await user.click(screen.getByRole("switch", { name: "Warm-up" }));
+      await user.click(screen.getByRole("button", { name: "Log Warm-up set" }));
+      await screen.findByRole("group", { name: "Warm-up set" });
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      await enterSet(user, "140", "5");
+      await user.click(screen.getByRole("button", { name: "Set 1 RPE" }));
+      await user.click(screen.getByRole("button", { name: "8" }));
+    };
+
+    it("adds no Set 2 until one is asked for (e2e-session)", async () => {
+      const store = useSlowDisk();
+      const { user } = setup({ active: session() });
+      await warmUpThenWorkingSet(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      });
+
+      expect(screen.queryAllByRole("group", { name: "Set 2" })).toHaveLength(0);
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("140");
+      await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(3));
+      expect((await setCreates(store)).map((p) => [p.loadKg, p.isWarmup])).toEqual([
+        [60, true],
+        [140, false],
+        [140, false],
+      ]);
+    });
+
+    it("offers Log Set 2 when Add set is tapped before Set 1 has landed (e2e-offline)", async () => {
+      const store = useSlowDisk();
+      const { user } = setup({ active: session() });
+      await warmUpThenWorkingSet(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      // No wait: straight on, inside the write.
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+
+      expect(await screen.findByRole("group", { name: "Set 2" })).toBeInTheDocument();
+      await user.click(await screen.findByRole("button", { name: "Log Set 2" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(3));
+      expect(screen.queryAllByRole("group", { name: "Set 3" })).toHaveLength(0);
+    });
   });
 
   it("keeps a set the phone could not store off the screen and out of the queue, and says so", async () => {

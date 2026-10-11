@@ -138,6 +138,8 @@ export function LogScreen() {
   const [busy, setBusy] = useState(false);
   /** A set the phone could not write down. Said out loud: the athlete believes it is logged. */
   const [unsaved, setUnsaved] = useState(false);
+  /** Confirmed, and on their way to the phone's storage. Shown queued until they are in it. */
+  const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
   const [ops, setOps] = useState<QueuedOp[]>([]);
   const [rest, setRest] = useState<RestTimer | null>(null);
   /** The logged set whose Delete is showing. */
@@ -473,33 +475,44 @@ export function LogScreen() {
     if (isWarmup) setRpeOpen(false);
   };
 
-  /** Rows whose write is on its way to the phone's storage, so a second tap is not a second set. */
-  const confirming = useRef(new Set<string>());
-
   const confirmSet = async (rowId: string) => {
     const row = plans.find((each) => each.clientSetId === rowId);
     if (!row || !active || !athleteId || !canComplete(row)) return;
     // Only the head of an exercise's plan is ever offered a confirm square;
     // this makes the rule hold even if a stale handler fires.
     if (headOf(plans, row.exerciseId)?.clientSetId !== rowId) return;
-    if (confirming.current.has(rowId)) return;
-    confirming.current.add(rowId);
     setBusy(true);
     setSelectedId(null);
-    const setIndex = nextSetIndex(everything.filter((s) => s.exerciseId === row.exerciseId));
+    // The row leaves the plan at once, so a tap on Add set while the write is
+    // still reaching the phone builds on a logged set rather than behind a
+    // planned one. It shows with the queued mark until the queue holds it:
+    // on screen, but not yet claiming to be saved.
+    const optimistic: UnnamedSet = {
+      exerciseId: row.exerciseId,
+      clientSetId: row.clientSetId,
+      setIndex: nextSetIndex(everything.filter((s) => s.exerciseId === row.exerciseId)),
+      loadKg: row.loadKg as number,
+      reps: row.reps as number,
+      rpe: row.rpe,
+      isWarmup: row.isWarmup,
+      loggedAt: new Date(),
+    };
+    setSaving((prev) => new Set(prev).add(row.clientSetId));
+    setLocal((prev) => [...prev, optimistic]);
+    // A row the athlete already planned becomes the head; with none, the
+    // exercise simply shows what was logged and Add set. No row is invented.
+    const { rows, next } = afterConfirm(plans, rowId);
+    setPlans(rows);
+    setFocusId(next?.clientSetId ?? null);
+    closeSheets();
 
-    // Written down first, shown second. logSet resolves once the set is in the
-    // durable queue on this phone -- a few milliseconds, and nothing here waits
-    // for Appwrite -- so the row still appears logged at once. What it never
-    // does any more is appear logged and then turn out not to be: a phone with
-    // full storage used to show the set, start the rest, and lose it.
     try {
       await logSet({
         sessionId: active.id,
         exerciseId: row.exerciseId,
-        setIndex,
-        loadKg: row.loadKg as number,
-        reps: row.reps as number,
+        setIndex: optimistic.setIndex as number,
+        loadKg: optimistic.loadKg,
+        reps: optimistic.reps,
         rpe: row.rpe,
         isWarmup: row.isWarmup,
         clientSetId: row.clientSetId,
@@ -510,34 +523,24 @@ export function LogScreen() {
       });
     } catch {
       // The device could not write to its own storage, so the set genuinely is
-      // not logged. The row stays where it was with the athlete's numbers in
-      // it, and they are told, so the next tap on it is a retry they chose.
+      // not logged. It comes off the logged list and back to the head of its
+      // exercise with the athlete's numbers, and they are told -- a row that
+      // quietly reappears unticked reads as a glitch, not as a lost set.
+      setLocal((prev) => prev.filter((s) => s.clientSetId !== row.clientSetId));
+      setPlans((prev) => (prev.some((each) => each.clientSetId === row.clientSetId) ? prev : [row, ...prev]));
       setUnsaved(true);
       return;
     } finally {
-      confirming.current.delete(rowId);
+      setSaving((prev) => {
+        const rest = new Set(prev);
+        rest.delete(row.clientSetId);
+        return rest;
+      });
       setBusy(false);
     }
 
+    // Only now is the set saved, so only now does anything say it is done.
     setUnsaved(false);
-    const logged: UnnamedSet = {
-      exerciseId: row.exerciseId,
-      clientSetId: row.clientSetId,
-      setIndex,
-      loadKg: row.loadKg as number,
-      reps: row.reps as number,
-      rpe: row.rpe,
-      isWarmup: row.isWarmup,
-      loggedAt: new Date(),
-    };
-    setLocal((prev) => [...prev, logged]);
-    // A row the athlete already planned becomes the head; with none, the
-    // exercise simply shows what was logged and Add set. No row is invented.
-    // The rows from the latest plans, in case another was touched in the
-    // moment the write took; the next head is the same either way.
-    setPlans((prev) => afterConfirm(prev, rowId).rows);
-    setFocusId(afterConfirm(plans, rowId).next?.clientSetId ?? null);
-    closeSheets();
     // Warm-ups start it too. Anything else is a rule an athlete has to learn,
     // and the feature list is explicit that this is the part Strong keeps
     // simple on purpose.
@@ -791,7 +794,7 @@ export function LogScreen() {
               name={block.name}
               sets={setsOf(block.id).map<LoggedSet>((s) => ({
                 clientSetId: s.clientSetId,
-                pendingSync: unsynced.has(s.clientSetId),
+                pendingSync: unsynced.has(s.clientSetId) || saving.has(s.clientSetId),
                 loadKg: s.loadKg,
                 reps: s.reps,
                 rpe: (s.rpe as RpeValue | null) ?? null,
