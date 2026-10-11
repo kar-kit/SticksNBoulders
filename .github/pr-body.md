@@ -1,53 +1,41 @@
-## feat(editor): Calendar view of the program, beside the week view
+## fix(video): never lose a clip to an expired session, and pin the clip stream's auth
 
-**Stacks on the program-editor-outline PR** (#71, `program-editor-outline`). Merge that first; this branch's diff against it is the calendar only.
+Two findings from the 9 Oct test audit.
 
-RTS, TrueCoach and TrainHeroic all show a program as a dated calendar, and coaches think about the cycle in weeks and phases. The editor's outline only showed one week at a time. This adds a **Week | Calendar** toggle to the program header. It is the only new control there. Calendar view shows the whole program as dated weeks. Schema, ops, permissions and validation are unchanged.
+### 1. A clip was deleted when the session expired mid-upload (audit B4, confirmed)
 
-### What changed
+The audit guessed this from reading the code. A test confirmed it. `sendChunk` treated every 4xx as permanent, 401 included. `attachClipToSet` and `resumeInterruptedUploads` then called `forgetUpload`, which deleted the blob from IndexedDB. The JWT is minted once per attempt and lasts 15 minutes, so a 150 MB clip on slow gym wifi could outlive its token and be lost. The new transport test "mints one fresh JWT and resends the refused chunk" failed on `dev` with `{ ok: false, retryable: false }`.
 
-**1. The toggle and the URL.** The header gets a segmented control (the existing `components/ui/tabs.tsx`) beside Starts. The choice is stored as `?view=calendar` and written with `history.replaceState`, which Next 16 syncs with its router, so it survives a reload and can be linked without adding a history entry. Any other query (`week`, `day`, `line` from "Adjust program") stays as it was. The page reads the view server-side (`editorViewFrom` in `lib/coach/adjust-program.ts`, next to `landingFrom`). Templates have no dates, so they get no toggle and always open in the week view.
+**Changes**
+- `lib/video/resumable-upload.ts`: on a 401, mint **one** fresh JWT per attempt and resend the refused chunk. If that 401s too, or no JWT can be minted, the result is `{ retryable: true, authExpired: true }`. 408 and 429 are now retryable as well, matching the offline queue's `classify`. Other 4xx (wrong type, too large) are still permanent.
+- `lib/video/upload.ts`: a kept clip now returns `reason: "pending"` instead of `"failed"`. When sign-in is the blocker, the message says signing in will send it. On resume, a sign-in failure refunds its attempt (`refundAttempt`, new in `pending-store.ts`). Without that, five app starts while signed out would reach `MAX_UPLOAD_ATTEMPTS` and delete a clip the server never refused.
+- `components/logging/attach-video.tsx`: a pending clip shows **"Video pending"** with the message (`data-upload="pending"`) and counts as on its way, so the coach's nudge stops. A refused clip is still shown as a failure.
+- Signing back in already re-runs `resumeInterruptedUploads()` (the `athleteId` effect in `session-context.tsx`), which picks up from the last confirmed chunk. The Feedback screen already lists pending uploads from IndexedDB.
+- `docs/video-upload.md`: the retry policy is updated.
 
-**2. The calendar** (`components/coach/program-calendar.tsx`). A Monday-first grid with one row per program week and one `<tbody>` band per block. The band shows the block name and its date range, and the separator between blocks is thicker. Each row header shows the week name, its dates and its state. The state uses the outline's own `weekState` + `StateMark` (draft / live / logged), now exported from `program-outline.tsx`. Every cell is dated from the same helpers the week view uses (`scheduledOnFor`, `placeDay`, `weekRange`, `blockRange`).
+### 2. Clip stream auth had no test that could fail (audit C07, C03–C06)
 
-A scheduled day shows its title, its first 3 distinct exercises and "+N more", plus a tick and a green edge once logged. A top set and its backoffs count as one lift. Its accessible name reads like "Mon 5 Oct, Squat day: Squat, Bench Press, Deadlift, +1, logged".
+`app/api/clip/[fileId]/route.ts` is correct today. Before this change, though, adding `x-appwrite-key` to the storage read would have turned it into an unauthenticated admin read of every clip, and every test would still have passed. I checked this against `dev`: that mutation **survived** the old tests. The fake storage served any file to any caller, and the header check used `toMatchObject`.
 
-A day dated outside its week, or not dated at all, is listed under its week's label rather than dropped.
+**Changes (tests only, no route change)**
+- The fake storage now models Appwrite permissions. The API key reads everything; a JWT reads only that user's files.
+- Upstream headers are checked with exact equality, and `x-appwrite-key` must be absent.
+- A valid ticket for a clip its holder can't read streams nothing: 404, with no upstream body leaked.
+- Missing, expired, forged, payload-edited, malformed and wrong-file tickets never create the admin client and never mint a JWT.
+- The JWT is minted only for the ticket's user. Query params such as `u`, `user` and `userId` are ignored.
+- `Cache-Control: no-store, private`, `nosniff`, and the forward allowlist (`set-cookie` and `x-appwrite-session` dropped).
 
-**3. Click-through.** Clicking a day switches to Week view on that week, scrolls to the day and puts the keyboard on its first line. A day with no lines, or a read-only one, gets focus on the day itself. This reuses the existing landing effect, generalised from "once, from the URL" to "whenever a landing is pending and the week view is showing".
+### Testing
+- Tests were written first. The transport and upload tests failed on `dev` and pass with the fix.
+- Mutation-checked. All 11 upload-path mutations were killed: no refresh, 401 classed as permanent, 408/429 dropped, no resend, no refund, forgetting on auth, wrong message, refresh per chunk instead of per attempt, and two UI mutations. All 9 clip-route mutations were killed: admin key added, admin key instead of JWT, fileId check removed, admin client created eagerly, upstream body passed through, `set-cookie` forwarded, nosniff removed, Cache-Control changed, and JWT user taken from the query.
+- `npm test` passed (169 files). `npm run lint` and `npx tsc --noEmit` are clean.
+- Not run: `e2e:video` against the live instance (out of scope for this offline run).
 
-**4. "+ Day" on empty cells.** It appears on hover or focus and sends the existing `addDay` op with `scheduledOn = anchor + 7·week + weekday`. That is the date a weekday chip would store. The view stays on the calendar and the cell becomes the new day.
-
-**5. No start date.** The calendar shows the same prompt as the week view. If nothing is dated, there is no grid. If some days are already dated, the anchor is counted back from them, as the week view already does.
-
-**6. Read-only** for anyone but the program's coach. There is no "+ Day", days still open, and empty cells are focusable and say "no session".
-
-**7. Accessibility.** The table has `role="grid"` with column headers (Week, Mon–Sun), row headers named like "Accumulation · Week 2, draft" and block row-group headers. There is one tab stop for the whole grid. Arrows walk the cells, Home and End jump to the ends of a row, and Enter activates.
-
-**Nothing logged can move.** The calendar only reads, plus `addDay`. No existing day is redated.
-
-### Layout choice
-
-[Inference] In Calendar view the outline column is hidden. The calendar rows carry the same block, week and state information, and dropping the 224 px rail gives each day column about 145 px at the coach side's ~1200 px effective width. Without that, columns would be about 115 px, and three exercise names truncate badly at that width. The side effect is that "+ Week", "+ Block" and block renames are only available in Week view.
-
-### Tests
-
-- `components/coach/program-calendar.test.tsx`: 17 tests. They cover the toggle and URL param (other params kept), opening on `?view=calendar`, no toggle on templates, column and row headers with state, block bands with ranges, cell dates across weeks and blocks, summary truncation, logged and unlabelled days, off-week and undated days, arrow-key walking with a single tab stop, click-through (week, scroll, focus on the line or the day), "+ Day" dates in two blocks, "+ Day" only on empty cells, "+ Day" with no start date but dated days, read-only mode, and the no-start-date prompt.
-- `lib/coach/adjust-program.test.ts`: `editorViewFrom`.
-- Mutation-checked: each of 21 deliberate breaks across the editor, the calendar and the view parser fails at least one test.
-- `scripts/e2e-calendar.mts` (`npm run e2e:calendar`) at 1440×900 covers `?view=calendar` and reload, the toggle writing and clearing the param, Monday-first headers, rows for both blocks, the summary with "+1 more", no horizontal scroll, click-through to the right week with focus inside the day, and "+ Day" on an empty cell. For "+ Day" it asserts both the stored `scheduled_on` and the cell turning into the new day. It writes the program through `program-fixtures.ts` ops and deletes only its own rows. **Not run yet.**
-
-`npx vitest run` passes 2630 of 2630. `npx eslint .`, `npx next build --webpack` and `npx tsc --noEmit` are all clean.
-
-### Check by eye
-
-- Cell density at 1440 with the coach-side 1.2× zoom: whether three exercise lines plus the title read comfortably at about 145 px.
-- Whether the hover-only "+ Day" is discoverable enough, or should show faintly at rest.
-- Whether hiding the outline in Calendar view is right, or whether Joey wants it kept.
-- The block band separator weight in dark mode.
-
-### E2E (live instance, Turbopack dev server, this branch)
-- New `npm run e2e:calendar` (`scripts/e2e-calendar.mts`, coach at 1440×900): 21/21. Covers the toggle and `?view=calendar`, grid rows and dates, day summaries, click-through to Week view, and + Day from an empty cell.
-- Re-run on this branch for regressions: `e2e:editor` 45/45, `e2e:program` 31/31, `e2e:copy` 22/22.
+### Decisions for Joey
+- **Refused tickets still return 404, not 401/403.** The brief asked for 401/403 on expired or forged tickets. The route and `ticket.ts` deliberately give one opaque 404 for every refusal, and the player's refresh fires on any error status, so I pinned the existing 404. Switching would be a one-line change per branch plus test updates. Say if you want it.
+- **403 on an upload chunk is still permanent.** The queue retries 403, but on a storage create Appwrite's 403 means the bucket refused the file. Retrying it would loop until the attempt cap.
+- **`refundAttempt` has no unit test.** It is raw IndexedDB glue, like the rest of `pending-store.ts` (audit Q2: always mocked). The `upload.test.ts` mock pins that it is called. Adding `fake-indexeddb` would cover it, but that is a new dependency.
+- **The 15-minute JWT lifetime is still [Unverified]** against the instance's configured TTL. The fix doesn't depend on the exact value.
+- **"Video pending" stays on that camera only until the screen reloads.** After a reload, pending clips still show on Feedback (from IndexedDB), but the Log screen's camera goes back to "Add video". A per-set pending marker on the Log screen would be a follow-up.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
