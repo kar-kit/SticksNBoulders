@@ -23,6 +23,7 @@ const store = vi.hoisted(() => ({ tree: null as unknown }));
 vi.mock("@/lib/programming/program-store", () => ({
   fetchProgramTree: async () => store.tree,
   sendProgramOp: async () => ({ rowId: "new" }),
+  fetchLoggedDayIds: async () => new Set(),
 }));
 
 const scrolled = vi.fn();
@@ -104,8 +105,9 @@ beforeEach(() => {
 it("opens on the traced week, in its own block, with the traced line focused", async () => {
   render(<ProgramEditor programId="p1" landing={{ weekId: "w3", dayId: "d9", lineId: "l9" }} />);
   const heavy = await screen.findByRole("region", { name: "Heavy squat" });
-  expect(screen.getByRole("button", { name: "Block 2" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("tab", { name: "Week 3" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("heading", { name: "Block 2 · Week 3" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Week 3, live" })).toHaveAttribute("aria-current", "true");
+  expect(screen.getByRole("button", { name: "Week 1, live" })).not.toHaveAttribute("aria-current");
   // The scroll and focus run in a passive effect, which React's scheduler can
   // leave for a task after the commit that findByRole resolves on (it yields
   // once a 5 ms slice is spent, so a busy machine made this fail ~1 run in 25).

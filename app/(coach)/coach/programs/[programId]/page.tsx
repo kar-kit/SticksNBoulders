@@ -1,5 +1,5 @@
 import { ProgramEditor } from "@/components/coach/program-editor";
-import { landingFrom } from "@/lib/coach/adjust-program";
+import { editorViewFrom, landingFrom } from "@/lib/coach/adjust-program";
 
 export const metadata = { title: "Program Editor — Sticks N Boulders" };
 
@@ -9,9 +9,10 @@ export const metadata = { title: "Program Editor — Sticks N Boulders" };
  *
  * `?week=&day=&line=` is where "Adjust program" lands it (the day a reviewed
  * clip was prescribed from). Only a starting position: it grants nothing, and
- * an id that is not in this program is simply not found.
+ * an id that is not in this program is simply not found. `?view=calendar`
+ * opens it on the calendar rather than one week.
  */
 export default async function ProgramEditorPage(props: PageProps<"/coach/programs/[programId]">) {
   const [{ programId }, query] = await Promise.all([props.params, props.searchParams]);
-  return <ProgramEditor programId={programId} landing={landingFrom(query)} />;
+  return <ProgramEditor programId={programId} landing={landingFrom(query)} view={editorViewFrom(query)} />;
 }

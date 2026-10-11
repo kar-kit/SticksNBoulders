@@ -7,7 +7,7 @@
  * What only the instance can prove:
  *
  *   - A linked coach writes a block in the Program Editor: a day, two lines
- *     typed into the grid, a note, Publish. Every row lands through
+ *     typed into the grid, a note, Publish week 1. Every row lands through
  *     /api/program with the coach and athlete copied from the program and a
  *     read-only permission stamp -- nobody holds update or delete.
  *   - The athlete sees that day on Today, percentages already in kilos
@@ -33,6 +33,7 @@ import { addCoachToCircle, ensureCircle } from "../appwrite/documents/circle-adm
 import { circleTeamId } from "../appwrite/documents/circle";
 import { linkPermissions, profilePermissions, referenceMaxPermissions, setPermissions } from "../appwrite/documents/policy";
 import { localDay } from "../lib/programming/program";
+import { WEEKDAYS, weekdayOf } from "../lib/programming/calendar";
 
 dedupeSdkWarnings();
 
@@ -112,6 +113,10 @@ const visible = (page: Page, text: string | RegExp, timeout = 20000) =>
     .then(() => true)
     .catch(() => false);
 
+/** The editor's day date, as dayDateLabel writes it ("Thu 9 Oct"). */
+const dayLabel = (day: string) =>
+  new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+
 const rowsOf = async (tableId: string, column: string, value: string) =>
   (
     await db.listRows({ databaseId: D, tableId, queries: [Query.equal(column, value), Query.limit(100)], ttl: 0 })
@@ -186,12 +191,26 @@ try {
   await coachPage.getByRole("button", { name: "Create" }).click();
   await coachPage.waitForURL(/\/coach\/programs\/[^/]+$/, { timeout: 30000 });
   created.programId = coachPage.url().split("/").at(-1)!;
-  check("Create opens the editor on week 1", await coachPage.getByRole("tab", { name: "Week 1" }).waitFor({ timeout: 20000 }).then(() => true).catch(() => false));
+  const week1 = coachPage.getByRole("navigation", { name: "Program outline" }).getByRole("button", { name: "Week 1, draft", exact: true });
+  check(
+    "Create opens the editor on week 1",
+    (await week1.waitFor({ timeout: 20000 }).then(() => true).catch(() => false)) &&
+      (await week1.getAttribute("aria-current")) === "true" &&
+      (await coachPage.getByRole("heading", { name: "Block 1 · Week 1", exact: true }).count()) === 1,
+  );
 
   await coachPage.getByRole("button", { name: "+ Day" }).click();
   const day = coachPage.getByRole("region", { name: "Day 1" });
   await day.waitFor({ timeout: 20000 });
-  check("a new day is dated from the start date", (await day.getByLabel("Day 1 date").inputValue()) === today);
+  // No per-day date input any more: the day takes its date from the start
+  // date, shown as the selected weekday chip and the day's date beside it.
+  const weekday = WEEKDAYS[weekdayOf(today)];
+  check(
+    "a new day is dated from the start date",
+    (await day.getByRole("group", { name: "Day 1 weekday" }).getByRole("button", { name: weekday, exact: true, pressed: true }).count()) === 1 &&
+      (await day.getByText(dayLabel(today), { exact: true }).count()) === 1,
+    weekday,
+  );
 
   const addLine = async (name: string) => {
     await day.getByRole("combobox", { name: "Add exercise to Day 1" }).fill(name);
@@ -219,8 +238,13 @@ try {
   await coachPage.waitForTimeout(1500);
   await coachPage.screenshot({ path: ".shots/program-editor-1440.png", fullPage: true });
 
-  await coachPage.getByRole("button", { name: "Publish" }).click();
-  check("Publish says so", await coachPage.getByLabel("Status").getByText("Published").waitFor({ timeout: 20000 }).then(() => true).catch(() => false));
+  // One publish per week; publishing week 1 takes the draft program live with it.
+  await coachPage.getByRole("button", { name: "Publish week 1", exact: true }).click();
+  check(
+    "Publish week 1 says so",
+    (await coachPage.getByLabel("Status").getByText("Live", { exact: true }).waitFor({ timeout: 20000 }).then(() => true).catch(() => false)) &&
+      (await coachPage.getByRole("button", { name: "Week 1, live", exact: true }).waitFor({ timeout: 10000 }).then(() => true).catch(() => false)),
+  );
 
   const lines = await poll(
     () => rowsOf("prescriptions", "program_id", created.programId),

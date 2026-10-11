@@ -1,4 +1,5 @@
-import { copyCalendar, daysBetween, duplicateShift, shiftDay } from "./copy";
+import { copyCalendar, copyWeekPlan, daysBetween, duplicateShift, shiftDay } from "./copy";
+import { programOp, type WeekTree } from "./program";
 
 describe("daysBetween and shiftDay", () => {
   it("counts whole calendar days, across a month and a clock change", () => {
@@ -60,5 +61,111 @@ describe("copyCalendar", () => {
       startOn: "2026-11-02",
       shift: 0,
     });
+  });
+});
+
+describe("copying a week into a new block (+ Block)", () => {
+  const source: WeekTree = {
+    id: "w4",
+    programId: "p1",
+    blockId: "b1",
+    position: 3,
+    label: "Heavy",
+    status: "published",
+    notes: "deload if sore",
+    days: [
+      {
+        id: "d1",
+        programId: "p1",
+        blockId: "b1",
+        weekId: "w4",
+        position: 0,
+        label: "Squat day",
+        scheduledOn: "2026-10-26",
+        notes: "belt on",
+        prescriptions: [
+          {
+            id: "l1",
+            programId: "p1",
+            weekId: "w4",
+            dayId: "d1",
+            exerciseId: "tempo-squat",
+            position: 0,
+            setCount: 3,
+            reps: 5,
+            repMax: 6,
+            load: "70%",
+            loadKind: "percent",
+            restSeconds: 180,
+            notes: "3s down",
+            backoff: "3 x 90%",
+            videoRequired: true,
+            referenceExerciseId: "squat",
+            updatedAt: "",
+          },
+          {
+            id: "l2",
+            programId: "p1",
+            weekId: "w4",
+            dayId: "d1",
+            exerciseId: "bench",
+            position: 1,
+            setCount: 1,
+            reps: null,
+            repMax: null,
+            load: null,
+            loadKind: null,
+            restSeconds: null,
+            notes: null,
+            updatedAt: "",
+          },
+        ],
+      },
+      { id: "d2", programId: "p1", blockId: "b1", weekId: "w4", position: 1, label: null, scheduledOn: null, notes: null, prescriptions: [] },
+    ],
+  };
+
+  it("carries every day and every typed field of every line, in order, moved by the shift", () => {
+    expect(copyWeekPlan(source, 7)).toEqual([
+      {
+        day: { label: "Squat day", scheduledOn: "2026-11-02", notes: "belt on" },
+        lines: [
+          {
+            exerciseId: "tempo-squat",
+            setCount: 3,
+            reps: 5,
+            repMax: 6,
+            load: "70%",
+            restSeconds: 180,
+            notes: "3s down",
+            backoff: "3 x 90%",
+            videoRequired: true,
+            referenceExerciseId: "squat",
+          },
+          {
+            exerciseId: "bench",
+            setCount: 1,
+            reps: null,
+            repMax: null,
+            load: null,
+            restSeconds: null,
+            notes: null,
+            backoff: null,
+            videoRequired: false,
+            referenceExerciseId: null,
+          },
+        ],
+      },
+      { day: { label: null, scheduledOn: null, notes: null }, lines: [] },
+    ]);
+  });
+
+  it("writes ops the server's own schema accepts", () => {
+    for (const { day, lines } of copyWeekPlan(source, 7)) {
+      expect(programOp.safeParse({ op: "addDay", weekId: "w9", ...day }).success).toBe(true);
+      for (const line of lines) {
+        expect(programOp.safeParse({ op: "addPrescription", dayId: "d9", ...line }).success).toBe(true);
+      }
+    }
   });
 });

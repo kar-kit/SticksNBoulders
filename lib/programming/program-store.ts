@@ -37,7 +37,7 @@ import {
 
 const PAGE = 100;
 
-type TableId = "programs" | "program_blocks" | "program_weeks" | "program_days" | "prescriptions";
+type TableId = "programs" | "program_blocks" | "program_weeks" | "program_days" | "prescriptions" | "sessions";
 
 async function listAll(tableId: TableId, queries: string[]): Promise<unknown[]> {
   const { tables, databaseId } = browserAppwrite();
@@ -78,6 +78,28 @@ export async function fetchProgramTree(programId: string): Promise<ProgramTree |
     days: parseRows(days, parseDay),
     prescriptions: parseRows(prescriptions, parsePrescriptionRow),
   });
+}
+
+/**
+ * The program days an athlete has started a session from, for the editor's
+ * "logged" mark and for keeping logged days where they are when the start
+ * date moves. Reads `sessions.program_day_id` only -- the same column the
+ * roster reads, through the coach's own session -- on the athlete_id index,
+ * filtered to this program's days here. Throws when it cannot read, so the
+ * caller can tell unknown from none.
+ */
+export async function fetchLoggedDayIds(athleteId: string, dayIds: readonly string[]): Promise<Set<string>> {
+  const rows = await listAll("sessions", [
+    Query.equal("athlete_id", athleteId),
+    Query.isNotNull("program_day_id"),
+    Query.select(["$id", "program_day_id"]),
+  ]);
+  const wanted = new Set(dayIds);
+  return new Set(
+    rows
+      .map((row) => (row as { program_day_id?: unknown }).program_day_id)
+      .filter((id): id is string => typeof id === "string" && wanted.has(id)),
+  );
 }
 
 /** Programs for an athlete, or written by a coach, newest first. Templates are `{ coachId, athleteId: null }`. */

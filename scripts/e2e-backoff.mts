@@ -201,8 +201,8 @@ try {
   check("a valid one says what it will do", await visible(coachPage, "3 sets at 90% of today's top set"));
   await coachPage.waitForTimeout(1500);
   await coachPage.screenshot({ path: ".shots/backoff-editor-1440.png", fullPage: true });
-  await coachPage.getByRole("button", { name: "Publish" }).click();
-  await coachPage.getByLabel("Status").getByText("Published").waitFor({ timeout: 20000 }).catch(() => {});
+  await coachPage.getByRole("button", { name: "Publish week 1", exact: true }).click();
+  await coachPage.getByLabel("Status").getByText("Live", { exact: true }).waitFor({ timeout: 20000 }).catch(() => {});
 
   const [line] = await poll(
     () => rowsOf("prescriptions", "program_id", created.programId),

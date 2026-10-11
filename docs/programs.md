@@ -22,8 +22,10 @@ UI question over these rows, not a migration:
   week-by-week button) and takes the program live with it if it is still a
   draft, because a published week under a draft program reaches nobody.
   `updateWeek {status: "draft"}` pulls a week back; the program stays
-  published, so the other weeks are untouched. Both are buttons beside the week
-  tabs in the editor. Today shows a day only when its program **and** its week
+  published, so the other weeks are untouched. In the editor the week's
+  **Publish week N** is the only publish button (it is `publishWeek`, so it
+  also takes a draft program live); **Publish all draft weeks** is
+  `publishProgram`, in the program's ⋯ menu. Today shows a day only when its program **and** its week
   are published. [Fact] Server and write helper impose no published-to-draft
   rule: `updateWeek` takes either status and `updateProgramWeek` passes it
   through (`program-admin.test.ts`).
@@ -66,6 +68,39 @@ athlete by permission would mean re-stamping every row on publish — hundreds o
 writes, any of which can fail halfway — to hide the athlete's own program from
 the athlete. The read path filters on status instead. An athlete reading the
 raw API can see a draft of their own program; nobody else can.
+
+## The editor's outline and calendar
+
+_Redesign, Oct 2026._ The editor is three columns: the athlete rail, an
+outline of blocks and weeks, and the week on screen.
+
+- **Blocks are phases.** A block's name is its phase; its ⋯ offers
+  Accumulation, Intensity, Peak, Taper and Deload as one-click names, rename
+  inline, and Remove (confirmed). No schema change. [Inference] The presets
+  are Calgary Barbell's phases plus deload.
+- **Each week shows where it stands**: Draft, Live (the week and its program
+  published) or Logged (an athlete has started a session from one of its
+  days, read from `sessions.program_day_id` on the athlete_id index). If the
+  sessions cannot be read, no week is shown as logged.
+- **"+ Week" repeats the block's last week** (`duplicateWeek`); an empty block
+  gets a blank week (`addWeek`). **"+ Block"** adds a block whose first week is
+  a copy of the program's last week, a week later, written as the ordinary
+  `addBlock` / `addWeek` / `addDay` / `addPrescription` ops
+  (`copyWeekPlan` in `lib/programming/copy.ts`), so it passes the same
+  validation and permission checks as typing it in. Copies are drafts and
+  never linked to their source.
+- **Dates come from the start date** (`lib/programming/calendar.ts`). Week N
+  is the Nth Monday-to-Sunday row from the start date's Monday; a day is a
+  weekday chip, and `scheduled_on` = that Monday + 7 × (N − 1) + weekday.
+  Monday-aligned even when the start date is not a Monday. [Inference] Without
+  a start date the anchor is counted back from the first dated day; with
+  nothing dated the chips wait for a start date. A day dated outside its week
+  is shown as such and only moves when the coach picks a weekday.
+- **Changing the start date** moves every day that sits in its week by the
+  same whole weeks, keeping its weekday. Days an athlete has logged from, and
+  days already outside their week, are not moved. If the sessions cannot be
+  read, only the start date is saved and the editor says the days kept their
+  dates.
 
 ## Logged work is immutable; prescriptions are not
 

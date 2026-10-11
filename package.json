@@ -53,7 +53,9 @@
     "e2e:copy": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-copy.mts",
     "e2e:backoff": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-backoff.mts",
     "e2e:my-program": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-my-program.mts",
-    "e2e:video-required": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-video-required.mts"
+    "e2e:video-required": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-video-required.mts",
+    "e2e:editor": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-editor.mts",
+    "e2e:calendar": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-calendar.mts"
   },
   "dependencies": {
     "appwrite": "^26.2.0",

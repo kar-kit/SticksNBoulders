@@ -9,8 +9,8 @@ import {
   parseRestCell,
   parseSetsCell,
   rememberedReference,
-  suggestDayDate,
   unresolvedWarning,
+  weekState,
 } from "./editor";
 import type { Prescription, ProgramOpInput, ProgramTree } from "./program";
 import type { Exercise } from "@/lib/exercises/match";
@@ -157,7 +157,7 @@ describe("moving around the grid", () => {
   });
 });
 
-describe("dating a new day", () => {
+describe("week status", () => {
   const tree = (over: Partial<ProgramTree> = {}, days: Array<string | null>[] = [[], []]): ProgramTree => ({
     id: "p1",
     coachId: "c",
@@ -201,27 +201,25 @@ describe("dating a new day", () => {
     ...over,
   });
 
-  it("follows the week's last dated day", () => {
-    expect(suggestDayDate(tree({}, [["2026-10-05", "2026-10-07"], []]), "w1")).toBe("2026-10-08");
-  });
-
-  it("starts an empty week from the program's start date, a week per week", () => {
-    expect(suggestDayDate(tree({ startOn: "2026-10-05" }), "w1")).toBe("2026-10-05");
-    expect(suggestDayDate(tree({ startOn: "2026-10-05" }), "w2")).toBe("2026-10-12");
-  });
-
-  it("with no start date, counts a week on from the week above", () => {
-    expect(suggestDayDate(tree({}, [["2026-10-06", "2026-10-08"], []]), "w2")).toBe("2026-10-13");
-  });
-
-  it("gives a template no date, and says nothing when there is nothing to count from", () => {
-    expect(suggestDayDate(tree({ athleteId: null, startOn: "2026-10-05" }), "w1")).toBeNull();
-    expect(suggestDayDate(tree(), "w1")).toBeNull();
-    expect(suggestDayDate(tree(), "nope")).toBeNull();
-  });
-
   it("counts the draft weeks the Publish button is about", () => {
     expect(draftWeeks(tree())).toBe(2);
+  });
+
+  it("shows a week as live only when the week and its program are both published", () => {
+    const t = tree({ status: "published" }, [["2026-10-05"]]);
+    const week = t.blocks[0].weeks[0];
+    expect(weekState(t, week, new Set())).toBe("draft");
+    expect(weekState(t, { ...week, status: "published" }, new Set())).toBe("live");
+    expect(weekState({ status: "draft" }, { ...week, status: "published" }, new Set())).toBe("draft");
+  });
+
+  it("shows a week as logged once a session was started from any of its days, and never guesses", () => {
+    const t = tree({ status: "published" }, [["2026-10-05", "2026-10-06"]]);
+    const week = { ...t.blocks[0].weeks[0], status: "published" as const };
+    expect(weekState(t, week, new Set(["d01"]))).toBe("logged");
+    expect(weekState(t, { ...week, status: "draft" }, new Set(["d01"]))).toBe("logged");
+    expect(weekState(t, week, new Set(["elsewhere"]))).toBe("live");
+    expect(weekState(t, week, null)).toBe("live");
   });
 });
 

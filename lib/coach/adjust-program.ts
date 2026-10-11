@@ -122,3 +122,12 @@ export function landingFrom(query: Record<string, string | string[] | undefined>
   if (lineId) landing.lineId = lineId;
   return landing;
 }
+
+/** How the editor shows the program: one week at a time, or every week on a calendar. */
+export type EditorView = "week" | "calendar";
+
+/** `?view=calendar`, read back. Anything else is the week view, the default. */
+export function editorViewFrom(query: Record<string, string | string[] | undefined>): EditorView {
+  const first = Array.isArray(query.view) ? query.view[0] : query.view;
+  return first === "calendar" ? "calendar" : "week";
+}

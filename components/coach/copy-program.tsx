@@ -25,11 +25,30 @@ interface Person {
   name: string;
 }
 
-export function CopyProgram({ tree, blockId, disabled }: { tree: ProgramTree; blockId: string | null; disabled?: boolean }) {
+export function CopyProgram({
+  tree,
+  blockId,
+  disabled,
+  open: openProp,
+  onClose,
+}: {
+  tree: ProgramTree;
+  blockId: string | null;
+  disabled?: boolean;
+  /**
+   * Opened from somewhere else -- the editor's program ⋯ menu -- rather than
+   * by its own button. Given, the form shows only while it is true and Close
+   * calls `onClose`.
+   */
+  open?: boolean;
+  onClose?: () => void;
+}) {
   const { state } = useSession();
   const coachId = state.status === "signed-in" ? state.user.id : null;
   const athleteIds = state.status === "signed-in" ? state.coach.athleteIds : null;
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : ownOpen;
   const [people, setPeople] = useState<Person[]>([]);
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<Person | null>(null);
@@ -54,8 +73,9 @@ export function CopyProgram({ tree, blockId, disabled }: { tree: ProgramTree; bl
   }, [open, coachId, athleteIds]);
 
   if (!open) {
+    if (controlled) return null;
     return (
-      <Button variant="secondary" disabled={disabled} onClick={() => setOpen(true)}>
+      <Button variant="secondary" disabled={disabled} onClick={() => setOwnOpen(true)}>
         Copy to…
       </Button>
     );
@@ -154,7 +174,8 @@ export function CopyProgram({ tree, blockId, disabled }: { tree: ProgramTree; bl
           variant="ghost"
           disabled={busy}
           onClick={() => {
-            setOpen(false);
+            if (controlled) onClose?.();
+            else setOwnOpen(false);
             setCopied(null);
             setTarget(null);
             setQuery("");

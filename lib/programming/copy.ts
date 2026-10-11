@@ -1,4 +1,4 @@
-import { addDays } from "./program";
+import { addDays, type ProgramOpInput, type WeekTree } from "./program";
 
 /**
  * The calendar arithmetic behind duplicating a week and copying a program.
@@ -61,3 +61,39 @@ export function copyCalendar(input: {
   if (input.startOn === null || anchor === null) return { startOn: input.startOn, shift: 0 };
   return { startOn: input.startOn, shift: daysBetween(anchor, input.startOn) };
 }
+
+/**
+ * The writes that copy one week into another block, as existing ops: one
+ * `addDay` per day, then one `addPrescription` per line under it. "+ Block"
+ * starts the new block with a copy of the last week before it -- the same
+ * "write a week, repeat it, adjust" that `duplicateWeek` serves inside a block
+ * -- and `duplicateWeek` only appends to its own block. Built from the ops the
+ * editor already sends, so it is held to the same validation and permission
+ * checks as typing it in by hand; no new server path. [Inference]
+ *
+ * Every field the coach typed is carried; the label of the week is not (as
+ * `duplicateWeek`). Days move by `shift` days, undated stays undated.
+ */
+export function copyWeekPlan(
+  source: WeekTree,
+  shift: number,
+): { day: Omit<AddDay, "op" | "weekId">; lines: Omit<AddLine, "op" | "dayId">[] }[] {
+  return source.days.map((day) => ({
+    day: { label: day.label, scheduledOn: shiftDay(day.scheduledOn, shift), notes: day.notes },
+    lines: day.prescriptions.map((line) => ({
+      exerciseId: line.exerciseId,
+      setCount: line.setCount,
+      reps: line.reps,
+      repMax: line.repMax,
+      load: line.load,
+      restSeconds: line.restSeconds,
+      notes: line.notes,
+      backoff: line.backoff ?? null,
+      videoRequired: line.videoRequired ?? false,
+      referenceExerciseId: line.referenceExerciseId ?? null,
+    })),
+  }));
+}
+
+type AddDay = Extract<ProgramOpInput, { op: "addDay" }>;
+type AddLine = Extract<ProgramOpInput, { op: "addPrescription" }>;
