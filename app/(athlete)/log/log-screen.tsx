@@ -485,8 +485,8 @@ export function LogScreen() {
     setSelectedId(null);
     // The row leaves the plan at once, so a tap on Add set while the write is
     // still reaching the phone builds on a logged set rather than behind a
-    // planned one. It shows with the queued mark until the queue holds it:
-    // on screen, but not yet claiming to be saved.
+    // planned one. It carries the queued mark until the queue holds it, and
+    // if the write fails it is taken back, loudly -- see the catch.
     const optimistic: UnnamedSet = {
       exerciseId: row.exerciseId,
       clientSetId: row.clientSetId,
@@ -505,6 +505,14 @@ export function LogScreen() {
     setPlans(rows);
     setFocusId(next?.clientSetId ?? null);
     closeSheets();
+    // The rest starts on the tap, as it always has: nothing else on screen
+    // waits for the disk, and a rest that appeared a beat late read as a
+    // missed tap. A failed write takes it back below, with the set.
+    // Warm-ups start it too. Anything else is a rule an athlete has to learn,
+    // and the feature list is explicit that this is the part Strong keeps
+    // simple on purpose.
+    const restBefore = rest;
+    changeRest(startRest());
 
     try {
       await logSet({
@@ -528,6 +536,9 @@ export function LogScreen() {
       // quietly reappears unticked reads as a glitch, not as a lost set.
       setLocal((prev) => prev.filter((s) => s.clientSetId !== row.clientSetId));
       setPlans((prev) => (prev.some((each) => each.clientSetId === row.clientSetId) ? prev : [row, ...prev]));
+      // A rest for a set that does not exist. Whatever was running before it
+      // comes back, the same as undoing a delete.
+      changeRest(restBefore);
       setUnsaved(true);
       return;
     } finally {
@@ -539,12 +550,9 @@ export function LogScreen() {
       setBusy(false);
     }
 
-    // Only now is the set saved, so only now does anything say it is done.
+    // Saved: the queued mark carries on until Appwrite has it, and any
+    // earlier warning is out of date.
     setUnsaved(false);
-    // Warm-ups start it too. Anything else is a rule an athlete has to learn,
-    // and the feature list is explicit that this is the part Strong keeps
-    // simple on purpose.
-    changeRest(startRest());
   };
 
   const discardPlanned = (rowId: string) => {
