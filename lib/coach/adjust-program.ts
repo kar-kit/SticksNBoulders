@@ -123,8 +123,12 @@ export function landingFrom(query: Record<string, string | string[] | undefined>
   return landing;
 }
 
-/** How the editor shows the program: every week on a calendar, or one week at a time. */
-export type EditorView = "week" | "calendar";
+/**
+ * How the editor shows the program: every week on a calendar, one week at a
+ * time, or one block as a grid of exercise slots by week (the progression
+ * view, docs/program-layout.md).
+ */
+export type EditorView = "week" | "calendar" | "progression";
 
 /**
  * The editor's view, read back out of its URL. The calendar is the default: a
@@ -138,6 +142,7 @@ export function editorViewFrom(query: Record<string, string | string[] | undefin
   const first = Array.isArray(query.view) ? query.view[0] : query.view;
   if (first === "week") return "week";
   if (first === "calendar") return "calendar";
+  if (first === "progression") return "progression";
   const { weekId, dayId, lineId } = landingFrom(query);
   return weekId || dayId || lineId ? "week" : "calendar";
 }

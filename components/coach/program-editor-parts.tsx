@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, type InputHTMLAttributes } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 
@@ -7,6 +8,55 @@ import { cn } from "@/lib/cn";
  * Small pieces the Program Editor and its outline share. Kept apart so the
  * outline does not import the editor that renders it.
  */
+
+/**
+ * A grid cell's input: uncontrolled while the coach types, and given the
+ * saved value whenever it is not the one being typed in.
+ *
+ * The grid used to key each cell on its text so a save re-rendered it with
+ * the new value. That remounted the input, and a remounted input has lost
+ * the focus: shorthand (`5x3` in sets also fills reps) changes the very cell
+ * Tab has just moved into, so the keyboard fell out of the grid mid-line.
+ * Here the element stays and only its value moves -- unless the coach has
+ * typed into it since it took the focus, which is never overwritten. Escape
+ * puts back `defaultValue`, which is therefore always the saved value.
+ */
+export function CellInput({
+  value,
+  revision,
+  onFocus,
+  onInput,
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "defaultValue"> & {
+  value: string;
+  /** Anything else the saved cell depends on: a change puts the text back even when `value` did not move. */
+  revision?: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  /** Typed into since it last took the focus: the coach's text wins. */
+  const typed = useRef(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.defaultValue = value;
+    if (el.ownerDocument.activeElement !== el || !typed.current) el.value = value;
+  }, [value, revision]);
+  return (
+    <input
+      ref={ref}
+      defaultValue={value}
+      onFocus={(e) => {
+        typed.current = false;
+        onFocus?.(e);
+      }}
+      onInput={(e) => {
+        typed.current = true;
+        onInput?.(e);
+      }}
+      {...props}
+    />
+  );
+}
 
 /** A text that saves when left. Escape puts it back. */
 export function InlineText({

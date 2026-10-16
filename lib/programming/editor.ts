@@ -2,7 +2,15 @@ import { parsePrescription, resolvePrescription, type PrescriptionKind } from ".
 import { describeBackoff, formatBackoff, parseBackoff } from "./backoff";
 import type { Prescription, ProgramOpInput, ProgramTree, WeekTree } from "./program";
 import { basisMaxesFor, referenceOf } from "./session-plan";
-import type { EstimatedInput, MaxKind, ReferenceMaxEntry } from "@/lib/strength/reference-max";
+import {
+  formatMaxKg,
+  maxDateLabel,
+  resolveMaxes,
+  type EstimatedInput,
+  type MaxKind,
+  type ReferenceMaxEntry,
+  type StoredKind,
+} from "@/lib/strength/reference-max";
 import { rankExercises, type Exercise } from "@/lib/exercises/match";
 
 /**
@@ -35,6 +43,9 @@ const BASIS_WORDS: Record<MaxKind, string> = {
 
 const trim = (value: number) => (Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2))));
 
+/** What an empty load cell says: what it takes, not that something is wrong. */
+export const EMPTY_LOAD = "No load yet · type 75%, @8 or 142.5";
+
 /**
  * What the coach's typing landed as, in words, shown beside the load cell.
  *
@@ -52,7 +63,9 @@ export function describeLoad(
   reference?: string | null,
 ): { kind: PrescriptionKind | null; label: string } {
   const spec = text ? parsePrescription(text) : null;
-  if (!spec) return { kind: null, label: reference ? `No load · a percentage here is of ${reference}` : "No load" };
+  // An empty cell says what it takes. The bare "No load" read as a fault on
+  // a row that simply had not been typed yet (Joey's screenshot, Oct 2026).
+  if (!spec) return { kind: null, label: reference ? `No load · a percentage here is of ${reference}` : EMPTY_LOAD };
   const of = (percent: number, basis: MaxKind) =>
     reference ? `${trim(percent)}% of ${reference} (${BASIS_WORDS[basis]})` : `${trim(percent)}% of ${BASIS_WORDS[basis]}`;
   switch (spec.kind) {
@@ -79,36 +92,137 @@ export interface EditorMaxes {
 }
 
 /**
- * The warning beside a percentage that will reach the athlete with no kilos:
- * "No Bench Press training max for Joey". Null when it resolves, when it is
- * not a percentage, or when `maxes` is null -- not yet loaded, failed, or a
- * template with nobody's maxes to read. Unknown is not missing.
- *
- * The same resolver as the athlete's phone, with no session max: the editor
- * cannot know today's top set, and a stored max is what the coach can fix.
- * For a reference row it names the referenced lift, because that is the max
- * the coach has to set; the variation's own max is never consulted.
+ * What the editor knows about the athlete's maxes: read, still reading, could
+ * not read, or a template with nobody's maxes to read. Unknown is not missing,
+ * so only `EditorMaxes` ever produces a warning.
  */
-export function unresolvedWarning(
-  line: Prescription,
-  context: {
-    maxes: EditorMaxes | null;
-    nameOf: (exerciseId: string) => string | null | undefined;
-    athleteName: string | null;
-    asOf: Date;
-  },
-): string | null {
-  if (!context.maxes) return null;
+export type MaxesRead = EditorMaxes | "loading" | "failed" | "template";
+
+/**
+ * The second line under a load cell: what the athlete will actually get.
+ *
+ *   resolved  "→ 142.5 kg · Squat training max 190, set 12 Sep"
+ *   missing   "No Squat training max for Joey · they see "75%"", with the
+ *             max to add when the coach can add it here
+ *   quiet     a plain statement: maxes still loading or unread, a template
+ */
+export interface LoadPreview {
+  tone: "resolved" | "missing" | "quiet";
+  text: string;
+  /** The max that would fix a missing one: typed into the editor, written through /api/reference-max. */
+  addMax?: { exerciseId: string; name: string; kind: StoredKind };
+}
+
+export interface PreviewContext {
+  maxes: MaxesRead;
+  nameOf: (exerciseId: string) => string | null | undefined;
+  /** Null when the coach is programming themselves. */
+  athleteName: string | null;
+  /** The date the max is read at: see `previewDate`. */
+  asOf: Date;
+}
+
+/**
+ * The instant a day's percentages are priced at in the editor: the start of
+ * the day's own date, or now when that is already past (or the day has none).
+ *
+ * The phone resolves at render time, so a past day the athlete has not opened
+ * yet will be priced off today's max, and a future day off whatever is in
+ * effect then -- which is what lets a coach set next block's training max in
+ * advance and see week 5 price off it. [Inference] docs/program-layout.md.
+ * The end of the day rather than its start would show a max dated that
+ * afternoon; the start matches what the athlete opening it first thing gets.
+ */
+export function previewDate(scheduledOn: string | null, now: Date): Date {
+  if (!scheduledOn) return now;
+  const day = new Date(`${scheduledOn}T00:00:00`);
+  return Number.isNaN(day.getTime()) || day < now ? now : day;
+}
+
+/**
+ * The kilos a percentage resolves to for this athlete, and from which max --
+ * or exactly why it resolves to none, and what would fix it.
+ *
+ * The same resolver as the athlete's phone (`basisMaxesFor`, then
+ * `resolvePrescription`, rounded down by `roundToLoadable`), with no session
+ * max: the editor cannot know today's top set, and the stored max is what the
+ * session opens with. Nothing here does arithmetic of its own; the date beside
+ * the max is read back from `resolveMaxes`, the function the resolver's
+ * numbers came from.
+ *
+ * Null where the kind line under the cell already says everything: a fixed
+ * load, an RPE, freeform words, an empty cell (`describeLoad` covers those).
+ */
+export function loadPreview(line: Prescription, context: PreviewContext): LoadPreview | null {
   const spec = line.load ? parsePrescription(line.load) : null;
-  if (spec?.kind !== "percent" && spec?.kind !== "capped") return null;
+  // An RPE row gets no kilos: the phone shows "RPE 8" and lets the athlete
+  // pick, so an editor estimate would be a number the athlete never sees, off
+  // an [Unverified] chart. Its kind line already says "athlete picks".
+  if (!spec || spec.kind === "fixed" || spec.kind === "freeform" || spec.kind === "rpe") return null;
+
+  const whose = context.athleteName ? `${context.athleteName}'s` : "the";
+  if (context.maxes === "template") return { tone: "quiet", text: "Template · kilos resolve per athlete" };
+  if (context.maxes === "loading") return { tone: "quiet", text: `Kilos appear once ${whose} maxes load` };
+  if (context.maxes === "failed") return { tone: "quiet", text: `Could not read ${whose} maxes · kilos unknown` };
+
+  const { entries, estimated } = context.maxes;
   const reference = referenceOf(line, spec);
   const lift = reference ?? line.exerciseId;
   const name = context.nameOf(lift) || "this lift";
-  const maxes = basisMaxesFor(lift, context.maxes.entries, context.maxes.estimated, context.asOf);
-  const resolved = resolvePrescription(spec, { ...maxes, session: null }, reference ? { name } : undefined);
-  if (!resolved.unresolved) return null;
+  const basis = basisMaxesFor(lift, entries, estimated, context.asOf);
+  const resolved = resolvePrescription(spec, { ...basis, session: null }, reference ? { name } : undefined);
+  const cap = spec.kind === "capped" ? `, stop at RPE ${trim(spec.rpe)}` : "";
+
+  if (!resolved.unresolved && resolved.loadKg !== null && resolved.basisUsed && resolved.basisKg !== null) {
+    // `session` cannot be chosen: no session max was passed.
+    const used = resolved.basisUsed === "session" ? spec.basis : resolved.basisUsed;
+    const own = entries.filter((entry) => entry.exerciseId === lift);
+    const from = resolveMaxes(own, context.asOf, estimated.get(lift) ?? null)[used];
+    const when = from ? maxDateLabel(from.asOf) : "";
+    // An e1RM was not set by anyone: it dates from the set that produced it.
+    const dated = when ? `, ${used === "estimated" ? "from" : "set"} ${when}` : "";
+    return {
+      tone: "resolved",
+      text: `→ ${trim(resolved.loadKg)} kg${cap} · ${name} ${BASIS_WORDS[used]} ${formatMaxKg(resolved.basisKg)}${dated}`,
+    };
+  }
+
+  // An e1RM comes from logged sets; there is nothing to type in for it.
+  if (spec.basis === "estimated") {
+    return {
+      tone: "missing",
+      text: `No ${name} e1RM yet: nothing logged with an RPE · drop "of e1rm" to use the training max`,
+    };
+  }
+  const kind: StoredKind = spec.basis;
+  const addMax = { exerciseId: lift, name, kind };
+  // A max set in advance is not missing, it is early: say when it starts.
+  const ahead = entries
+    .filter((e) => e.exerciseId === lift && e.kind === kind && new Date(e.effectiveFrom).getTime() > context.asOf.getTime())
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
+  if (ahead) {
+    return {
+      tone: "missing",
+      text: `${name} ${BASIS_WORDS[kind]} ${formatMaxKg(ahead.valueKg)} starts ${maxDateLabel(ahead.effectiveFrom)} · nothing in effect yet`,
+      addMax,
+    };
+  }
   const who = context.athleteName ? ` for ${context.athleteName}` : "";
-  return `No ${name} ${BASIS_WORDS[spec.basis]}${who} · they see "${resolved.display}"`;
+  return { tone: "missing", text: `No ${name} ${BASIS_WORDS[kind]}${who} · they see "${resolved.display}"`, addMax };
+}
+
+/**
+ * The warning alone: `loadPreview`'s missing line, or null. Null while the
+ * maxes are unknown (`maxes: null`), on anything that resolves, and on
+ * anything that is not a percentage.
+ */
+export function unresolvedWarning(
+  line: Prescription,
+  context: Omit<PreviewContext, "maxes"> & { maxes: EditorMaxes | null },
+): string | null {
+  if (!context.maxes) return null;
+  const preview = loadPreview(line, { ...context, maxes: context.maxes });
+  return preview?.tone === "missing" ? preview.text : null;
 }
 
 /**
@@ -227,6 +341,112 @@ export function formatRestCell(seconds: number | null): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+/* -------------------------------------------------------------------------
+ * Shorthand: `5x3 @8` fills sets, reps and load at once
+ * ---------------------------------------------------------------------- */
+
+/** Sets, reps and (if typed) a load, from `5x3 @8`. */
+export interface Shorthand {
+  setCount: number;
+  reps: number | null;
+  repMax: number | null;
+  /** Undefined when nothing followed the reps: see `shorthandOp`'s `whole`. */
+  load?: string;
+}
+
+/**
+ * `<sets> x <reps> [load]`, the way coaches write a line on paper.
+ *
+ *   5x3            5 sets of 3
+ *   5 x 3 @8       and an RPE
+ *   3×5 75%        a percentage (× as well as x)
+ *   3x8-10 @7      a rep range
+ *   4x4 70% of bench   a reference lift, split out later by splitReference
+ *   3x @8          sets only: the load cell says it all
+ *
+ * The load starts after a space, or straight after the reps with `@`:
+ * `5x3@8` is shorthand, `3x75%` is not (75 reps of "%"?), so it is left to
+ * the load grammar, which keeps it as the coach's words.
+ */
+const SHORTHAND = /^(\d{1,2})\s*[x×]\s*(\d{1,3}(?:\s*[-–]\s*\d{1,3})?)?(?:(?:\s+|(?=@))(\S.*?))?\s*$/i;
+
+/**
+ * Null when the text is not shorthand at all -- a plain `5` in the sets cell,
+ * `75%` in the load cell -- so every cell keeps its own grammar. Shorthand
+ * whose numbers are out of range is refused with the cell's own words, never
+ * half-applied.
+ */
+export function parseShorthand(text: string): Parsed<Shorthand> | null {
+  const match = SHORTHAND.exec(text.trim());
+  if (!match) return null;
+  const sets = parseSetsCell(match[1]);
+  if (!sets.ok) return sets;
+  const reps = parseRepsCell(match[2] ?? "");
+  if (!reps.ok) return reps;
+  return {
+    ok: true,
+    value: { setCount: sets.value, ...reps.value, ...(match[3] ? { load: match[3].trim() } : {}) },
+  };
+}
+
+/**
+ * The one `updatePrescription` a shorthand becomes: only the fields it
+ * changes, as `commitCell` sends only the edited field.
+ *
+ * `whole` is the progression cell, which holds the line's sets, reps and load
+ * together: there, leaving the load off clears it. In the week grid's sets or
+ * reps cell, `5x3` says nothing about the load, so the load is left alone.
+ */
+export function shorthandOp(
+  line: Prescription,
+  shorthand: Shorthand,
+  library: readonly Exercise[],
+  options: { whole?: boolean } = {},
+): { op: ProgramOpInput } | { unchanged: true } | { error: string } {
+  const op: Extract<ProgramOpInput, { op: "updatePrescription" }> = { op: "updatePrescription", prescriptionId: line.id };
+  if (shorthand.setCount !== line.setCount) op.setCount = shorthand.setCount;
+  if (shorthand.reps !== line.reps || shorthand.repMax !== line.repMax) {
+    op.reps = shorthand.reps;
+    op.repMax = shorthand.repMax;
+  }
+  const typedLoad = shorthand.load ?? (options.whole ? "" : undefined);
+  if (typedLoad !== undefined) {
+    const { load, reference } = splitReference(typedLoad, library);
+    if (load.length > 120) return { error: "Load is 120 characters at most" };
+    if (load.trim() !== (line.load ?? "").trim()) op.load = load;
+    if (reference !== undefined && reference !== (line.referenceExerciseId ?? null)) op.referenceExerciseId = reference;
+  }
+  return Object.keys(op).length > 2 ? { op } : { unchanged: true };
+}
+
+/**
+ * A line as one progression cell: `3x5 75%`, `1x5 @8`, `3x8-10`, `3x @8`.
+ * What `parseShorthand` reads back, so an untouched cell round-trips.
+ */
+export function progressionText(line: Pick<Prescription, "setCount" | "reps" | "repMax" | "load">): string {
+  const load = line.load?.trim();
+  return `${line.setCount}x${formatRepsCell(line.reps, line.repMax)}${load ? ` ${load}` : ""}`;
+}
+
+/**
+ * A committed progression cell: shorthand fills all three; anything else is
+ * the load alone (`77.5%` across a row of weeks is the common edit), and an
+ * emptied cell is put back rather than read as "remove this line" -- removal
+ * stays in the week view, behind its ×.
+ */
+export function commitProgression(
+  line: Prescription,
+  text: string,
+  library: readonly Exercise[] = [],
+): { op: ProgramOpInput } | { unchanged: true } | { error: string } {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed === progressionText(line)) return { unchanged: true };
+  const shorthand = parseShorthand(trimmed);
+  if (shorthand && !shorthand.ok) return { error: shorthand.reason };
+  if (shorthand) return shorthandOp(line, shorthand.value, library, { whole: true });
+  return shorthandOp(line, { setCount: line.setCount, reps: line.reps, repMax: line.repMax, load: trimmed }, library);
+}
+
 /** A cell's text as the grid shows it. The exercise column is named by the caller. */
 export function cellText(line: Prescription, column: Exclude<Column, "exercise">): string {
   switch (column) {
@@ -273,6 +493,13 @@ export function commitCell(
 ): { op: ProgramOpInput } | { unchanged: true } | { error: string } {
   if (text.trim() === cellText(line, column).trim()) return { unchanged: true };
   const base = { op: "updatePrescription" as const, prescriptionId: line.id };
+  // `5x3 @8` typed into sets, reps or load fills all three: whichever cell
+  // the coach happens to be in, the line on paper is what they type.
+  if (column === "sets" || column === "reps" || column === "load") {
+    const shorthand = parseShorthand(text);
+    if (shorthand && !shorthand.ok) return { error: shorthand.reason };
+    if (shorthand) return shorthandOp(line, shorthand.value, library);
+  }
   switch (column) {
     case "sets": {
       const parsed = parseSetsCell(text);

@@ -7,10 +7,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Menu } from "@/components/ui/menu";
 import { Tabs } from "@/components/ui/tabs";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
+import { BumpWeek } from "@/components/coach/bump-week";
 import { CopyProgram } from "@/components/coach/copy-program";
-import { ConfirmStrip, InlineText } from "@/components/coach/program-editor-parts";
+import { CellInput, ConfirmStrip, InlineText } from "@/components/coach/program-editor-parts";
+import { LoadPreviewLine } from "@/components/coach/load-preview";
 import { ProgramCalendar } from "@/components/coach/program-calendar";
+import { ProgramContext, useContextDrawer } from "@/components/coach/program-context";
 import { ProgramOutline } from "@/components/coach/program-outline";
+import { ProgramProgression } from "@/components/coach/program-progression";
 import { cn } from "@/lib/cn";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { useSession } from "@/lib/auth/session-context";
@@ -26,12 +30,14 @@ import {
   describeBackoffCell,
   describeLoad,
   draftWeeks,
+  loadPreview,
   moveCell,
+  previewDate,
   rememberedReference,
-  unresolvedWarning,
   weekState,
   type Column,
-  type EditorMaxes,
+  type LoadPreview,
+  type MaxesRead,
 } from "@/lib/programming/editor";
 import {
   newDayDate,
@@ -45,7 +51,8 @@ import {
   WEEKDAYS,
 } from "@/lib/programming/calendar";
 import { copyWeekPlan } from "@/lib/programming/copy";
-import type { BlockTree, DayTree, Prescription, ProgramOpInput, ProgramTree } from "@/lib/programming/program";
+import { bumpPlan, lineAt, type Bump } from "@/lib/programming/bump";
+import type { BlockTree, DayTree, Prescription, ProgramOpInput, ProgramTree, WeekTree } from "@/lib/programming/program";
 import type { EditorLanding, EditorView } from "@/lib/coach/adjust-program";
 import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/programming/program-store";
 
@@ -78,12 +85,18 @@ import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/progra
  * editor already had. Edits to a published week are live on save -- see
  * docs/programs.md for why there is no second draft layer yet.
  *
- * Calendar | Week: the calendar (program-calendar.tsx) shows every week as a
- * dated row and opens a day here, in the week view, scrolled to it. It is
- * what a program opens on, except from a link to a particular week, day or
- * line, which opens the week view. The choice is `?view=` in the URL, written
- * with replaceState so it survives a reload and can be linked without adding
- * a history entry.
+ * Calendar | Week | Progression: the calendar (program-calendar.tsx) shows
+ * every week as a dated row and opens a day here, in the week view, scrolled
+ * to it. It is what a program opens on, except from a link to a particular
+ * week, day or line, which opens the week view. The progression view
+ * (program-progression.tsx) is one block as exercise slots by week, every
+ * cell editable. The choice is `?view=` in the URL, written with replaceState
+ * so it survives a reload and can be linked without adding a history entry.
+ *
+ * Under every percentage, the kilos the athlete will get and the max they
+ * come from, or why there are none and an "Add one" (load-preview.tsx). The
+ * context drawer (program-context.tsx) puts their last logged week and
+ * unwatched clips beside the week. docs/program-layout.md.
  *
  * Seams left: backoff rules (21) and video-required (30) are columns after
  * Notes.
@@ -111,7 +124,10 @@ const STATE_WORD = { draft: "Draft", live: "Live", logged: "Logged" } as const;
 const VIEWS = [
   { value: "week", label: "Week" },
   { value: "calendar", label: "Calendar" },
+  { value: "progression", label: "Progression" },
 ] as const;
+/** A template has no dates, so no calendar. */
+const TEMPLATE_VIEWS = VIEWS.filter((v) => v.value !== "calendar");
 
 /** The view into the URL, leaving the landing and anything else in it alone. */
 function writeView(view: EditorView) {
@@ -137,8 +153,8 @@ export function ProgramEditor({
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [athleteName, setAthleteName] = useState<string | null>(null);
-  /** The athlete's maxes, for the unresolved-percentage warning. Null until read: unknown is not missing. */
-  const [maxes, setMaxes] = useState<EditorMaxes | null>(null);
+  /** The athlete's maxes, for the kilos under each percentage. Unknown is not missing. */
+  const [maxes, setMaxes] = useState<MaxesRead>("loading");
   /**
    * Days an athlete has started a session from. Undefined while reading, null
    * when it could not be read: neither is "none", so neither marks a week
@@ -151,7 +167,21 @@ export function ProgramEditor({
   const [busy, setBusy] = useState(false);
   const [copying, setCopying] = useState(false);
   const [removingWeek, setRemovingWeek] = useState<string | null>(null);
+  /** The week whose "Duplicate with a bump…" form is open. */
+  const [bumping, setBumping] = useState<string | null>(null);
   const [view, setView] = useState<EditorView>(initialView);
+  /** The progression view's block, when the coach picked one; else the selected week's. */
+  const [progressionBlockId, setProgressionBlockId] = useState<string | null>(null);
+  const [contextOpen, setContextOpen] = useContextDrawer();
+
+  const readMaxes = useCallback(async (athleteId: string) => {
+    try {
+      const [entries, estimated] = await Promise.all([fetchReferenceMaxes(athleteId), fetchEstimatedMaxes(athleteId)]);
+      setMaxes({ entries, estimated });
+    } catch {
+      setMaxes("failed");
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     const tree = await fetchProgramTree(programId).catch(() => undefined);
@@ -172,9 +202,7 @@ export function ProgramEditor({
         .catch(() => {});
       if (tree.athleteId) {
         const athleteId = tree.athleteId;
-        void Promise.all([fetchReferenceMaxes(athleteId), fetchEstimatedMaxes(athleteId)])
-          .then(([entries, estimated]) => setMaxes({ entries, estimated }))
-          .catch(() => {});
+        void readMaxes(athleteId);
         const dayIds = tree.blocks.flatMap((b) => b.weeks).flatMap((w) => w.days).map((d) => d.id);
         // Days added after this read cannot have been logged yet.
         void fetchLoggedDayIds(athleteId, dayIds)
@@ -182,6 +210,7 @@ export function ProgramEditor({
           .catch(() => setLogged(null));
       } else {
         setLogged(new Set());
+        setMaxes("template");
       }
       if (tree.athleteId && tree.athleteId !== tree.coachId) {
         void fetchAthleteNames([tree.athleteId])
@@ -189,24 +218,28 @@ export function ProgramEditor({
           .catch(() => {});
       }
     })();
-  }, [reload]);
+  }, [reload, readMaxes]);
 
   const tree = load.status === "ready" ? load.tree : null;
   const allWeeks = useMemo(() => tree?.blocks.flatMap((b) => b.weeks) ?? [], [tree]);
   const week = allWeeks.find((w) => w.id === weekId) ?? allWeeks[0] ?? null;
   const block = (week && tree?.blocks.find((b) => b.id === week.blockId)) ?? tree?.blocks[0] ?? null;
   const names = useMemo(() => new Map(exercises.map((e) => [e.id, e.name])), [exercises]);
-  /** Beside each percentage the athlete will get no kilos for: which max is missing. */
-  const warningFor = useCallback(
-    (line: Prescription) =>
-      unresolvedWarning(line, {
+  /** Under each load cell: the kilos the athlete will get, or why there are none. */
+  const previewFor = useCallback(
+    (line: Prescription, day: Pick<DayTree, "scheduledOn">): LoadPreview | null =>
+      loadPreview(line, {
         maxes,
         nameOf: (id) => names.get(id),
         athleteName: tree?.athleteId === tree?.coachId ? null : athleteName,
-        asOf: new Date(),
+        asOf: previewDate(day.scheduledOn, new Date()),
       }),
     [maxes, names, athleteName, tree?.athleteId, tree?.coachId],
   );
+  const maxesOf = tree?.athleteId ?? null;
+  const maxAdded = useCallback(() => {
+    if (maxesOf) void readMaxes(maxesOf);
+  }, [readMaxes, maxesOf]);
 
   // Then to its day, once, with the keyboard on the traced line so arrows
   // work straight away. A day or line no longer in the tree is not found.
@@ -218,8 +251,9 @@ export function ProgramEditor({
     landing?.dayId ? { dayId: landing.dayId, lineId: landing.lineId, focusDay: false } : null,
   );
   const [landings, setLandings] = useState(0);
-  // A template has no dates, so no calendar: always the week view.
-  const showingWeek = view === "week" || tree?.athleteId === null;
+  // A template has no dates, so no calendar: the week view in its place.
+  const shown: EditorView = view === "calendar" && tree?.athleteId === null ? "week" : view;
+  const showingWeek = shown === "week";
   useEffect(() => {
     const to = landingTo.current;
     if (!to || !tree || !showingWeek) return;
@@ -395,6 +429,33 @@ export function ProgramEditor({
   };
 
   /**
+   * "Duplicate with a bump": duplicateWeek, then one updatePrescription per
+   * line the bump changes, on the copy, found by its place in the week (the
+   * copy is written day for day, line for line). A line not where it should
+   * be is left as copied rather than guessed at, and the coach is told.
+   */
+  const duplicateWithBump = async (source: WeekTree, bump: Bump) => {
+    const plan = bumpPlan(source, bump);
+    let skipped = 0;
+    const id = await runMany(async () => {
+      const { rowId } = await sendProgramOp({ op: "duplicateWeek", weekId: source.id });
+      const fresh = await fetchProgramTree(programId);
+      const copy = fresh?.blocks.flatMap((b) => b.weeks).find((w) => w.id === rowId);
+      for (const change of plan) {
+        const line = copy ? lineAt(copy, change) : null;
+        if (!line) skipped += 1;
+        else await sendProgramOp({ op: "updatePrescription", prescriptionId: line.id, load: change.to });
+      }
+      return rowId;
+    });
+    if (skipped > 0) setError(`Copied. ${skipped} ${skipped === 1 ? "line was" : "lines were"} not where expected and kept their load.`);
+    if (id) {
+      setBumping(null);
+      setWeekId(id);
+    }
+  };
+
+  /**
    * The start date, and every day that follows it. Logged days and days
    * already outside their week stay put (redatePlan). When the sessions could
    * not be read, only the start date is saved and the coach is told why.
@@ -414,6 +475,10 @@ export function ProgramEditor({
     });
 
   const weekAt = week ? weekIndexOf(tree, week.id) : -1;
+  const progressionBlock = tree.blocks.find((b) => b.id === progressionBlockId) ?? block;
+  // The drawer's exercises: every one on this week's days, in order.
+  const inView = [...new Set(week?.days.flatMap((d) => d.prescriptions.map((l) => l.exerciseId)) ?? [])];
+
   const state = week ? weekState(tree, week, knownLogged) : null;
   const live = week?.status === "published" && tree.status === "published";
   const statusWord = tree.status === "published" ? "Live" : tree.status === "archived" ? "Archived" : "Draft";
@@ -448,9 +513,7 @@ export function ProgramEditor({
           </p>
         </div>
         <div className="flex items-end gap-2">
-          {tree.athleteId !== null ? (
-            <Tabs label="View" tabs={VIEWS} value={showingWeek ? "week" : "calendar"} onChange={changeView} />
-          ) : null}
+          <Tabs label="View" tabs={tree.athleteId === null ? TEMPLATE_VIEWS : VIEWS} value={shown} onChange={changeView} />
           <label className="flex flex-col gap-1 text-label uppercase text-muted-2">
             Starts
             <input
@@ -499,7 +562,39 @@ export function ProgramEditor({
         </p>
       ) : null}
 
-      {!showingWeek ? (
+      {shown === "progression" ? (
+        <section aria-label="Progression" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5">
+          {progressionBlock ? (
+            <ProgramProgression
+              tree={tree}
+              block={progressionBlock}
+              onSelectBlock={(id) => {
+                setProgressionBlockId(id);
+                const first = tree.blocks.find((b) => b.id === id)?.weeks[0];
+                if (first) setWeekId(first.id);
+              }}
+              onOpenWeek={(id) => {
+                setWeekId(id);
+                setRemovingWeek(null);
+                changeView("week");
+              }}
+              anchor={anchor}
+              logged={knownLogged}
+              weekName={weekName}
+              names={names}
+              exercises={exercises}
+              editable={editable}
+              busy={busy}
+              previewFor={previewFor}
+              referenceFor={(exerciseId) => rememberedReference(tree, exerciseId)}
+              editLine={editLine}
+              run={run}
+            />
+          ) : (
+            <p className="m-0 text-body text-muted">No blocks yet. Add one from the week view.</p>
+          )}
+        </section>
+      ) : shown === "calendar" ? (
         <section aria-label="Calendar" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5">
           {startPrompt}
           {anchor && tree.blocks.length > 0 ? (
@@ -556,6 +651,16 @@ export function ProgramEditor({
                     </p>
                   </div>
                   <span className="flex-1" />
+                  {tree.athleteId ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-pressed={contextOpen}
+                      onClick={() => setContextOpen(!contextOpen)}
+                    >
+                      Context
+                    </Button>
+                  ) : null}
                   {editable ? (
                     // The one publish. publishWeek takes a draft program live
                     // with it, so a coach never needs a second button to make
@@ -588,11 +693,31 @@ export function ProgramEditor({
                             if (id) setWeekId(id);
                           },
                         },
+                        {
+                          // The copy with every load stepped: +%, +kg, +RPE, previewed first.
+                          label: "Duplicate with a bump…",
+                          onSelect: () => {
+                            setRemovingWeek(null);
+                            setBumping(week.id);
+                          },
+                        },
                         { label: `Remove ${weekPhrase(week.id)}`, tone: "danger", onSelect: () => setRemovingWeek(week.id) },
                       ]}
                     />
                   ) : null}
                 </header>
+                {editable && bumping === week.id ? (
+                  <BumpWeek
+                    tree={tree}
+                    block={block}
+                    week={week}
+                    anchor={anchor}
+                    names={names}
+                    busy={busy}
+                    onCancel={() => setBumping(null)}
+                    onDuplicate={(bump) => void duplicateWithBump(week, bump)}
+                  />
+                ) : null}
                 {removingWeek === week.id ? (
                   <ConfirmStrip
                     label={`Remove ${weekPhrase(week.id)}`}
@@ -605,7 +730,7 @@ export function ProgramEditor({
                   />
                 ) : null}
 
-                <div className="flex flex-col gap-6">
+                <div className="flex flex-col gap-6" data-week-days>
                   {week.days.length === 0 ? <p className="m-0 text-body text-muted">No days in this week yet.</p> : null}
                   {week.days.map((day, at) => (
                     <DayEditor
@@ -620,7 +745,9 @@ export function ProgramEditor({
                       logged={knownLogged?.has(day.id) ?? false}
                       names={names}
                       exercises={exercises}
-                      warningFor={warningFor}
+                      previewFor={previewFor}
+                      athleteId={tree.athleteId}
+                      onMaxAdded={maxAdded}
                       referenceFor={(exerciseId) => rememberedReference(tree, exerciseId)}
                       run={run}
                       editLine={editLine}
@@ -646,6 +773,18 @@ export function ProgramEditor({
               <p className="m-0 text-body text-muted">No blocks yet. Add one to start writing.</p>
             )}
           </section>
+          {contextOpen && tree.athleteId && viewerId ? (
+            <div className="flex">
+              <ProgramContext
+                athleteId={tree.athleteId}
+                coachId={viewerId}
+                athleteName={tree.athleteId === tree.coachId ? null : athleteName}
+                exerciseIds={inView}
+                names={names}
+                onClose={() => setContextOpen(false)}
+              />
+            </div>
+          ) : null}
         </div>
       )}
     </div>
@@ -684,8 +823,12 @@ interface DayEditorProps {
   logged: boolean;
   names: ReadonlyMap<string, string>;
   exercises: readonly Exercise[];
-  /** docs/reference-lift.md: the missing-max warning, and the reference a new line inherits. */
-  warningFor: (line: Prescription) => string | null;
+  /** docs/program-layout.md: the kilos under a load cell, or why there are none. */
+  previewFor: (line: Prescription, day: DayTree) => LoadPreview | null;
+  /** Whose max "Add one" sets. Null on a template. */
+  athleteId: string | null;
+  onMaxAdded: () => void;
+  /** docs/reference-lift.md: the reference a new line inherits. */
   referenceFor: (exerciseId: string) => string | null;
   run: (op: ProgramOpInput) => Promise<string | null>;
   editLine: (line: Prescription, op: ProgramOpInput) => Promise<string | null>;
@@ -703,7 +846,9 @@ function DayEditor({
   logged,
   names,
   exercises,
-  warningFor,
+  previewFor,
+  athleteId,
+  onMaxAdded,
   referenceFor,
   run,
   editLine,
@@ -730,8 +875,30 @@ function DayEditor({
     })();
   }, [focusAfter, lines]);
 
+  const section = useRef<HTMLElement>(null);
   const focusCell = (row: number, col: number) =>
     grid.current?.querySelector<HTMLElement>(`[data-cell="${row}-${col}"]`)?.focus();
+  /** This day's "Add exercise" field: where Enter on the last row goes, to type the next line. */
+  const addField = (card: Element | null = section.current) =>
+    card?.querySelector<HTMLInputElement>("[data-add-line] input") ?? null;
+  /**
+   * Up from the first row and Down from the last carry on into the day card
+   * above or below, same column -- one grid for the week, as in a sheet.
+   * Into a day with no lines, Down lands on its "Add exercise" field.
+   */
+  const crossDays = (step: 1 | -1, col: number): boolean => {
+    const here = section.current;
+    const cards = [...(here?.closest("[data-week-days]")?.querySelectorAll<HTMLElement>("[data-day-card]") ?? [])];
+    const other = here ? cards[cards.indexOf(here) + step] : undefined;
+    if (!other) return false;
+    const column = [...other.querySelectorAll<HTMLElement>(`[data-cell$="-${col}"]`)].filter(
+      (el) => !(el as HTMLInputElement).disabled,
+    );
+    const target = (step === 1 ? column[0] : column.at(-1)) ?? (step === 1 ? addField(other) : null);
+    if (!target) return false;
+    target.focus();
+    return true;
+  };
 
   const onKey = (event: React.KeyboardEvent<HTMLElement>, row: number, col: number) => {
     const target = event.currentTarget as HTMLInputElement;
@@ -759,14 +926,21 @@ function DayEditor({
     const next = moveCell({ row, col }, event.key, { rows: lines.length, cols: COLUMNS.length }, caret);
     if (event.key === "Enter") {
       event.preventDefault();
-      // Leaving the cell is what commits it; Enter on the last row commits in place.
+      // Leaving the cell is what commits it. Enter on the last row goes on to
+      // "Add exercise": type the line, Enter, type the next exercise.
+      const add = next ? null : addField();
       if (next) focusCell(next.row, next.col);
+      else if (add) add.focus();
       else target.blur();
       return;
     }
     if (next) {
       event.preventDefault();
       focusCell(next.row, next.col);
+      return;
+    }
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && crossDays(event.key === "ArrowDown" ? 1 : -1, col)) {
+      event.preventDefault();
     }
   };
 
@@ -803,7 +977,9 @@ function DayEditor({
 
   return (
     <section
+      ref={section}
       id={`day-${day.id}`}
+      data-day-card
       aria-label={title}
       // Focusable from script only: where the calendar lands a day with no line to focus.
       tabIndex={-1}
@@ -897,11 +1073,25 @@ function DayEditor({
               line.load,
               line.referenceExerciseId ? (names.get(line.referenceExerciseId) ?? "another lift") : null,
             );
-            const warning = warningFor(line);
+            const preview = previewFor(line, day);
             return (
               <tr key={line.id} aria-label={`${title} line ${row + 1}: ${name}`} className="align-top">
                 <td className="w-48 px-1 py-0.5">
                   {swapping === line.id ? (
+                    // Escape with the list already shut, or leaving the field,
+                    // backs out of the swap with the line as it was; picking
+                    // one puts the keyboard back on the exercise cell.
+                    <div
+                      onKeyDown={(e) => {
+                        if (e.key !== "Escape" || e.currentTarget.querySelector('[aria-expanded="true"]')) return;
+                        e.preventDefault();
+                        setSwapping(null);
+                        setFocusAfter({ lineId: line.id, col: "exercise" });
+                      }}
+                      onBlur={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setSwapping(null);
+                      }}
+                    >
                     <ExerciseTypeahead
                       exercises={exercises}
                       limit={exercises.length || undefined}
@@ -910,6 +1100,7 @@ function DayEditor({
                       autoFocus
                       onSelect={async (exercise) => {
                         setSwapping(null);
+                        setFocusAfter({ lineId: line.id, col: "exercise" });
                         if (exercise.id !== line.exerciseId) {
                           await editLine(line, {
                             op: "updatePrescription",
@@ -920,6 +1111,7 @@ function DayEditor({
                       }}
                       onCreate={async (typed) => {
                         setSwapping(null);
+                        setFocusAfter({ lineId: line.id, col: "exercise" });
                         const created = await createExercise(typed);
                         if (created) {
                           await editLine(line, {
@@ -930,6 +1122,7 @@ function DayEditor({
                         }
                       }}
                     />
+                    </div>
                   ) : (
                     <button
                       type="button"
@@ -960,7 +1153,8 @@ function DayEditor({
                       className={cn(
                         "px-1 py-0.5",
                         column === "sets" || column === "reps" || column === "rest" ? "w-16" : "",
-                        column === "load" ? "w-48" : "",
+                        // Wide enough for "→ 142.5 kg · Squat training max 190, set 12 Sep" on two lines.
+                        column === "load" ? "w-64" : "",
                         column === "backoff" ? "w-36" : "",
                         column === "video" ? "w-16" : "",
                       )}
@@ -979,15 +1173,15 @@ function DayEditor({
                           className="mx-3 mt-2.5 size-4 accent-accent-fill focus:outline-2 focus:outline-accent-line"
                         />
                       ) : (
-                      <input
+                      <CellInput
                         data-cell={`${row}-${col}`}
                         aria-label={`${COLUMN_LABEL[column]}, line ${row + 1}`}
                         aria-invalid={errors[key] ? true : undefined}
                         disabled={!editable}
-                        defaultValue={text}
+                        value={text}
                         // The reference is part of what the load cell shows, so
                         // `70% of bench` over a stored `70%` puts the cell back.
-                        key={column === "load" ? `${text}|${line.referenceExerciseId ?? ""}` : text}
+                        revision={column === "load" ? (line.referenceExerciseId ?? "") : undefined}
                         onKeyDown={(e) => onKey(e, row, col)}
                         onBlur={(e) => void commit(line, column as Exclude<Column, "exercise">, e.target.value)}
                         className={cn(
@@ -1003,12 +1197,11 @@ function DayEditor({
                           {loadKind.label}
                         </span>
                       ) : null}
-                      {column === "load" && warning ? (
-                        // The athlete will get the bare percentage. Said here,
+                      {column === "load" ? (
+                        // What the athlete will get: the kilos and the max
+                        // behind them, or why there are none -- said here,
                         // where the coach can still set the max.
-                        <span className="block px-1 pt-0.5 text-caption text-danger-line" data-kind="unresolved">
-                          {warning}
-                        </span>
+                        <LoadPreviewLine preview={preview} athleteId={athleteId} editable={editable} onMaxAdded={onMaxAdded} />
                       ) : null}
                       {column === "backoff" && line.backoff ? (
                         // Order 21: what the rule will do with today's top set.
@@ -1044,7 +1237,7 @@ function DayEditor({
       </div>
 
       {editable ? (
-        <div className="max-w-sm">
+        <div className="max-w-sm" data-add-line>
           <ExerciseTypeahead
             exercises={exercises}
             limit={exercises.length || undefined}

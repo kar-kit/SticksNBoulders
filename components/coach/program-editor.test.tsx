@@ -19,13 +19,32 @@ vi.mock("@/lib/exercises/library", () => ({
   ],
 }));
 
-const athleteMaxes = vi.hoisted(() => ({ entries: [] as unknown[], fail: false }));
+const athleteMaxes = vi.hoisted(() => ({
+  entries: [] as unknown[],
+  fail: false,
+  set: vi.fn<(input: Record<string, unknown>) => Promise<string>>(),
+}));
 vi.mock("@/lib/strength/reference-max-store", () => ({
   fetchReferenceMaxes: async () => {
     if (athleteMaxes.fail) throw new Error("offline");
     return athleteMaxes.entries;
   },
   fetchEstimatedMaxes: async () => new Map(),
+  setReferenceMax: (input: Record<string, unknown>) => athleteMaxes.set(input),
+}));
+
+// The context drawer's reads: the athlete's sessions and sets, their clips and this coach's reviews.
+const context = vi.hoisted(() => ({
+  sessions: [{ id: "s1" }] as Array<{ id: string }>,
+  sets: [] as unknown[],
+  clips: [] as unknown[],
+  reviewed: new Set<string>(),
+}));
+vi.mock("@/lib/logging/session-store", () => ({ fetchRecentSessions: async () => context.sessions }));
+vi.mock("@/lib/logging/history-store", () => ({ fetchSetsForSessions: async () => context.sets }));
+vi.mock("@/lib/review/queue-store", () => ({
+  fetchClips: async () => context.clips,
+  fetchReviewedSetIds: async () => context.reviewed,
 }));
 const squatMax = {
   id: "m1",
@@ -125,6 +144,11 @@ beforeEach(() => {
   viewer.id = "ruairi";
   athleteMaxes.entries = [squatMax];
   athleteMaxes.fail = false;
+  athleteMaxes.set.mockResolvedValue("m-new");
+  context.sets = [];
+  context.clips = [];
+  context.reviewed = new Set();
+  window.localStorage.clear();
   store.tree = tree();
   store.logged = new Set();
   store.send.mockResolvedValue({ rowId: "new" });
@@ -812,5 +836,307 @@ describe("dates from the start date", () => {
     await user.tab();
     expect(await screen.findByRole("alert")).toHaveTextContent("The days kept their dates");
     expect(store.send).toHaveBeenCalledTimes(1);
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * docs/program-layout.md: kilos, shorthand, the keyboard, progression, context
+ * ---------------------------------------------------------------------- */
+
+describe("the kilos under every percentage", () => {
+  it("shows what the percentage resolves to and the max behind it", async () => {
+    const day = await ready();
+    expect(await within(day).findByText("→ 150 kg · Squat training max 200, set 1 Sep")).toBeInTheDocument();
+  });
+
+  it("adds a missing max from beside the cell, then prices the line off it", async () => {
+    athleteMaxes.entries = [];
+    athleteMaxes.set.mockImplementation(async (input) => {
+      athleteMaxes.entries = [{ ...squatMax, valueKg: input.valueKg as number }];
+      return "m-new";
+    });
+    const user = userEvent.setup();
+    const day = await ready();
+    expect(await within(day).findByText('No Squat training max for Joey · they see "75%"')).toBeInTheDocument();
+    await user.click(within(day).getByRole("button", { name: "Add one" }));
+    await user.type(within(day).getByRole("textbox", { name: "Squat training max, kg" }), "180{Enter}");
+    expect(athleteMaxes.set).toHaveBeenCalledWith({ athleteId: "joey", exerciseId: "squat", kind: "training", valueKg: 180 });
+    expect(await within(day).findByText("→ 135 kg · Squat training max 180, set 1 Sep")).toBeInTheDocument();
+    expect(store.send).not.toHaveBeenCalled();
+  });
+
+  it("says the maxes could not be read rather than showing nothing", async () => {
+    athleteMaxes.fail = true;
+    const day = await ready();
+    expect(await within(day).findByText("Could not read Joey's maxes · kilos unknown")).toBeInTheDocument();
+  });
+});
+
+/** Week 1 with a second day under the squat day. */
+const twoDays = (): ProgramTree => {
+  const t = tree();
+  t.blocks[0].weeks[0].days.push({
+    id: "d2",
+    programId: "p1",
+    blockId: "b1",
+    weekId: "w1",
+    position: 1,
+    label: "Bench day",
+    scheduledOn: "2026-10-07",
+    notes: null,
+    prescriptions: [{ ...line("l3", "bench", 0, { setCount: 4, reps: 6, load: "70%", loadKind: "percent" }), dayId: "d2" }],
+  });
+  return t;
+};
+
+describe("keyboard-first entry", () => {
+  it("fills sets, reps and load from 5x3 @8 typed into the sets cell, in one write", async () => {
+    const user = userEvent.setup();
+    await ready();
+    const sets = screen.getByRole("textbox", { name: "Sets, line 2" });
+    await user.clear(sets);
+    await user.type(sets, "5x3 @8");
+    await user.tab();
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({
+        op: "updatePrescription",
+        prescriptionId: "l2",
+        setCount: 5,
+        reps: 3,
+        repMax: null,
+        load: "@8",
+      }),
+    );
+    expect(store.send).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("textbox", { name: "Sets, line 2" })).toHaveValue("5");
+    expect(screen.getByRole("textbox", { name: "Load, line 2" })).toHaveValue("@8");
+  });
+
+  it("keeps the keyboard in the cell Tab moved to, even when the save changes that cell", async () => {
+    const user = userEvent.setup();
+    await ready();
+    const sets = screen.getByRole("textbox", { name: "Sets, line 2" });
+    await user.clear(sets);
+    await user.type(sets, "5x3");
+    await user.tab();
+    const reps = screen.getByRole("textbox", { name: "Reps, line 2" });
+    await waitFor(() => expect(reps).toHaveValue("3"));
+    expect(reps).toHaveFocus();
+    await user.keyboard("{Backspace}4");
+    await user.tab();
+    await waitFor(() =>
+      expect(store.send).toHaveBeenLastCalledWith({ op: "updatePrescription", prescriptionId: "l2", reps: 4, repMax: null }),
+    );
+  });
+
+  it("goes from a day's last row to its Add exercise field on Enter, to type the next line", async () => {
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.click(screen.getByRole("textbox", { name: "Load, line 2" }));
+    await user.keyboard("{Enter}");
+    expect(within(day).getByRole("combobox", { name: "Add exercise to Squat day" })).toHaveFocus();
+  });
+
+  it("carries Up and Down on into the day card above or below, in the same column", async () => {
+    store.tree = twoDays();
+    const user = userEvent.setup();
+    await ready();
+    const bench = await screen.findByRole("region", { name: "Bench day" });
+    await user.click(screen.getAllByRole("textbox", { name: "Reps, line 2" })[0]);
+    await user.keyboard("{ArrowDown}");
+    expect(within(bench).getByRole("textbox", { name: "Reps, line 1" })).toHaveFocus();
+    await user.keyboard("{ArrowUp}");
+    expect(within(screen.getByRole("region", { name: "Squat day" })).getByRole("textbox", { name: "Reps, line 2" })).toHaveFocus();
+  });
+
+  it("backs out of an exercise swap with Escape, onto the exercise cell, changing nothing", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getAllByRole("button", { name: "Squat" })[1]);
+    const field = screen.getByRole("combobox", { name: "Exercise for line 2" });
+    await user.type(field, "dead");
+    await user.keyboard("{Escape}{Escape}");
+    expect(screen.queryByRole("combobox", { name: "Exercise for line 2" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Squat" })[1]).toHaveFocus());
+    expect(store.send).not.toHaveBeenCalled();
+  });
+});
+
+/** Two weeks of the squat day: week 2 has the top set and a 77.5% backoff, and no bench line. */
+const twoWeeks = (): ProgramTree => {
+  const t = tree();
+  const [w1, w2] = t.blocks[0].weeks;
+  w1.days[0].prescriptions.push(line("l4", "bench", 2, { setCount: 4, reps: 6, load: "70%", loadKind: "percent" }));
+  w2.days = [
+    {
+      ...w1.days[0],
+      id: "d2",
+      weekId: "w2",
+      label: null,
+      scheduledOn: "2026-10-12",
+      prescriptions: [
+        { ...line("l1b", "squat", 0, { setCount: 1, reps: 5, load: "@8", loadKind: "rpe" }), weekId: "w2", dayId: "d2" },
+        { ...line("l2b", "squat", 1, { setCount: 3, reps: 5, load: "77.5%", loadKind: "percent" }), weekId: "w2", dayId: "d2" },
+      ],
+    },
+  ];
+  return t;
+};
+
+describe("the progression view", () => {
+  const progression = async () => {
+    store.tree = twoWeeks();
+    render(<ProgramEditor programId="p1" view="progression" />);
+    return screen.findByRole("table", { name: "Block 1 progression" });
+  };
+
+  it("lays the block out as slots by week, each cell the line in shorthand with its kilos", async () => {
+    const grid = await progression();
+    expect(screen.getByRole("tab", { name: "Progression" })).toHaveAttribute("aria-selected", "true");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 1" })).toHaveValue("3x5 75%");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 2" })).toHaveValue("3x5 77.5%");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat, Week 2" })).toHaveValue("1x5 @8");
+    // 77.5% of 200 is 155: the compact line shows the kilos, the title the rest.
+    expect(await within(grid).findByText("→ 155 kg")).toHaveAttribute("title", "→ 155 kg · Squat training max 200, set 1 Sep");
+  });
+
+  it("edits a week's load in place with one number, sending only the load", async () => {
+    const user = userEvent.setup();
+    const grid = await progression();
+    const cell = within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 2" });
+    await user.clear(cell);
+    await user.type(cell, "80%");
+    await user.tab();
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l2b", load: "80%" }),
+    );
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 2" })).toHaveValue("3x5 80%");
+  });
+
+  it("adds the missing line to that week's day by typing into its empty cell", async () => {
+    const user = userEvent.setup();
+    const grid = await progression();
+    const cell = within(grid).getByRole("textbox", { name: "Squat day · Bench Press, Week 2" });
+    expect(cell).toHaveValue("");
+    await user.type(cell, "4x6 72.5%");
+    await user.tab();
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({
+        op: "addPrescription",
+        dayId: "d2",
+        exerciseId: "bench",
+        setCount: 4,
+        reps: 6,
+        repMax: null,
+        load: "72.5%",
+      }),
+    );
+  });
+
+  it("walks the grid with the arrow keys: along a slot's weeks, and down through the slots", async () => {
+    const user = userEvent.setup();
+    const grid = await progression();
+    await user.click(within(grid).getByRole("textbox", { name: "Squat day · Squat, Week 1" }));
+    await user.keyboard("{End}{ArrowRight}");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat, Week 2" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 2" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Bench Press, Week 2" })).toHaveFocus();
+  });
+
+  it("opens a week in the week view from its column heading", async () => {
+    const user = userEvent.setup();
+    await progression();
+    await user.click(screen.getByRole("button", { name: "Open Week 2 in the week view" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "Block 1 · Week 2" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Week" })).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("the context drawer", () => {
+  it("opens beside the week with their last logged week and the clips this coach has not cleared", async () => {
+    context.sets = [
+      { exerciseId: "squat", sessionId: "s1", setIndex: 0, loadKg: 180, reps: 3, rpe: 8, isWarmup: false, loggedAt: new Date("2026-10-06T10:00:00") },
+      { exerciseId: "squat", sessionId: "s1", setIndex: 1, loadKg: 150, reps: 5, rpe: 7, isWarmup: false, loggedAt: new Date("2026-10-06T10:10:00") },
+      { exerciseId: "squat", sessionId: "s1", setIndex: 2, loadKg: 150, reps: 5, rpe: 7, isWarmup: false, loggedAt: new Date("2026-10-06T10:20:00") },
+    ];
+    context.clips = [
+      { id: "c1", athleteId: "joey", exerciseId: "squat", sessionId: "s1", setIndex: 0, loadKg: 180, reps: 3, rpe: 8, e1rmKg: null, loggedAt: "2026-10-06T10:00:00Z", videoFileId: "f1", notes: null },
+      { id: "c2", athleteId: "joey", exerciseId: "squat", sessionId: "s1", setIndex: 1, loadKg: 150, reps: 5, rpe: 7, e1rmKg: null, loggedAt: "2026-10-06T10:10:00Z", videoFileId: "f2", notes: null },
+    ];
+    context.reviewed = new Set(["c1"]);
+    const user = userEvent.setup();
+    await ready();
+    expect(screen.queryByRole("complementary", { name: "Context" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Context" }));
+    const drawer = await screen.findByRole("complementary", { name: "Context" });
+    expect(await within(drawer).findByText("180 × 3 @8, 150 × 5 @7 ×2")).toBeInTheDocument();
+    const videos = within(drawer).getByRole("region", { name: "Videos waiting" });
+    expect(within(videos).getByText("Videos waiting · 1")).toBeInTheDocument();
+    expect(within(videos).getAllByRole("listitem")).toHaveLength(1);
+    expect(window.localStorage.getItem("snb.editor.context")).toBe("open");
+    expect(store.send).not.toHaveBeenCalled();
+  });
+
+  it("says when their sessions did not load, rather than showing an empty week", async () => {
+    context.sessions = null as unknown as Array<{ id: string }>;
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Context" }));
+    expect(await screen.findByText("Their sessions did not load. Nothing here is missing; it is unknown.")).toBeInTheDocument();
+    context.sessions = [{ id: "s1" }];
+  });
+});
+
+describe("duplicate with a bump", () => {
+  it("previews where the copy lands and what changes, then writes the copy and steps its lines", async () => {
+    const copy = tree().blocks[0].weeks[0];
+    const copied = {
+      ...copy,
+      id: "w9",
+      position: 2,
+      days: copy.days.map((d) => ({ ...d, id: "d9", weekId: "w9", prescriptions: d.prescriptions.map((l) => ({ ...l, id: `${l.id}-9`, weekId: "w9", dayId: "d9" })) })),
+    };
+    store.send.mockImplementation(async (op) => {
+      if (op.op === "duplicateWeek") {
+        const t = tree();
+        t.blocks[0].weeks.push(copied);
+        store.tree = t;
+        return { rowId: "w9" };
+      }
+      return { rowId: "x" };
+    });
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Week 1 actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate with a bump…" }));
+    const form = screen.getByRole("region", { name: "Duplicate with a bump" });
+    expect(within(form).getByText("Lands as Week 3, 19–25 Oct, at the end of Block 1.")).toBeInTheDocument();
+    await user.type(within(form).getByRole("textbox", { name: "+ %" }), "2.5");
+    await user.type(within(form).getByRole("textbox", { name: "+ RPE" }), "0.5");
+    const changes = within(form).getByRole("list", { name: "Lines that change" });
+    expect(within(changes).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Squat: @8 → @8.5", "Squat: 75% → 77.5%"]);
+    expect(store.send).not.toHaveBeenCalled();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(store.send.mock.calls.map((c) => c[0])).toEqual([
+        { op: "duplicateWeek", weekId: "w1" },
+        { op: "updatePrescription", prescriptionId: "l1-9", load: "@8.5" },
+        { op: "updatePrescription", prescriptionId: "l2-9", load: "77.5%" },
+      ]),
+    );
+    expect(await screen.findByRole("heading", { level: 2, name: "Block 1 · Week 3" })).toBeInTheDocument();
+  });
+
+  it("refuses a step it cannot apply, and writes nothing", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Week 1 actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate with a bump…" }));
+    const form = screen.getByRole("region", { name: "Duplicate with a bump" });
+    await user.type(within(form).getByRole("textbox", { name: "+ RPE" }), "0.3{Enter}");
+    expect(within(form).getByRole("alert")).toHaveTextContent("RPE moves in half points, like 0.5");
+    expect(store.send).not.toHaveBeenCalled();
   });
 });

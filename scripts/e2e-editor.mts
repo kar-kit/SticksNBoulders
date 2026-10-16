@@ -382,7 +382,8 @@ try {
   // Tab only walks the date input's own day/month/year segments in Chromium;
   // the save is on blur.
   await startDate.blur();
-  const shifted = await poll(dayDates, (dates) => dates[0] === addDays(today, 7));
+  // Every day, not the first: the redates are one op per day, in order.
+  const shifted = await poll(dayDates, (dates) => dates.join() === [7, 14, 21].map((n) => addDays(today, n)).join());
   check(
     "a week later moves every unlogged day a week later",
     shifted.join() === [7, 14, 21].map((n) => addDays(today, n)).join(),
@@ -393,7 +394,7 @@ try {
   // Tab only walks the date input's own day/month/year segments in Chromium;
   // the save is on blur.
   await startDate.blur();
-  const restored = await poll(dayDates, (dates) => dates[0] === today);
+  const restored = await poll(dayDates, (dates) => dates.join() === [0, 7, 14].map((n) => addDays(today, n)).join());
   check("and moving it back moves them back", restored.join() === [0, 7, 14].map((n) => addDays(today, n)).join(), JSON.stringify(restored));
 
   // --- Publish week 1 ----------------------------------------------------------
