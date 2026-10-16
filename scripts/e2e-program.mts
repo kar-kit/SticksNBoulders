@@ -191,6 +191,8 @@ try {
   await coachPage.getByRole("button", { name: "Create" }).click();
   await coachPage.waitForURL(/\/coach\/programs\/[^/]+$/, { timeout: 30000 });
   created.programId = coachPage.url().split("/").at(-1)!;
+  // A program opens on its calendar; these steps work in the week view.
+  await coachPage.getByRole("tab", { name: "Week" }).click({ timeout: 30000 });
   const week1 = coachPage.getByRole("navigation", { name: "Program outline" }).getByRole("button", { name: "Week 1, draft", exact: true });
   check(
     "Create opens the editor on week 1",

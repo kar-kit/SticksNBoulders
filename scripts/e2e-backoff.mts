@@ -181,6 +181,8 @@ try {
   await coachPage.getByRole("button", { name: "Create" }).click();
   await coachPage.waitForURL(/\/coach\/programs\/[^/]+$/, { timeout: 30000 });
   created.programId = coachPage.url().split("/").at(-1)!;
+  // A program opens on its calendar; these steps work in the week view.
+  await coachPage.getByRole("tab", { name: "Week" }).click({ timeout: 30000 });
   await coachPage.getByRole("button", { name: "+ Day" }).click();
   const day = coachPage.getByRole("region", { name: "Day 1" });
   await day.waitFor({ timeout: 20000 });

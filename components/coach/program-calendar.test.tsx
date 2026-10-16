@@ -160,7 +160,7 @@ const calendar = async () => {
 };
 
 describe("the Week | Calendar toggle", () => {
-  it("switches views and keeps the choice in ?view=calendar, leaving the rest of the URL alone", async () => {
+  it("switches views and keeps the choice in ?view=, leaving the rest of the URL alone", async () => {
     const user = userEvent.setup();
     render(<ProgramEditor programId="p1" />);
     await screen.findByRole("region", { name: "Squat day" });
@@ -179,7 +179,7 @@ describe("the Week | Calendar toggle", () => {
 
     await user.click(within(toggle).getByRole("tab", { name: "Week" }));
     expect(await screen.findByRole("region", { name: "Squat day" })).toBeInTheDocument();
-    expect(new URLSearchParams(window.location.search).has("view")).toBe(false);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("week");
     expect(new URLSearchParams(window.location.search).get("week")).toBe("w1");
   });
 
@@ -300,7 +300,7 @@ describe("from the calendar to the week", () => {
     await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1));
     expect(scrolled.mock.contexts[0]).toBe(opened);
     expect(opened.contains(document.activeElement)).toBe(true);
-    expect(new URLSearchParams(window.location.search).has("view")).toBe(false);
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("week");
   });
 
   it("puts the keyboard on the day's first line when it has one", async () => {

@@ -201,7 +201,7 @@ try {
   const coachCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
   const coachPage = await coachCtx.newPage();
   await signIn(coachPage, coach.email);
-  await coachPage.goto(`${BASE}/coach/programs/${programId}`);
+  await coachPage.goto(`${BASE}/coach/programs/${programId}?view=week`);
   // Duplicate sits in the week's ⋯ menu now, beside "Publish week 1".
   await coachPage.getByRole("button", { name: "Week 1 actions", exact: true }).click({ timeout: 30000 });
   await coachPage.getByRole("menuitem", { name: "Duplicate week 1", exact: true }).click();

@@ -78,10 +78,12 @@ import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/progra
  * editor already had. Edits to a published week are live on save -- see
  * docs/programs.md for why there is no second draft layer yet.
  *
- * Week | Calendar: the calendar (program-calendar.tsx) shows every week as a
- * dated row and opens a day here, in the week view, scrolled to it. The
- * choice is `?view=calendar` in the URL, written with replaceState so it
- * survives a reload and can be linked without adding a history entry.
+ * Calendar | Week: the calendar (program-calendar.tsx) shows every week as a
+ * dated row and opens a day here, in the week view, scrolled to it. It is
+ * what a program opens on, except from a link to a particular week, day or
+ * line, which opens the week view. The choice is `?view=` in the URL, written
+ * with replaceState so it survives a reload and can be linked without adding
+ * a history entry.
  *
  * Seams left: backoff rules (21) and video-required (30) are columns after
  * Notes.
@@ -114,8 +116,10 @@ const VIEWS = [
 /** The view into the URL, leaving the landing and anything else in it alone. */
 function writeView(view: EditorView) {
   const url = new URL(window.location.href);
-  if (view === "calendar") url.searchParams.set("view", "calendar");
-  else url.searchParams.delete("view");
+  // Both written, never one removed: the calendar is the default only when
+  // nothing else in the URL asks for a place, so a bare URL would not say
+  // which the coach chose.
+  url.searchParams.set("view", view);
   window.history.replaceState(window.history.state, "", url);
 }
 

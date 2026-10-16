@@ -147,10 +147,18 @@ describe("URLs", () => {
     expect(idParam("joey")).toBe("joey");
   });
 
-  it("reads the editor's view: calendar only when asked for, week otherwise", () => {
+  it("reads the editor's view: calendar by default, week when asked for or sent to a place", () => {
+    expect(editorViewFrom({})).toBe("calendar");
     expect(editorViewFrom({ view: "calendar" })).toBe("calendar");
-    expect(editorViewFrom({ view: ["calendar", "week"] })).toBe("calendar");
-    expect(editorViewFrom({ view: "month" })).toBe("week");
-    expect(editorViewFrom({})).toBe("week");
+    expect(editorViewFrom({ view: "month" })).toBe("calendar");
+    expect(editorViewFrom({ view: "week" })).toBe("week");
+    expect(editorViewFrom({ view: ["week", "calendar"] })).toBe("week");
+    // The "Adjust program" links name a place, so they open the week view...
+    expect(editorViewFrom({ day: "day1" })).toBe("week");
+    expect(editorViewFrom({ week: "week1", line: "line1" })).toBe("week");
+    // ...unless the coach has since chosen the calendar.
+    expect(editorViewFrom({ day: "day1", view: "calendar" })).toBe("calendar");
+    // A malformed id is no landing.
+    expect(editorViewFrom({ day: "not a valid id!" })).toBe("calendar");
   });
 });
