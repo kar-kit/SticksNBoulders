@@ -12,12 +12,15 @@ import { execSync } from "node:child_process";
  * home-screen app, which can sit resumed in the background for days without
  * ever loading a page from scratch.
  *
- * `SNB_BUILD_ID` wins when the host sets it. Otherwise the commit, which is
- * deterministic across the several processes a build runs in (a timestamp is
- * not). With neither, the worker still works; it just never cleans up.
+ * `SNB_BUILD_ID` wins when the host sets it. Then Vercel's commit sha, which a
+ * Vercel build always has (its build container does not promise a .git
+ * directory). Otherwise the commit from git, which is deterministic across the
+ * several processes a build runs in (a timestamp is not). With none of them,
+ * the worker still works; it just never cleans up.
  */
 function buildId(): string | undefined {
   if (process.env.SNB_BUILD_ID) return process.env.SNB_BUILD_ID;
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 12);
   try {
     return (
       execSync("git rev-parse --short=12 HEAD", {
@@ -33,11 +36,12 @@ function buildId(): string | undefined {
 
 const BUILD_ID = buildId();
 
-module.exports = {
-  allowedDevOrigins: ["192.168.1.189"],
-};
-
 const nextConfig: NextConfig = {
+  // The phone on the LAN that loads the dev server. It was added as a second,
+  // stray `module.exports = {...}` beside `export default`, which replaced this
+  // whole object and silently dropped the build id and the /sw.js headers
+  // below from every production build. It belongs in here.
+  allowedDevOrigins: ["192.168.1.189"],
   deploymentId: BUILD_ID,
   env: {
     NEXT_PUBLIC_SNB_BUILD_ID: BUILD_ID ?? "unversioned",
