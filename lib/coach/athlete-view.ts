@@ -222,8 +222,16 @@ function nextUpcoming(
  * That is what makes the empty state actionable: Ruairi's first move with a
  * new athlete is setting a training max on a squat nobody has logged yet, and
  * a grid of only lifts that already have numbers would give him nowhere to
- * type it. Every other lift appears once it has any number at all, in library
- * order (the seeded library is in competition order, see reference-max.ts).
+ * type it.
+ *
+ * And ONLY those three, in competition order -- Joey's review of the
+ * dashboard, 16 Oct 2026: "SBD is priority", no other exercise listed. A
+ * Pause Bench row with an e1RM used to appear here once it had a number,
+ * which put a variation on the same footing as the total. The cost, said
+ * plainly: this grid was the only place a coach could type a max for a
+ * variation. A percentage of a variation can still be priced off a
+ * competition lift (docs/reference-lift.md), and the rows themselves are
+ * untouched -- nothing stored changes, only what this panel lists.
  */
 export function maxGrid(
   entries: readonly ReferenceMaxEntry[],
@@ -232,11 +240,8 @@ export function maxGrid(
   asOf: Date,
 ): MaxGridRow[] {
   const rows: MaxGridRow[] = [];
-  const seen = new Set<string>();
 
   const push = (exercise: Exercise) => {
-    if (seen.has(exercise.id)) return;
-    seen.add(exercise.id);
     const mine = entries.filter((entry) => entry.exerciseId === exercise.id);
     const maxes = resolveMaxes(mine, asOf, estimates.get(exercise.id) ?? null);
     rows.push({
@@ -251,14 +256,11 @@ export function maxGrid(
     });
   };
 
+  // The seeded global rows only, as in liftTabs: an athlete's hand-typed
+  // "Squat" is their own exercise, not the competition squat.
   for (const lift of COMPETITION_LIFTS) {
     const exercise = exercises.find((e) => e.isGlobal && e.normalisedName === lift);
     if (exercise) push(exercise);
-  }
-
-  for (const exercise of exercises) {
-    const hasEntry = entries.some((entry) => entry.exerciseId === exercise.id);
-    if (hasEntry || estimates.has(exercise.id)) push(exercise);
   }
 
   return rows;
@@ -333,6 +335,12 @@ export interface VideoRow extends ClipSet {
   /** This coach has cleared it in the Review Queue. Per coach, like the queue. */
   reviewed: boolean;
   commentCount: number;
+  /**
+   * The most recent thing said on this clip, by either party, so the list can
+   * show the latest feedback against the clip it is about (Joey's review, 16
+   * Oct 2026) without opening it. Null when nothing has been said.
+   */
+  latestComment: Comment | null;
 }
 
 /**
@@ -346,13 +354,21 @@ export function videoRows(
   comments: readonly Comment[],
   nameOf: (exerciseId: string) => string | undefined,
 ): VideoRow[] {
-  const counts = new Map<string, number>();
-  for (const comment of comments) counts.set(comment.setId, (counts.get(comment.setId) ?? 0) + 1);
-
   const time = (iso: string) => {
     const ms = new Date(iso).getTime();
     return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
   };
+
+  const counts = new Map<string, number>();
+  const latest = new Map<string, Comment>();
+  for (const comment of comments) {
+    counts.set(comment.setId, (counts.get(comment.setId) ?? 0) + 1);
+    const was = latest.get(comment.setId);
+    // Ties go to the later id, so the choice does not depend on read order.
+    if (!was || time(comment.createdAt) > time(was.createdAt) || (time(comment.createdAt) === time(was.createdAt) && comment.id > was.id)) {
+      latest.set(comment.setId, comment);
+    }
+  }
 
   return [...clips]
     .sort((a, b) => time(b.loggedAt) - time(a.loggedAt))
@@ -361,6 +377,7 @@ export function videoRows(
       exerciseName: nameOf(clip.exerciseId) ?? UNKNOWN_LIFT,
       reviewed: reviewedSetIds.has(clip.id),
       commentCount: counts.get(clip.id) ?? 0,
+      latestComment: latest.get(clip.id) ?? null,
     }));
 }
 

@@ -13,6 +13,9 @@ vi.mock("@/lib/strength/reference-max-store", () => store);
 const library = vi.hoisted(() => ({ fetchExerciseLibrary: vi.fn() }));
 vi.mock("@/lib/exercises/library", () => library);
 
+const dots = vi.hoisted(() => ({ fetchDots: vi.fn() }));
+vi.mock("@/lib/strength/dots-store", () => dots);
+
 vi.mock("@/lib/auth/session-context", () => ({
   useSession: () => ({
     state: { status: "signed-in", user: { id: "coach", name: "Ruairi", email: "" }, coach: { isCoach: true, athleteIds: ["joey"] } },
@@ -42,6 +45,8 @@ beforeEach(() => {
   store.removeReferenceMax.mockReset();
   store.fetchReferenceMaxes.mockResolvedValue([]);
   store.fetchEstimatedMaxes.mockResolvedValue(new Map());
+  dots.fetchDots.mockReset();
+  dots.fetchDots.mockResolvedValue({ status: "no-bodyweight" });
   library.fetchExerciseLibrary.mockResolvedValue([
     exercise(SQUAT, "Squat"),
     exercise(BENCH, "Bench Press"),
@@ -108,6 +113,77 @@ describe("an athlete with maxes", () => {
     render(<CurrentMaxes athleteId="joey" />);
     await screen.findByRole("row", { name: /Squat/ });
     expect(screen.queryByRole("row", { name: /Barbell Row/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("only the competition lifts", () => {
+  it("lists squat, bench and deadlift in that order and nothing else, even a lift with an e1RM", async () => {
+    store.fetchReferenceMaxes.mockResolvedValue([maxRow({ exerciseId: ROW, kind: "tested", valueKg: 140 })]);
+    store.fetchEstimatedMaxes.mockResolvedValue(new Map([[ROW, { valueKg: 150, asOf: "2026-09-14" }]]));
+    render(<CurrentMaxes athleteId="joey" />);
+    await screen.findByRole("row", { name: /Squat/ });
+    const names = screen.getAllByRole("rowheader").map((cell) => cell.textContent);
+    expect(names).toEqual(["Squat", "Bench Press", "Deadlift", "DOTS"]);
+  });
+});
+
+describe("DOTS, in the same table", () => {
+  const ready = {
+    status: "ready",
+    score: 402.84,
+    totalKg: 594,
+    bodyweightKg: 82.3,
+    measuredOn: "2026-10-16",
+    stale: false,
+    lifts: [
+      { lift: "squat", valueKg: 202.5, kind: "estimated" },
+      { lift: "bench press", valueKg: 144, kind: "estimated" },
+      { lift: "deadlift", valueKg: 247.5, kind: "estimated" },
+    ],
+  };
+
+  it("is the last row, with the score and the total it came from", async () => {
+    dots.fetchDots.mockResolvedValue(ready);
+    render(<CurrentMaxes athleteId="joey" />);
+    const row = await screen.findByRole("row", { name: /^DOTS/ });
+    expect(row).toHaveTextContent("402.8");
+    expect(row).toHaveTextContent("from 202.5 / 144 / 247.5 at 82.3 kg");
+    expect(dots.fetchDots).toHaveBeenCalledWith("joey");
+    const rows = screen.getAllByRole("row");
+    expect(rows[rows.length - 1]).toBe(row);
+  });
+
+  it("dates the bodyweight behind a stale score", async () => {
+    dots.fetchDots.mockResolvedValue({ ...ready, stale: true, measuredOn: "2026-09-20" });
+    render(<CurrentMaxes athleteId="joey" />);
+    expect(await screen.findByRole("row", { name: /^DOTS/ })).toHaveTextContent("weighed 20 Sep");
+  });
+
+  it("says what it is waiting on, in the coach's words, when there is no score", async () => {
+    dots.fetchDots.mockResolvedValue({ status: "incomplete-total", missing: ["deadlift"] });
+    render(<CurrentMaxes athleteId="joey" />);
+    expect(await screen.findByRole("row", { name: /^DOTS/ })).toHaveTextContent(
+      "Waiting on deadlift — no tested max and nothing logged yet.",
+    );
+  });
+
+  it("leaves the row out, and the maxes up, when DOTS cannot be read", async () => {
+    dots.fetchDots.mockRejectedValue(new Error("offline"));
+    render(<CurrentMaxes athleteId="joey" />);
+    await screen.findByRole("row", { name: /Squat/ });
+    expect(screen.queryByRole("row", { name: /^DOTS/ })).not.toBeInTheDocument();
+  });
+
+  it("is read again after a save, so a new max moves the score", async () => {
+    dots.fetchDots.mockResolvedValue(ready);
+    store.setReferenceMax.mockResolvedValue("new-row");
+    const user = userEvent.setup();
+    render(<CurrentMaxes athleteId="joey" />);
+    await user.click(await screen.findByRole("button", { name: "Set tested for Bench Press" }));
+    dots.fetchDots.mockResolvedValue({ ...ready, score: 410.11 });
+    await user.type(screen.getByLabelText("tested for Bench Press, kg"), "150{Enter}");
+    expect(await screen.findByText("410.1")).toBeInTheDocument();
+    expect(dots.fetchDots).toHaveBeenCalledTimes(2);
   });
 });
 

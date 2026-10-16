@@ -88,26 +88,11 @@ export function CommentBox({
     if (!posted) setError("That didn't send. Your words are still here — try again.");
   };
 
-  const threads = threadComments(comments);
   const remaining = MAX_COMMENT_LENGTH - draft.trim().length;
 
   return (
     <div className="flex flex-col gap-4">
-      {threads.length > 0 ? (
-        <div className="flex flex-col gap-3">
-          <h3 className="m-0 text-ui font-semibold text-muted">Already said</h3>
-          {threads.map(({ comment, replies }) => (
-            <div key={comment.id} className="flex flex-col gap-2">
-              <Said comment={comment} names={names} viewerId={viewerId} />
-              {replies.map((reply) => (
-                <div key={reply.id} className="pl-5">
-                  <Said comment={reply} names={names} viewerId={viewerId} />
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <CommentThread comments={comments} names={names} viewerId={viewerId} />
 
       <div className="flex flex-col gap-2">
         <label htmlFor="comment" className="sr-only">
@@ -154,6 +139,44 @@ export function CommentBox({
           Skip
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * What has already been said about one clip, threaded one level deep.
+ *
+ * Its own export so the Athlete View's clip dialog draws a thread with these
+ * exact words and this exact layout rather than a second rendering of the
+ * same rows (Joey, 16 Oct 2026: reuse the queue's components). Renders
+ * nothing for a clip nobody has spoken about; the caller says so in its own
+ * words, since "nothing yet" means different things in the queue and on the
+ * athlete's page.
+ */
+export function CommentThread({
+  comments,
+  names,
+  viewerId,
+}: {
+  comments: readonly Comment[];
+  names: ReadonlyMap<string, string>;
+  viewerId: string;
+}) {
+  const threads = threadComments(comments);
+  if (threads.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="m-0 text-ui font-semibold text-muted">Already said</h3>
+      {threads.map(({ comment, replies }) => (
+        <div key={comment.id} className="flex flex-col gap-2">
+          <Said comment={comment} names={names} viewerId={viewerId} />
+          {replies.map((reply) => (
+            <div key={reply.id} className="pl-5">
+              <Said comment={reply} names={names} viewerId={viewerId} />
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

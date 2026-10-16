@@ -103,33 +103,41 @@ export function DotsBlock({ athleteId, audience }: DotsBlockProps) {
     <section className="flex flex-col gap-1">
       <Label />
       <p className="m-0 text-ui text-muted">
-        {result.status === "no-sex" ? (
-          audience === "athlete" ? (
-            <>
-              <Link href="/me" className="underline">
-                Add your sex on Profile
-              </Link>{" "}
-              and this appears. The two formulas differ and there is no sensible default.
-            </>
-          ) : (
-            "Waiting on their sex, which is set on their own Profile screen."
-          )
+        {audience === "coach" ? coachDotsWaiting(result) : null}
+
+        {audience === "athlete" && result.status === "no-sex" ? (
+          <>
+            <Link href="/me" className="underline">
+              Add your sex on Profile
+            </Link>{" "}
+            and this appears. The two formulas differ and there is no sensible default.
+          </>
         ) : null}
 
-        {result.status === "no-bodyweight"
-          ? audience === "athlete"
-            ? "Log a weight and this appears."
-            : "Waiting on a weigh-in."
-          : null}
+        {audience === "athlete" && result.status === "no-bodyweight" ? "Log a weight and this appears." : null}
 
-        {result.status === "incomplete-total"
-          ? audience === "athlete"
-            ? `Needs a number on ${liftList(result.missing)}. Log a top single, or ask your coach to set a tested max.`
-            : `Waiting on ${liftList(result.missing)} — no tested max and nothing logged yet.`
+        {audience === "athlete" && result.status === "incomplete-total"
+          ? `Needs a number on ${liftList(result.missing)}. Log a top single, or ask your coach to set a tested max.`
           : null}
       </p>
     </section>
   );
+}
+
+/**
+ * What the coach is told when there is no DOTS yet. Exported so the Athlete
+ * View's maxes table, which now carries DOTS as a row, says the same sentence
+ * this block does -- one wording per cause, whichever surface draws it.
+ */
+export function coachDotsWaiting(result: Exclude<DotsResult, { status: "ready" }>): string {
+  switch (result.status) {
+    case "no-sex":
+      return "Waiting on their sex, which is set on their own Profile screen.";
+    case "no-bodyweight":
+      return "Waiting on a weigh-in.";
+    case "incomplete-total":
+      return `Waiting on ${liftList(result.missing)} — no tested max and nothing logged yet.`;
+  }
 }
 
 function Label() {

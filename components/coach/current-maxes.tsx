@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { coachDotsWaiting } from "@/components/strength/dots-block";
 import { fetchExerciseLibrary } from "@/lib/exercises/library";
 import { useSession } from "@/lib/auth/session-context";
 import { maxGrid, maxSource, parseKg, type MaxGridRow } from "@/lib/coach/athlete-view";
@@ -18,6 +19,8 @@ import {
   removeReferenceMax,
   setReferenceMax,
 } from "@/lib/strength/reference-max-store";
+import { formatDots, formatTotalBreakdown, type DotsResult } from "@/lib/strength/dots";
+import { fetchDots } from "@/lib/strength/dots-store";
 import { cn } from "@/lib/cn";
 
 /**
@@ -38,11 +41,18 @@ import { cn } from "@/lib/cn";
  * Entries are append-only, so "editing" is entering a new number with a date.
  * The one true edit is Undo, straight after saving, which deletes the row just
  * written -- the typo case docs/reference-maxes.md keeps deletion for.
+ *
+ * Squat, bench and deadlift only, in that order (see maxGrid), with DOTS as
+ * the last row of the same table rather than a block of its own (Joey's
+ * review, 16 Oct 2026): it is the three numbers above it divided by
+ * bodyweight, so it belongs under them. It is read with the grid and re-read
+ * with it after every save, so a new max moves the score at the same moment
+ * -- the old separate block kept showing the score from page load.
  */
 
 type State =
   | { status: "loading" }
-  | { status: "ready"; rows: MaxGridRow[]; entries: ReferenceMaxEntry[] }
+  | { status: "ready"; rows: MaxGridRow[]; entries: ReferenceMaxEntry[]; dots: DotsResult | null }
   | { status: "failed" };
 
 /**
@@ -98,15 +108,21 @@ export function CurrentMaxes({ athleteId }: CurrentMaxesProps) {
         // The athlete's library, not the coach's: global rows plus the ones
         // this athlete typed mid-session, which the coach reads through the
         // circle team.
-        const [entries, estimates, library] = await Promise.all([
+        //
+        // DOTS through fetchDots, the one assembly both screens use, rather
+        // than recomputed here from the rows just read: two assemblies of one
+        // number could disagree (lib/strength/dots-store.ts). A failed DOTS
+        // read is quiet -- the row is left out -- and never fails the maxes.
+        const [entries, estimates, library, dots] = await Promise.all([
           fetchReferenceMaxes(athleteId),
           fetchEstimatedMaxes(athleteId),
           fetchExerciseLibrary(athleteId),
+          fetchDots(athleteId).catch(() => null),
         ]);
         if (cancelled) return;
         setState({
           athleteId,
-          state: { status: "ready", rows: maxGrid(entries, library, estimates, new Date()), entries },
+          state: { status: "ready", rows: maxGrid(entries, library, estimates, new Date()), entries, dots },
         });
       } catch {
         if (!cancelled) setState({ athleteId, state: { status: "failed" } });
@@ -225,6 +241,7 @@ export function CurrentMaxes({ athleteId }: CurrentMaxesProps) {
                   </td>
                 </tr>
               ))}
+              {state.dots ? <DotsRow result={state.dots} /> : null}
             </tbody>
           </table>
           <p className="m-0 text-caption text-muted-2">
@@ -236,6 +253,45 @@ export function CurrentMaxes({ athleteId }: CurrentMaxesProps) {
     </section>
   );
 }
+
+/**
+ * DOTS, as the table's last row: the score where the numbers are, and the
+ * total it came from beside it, so a coach can see which three lifts it was
+ * built on. Kilos, as everything on the coach side is.
+ */
+function DotsRow({ result }: { result: DotsResult }) {
+  return (
+    <tr className="border-t border-border align-top">
+      <th scope="row" className="py-2.5 pr-3 text-left font-normal">
+        DOTS
+      </th>
+      <td colSpan={3} className="py-2.5">
+        {result.status === "ready" ? (
+          <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="font-semibold tabular-nums">{formatDots(result.score)}</span>
+            <span className="text-caption text-muted tabular-nums">
+              from {formatTotalBreakdown(result.lifts, "kg")} at {result.bodyweightKg.toFixed(1)} kg
+              {result.stale ? (
+                // The bodyweight behind it is older than the averaging window.
+                // Dated rather than hidden, as on the DOTS block: an undated
+                // figure reads as current.
+                <span className="text-muted-2"> · weighed {weighedOn(result.measuredOn)}</span>
+              ) : null}
+            </span>
+          </span>
+        ) : (
+          <span className="text-caption text-muted">{coachDotsWaiting(result)}</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+const weighedOn = (key: string): string => {
+  const [year, month, day] = key.split("-").map(Number);
+  if (!year || !month || !day) return key;
+  return new Date(year, month - 1, day).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+};
 
 function MaxCell({
   max,

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchLinkRows } from "@/lib/coach/athlete-view-store";
 import { saveSuggestionMode } from "@/lib/coach/suggestion-mode-store";
+import { cn } from "@/lib/cn";
 import {
   DEFAULT_SUGGESTION_MODE,
   SUGGESTION_MODES,
@@ -23,6 +24,15 @@ import {
  * Writes through /api/link/suggestions, which refuses anyone but the coach on
  * an active link. Optimistic, and rolled back with a sentence if the write is
  * refused -- a switch that looks flipped and is not is worse than a slow one.
+ *
+ * A compact setting in the page header, not a panel (Joey's review, 16 Oct
+ * 2026: no longer front and centre). It is set once per athlete and rarely
+ * touched, so the page shows only what it is set to; the choice and what each
+ * option does open beneath it on request. Disclosure rather than a menu,
+ * because what opens is a radio group with explanations, not a list of
+ * commands. Escape or a click elsewhere folds it away, and an error stays
+ * visible on the folded control until the next change, so a refused write is
+ * never hidden by closing the panel.
  */
 
 type State =
@@ -40,6 +50,32 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
   const coachId = session.status === "signed-in" ? session.user.id : "";
   const [state, setState] = useState<State & { for?: string }>({ status: "loading" });
   const name = useId();
+  const [open, setOpen] = useState(false);
+  const wrapper = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: PointerEvent) => {
+      if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
+    };
+    // On the document, not the wrapper: choosing an option disables the
+    // radios while it saves, which drops focus to the body, and an Escape
+    // from there must still fold the panel away.
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      const focus = document.activeElement;
+      if (!focus || focus === document.body || wrapper.current?.contains(focus)) trigger.current?.focus();
+    };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!coachId) return;
@@ -92,16 +128,45 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
     }
   };
 
-  return (
-    <section className="flex flex-col gap-3" aria-labelledby={`${name}-heading`}>
-      <h2 id={`${name}-heading`} className="m-0 text-label uppercase tracking-wide text-muted">
-        Load suggestions
-      </h2>
+  const summary = current.status === "ready" ? SUGGESTION_MODE_LABEL[current.mode] : "Loading…";
 
-      {current.status === "loading" ? (
-        <p className="m-0 text-ui text-muted">Loading…</p>
-      ) : (
-        <>
+  return (
+    <div ref={wrapper} className="relative">
+      <button
+        ref={trigger}
+        type="button"
+        aria-expanded={open}
+        aria-controls={`${name}-panel`}
+        disabled={current.status !== "ready"}
+        onClick={() => setOpen((was) => !was)}
+        className={cn(
+          "inline-flex h-8 items-center gap-2 rounded-chip border border-border px-3 text-caption text-muted",
+          "hover:text-foreground disabled:text-muted-2",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
+        )}
+      >
+        <GearIcon />
+        <span className="font-mono text-label-xs uppercase text-muted-2">Load suggestions</span>
+        <span className="text-foreground">{summary}</span>
+        <span aria-hidden className="text-muted-2">
+          {open ? "▴" : "▾"}
+        </span>
+      </button>
+
+      {current.status === "ready" && current.error && !open ? (
+        <p role="alert" className="m-0 mt-1 max-w-[320px] text-caption text-danger-line">
+          {current.error}
+        </p>
+      ) : null}
+
+      {open && current.status === "ready" ? (
+        <div
+          id={`${name}-panel`}
+          className="absolute right-0 top-full z-20 mt-2 flex w-[340px] flex-col gap-3 rounded-control border border-border bg-surface p-4"
+        >
+          <p id={`${name}-heading`} className="m-0 text-label uppercase tracking-wide text-muted">
+            Load suggestions
+          </p>
           <div role="radiogroup" aria-labelledby={`${name}-heading`} className="flex flex-col gap-2">
             {SUGGESTION_MODES.map((mode) => (
               <label key={mode} className="flex cursor-pointer items-start gap-2.5">
@@ -115,7 +180,7 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
                   className="mt-1"
                 />
                 <span className="flex flex-col">
-                  <span className="text-body">{SUGGESTION_MODE_LABEL[mode]}</span>
+                  <span className="text-ui">{SUGGESTION_MODE_LABEL[mode]}</span>
                   <span className="text-caption text-muted">{HINT[mode]}</span>
                 </span>
               </label>
@@ -127,13 +192,17 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
               {current.error}
             </p>
           ) : null}
-          {/* Honest about today: the engine needs a prescribed target RPE, and
-              prescriptions do not reach the logger until Order 22. */}
-          <p className="m-0 text-caption text-muted-2">
-            Suggestions need a prescribed target RPE, so none appear until programs reach the logger.
-          </p>
-        </>
-      )}
-    </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function GearIcon() {
+  return (
+    <svg aria-hidden viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
+    </svg>
   );
 }
