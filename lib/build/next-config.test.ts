@@ -19,7 +19,7 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("next.config", () => {
   it("is the one config, with its build id and its service worker headers", async () => {
-    const config = await load({ SNB_BUILD_ID: "abc123", VERCEL_GIT_COMMIT_SHA: "" });
+    const config = await load({ SNB_BUILD_ID: "abc123", VERCEL_GIT_COMMIT_SHA: "", NEXT_DEPLOYMENT_ID: "" });
     expect(config.deploymentId).toBe("abc123");
     expect(config.env?.NEXT_PUBLIC_SNB_BUILD_ID).toBe("abc123");
     const headers = await config.headers!();
@@ -28,17 +28,30 @@ describe("next.config", () => {
   });
 
   it("keeps the LAN origin for the dev server", async () => {
-    const config = await load({ SNB_BUILD_ID: "abc123" });
+    const config = await load({ SNB_BUILD_ID: "abc123", NEXT_DEPLOYMENT_ID: "" });
     expect(config.allowedDevOrigins).toContain("192.168.1.189");
   });
 
   it("takes the build id from the Vercel commit when the host sets none", async () => {
-    const config = await load({ SNB_BUILD_ID: "", VERCEL_GIT_COMMIT_SHA: "0123456789abcdef0123" });
+    const config = await load({ SNB_BUILD_ID: "", NEXT_DEPLOYMENT_ID: "", VERCEL_GIT_COMMIT_SHA: "0123456789abcdef0123" });
     expect(config.deploymentId).toBe("0123456789ab");
   });
 
+  it("takes Vercel's own deployment id over everything, or Next fails the build", async () => {
+    // Reproduced from a real Vercel build log on 16 Oct 2026: 'The
+    // NEXT_DEPLOYMENT_ID environment variable value "dpl_..." does not match
+    // the provided deploymentId "952412e1f046" in the config.'
+    const config = await load({
+      NEXT_DEPLOYMENT_ID: "dpl_abc",
+      SNB_BUILD_ID: "mine",
+      VERCEL_GIT_COMMIT_SHA: "0123456789abcdef0123",
+    });
+    expect(config.deploymentId).toBe("dpl_abc");
+    expect(config.env?.NEXT_PUBLIC_SNB_BUILD_ID).toBe("dpl_abc");
+  });
+
   it("lets SNB_BUILD_ID win over the Vercel commit", async () => {
-    const config = await load({ SNB_BUILD_ID: "mine", VERCEL_GIT_COMMIT_SHA: "0123456789abcdef0123" });
+    const config = await load({ SNB_BUILD_ID: "mine", NEXT_DEPLOYMENT_ID: "", VERCEL_GIT_COMMIT_SHA: "0123456789abcdef0123" });
     expect(config.deploymentId).toBe("mine");
   });
 });
