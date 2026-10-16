@@ -228,37 +228,41 @@ of the top layer.
 
 ## Performance
 
-`npm run perf:coach-editor` (scripts/perf-coach-editor.mts), 16 Oct 2026, on
-Joey's MacBook, headless Chromium at 1440×900, against `next build --webpack`
-/ `next start`. The week is five days of six lines, every load cell with its
+`npm run perf:coach-editor` (scripts/perf-coach-editor.mts), on Joey's
+MacBook, headless Chromium at 1440×900, against `next build --webpack` /
+`next start`. The week is five days of six lines, every load cell with its
 kilos line. "Before" is `origin/dev` at a12f235; "after" is this branch. Two
-runs each; the table shows the range.
+runs each, built and measured back to back in one session; the table shows
+the range. Re-measured 16 Oct 2026 after the tint went from 900 to 400 ms and
+the placeholder row went in.
 
 | Scenario | Frames > 33 ms (before → after) | Long animation frames / long tasks | Main-thread time, ms (before → after) | Style recalc, ms (before → after) |
 | --- | --- | --- | --- | --- |
-| Typing 12 cells, 1× CPU | 0 → 0 | 0 / 0 → 0 / 0 | 195–199 → 195–203 | 2 → 13–14 |
-| Switching views ×9, 1× | 0 → 0 | 0 / 0 → 0 / 0 | 113–114 → 141 | 7 → 17–18 |
-| Typeahead ×3, 1× | 0 → 0 | 0 / 0 → 0 / 0 | 256–259 → 230–257 | 6 → 24–27 |
-| Typing, 4× throttled | 0 → 0 | 0 / 0 → 0 / 0 | 369–391 → 572–613 | 2–3 → 28–31 |
-| Switching views, 4× | 0 → 0 | 0 / 0 → 0 / 0 | 264–265 → 350–356 | 21 → 39–46 |
-| Typeahead, 4× | 0 → 0 | 0 / 0 → 0 / 0 | 246–262 → 362–387 | 8–11 → 37–39 |
+| Typing 12 cells, 1× CPU | 0 → 0 | 0 / 0 → 0 / 0 | 176–204 → 211–214 | 2 → 12–13 |
+| Switching views ×9, 1× | 0 → 0 | 0 / 0 → 0 / 0 | 114 → 134–146 | 7 → 14 |
+| Typeahead ×3, 1× | 0 → 0 | 0 / 0 → 0 / 0 | 259–266 → 252–272 | 6–7 → 29–31 |
+| Typing, 4× throttled | 0 → 0 | 0 / 0 → 0 / 0 | 396–413 → 557–558 | 3–4 → 23–25 |
+| Switching views, 4× | 0 → 0 | 0 / 0 → 0 / 0 | 263–269 → 335–375 | 19–21 → 37–42 |
+| Typeahead, 4× | 0 → 0 | 0 / 0 → 0 / 0 | 248–284 → 390–392 | 8–10 → 41–48 |
 
-Frame p50 and p95 were 16.7 ms in every run, before and after; the worst
-frame anywhere after was 16.8 ms.
+Frame p50 and p95 were 16.7 ms in every run; the worst frame after was
+16.8 ms (one 33.3 ms frame appeared in the *before* build's 4× view switch,
+under the 33.4 ms threshold).
 
 - [Fact] No jank measured: not one frame over 33 ms, and no long animation
   frame or long task, in either build, at 1× or 4× throttling. The observers
   were checked to work in this browser: a deliberate 120 ms block is reported
   as a long task and a long animation frame.
-- [Fact] The motion costs main-thread time: about +55% in the typing scenario
-  at 4× (roughly +200 ms over a 3-second burst of twelve committed cells) and
-  +30–50% elsewhere at 4×, mostly style recalculation and paint for the
-  tints and transitions. At 1× the difference is within noise except style
-  recalc.
-- [Inference] The typing cost is mostly the saved tint: one 900 ms `::after`
-  animation per committed cell, overlapping as the coach tabs along. If a
-  slower machine ever shows jank there, shortening `duration-linger` is the
-  first lever.
+- [Fact] The motion still costs main-thread time at 4×: typing +~150 ms
+  (+35–40%) over the 3-second burst, view switching +~90 ms, typeahead
+  +~125 ms, mostly style recalculation and paint.
+- [Fact] With the 900 ms tint the typing delta was +~200 ms (+50–55%; before
+  369–391, after 572–613 in the first session). At 400 ms it is +~150 ms.
+  The typing cost came down, by about a quarter of the added cost, not to
+  zero. Style recalc while typing at 4× went from 28–31 to 23–25 ms.
+- [Inference] What remains is the transitions on every grid input and the
+  shorter tints, plus, in this build, the placeholder row's extra render per
+  add (not in the typing scenario, which adds no lines).
 - [Unverified] Headless Chromium's frame clock is not a real display's and
   4× throttling of an Apple-silicon core is not a real slow laptop. These are
   comparisons between two builds on one machine. A real-device check on
