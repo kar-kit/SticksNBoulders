@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 import { TextField } from "@/components/ui/input";
 import {
@@ -154,6 +154,13 @@ export function ExerciseTypeahead({
 
   const showList = open && options.length > 0;
 
+  // A list that scrolls has to follow the keyboard: arrowing past the last
+  // visible row would otherwise move the highlight out of sight.
+  useEffect(() => {
+    if (!showList) return;
+    document.getElementById(`${baseId}-option-${clamped}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [showList, clamped, baseId]);
+
   return (
     <div className="flex w-full flex-col gap-1.5">
       <TextField
@@ -188,7 +195,10 @@ export function ExerciseTypeahead({
           id={listId}
           role="listbox"
           aria-label={`${label} results`}
-          className="m-0 flex list-none flex-col overflow-hidden rounded-control border border-border bg-surface p-0"
+          // Scrolls rather than clips: a library longer than the list was
+          // unreachable by browsing, only by typing. Capped at half the
+          // viewport so the page under it stays in view.
+          className="m-0 flex max-h-[min(24rem,50vh)] list-none flex-col overflow-y-auto overscroll-contain rounded-control border border-border bg-surface p-0"
         >
           {options.map((option, index) => {
             const active = index === clamped;

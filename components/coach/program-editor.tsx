@@ -904,6 +904,7 @@ function DayEditor({
                   {swapping === line.id ? (
                     <ExerciseTypeahead
                       exercises={exercises}
+                      limit={exercises.length || undefined}
                       label={`Exercise for line ${row + 1}`}
                       placeholder={name}
                       autoFocus
@@ -1046,6 +1047,7 @@ function DayEditor({
         <div className="max-w-sm">
           <ExerciseTypeahead
             exercises={exercises}
+            limit={exercises.length || undefined}
             label={`Add exercise to ${title}`}
             placeholder="Type an exercise to add a line"
             clearOnSelect
