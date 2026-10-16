@@ -105,7 +105,7 @@ await teams.createMembership({ teamId: circle.$id, userId: athlete.$id, roles: [
 await teams.createMembership({ teamId: circle.$id, userId: coach.$id, roles: [CIRCLE_ROLES.coach] });
 
 const profile = await adminDb.createRow({
-  databaseId: db, tableId: "profiles", rowId: ID.unique(),
+  databaseId: db, tableId: "profiles", rowId: athlete.$id,
   data: {
     user_id: athlete.$id,
     display_name: "Joey Pang",
