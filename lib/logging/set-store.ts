@@ -53,7 +53,11 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
     loggedAt: loggedAt.toISOString(),
     ...(input.prescriptionId ? { prescriptionId: input.prescriptionId, prescribed: input.prescribed ?? null } : {}),
   });
-  await queueRollupRefresh(input.exerciseId, loggedAt);
+  // The set is on disk from here, so nothing after this may report it as not
+  // logged: the screen would take the row back while the set still synced.
+  // A refresh that could not be queued leaves the week's totals stale until
+  // the next set on that lift queues another; the set itself is safe.
+  await queueRollupRefresh(input.exerciseId, loggedAt).catch(() => {});
 
   return {
     exerciseId: input.exerciseId,

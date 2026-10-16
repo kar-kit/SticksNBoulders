@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Actor } from "@/appwrite/documents";
 import { createMemoryStore } from "./memory-store";
-import { enqueue, attachQueue, flush, queuedOps, resetQueueForTests } from "./client";
+import { enqueue, attachQueue, detachQueue, flush, hasUnsynced, queuedOps, resetQueueForTests } from "./client";
 import type { QueueStore, QueuedOp } from "./queue";
 
 const runOp = vi.hoisted(() => vi.fn<(actor: Actor, op: QueuedOp) => Promise<void>>());
@@ -318,16 +318,19 @@ describe("rollup refreshes", () => {
 
 describe("withdrawing a set", () => {
   it("does not send an op that was withdrawn after the batch was taken", async () => {
-    // A set deleted while an earlier op was on the wire. The drain loop holds
-    // a snapshot; without the check it would send the create anyway.
-    const { store } = recordingStore();
+    // A set deleted while an earlier op was on the wire. Both ops are on disk
+    // before the drain starts, so both are in the batch it snapshots; without
+    // the check the create goes out after the session anyway.
+    const { store } = recordingStore([
+      { id: "op-0", kind: "session.create", payload: { sessionId: "cs-1" }, sequence: 0, attempts: 0, nextAttemptAt: 0 },
+      { id: "op-1", kind: "set.create", payload: { setId: "st-1", sessionId: "cs-1" }, sequence: 1, attempts: 0, nextAttemptAt: 0 },
+    ]);
     resetQueueForTests(store);
-    await attachQueue(ACTOR);
-
     let release: () => void = () => {};
     runOp.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
-    await enqueue("session.create", { sessionId: "cs-1" });
-    await enqueue("set.create", { setId: "st-1", sessionId: "cs-1" });
+    await attachQueue(ACTOR);
+    // The drain is holding session.create on the wire, set.create behind it.
+    await vi.waitFor(() => expect(runOp).toHaveBeenCalledTimes(1));
 
     const { withdrawSet } = await import("./client");
     const { landed } = await withdrawSet("st-1");
@@ -335,6 +338,45 @@ describe("withdrawing a set", () => {
     await flush();
 
     expect(landed).toBe(false);
+    expect(runOp.mock.calls.map(([, op]) => op.kind)).toEqual(["session.create"]);
+    expect(await store.all()).toEqual([]);
+  });
+
+  it("does not send a withdrawn op while its removal is still being written down", async () => {
+    // IndexedDB takes a tick to delete. If the in-memory queue only lets go of
+    // the op after the disk has, a drain that moves on in that gap still sees
+    // it and sends it -- and withdrawSet has already told the caller it never
+    // landed, so no delete is queued behind it. The athlete's deleted set
+    // turns up on the coach's side for good.
+    const inner = createMemoryStore([
+      { id: "op-0", kind: "session.create", payload: { sessionId: "cs-1" }, sequence: 0, attempts: 0, nextAttemptAt: 0 },
+      { id: "op-1", kind: "set.create", payload: { setId: "st-1", sessionId: "cs-1" }, sequence: 1, attempts: 0, nextAttemptAt: 0 },
+    ]);
+    let diskCatchesUp: () => void = () => {};
+    const slowDisk = new Promise<void>((resolve) => (diskCatchesUp = resolve));
+    const store: QueueStore = {
+      put: inner.put,
+      all: inner.all,
+      remove: async (id) => {
+        if (id === "op-1") await slowDisk;
+        await inner.remove(id);
+      },
+    };
+    resetQueueForTests(store);
+    let release: () => void = () => {};
+    runOp.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
+    await attachQueue(ACTOR);
+    await vi.waitFor(() => expect(runOp).toHaveBeenCalledTimes(1));
+
+    const { withdrawSet } = await import("./client");
+    const withdrawing = withdrawSet("st-1");
+    release();
+    // Lets the drain move on while the disk is still deleting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    diskCatchesUp();
+    await flush();
+
+    expect((await withdrawing).landed).toBe(false);
     expect(runOp.mock.calls.map(([, op]) => op.kind)).toEqual(["session.create"]);
   });
 
@@ -369,5 +411,143 @@ describe("withdrawing a set", () => {
     const { dismissFailed } = await import("./client");
     await dismissFailed(["f", "p"]);
     expect((await store.all()).map((op) => op.id)).toEqual(["p"]);
+  });
+});
+
+describe("a shared phone", () => {
+  // e2e P0-3, at the level the queue actually decides it. Athlete A logs with
+  // no signal and signs out; athlete B signs in on the same phone. Every op the
+  // runner sends carries whoever the queue is attached as, and the document
+  // helpers stamp that id onto the row -- so an op of A's sent as B is A's
+  // training written into B's account, readable by B's coach.
+  const A: Actor = { userId: "athlete-a" };
+  const B: Actor = { userId: "athlete-b" };
+
+  const sentAs = () => runOp.mock.calls.map(([who, op]) => `${who.userId}:${op.kind}`);
+
+  async function aLogsOffline(store: QueueStore) {
+    resetQueueForTests(store);
+    await attachQueue(A);
+    runOp.mockRejectedValue(new TypeError("Failed to fetch"));
+    await enqueue("session.create", { sessionId: "cs-a" });
+    await enqueue("set.create", { setId: "st-a1", sessionId: "cs-a" });
+    await enqueue("set.create", { setId: "st-a2", sessionId: "cs-a" });
+    await flush();
+    runOp.mockReset();
+    runOp.mockResolvedValue(undefined);
+  }
+
+  afterEach(() => resetQueueForTests());
+
+  it("never sends one athlete's queued sets as the next athlete to sign in", async () => {
+    const { store } = recordingStore();
+    await aLogsOffline(store);
+
+    // Same tab: Me -> Sign out, then B signs in and the provider attaches.
+    detachQueue();
+    await attachQueue(B);
+    await flush(true);
+
+    expect(sentAs().filter((line) => line.startsWith("athlete-b"))).toEqual([]);
+    // Held, not dropped: A's training is still on the phone.
+    expect((await store.all()).map((op) => op.payload.setId ?? op.payload.sessionId).sort()).toEqual([
+      "cs-a",
+      "st-a1",
+      "st-a2",
+    ]);
+    // And B's screens never see it as B's.
+    expect(queuedOps()).toEqual([]);
+  });
+
+  it("holds them across a reload too, where nothing in memory remembers A", async () => {
+    const { store } = recordingStore();
+    await aLogsOffline(store);
+
+    resetQueueForTests(store);
+    await attachQueue(B);
+    await flush(true);
+
+    expect(sentAs()).toEqual([]);
+    expect(await store.all()).toHaveLength(3);
+  });
+
+  it("sends B's own sets while A's wait", async () => {
+    const { store } = recordingStore();
+    await aLogsOffline(store);
+
+    resetQueueForTests(store);
+    await attachQueue(B);
+    await enqueue("set.create", { setId: "st-b1", sessionId: "cs-b" });
+    await flush(true);
+
+    expect(sentAs()).toEqual(["athlete-b:set.create"]);
+    expect(runOp.mock.calls[0][1].payload.setId).toBe("st-b1");
+    expect(await store.all()).toHaveLength(3);
+  });
+
+  it("sends A's sets exactly once, as A, when A signs back in", async () => {
+    const { store } = recordingStore();
+    await aLogsOffline(store);
+
+    resetQueueForTests(store);
+    await attachQueue(B);
+    await flush(true);
+
+    resetQueueForTests(store);
+    await attachQueue(A);
+    await flush(true);
+    await flush(true);
+
+    expect(sentAs()).toEqual(["athlete-a:session.create", "athlete-a:set.create", "athlete-a:set.create"]);
+    expect(await store.all()).toEqual([]);
+  });
+
+  it("adopts ops written before they carried an owner, rather than stranding them", async () => {
+    // A phone that queued on the old build. Its ops name nobody, and the only
+    // sensible owner is the athlete who opens the app next -- see the PR notes.
+    const { store } = recordingStore([
+      { id: "op-old", kind: "set.create", payload: { setId: "st-old" }, sequence: 0, attempts: 0, nextAttemptAt: 0 },
+    ]);
+    resetQueueForTests(store);
+    runOp.mockRejectedValue(new TypeError("Failed to fetch"));
+    await attachQueue(A);
+    await flush();
+
+    expect((await store.all())[0].ownerId).toBe("athlete-a");
+  });
+
+  it("tells the sign-out button whether anything is still waiting to sync", async () => {
+    // A refusal never sends, on this sign-in or the next, so it is not a
+    // reason to stop someone signing out.
+    const { store } = recordingStore([
+      { id: "f", kind: "set.create", payload: { setId: "st-x" }, sequence: 0, attempts: 1, nextAttemptAt: 0, permanentError: "bad", ownerId: "athlete-a" },
+    ]);
+    resetQueueForTests(store);
+    runOp.mockRejectedValue(new TypeError("Failed to fetch"));
+    await attachQueue(A);
+    expect(hasUnsynced()).toBe(false);
+
+    await enqueue("set.create", { setId: "st-a1", sessionId: "cs-a" });
+    await flush();
+    expect(hasUnsynced()).toBe(true);
+  });
+
+  it("stops sending the moment the athlete signs out, even mid-drain", async () => {
+    const { store } = recordingStore();
+    resetQueueForTests(store);
+    await attachQueue(A);
+
+    let release: () => void = () => {};
+    runOp.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)));
+    await enqueue("session.create", { sessionId: "cs-a" });
+    await enqueue("set.create", { setId: "st-a1", sessionId: "cs-a" });
+    await new Promise((r) => setTimeout(r, 0));
+
+    detachQueue();
+    release();
+    await flush();
+
+    expect(sentAs()).toEqual(["athlete-a:session.create"]);
+    expect((await store.all()).map((op) => op.kind)).toEqual(["set.create"]);
   });
 });

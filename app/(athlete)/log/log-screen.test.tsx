@@ -432,6 +432,102 @@ describe("logging a set", () => {
   });
 });
 
+describe("logging a set on a phone that cannot store it", () => {
+  const addSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+  };
+  const enter140x5 = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    for (const key of ["1", "4", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "5" }));
+  };
+
+  it("says the set was not saved, rather than quietly putting the row back", async () => {
+    logSet.mockRejectedValueOnce(new DOMException("Quota exceeded", "QuotaExceededError"));
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await enter140x5(user);
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/wasn.t saved/);
+    // Still the row to confirm, numbers intact, and no rest started for a set
+    // that does not exist.
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
+    expect(screen.queryByRole("timer", { name: "Rest timer" })).not.toBeInTheDocument();
+  });
+
+  it("logs it on the next tap once there is room, and the warning goes", async () => {
+    logSet.mockRejectedValueOnce(new DOMException("Quota exceeded", "QuotaExceededError"));
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await enter140x5(user);
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await screen.findByRole("alert");
+
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(logSet).toHaveBeenCalledTimes(2);
+    expect(logSet.mock.calls[1][0]).toMatchObject({ clientSetId: logSet.mock.calls[0][0].clientSetId });
+    expect(await screen.findByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
+  });
+
+  it("marks the set queued until it is written to the phone, with the rest already running", async () => {
+    let written: () => void = () => {};
+    logSet.mockImplementationOnce(() => new Promise<void>((resolve) => (written = resolve)));
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await enter140x5(user);
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+
+    // The write is under way: the row says it is not yet saved, and the rest
+    // has started on the tap rather than on the disk.
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(screen.getByLabelText("Queued, will sync")).toBeInTheDocument();
+    expect(screen.getByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
+
+    await act(async () => written());
+    expect(screen.queryByLabelText("Queued, will sync")).not.toBeInTheDocument();
+    expect(screen.getByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
+  });
+
+  it("puts back the rest that was running when a set cannot be stored", async () => {
+    // The rest belongs to the last set that exists. A failed set's rest goes,
+    // and the previous set's comes back where it was.
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await enter140x5(user);
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await screen.findByRole("timer", { name: "Rest timer" });
+    await user.click(screen.getByRole("button", { name: "Add 30 seconds to the rest" }));
+    expect(screen.getByRole("timer", { name: "Rest timer" })).toHaveTextContent("2:30");
+
+    logSet.mockRejectedValueOnce(new DOMException("Quota exceeded", "QuotaExceededError"));
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("timer", { name: "Rest timer" })).toHaveTextContent(/2:[23]\d/);
+  });
+
+  it("still queues the set when only localStorage is full", async () => {
+    // The rest timer and the running session are remembered in localStorage.
+    // That failing is a convenience lost, never a set: logSet must still run.
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    });
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await enter140x5(user);
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+});
+
 describe("finishing", () => {
   it("confirms first, and can be backed out of", async () => {
     const { user, finish } = setup({ active: session() });
@@ -1373,6 +1469,121 @@ describe("a set followed into the queue", () => {
     await user.click(screen.getByRole("button", { name: "Log Set 2" }));
     await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
     expect((await setCreates(store)).map((p) => p.setIndex)).toEqual([1, 3]);
+  });
+
+  describe("tapping on while the write is still reaching the phone", () => {
+    // The e2e session and offline scripts, step for step, over a queue whose
+    // disk takes 50ms a write -- real IndexedDB is slower than a Map, and the
+    // e2e taps land inside that window.
+    const useSlowDisk = () => {
+      const inner = createMemoryStore();
+      return useRealQueue({
+        put: async (op) => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          await inner.put(op);
+        },
+        remove: inner.remove,
+        all: inner.all,
+      });
+    };
+    const warmUpThenWorkingSet = async (user: ReturnType<typeof userEvent.setup>) => {
+      await addSquat(user);
+      await enterSet(user, "60", "5");
+      await user.click(screen.getByRole("switch", { name: "Warm-up" }));
+      await user.click(screen.getByRole("button", { name: "Log Warm-up set" }));
+      await screen.findByRole("group", { name: "Warm-up set" });
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      await enterSet(user, "140", "5");
+      await user.click(screen.getByRole("button", { name: "Set 1 RPE" }));
+      await user.click(screen.getByRole("button", { name: "8" }));
+    };
+
+    it("adds no Set 2 until one is asked for (e2e-session)", async () => {
+      const store = useSlowDisk();
+      const { user } = setup({ active: session() });
+      await warmUpThenWorkingSet(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      });
+
+      expect(screen.queryAllByRole("group", { name: "Set 2" })).toHaveLength(0);
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("140");
+      await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(3));
+      expect((await setCreates(store)).map((p) => [p.loadKg, p.isWarmup])).toEqual([
+        [60, true],
+        [140, false],
+        [140, false],
+      ]);
+    });
+
+    it("starts the rest when a set is logged with the planned row behind it already edited (e2e-session)", async () => {
+      const store = useSlowDisk();
+      const { user } = setup({ active: session() });
+      await addSquat(user);
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+      for (const key of ["1", "6", "0"]) await user.click(screen.getByRole("button", { name: key }));
+      await user.click(screen.getByRole("button", { name: "Reps" }));
+      await user.click(screen.getByRole("button", { name: "3" }));
+      await user.click(screen.getByRole("button", { name: "Set 1 RPE" }));
+      await user.click(screen.getByRole("button", { name: "9" }));
+      await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
+      for (const key of ["1", "0", "0"]) await user.click(screen.getByRole("button", { name: key }));
+      expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("100");
+
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await screen.findByRole("button", { name: "Log Set 2" });
+      expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("100");
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(1));
+      // Within a frame or two of the write landing, not "eventually".
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      });
+      expect(screen.getByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
+    });
+
+    it("offers Log Set 2 when Add set is tapped before Set 1 has landed (e2e-offline)", async () => {
+      const store = useSlowDisk();
+      const { user } = setup({ active: session() });
+      await warmUpThenWorkingSet(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      // No wait: straight on, inside the write.
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+
+      expect(await screen.findByRole("group", { name: "Set 2" })).toBeInTheDocument();
+      await user.click(await screen.findByRole("button", { name: "Log Set 2" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(3));
+      expect(screen.queryAllByRole("group", { name: "Set 3" })).toHaveLength(0);
+    });
+  });
+
+  it("keeps a set the phone could not store off the screen and out of the queue, and says so", async () => {
+    // The whole path with the real queue: IndexedDB refuses the write.
+    const inner = createMemoryStore();
+    const disk = { full: true };
+    const store = useRealQueue({
+      put: (op) => (disk.full ? Promise.reject(new DOMException("Quota exceeded", "QuotaExceededError")) : inner.put(op)),
+      remove: inner.remove,
+      all: inner.all,
+    });
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await enterSet(user, "140", "5");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/wasn.t saved/);
+    expect(await setCreates(store)).toEqual([]);
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+
+    disk.full = false;
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(async () => expect(await setCreates(store)).toHaveLength(1));
+    expect((await setCreates(store))[0]).toMatchObject({ loadKg: 140, reps: 5 });
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
   });
 
   it("brings a deleted set back when the device cannot write the delete down", async () => {

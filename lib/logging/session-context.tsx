@@ -112,7 +112,7 @@ export function TrainingSessionProvider({
     // seconds of re-sending rather than the whole file. Deliberately silent --
     // the athlete already saw the set logged, and a video finishing in the
     // background is not news they need interrupting for.
-    void resumeInterruptedUploads();
+    void resumeInterruptedUploads(athleteId);
     return stop;
   }, [athleteId]);
 

@@ -139,8 +139,10 @@ export async function attachClipToSet(
  * finishing in the background is not news. Failures stay in the store for the
  * next attempt rather than interrupting whatever they are doing now.
  */
-export async function resumeInterruptedUploads(): Promise<{ resumed: number; failed: number }> {
-  const pending = await pendingUploads();
+export async function resumeInterruptedUploads(athleteId: string): Promise<{ resumed: number; failed: number }> {
+  // Only this athlete's. On a shared phone the last athlete's clip would
+  // otherwise upload under the next one's session; it waits for its owner.
+  const pending = (await pendingUploads()).filter((entry) => entry.athleteId === athleteId);
   let resumed = 0;
   let failed = 0;
 

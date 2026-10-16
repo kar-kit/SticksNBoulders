@@ -48,6 +48,12 @@ export interface QueuedOp {
   nextAttemptAt: number;
   /** Set when an op can never succeed, so it stops blocking everything behind it. */
   permanentError?: string;
+  /**
+   * The athlete who queued it. Only ever sent as them: on a shared phone the
+   * next person to sign in must not inherit someone else's unsent training.
+   * Absent on ops queued before owners were recorded.
+   */
+  ownerId?: string;
 }
 
 export interface QueueStore {
@@ -101,8 +107,9 @@ export function newOp(
   sequence: number,
   id: string,
   now = Date.now(),
+  ownerId: string | null = null,
 ): QueuedOp {
-  return { id, kind, payload, sequence, attempts: 0, nextAttemptAt: now };
+  return { id, kind, payload, sequence, attempts: 0, nextAttemptAt: now, ...(ownerId ? { ownerId } : {}) };
 }
 
 /**

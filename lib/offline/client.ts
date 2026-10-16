@@ -37,7 +37,15 @@ let store: QueueStore | null = null;
 let opening: Promise<QueueStore> | null = null;
 let cache: QueuedOp[] = [];
 let sequence = 0;
+/** Who the queue sends as. Null once they sign out: nothing drains with nobody signed in. */
 let actor: Actor | null = null;
+/**
+ * Whose ops this page reads and writes. Set by `attachQueue` and deliberately
+ * kept by `detachQueue`, so a write that lands after sign-out (a clip finishing
+ * its upload) is still stamped as the athlete who made it, never as nobody --
+ * an op owned by nobody is adopted by whoever attaches next.
+ */
+let owner: string | null = null;
 let draining: Promise<void> | null = null;
 /** The op whose request is on the wire right now, so nothing drops it mid-send. */
 let inFlight: string | null = null;
@@ -60,11 +68,33 @@ function announce() {
   for (const listener of listeners) listener(cache);
 }
 
+/** Whether an op belongs to whoever this page is attached as. */
+const ownedHere = (op: QueuedOp): boolean => (op.ownerId ?? null) === owner;
+
 async function refresh(open: QueueStore) {
-  cache = await open.all();
+  const everything = await open.all();
   // Survives a reload: the counter picks up above whatever is still on disk, so
   // ops written before the refresh keep their place in front of new ones.
-  for (const op of cache) sequence = Math.max(sequence, op.sequence + 1);
+  // Counted over every athlete's ops, not just this one's, so two people's
+  // queues on one phone never share a sequence number.
+  for (const op of everything) sequence = Math.max(sequence, op.sequence + 1);
+  // Ops queued before ops carried an owner name nobody. They are adopted by the
+  // first athlete to attach, and written back so the claim survives a reload.
+  // On a phone with one athlete -- nearly all of them -- that is the right
+  // owner; the alternative is stranding sets nobody can ever send.
+  const adopted = owner
+    ? await Promise.all(
+        everything.map(async (op) => {
+          if (op.ownerId !== undefined) return op;
+          const claimed = { ...op, ownerId: owner as string };
+          await open.put(claimed);
+          return claimed;
+        }),
+      )
+    : everything;
+  // Everyone else's ops stay on disk, untouched, and out of this athlete's
+  // screens: they are held, not dropped, until their owner signs back in here.
+  cache = adopted.filter(ownedHere);
   announce();
 }
 
@@ -89,6 +119,7 @@ function heartbeat() {
  */
 export async function attachQueue(who: Actor): Promise<QueuedOp[]> {
   actor = who;
+  owner = who.userId;
   // IndexedDB is evictable when the device is short of space, and what is in it
   // here is someone's training. Asking costs nothing and is ignored where it is
   // not supported.
@@ -99,6 +130,27 @@ export async function attachQueue(who: Actor): Promise<QueuedOp[]> {
   void flush(true);
   return cache;
 }
+
+/**
+ * Stops sending as the athlete who is signing out.
+ *
+ * Their ops stay on disk. Nothing is sent with nobody signed in, and the next
+ * athlete to attach sees only their own -- see `refresh`. When the same
+ * athlete signs back in on this phone, theirs flush as if nothing happened.
+ */
+export function detachQueue(): void {
+  actor = null;
+  if (timer) clearInterval(timer);
+  timer = null;
+}
+
+/**
+ * Whether the signed-in athlete has writes still waiting to reach Appwrite.
+ *
+ * Permanently refused ops are left out: they will not send on the next sign-in
+ * either, and the log screen already says so.
+ */
+export const hasUnsynced = (): boolean => pendingOps(cache).length > 0;
 
 export function subscribeToQueue(listener: Listener): () => void {
   listeners.add(listener);
@@ -115,7 +167,7 @@ export async function enqueue(kind: OpKind, payload: Record<string, unknown>): P
   // Padded because the id is IndexedDB's key and getAll returns by key: unpadded,
   // op-<t>-10 comes back ahead of op-<t>-9. The drain sorts by `sequence` anyway;
   // this keeps what is on disk readable in the same order.
-  const op = newOp(kind, payload, next, `op-${Date.now()}-${String(next).padStart(8, "0")}`);
+  const op = newOp(kind, payload, next, `op-${Date.now()}-${String(next).padStart(8, "0")}`, Date.now(), owner);
   await open.put(op);
   cache = [...cache, op];
   announce();
@@ -132,12 +184,16 @@ export async function enqueue(kind: OpKind, payload: Record<string, unknown>): P
 export async function withdrawSet(setId: string): Promise<{ landed: boolean }> {
   const open = await ready();
   const { drop, landed } = opsDroppedByDelete(cache, setId, inFlight);
-  for (const op of drop) await open.remove(op.id);
+  // Out of memory first, synchronously, then off the disk. The drain decides
+  // what to send from the cache, and the disk takes a tick per delete: in that
+  // gap a drain that had moved on would still find the op and send it, after
+  // this has already answered "never landed" and no delete is coming behind.
   const gone = new Set(drop.map((op) => op.id));
   if (gone.size > 0) {
     cache = cache.filter((each) => !gone.has(each.id));
     announce();
   }
+  for (const op of drop) await open.remove(op.id);
   return { landed };
 }
 
@@ -169,7 +225,9 @@ export function flush(force = false): Promise<void> {
 }
 
 async function drain(force: boolean): Promise<void> {
-  if (!actor) return;
+  // Captured once: a drain started as one athlete never finishes as another.
+  const who = actor;
+  if (!who) return;
   const open = await ready();
 
   // Loops rather than taking one batch, because a set logged while the previous
@@ -185,6 +243,9 @@ async function drain(force: boolean): Promise<void> {
       // The batch is a snapshot. An op withdrawn since it was taken -- a set
       // deleted while an earlier op was sending -- must not be sent anyway.
       if (!cache.some((each) => each.id === op.id)) continue;
+      // Signed out, or someone else signed in, since this drain began. Stop:
+      // whatever is left is sent by the next drain, as whoever owns it.
+      if (actor !== who) return;
       try {
         // A rollup refresh with a later one behind it would recompute a week
         // that is about to be recomputed again. Dropped rather than run, and
@@ -195,7 +256,7 @@ async function drain(force: boolean): Promise<void> {
         }
         inFlight = op.id;
         try {
-          await runOp(actor, op);
+          await runOp(who, op);
         } finally {
           inFlight = null;
         }
@@ -240,6 +301,7 @@ export function resetQueueForTests(next: QueueStore | null = null) {
   cache = [];
   sequence = 0;
   actor = null;
+  owner = null;
   draining = null;
   inFlight = null;
   if (timer) clearInterval(timer);

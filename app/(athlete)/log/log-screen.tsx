@@ -143,6 +143,10 @@ export function LogScreen() {
   const [rpeOpen, setRpeOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
+  /** A set the phone could not write down. Said out loud: the athlete believes it is logged. */
+  const [unsaved, setUnsaved] = useState(false);
+  /** Confirmed, and on their way to the phone's storage. Shown queued until they are in it. */
+  const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
   const [ops, setOps] = useState<QueuedOp[]>([]);
   const [rest, setRest] = useState<RestTimer | null>(null);
   /** The logged set whose Delete is showing. */
@@ -493,10 +497,10 @@ export function LogScreen() {
     if (headOf(plans, row.exerciseId)?.clientSetId !== rowId) return;
     setBusy(true);
     setSelectedId(null);
-    // The row appears logged immediately because it *is* logged: logSet writes
-    // it to the durable queue, and nothing here waits for Appwrite. There is no
-    // rollback path any more, and that is the point -- a set the athlete saw
-    // land never quietly disappears because a lift happened in a basement.
+    // The row leaves the plan at once, so a tap on Add set while the write is
+    // still reaching the phone builds on a logged set rather than behind a
+    // planned one. It carries the queued mark until the queue holds it, and
+    // if the write fails it is taken back, loudly -- see the catch.
     const optimistic: UnnamedSet = {
       exerciseId: row.exerciseId,
       clientSetId: row.clientSetId,
@@ -507,6 +511,7 @@ export function LogScreen() {
       isWarmup: row.isWarmup,
       loggedAt: new Date(),
     };
+    setSaving((prev) => new Set(prev).add(row.clientSetId));
     setLocal((prev) => [...prev, optimistic]);
     // A row the athlete already planned becomes the head; with none, the
     // exercise simply shows what was logged and Add set. No row is invented.
@@ -514,9 +519,13 @@ export function LogScreen() {
     setPlans(rows);
     setFocusId(next?.clientSetId ?? null);
     closeSheets();
+    // The rest starts on the tap, as it always has: nothing else on screen
+    // waits for the disk, and a rest that appeared a beat late read as a
+    // missed tap. A failed write takes it back below, with the set.
     // Warm-ups start it too. Anything else is a rule an athlete has to learn,
     // and the feature list is explicit that this is the part Strong keeps
     // simple on purpose.
+    const restBefore = rest;
     changeRest(startRest());
 
     try {
@@ -535,15 +544,29 @@ export function LogScreen() {
           : {}),
       });
     } catch {
-      // Only reachable if the device cannot write to its own storage at all.
-      // Then the set genuinely is not logged, and saying so beats a lie. The
-      // row goes back to the head of its exercise with the athlete's numbers:
-      // nothing else on screen holds them now that a confirm adds no row.
+      // The device could not write to its own storage, so the set genuinely is
+      // not logged. It comes off the logged list and back to the head of its
+      // exercise with the athlete's numbers, and they are told -- a row that
+      // quietly reappears unticked reads as a glitch, not as a lost set.
       setLocal((prev) => prev.filter((s) => s.clientSetId !== row.clientSetId));
       setPlans((prev) => (prev.some((each) => each.clientSetId === row.clientSetId) ? prev : [row, ...prev]));
+      // A rest for a set that does not exist. Whatever was running before it
+      // comes back, the same as undoing a delete.
+      changeRest(restBefore);
+      setUnsaved(true);
+      return;
     } finally {
+      setSaving((prev) => {
+        const rest = new Set(prev);
+        rest.delete(row.clientSetId);
+        return rest;
+      });
       setBusy(false);
     }
+
+    // Saved: the queued mark carries on until Appwrite has it, and any
+    // earlier warning is out of date.
+    setUnsaved(false);
   };
 
   const discardPlanned = (rowId: string) => {
@@ -793,7 +816,7 @@ export function LogScreen() {
               name={block.name}
               sets={setsOf(block.id).map<LoggedSet>((s) => ({
                 clientSetId: s.clientSetId,
-                pendingSync: unsynced.has(s.clientSetId),
+                pendingSync: unsynced.has(s.clientSetId) || saving.has(s.clientSetId),
                 loadKg: s.loadKg,
                 reps: s.reps,
                 rpe: (s.rpe as RpeValue | null) ?? null,
@@ -895,6 +918,21 @@ export function LogScreen() {
             {failed.length} {failed.length === 1 ? "entry" : "entries"} could not be saved and
             {failed.length === 1 ? " is" : " are"} not on your coach&rsquo;s side. Everything else synced.
           </p>
+        ) : null}
+
+        {unsaved ? (
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-3 rounded-card border border-danger-line bg-surface p-3"
+          >
+            <p className="m-0 text-caption text-foreground">
+              That set wasn&rsquo;t saved &mdash; this phone couldn&rsquo;t store it. Your numbers are still in
+              the row. Free up some space, then tap it again.
+            </p>
+            <Button variant="ghost" size="sm" onClick={() => setUnsaved(false)}>
+              OK
+            </Button>
+          </div>
         ) : null}
 
         {/*

@@ -1,62 +1,65 @@
-## fix(units): apply the athlete's kg/lb preference
+## fix(offline): set-logging queue integrity (shared phone, full storage, withdrawn sets)
 
-The Pounds setting on Me was saved to the profile and nothing ever read it. An athlete who picked Pounds and typed 225 stored **225 kg**. This is finding B3 in the 9 Oct test audit, which calls it the most likely way a wrong load gets into the system.
+Three fixes to the offline set queue, from the 2026-10-09 test audit (Summary items 3 and 4, e2e P0-3, athlete U03 and C02/Q3). Each fix has tests that fail on `dev` and pass here. Each test was mutation-checked: reverting the fix makes it fail again.
 
-### Semantics (Joey's decision, pending confirmation)
+### 1. Shared phone: A's unsent sets were sent as B (confirmed)
 
-- **Storage stays kilograms everywhere.** There is no schema change, no migration, and nothing changes for the coach.
-- **Athletes type and read weights in their chosen unit.** The conversion happens at the screen boundary and nowhere else. A typed number becomes kilos on its way in (`loadFromInput`), and kilos become the athlete's unit on the way out (`loadIn`), both in `lib/units.ts`.
-- **No round-trip drift.** In pounds the pad takes one decimal and the screen shows one decimal. Stored kilos are rounded to the gram, which is 0.0022 lb and well inside the 0.05 lb that would change a one-decimal display. A test checks every tenth from 0 to 1,500 lb, and each one reads back exactly as typed. Kilos keep the two decimals the logger has always used, and the kilo path is unchanged.
-- **Plate rounding in pounds: 5 lb, rounded down.** A weight the app works out for the athlete (a percentage, an RPE suggestion, a backoff) is floored to a multiple of 5 lb for a pound athlete, instead of 2.5 kg. That is the 2.5 lb plate pair, the smallest a commercial pound gym reliably has, and the nearest pound equivalent of the 2.5 kg step (5 lb = 2.27 kg). It rounds down for the same reason the kilo version does. Example: 75% of a 203 kg training max is 152.25 kg, which is 335.7 lb, so the target is 335 lb, stored as 151.953 kg.
+**The bug.** Athlete A logs with no signal and signs out. Athlete B signs in on the same phone, and A's queued session and sets go to Appwrite as B. The runner stamps the attached actor onto every row, so A's training was written into B's account under B's permissions, where B's coach could read it. Queued ops had no owner, `signOut` never touched the queue, and `attachQueue` swapped the actor.
 
-### What changed
+**Evidence.** `lib/offline/client.test.ts › a shared phone` uses the real `client.ts` and `queue.ts` with a mocked runner. On `dev` it fails with `expected [ 'athlete-b:session.create', 'athlete-b:set.create', 'athlete-b:set.create' ] to deeply equal []`, in the same tab and after a reload.
 
-**Plumbing**
-- `lib/profile/units-context.tsx` (new): `UnitsProvider` plus `useUnits()`, mounted in the athlete providers. It starts from the unit this device last cached for the account, so a reload with no signal still reads pounds. Then it reads the profile with a plain read (`fetchProfile`, not `ensureMyProfile`, because opening a screen should not write a row). A failed read leaves the cached unit in place. A unit picked on Me applies everywhere at once, and a slower read that arrives afterwards cannot undo it. Outside the provider, which covers every coach screen and the existing tests, the unit is kg.
-- `lib/units.ts`: adds `loadIn`, `loadFromInput`, `loadNumber`, `loadLabel`, `unitName` and `LOAD_DECIMALS`. The existing helpers are untouched.
-- `lib/strength/plates.ts`: `roundToLoadable(kg, unit = "kg")` and `LOADABLE_INCREMENT_LB = 5`.
-- An optional `unit` parameter, defaulting to kg, is threaded through `suggestLoad`, `nextSetSuggestion`, `resolvePrescription`, `resolveExercise`, `targetsFor`, `backoffLoad`, `backoffDisplay`, `backoffNote`, `prescribeNewRows`, `resolvePrefill`, `rowAfter` and `addRow`.
+**The fix.**
+- `QueuedOp.ownerId` is stamped at enqueue. The queue's cache, and so every screen, only holds the attached athlete's ops. Other athletes' ops stay on disk untouched. They are held, not dropped, and flush exactly once, as their owner, when that athlete signs back in on the phone.
+- `detachQueue()` is called from `signOut`: nothing is sent with nobody signed in. A drain stops if the athlete changes under it.
+- `resumeInterruptedUploads(athleteId)` only resumes the signed-in athlete's clips. Before this, A's half-uploaded clip would have finished under B's session.
+- If training is still waiting to sync, Me → Sign out asks first: "Some of your training hasn't synced yet. It stays on this phone and sends the next time you sign in here." The options are Stay signed in and Sign out anyway. Permanently refused ops don't trigger the warning, because they won't send on a later sign-in either.
 
-**Every athlete surface that enters or shows a weight**
+### 2. Full storage: a set looked logged and wasn't
 
-| Surface | In | Out |
-|---|---|---|
-| Log Session: set rows, column header, number pad (label, decimals) | ✓ | ✓ |
-| Log Session: target lines, "Next:" line, suggestion and backoff notes, Session done tonnage | | ✓ |
-| History list (tonnage) and session detail (rows, edit pad, tonnage) | ✓ | ✓ |
-| Lift Detail: e1RM, change, PRs, recent sets | | ✓ |
-| Today and My Program target lines | | ✓ |
-| Bodyweight: entry, headline, 7-day average and change, placeholder, recent list, range-error message | ✓ | ✓ |
-| DOTS block: total breakdown and stale bodyweight (athlete only, through the provider) | | ✓ |
-| Coach Feedback: the set the comment is on | | ✓ |
+**The bug.** `confirmSet` showed the row as logged and started the rest timer before `logSet` had written to IndexedDB. When the write failed, the row went back to "planned" with nothing said, and the rest timer kept running. `writeLocal` swallowing its error was a red herring for the set itself, because localStorage only backs conveniences (rest timer, cached session). Tests now pin that.
 
-On bodyweight, `checkWeight(value, unit)` keeps a pound reading to one decimal in pounds and stores it to the gram. The old rounding to 0.1 kg would have turned 180 lb into 179.9 lb on read-back. The plausible range is still 20 to 400 kg, which the message gives as 44.1 to 881.8 lb.
+**The fix.** A failed write is now always surfaced and undone, never silent.
+- **On confirm:** the row leaves the plan at once and shows in the logged list with the existing "Queued, will sync" mark until `logSet` has it on disk. The rest timer starts on the tap, as on `dev`.
+- **On a failed write:** the row comes off the logged list and goes back to the head of its exercise with its numbers. The rest is put back to whatever was running before. A `role="alert"` says "That set wasn't saved — this phone couldn't store it. Your numbers are still in the row. Free up some space, then tap it again." The next tap retries with the same client id.
 
-### Still in kilograms, and why
+*Revised twice after e2e feedback.*
+1. **First version:** it kept the row in the plan until the write landed. Add set tapped inside that window built a row behind a still-planned head. That broke e2e-session (a stray "Set 2") and e2e-offline (no "Log Set 2").
+2. **Second version:** it started the rest only after `logSet` resolved. That is two sequential IndexedDB writes (`set.create`, then `rollup.refresh`), so e2e-session's "rest timer started as usual" check, made the moment "Log Set 4" appears, ran before the timer existed. The delay was only those writes; the timer did appear afterwards. Starting it on the tap removes the race instead of making the script wait.
 
-- **Every coach screen** (roster, athlete view, current maxes, review queue, clip context, program editor). The coach side has no provider, so it renders kg as before. Applying a coach's own preference there was not trivial: those screens mix the coach's profile with the athlete's data, and nobody has asked for it.
-- **The prescription snapshot a logged set keeps** (`prescribed`). The coach reads it back in clip context and the CSV, and storage is in kilos. A pound athlete's "Next:" line uses a separate `shown` field in pounds, so the athlete never sees the kilo version.
-- **CSV export.** The header says `Load (kg)` and `e1RM (kg)`, so the unit is never ambiguous. The file is shaped for Ruairi's spreadsheet, and switching columns by athlete would break his formulas. The snapshot text in it is also in kilos.
-- **DOTS itself** is calculated in kilos. Only what the athlete reads is converted.
-- **Charts** (e1RM, bodyweight) have no axis numbers, and a linear rescale does not change their shape.
+Three component tests replay these e2e sequences over a queue whose disk takes 50ms per write. Each fails on the version it caught and passes on `dev` and here.
+
+`logSet` no longer throws once `set.create` is on disk. Before, a `rollup.refresh` that couldn't be queued made the screen take back a set that would still sync.
+
+### 3. Withdrawn-op test was hollow, and hid a real race
+
+**The test.** The old test enqueued the set after the drain had taken its snapshot, so it passed even with the snapshot guard deleted. It now seeds both ops before `attachQueue`, so both are in the batch.
+
+**The race.** Writing the test properly exposed a real bug. `withdrawSet` removed ops from IndexedDB first and from the in-memory cache after. A drain that moved on during that delete still found the set and sent it, while `withdrawSet` had already returned `landed: false`, so no `set.delete` was queued behind it. The athlete's deleted set stayed on the coach's side. Now the cache drops the op synchronously, before the disk delete. A new test gates the disk delete to reproduce the race; it fails on the old ordering.
 
 ### Testing
-
-- `npm test`: 171 files, **2,680 passed** (2,630 before, plus 50 new). `npm run lint` is clean, and so is `npx tsc --noEmit` after `npx next typegen`.
-- **Unit tests:** conversion helpers, including the exhaustive pound round trip and gram storage; pound plates; the suggestion engine and gate; the pad's pound decimals; targets, snapshots and `targetLine` in pounds, including a reference lift and backoffs; the prefill note; bodyweight's check, its no-drift sweep and its message; the DOTS breakdown; and the provider's cache, account isolation and the race with a slow read.
-- **Component tests:** the real `UnitsProvider` wrapped around `LogScreen` shows that **225 lb typed on the pad reaches `logSet` as `loadKg: 102.058`** and reads back as 225, including on the prefilled next set and on its pad. Further tests cover a History correction typed in pounds and written as kilos, a set row and header in pounds, a Bodyweight entry passed as pounds, and Lift Detail, Today and History tonnage in pounds.
-- **Failing first:** with the logger, set row, pad and block reverted to `dev`, all three pound tests on the log screen fail.
-- **Mutation check:** 26 one-site mutations, each reverted after its run, and **26 killed**. They include the original bug (pad entry not converted), the pad opening on stored kilos, pounds stored to 0.1 kg, pound plates on the kilo increment, the gate dropping the unit, the snapshot losing its kilos, `targetLine` showing kilos, the backoff note in kilos, the bodyweight screen dropping the unit, the provider ignoring its cache, a stale read winning, and Lift Detail, DOTS, History tonnage and Today targets left in kilos. History tonnage and Today targets survived the first pass, so I added tests for both in the second commit.
-- **Not pinned by a test:** the DOTS block and Coach Feedback card components (`formatTotalBreakdown` underneath is pinned), the My Program screen (it makes the same `targetsFor` call as Today), and the Session done tonnage.
+- `npm test`: 172 files, 2656 tests pass. `npx tsc --noEmit` is clean after `npx next typegen`. `npm run lint` is clean.
+- New and changed tests:
+  - `lib/offline/client.test.ts` (shared phone ×7, withdrawn op ×2)
+  - `lib/auth/session.test.ts`
+  - `app/(athlete)/me/me-panel.test.tsx`
+  - `lib/video/upload.test.ts`
+  - `lib/logging/set-store.test.ts`
+  - `app/(athlete)/log/log-screen.test.tsx` (mocked and real-queue storage-full paths, queued-until-written, the rest being restored on failure, and three e2e tap sequences over a 50ms disk)
+  - `lib/local-store.test.ts`
+- Mutation checks, each turning at least one test red:
+  - the owner filter, adoption, `owner` assignment, `detachQueue`'s actor clear and the mid-drain actor check
+  - the upload athlete filter and `signOut`'s `detachQueue()`
+  - the sign-out warning branch
+  - the snapshot guard and withdraw ordering
+  - `setUnsaved(true)`, the saving mark, the rest revert (removed, or clearing instead of restoring), the rollup `.catch`, and `writeLocal`'s try/catch
+- Not run here: the live e2e suites. e2e:offline passed 46/46 on 0eebc93. e2e:session failed 1/71 there (the rest-timer check); the fix is above and needs a re-run, plus P0-3.
 
 ### Decisions for Joey
-
-1. **Confirm the semantics above.** They are your call, and I have treated them as pending.
-2. **Existing data [Unverified].** If any athlete already picked Pounds and logged sets before this merges, those sets hold pound numbers in kilo columns. After this fix they will show about 2.2× too heavy. To check: list `profiles` with `units = "lb"` and compare their sets' `logged_at` against the merge date. I did not run anything against the live instance. If any turn up, the fix is a one-off `÷ 2.2046` on those rows plus `rollups:rebuild`.
-3. **5 lb, rounded down** for derived weights in pounds. [SME to confirm] with Ruairi, alongside the existing 2.5 kg increment. Micro-plates would argue for 2.5 lb.
-4. **A coach's fixed kilos are converted, not re-rounded.** For example, 140 kg reads as 308.6 lb, and the athlete loads whatever their plates allow. The alternative would floor it to 305 lb, which quietly changes the coach's number.
-5. **Pound entry takes one decimal, not two.** Pound totals move in 0.5 lb steps even with micro-plates, and this restriction is what makes the round trip exact.
-6. **Switching unit mid-session.** Rows already on screen keep their stored kilos and display converted. Only new rows are priced on the new plates. I think this is right, because re-pricing a row under the athlete's thumb is what `prescribeNewRows` already refuses to do.
-7. **The 7-day bodyweight average** is still worked out on weigh-ins rounded to 0.1 kg and then converted. It can sit up to about 0.1 lb from an average taken in pounds. [Inference] This is a display-only difference and not worth reworking `rollingAverage` for.
+1. **Ops queued before this release have no owner, and the first athlete to open the app adopts them.** On a one-athlete phone, which is nearly every phone, that's the right owner. The alternative is stranding sets nobody can ever send. The leak survives only if a phone was shared and still had an unsynced queue at upgrade time. Should we hold unowned ops instead?
+2. **Sign-out warns but doesn't block.** It doesn't try a last flush either. Should we add a short `flush(true)` before the warning, so an online phone usually skips it?
+3. **B never sees that A's ops are being held.** They are invisible to B. P0-3 also allowed a "belongs to another account" notice. Showing one would tell B that someone else has unsynced training on the phone, so it is a privacy trade-off.
+4. **The rest timer starts on the tap, before the set is on disk.** If the write then fails, the rest is withdrawn along with the set, and the alert says why. Holding the rest until the write lands (version 2) was more literal about "saved" but put IndexedDB latency on screen. If IndexedDB hangs (older iOS Safari has had this bug), the set stays marked queued with no alert. A timeout raising the same alert is a possible follow-up.
+5. **Still open:** `openQueueStore` falls back to an in-memory store when IndexedDB can't open (private mode, blocked). Sets then show as saved but are lost on reload, and nothing tells the athlete. It's out of scope here and worth a follow-up banner.
+6. **Still open:** two tabs on one phone share a queue (audit B7). Not addressed here.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
