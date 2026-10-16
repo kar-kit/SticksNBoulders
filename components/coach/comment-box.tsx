@@ -113,7 +113,7 @@ export function CommentBox({
           placeholder="What did you see?"
           aria-invalid={error ? true : undefined}
           className={cn(
-            "w-full resize-y rounded-control border bg-surface-2 p-3 text-body text-foreground",
+            "w-full resize-y rounded-control border bg-surface-2 p-3 text-body text-foreground transition-control",
             "placeholder:text-muted-2 focus:outline-none focus:ring-2 focus:ring-accent-line",
             error ? "border-danger-line" : "border-border",
           )}

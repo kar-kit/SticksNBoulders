@@ -19,6 +19,18 @@ const VARIANTS: Record<ButtonVariant, string> = {
     "active:bg-danger-fill active:text-on-danger-fill",
 };
 
+/*
+ * Hover, mirrored on keyboard focus, for the coach's pointer and keyboard.
+ * Behind `coach:` (globals.css) because this button is also the athlete's,
+ * held mid-set where there is no hover and the press state is the feedback.
+ */
+const COACH_HOVER: Record<ButtonVariant, string> = {
+  primary: "coach:enabled:hover:opacity-90 coach:focus-visible:opacity-90",
+  secondary: "coach:enabled:hover:bg-surface-2 coach:focus-visible:bg-surface-2",
+  ghost: "coach:enabled:hover:text-foreground coach:focus-visible:text-foreground",
+  danger: "coach:enabled:hover:bg-danger-fill/15 coach:focus-visible:bg-danger-fill/15",
+};
+
 const SIZES: Record<ButtonSize, string> = {
   sm: "h-9 px-[14px] text-ui rounded-chip",
   md: "h-11 px-[18px] text-body rounded-control",
@@ -49,8 +61,12 @@ export function Button({
       className={cn(
         "inline-flex items-center justify-center whitespace-nowrap",
         "transition-colors disabled:cursor-not-allowed",
+        // On the coach side the shared transition tokens and a press;
+        // docs/coach-motion.md. The athlete's button is unchanged.
+        "coach:transition-control coach:press",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
         VARIANTS[variant],
+        COACH_HOVER[variant],
         SIZES[size],
         block && "w-full",
         className,
