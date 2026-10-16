@@ -1279,4 +1279,136 @@ describe("motion", () => {
     refuse(new Error("not-allowed"));
     await waitFor(() => expect(day).not.toHaveAttribute("aria-busy"));
   });
+
+  describe("adding a line before the server answers", () => {
+    type Deferred = { resolve: (v: { rowId: string }) => void; reject: (e: Error) => void };
+    /** Holds every addPrescription until the test answers it; anything else goes through. */
+    const holdAdds = () => {
+      const held: Deferred[] = [];
+      store.send.mockImplementation((op) =>
+        op.op === "addPrescription"
+          ? new Promise((resolve, reject) => held.push({ resolve, reject }))
+          : Promise.resolve({ rowId: "ok" }),
+      );
+      return held;
+    };
+    const withLine = (id: string, exerciseId: string, over: Record<string, unknown> = {}) => {
+      const next = tree();
+      const lines = next.blocks[0].weeks[0].days[0].prescriptions;
+      lines.push(line(id, exerciseId, lines.length, { setCount: 1, ...over }));
+      return next;
+    };
+    const add = async (user: ReturnType<typeof userEvent.setup>, day: HTMLElement, typed: string, option: string) => {
+      await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), typed);
+      await user.click(await screen.findByRole("option", { name: option }));
+    };
+
+    it("shows the line at once, pending, with the keyboard on its Sets cell", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+
+      const row = within(day).getByRole("row", { name: "Squat day line 3: Bench Press" });
+      expect(held).toHaveLength(1);
+      expect(row).toHaveAttribute("aria-busy", "true");
+      await waitFor(() => expect(within(row).getByRole("textbox", { name: "Sets, line 3" })).toHaveFocus());
+      // Nothing to write to yet: no exercise swap, no video toggle.
+      expect(within(row).getByRole("button", { name: /Bench Press/ })).toBeDisabled();
+      expect(within(row).getByRole("checkbox")).toBeDisabled();
+    });
+
+    it("holds what is typed into it, then sends it once the line has an id, in the same row", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      const row = within(day).getByRole("row", { name: "Squat day line 3: Bench Press" });
+      const sets = within(row).getByRole("textbox", { name: "Sets, line 3" });
+      await waitFor(() => expect(sets).toHaveFocus());
+      await user.clear(sets);
+      await user.type(sets, "4");
+      await user.tab(); // reps
+      await user.tab(); // load
+      await user.keyboard("75%");
+      await user.tab(); // rest
+      expect(store.send).toHaveBeenCalledTimes(1); // the add, and nothing against a row that does not exist
+
+      store.tree = withLine("l3", "bench");
+      held[0].resolve({ rowId: "l3" });
+      await waitFor(() =>
+        expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l3", setCount: 4 }),
+      );
+      expect(store.send).toHaveBeenCalledWith(
+        expect.objectContaining({ op: "updatePrescription", prescriptionId: "l3", load: "75%" }),
+      );
+      // The real row is the placeholder's element: nothing jumped, the text stayed.
+      const real = rowOf("l3")!;
+      expect(real).toBe(row);
+      expect(real).not.toHaveAttribute("aria-busy");
+      expect(sets).toBeInTheDocument();
+      expect(sets).toHaveValue("4");
+      expect(within(real).getByRole("textbox", { name: "Rest, line 3" })).toHaveFocus();
+      // Folded into the tree the real row first renders from, so what the cell
+      // shows under it already reads the held load.
+      expect(within(real).getByText("Percent · 75% of training max")).toBeInTheDocument();
+    });
+
+    it("will not move a line past one that has no id yet", async () => {
+      holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      const sets2 = within(day).getByRole("textbox", { name: "Sets, line 2" });
+      sets2.focus();
+      await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
+      expect(store.send.mock.calls.some(([op]) => op.op === "reorder")).toBe(false);
+    });
+
+    it("fades the line out and says why when the add is refused", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      const row = within(day).getByRole("row", { name: "Squat day line 3: Bench Press" });
+      held[0].reject(new Error("not-allowed"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("not-allowed");
+      expect(row).toHaveAttribute("aria-hidden", "true");
+      ended(row);
+      expect(row).not.toBeInTheDocument();
+    });
+
+    it("removes a line whose × was pressed before it had an id, as soon as it has one", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      await user.click(within(day).getByRole("button", { name: "Remove line 3" }));
+      expect(within(day).queryByRole("row", { name: /line 3/ })).not.toBeInTheDocument();
+
+      store.tree = withLine("l3", "bench");
+      held[0].resolve({ rowId: "l3" });
+      await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "removePrescription", prescriptionId: "l3" }));
+      expect(within(day).queryByRole("row", { name: /line 3/ })).not.toBeInTheDocument();
+    });
+
+    it("sends two quick adds one after the other, in the order they were typed", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      await add(user, day, "dead", "Deadlift");
+      expect(within(day).getByRole("row", { name: "Squat day line 3: Bench Press" })).toBeInTheDocument();
+      expect(within(day).getByRole("row", { name: "Squat day line 4: Deadlift" })).toBeInTheDocument();
+      expect(held).toHaveLength(1);
+
+      store.tree = withLine("l3", "bench");
+      held[0].resolve({ rowId: "l3" });
+      await waitFor(() => expect(held).toHaveLength(2));
+      expect(store.send.mock.calls.filter(([op]) => op.op === "addPrescription").map(([op]) => op.exerciseId)).toEqual([
+        "bench",
+        "deadlift",
+      ]);
+    });
+  });
 });

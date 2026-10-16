@@ -365,6 +365,51 @@ export function ProgramEditor({
     }
   };
 
+  /**
+   * "Add exercise": the write, then the tree read back -- and before that
+   * tree is shown, `claim` hands the new row id to the placeholder row the
+   * day is already showing and returns whatever the coach typed into it
+   * meanwhile, as ops. Those are folded into the tree in the same render the
+   * real row first appears in, so it replaces the placeholder in place (same
+   * element, same focus, same text), then sent. Not `run`: nothing is
+   * disabled while it is in flight, because the coach is typing into the row.
+   */
+  const insertLine = async (
+    op: ProgramOpInput,
+    claim: (rowId: string, line: Prescription | null) => ProgramOpInput[],
+  ): Promise<string | null> => {
+    setError(null);
+    let rowId: string;
+    try {
+      ({ rowId } = await sendProgramOp(op));
+    } catch (failure) {
+      failed(failure);
+      return null;
+    }
+    const fresh = await fetchProgramTree(programId).catch(() => undefined);
+    const line = fresh ? findLine(fresh, rowId) : null;
+    const edits = claim(rowId, line);
+    if (!fresh) {
+      await reload();
+      return rowId;
+    }
+    setLoad({
+      status: "ready",
+      tree: line && edits.length ? mapLines(fresh, (l) => (l.id === rowId ? edits.reduce(applyLineOp, l) : l)) : fresh,
+    });
+    for (const edit of edits) {
+      try {
+        await sendProgramOp(edit);
+      } catch (failure) {
+        // Said, and the tree read back so the row shows what was kept.
+        failed(failure);
+        await reload();
+        break;
+      }
+    }
+    return rowId;
+  };
+
   const createExercise = async (name: string): Promise<Exercise | null> => {
     if (!tree) return null;
     try {
@@ -790,6 +835,7 @@ export function ProgramEditor({
                       referenceFor={(exerciseId) => rememberedReference(tree, exerciseId)}
                       run={run}
                       editLine={editLine}
+                      insertLine={insertLine}
                       createExercise={createExercise}
                     />
                   ))}
@@ -831,6 +877,12 @@ export function ProgramEditor({
       )}
     </div>
   );
+}
+
+function findLine(tree: ProgramTree, lineId: string): Prescription | null {
+  for (const b of tree.blocks)
+    for (const w of b.weeks) for (const d of w.days) for (const l of d.prescriptions) if (l.id === lineId) return l;
+  return null;
 }
 
 function mapLines(tree: ProgramTree, change: (line: Prescription) => Prescription): ProgramTree {
@@ -876,7 +928,20 @@ interface DayEditorProps {
   referenceFor: (exerciseId: string) => string | null;
   run: (op: ProgramOpInput) => Promise<string | null>;
   editLine: (line: Prescription, op: ProgramOpInput) => Promise<string | null>;
+  insertLine: (op: ProgramOpInput, claim: (rowId: string, line: Prescription | null) => ProgramOpInput[]) => Promise<string | null>;
   createExercise: (name: string) => Promise<Exercise | null>;
+}
+
+/**
+ * A line on screen before the server has given it an id: "Add exercise" puts
+ * it in the grid at once. `saving` until claimed; `cancelled` when its × was
+ * pressed first (it is removed as soon as it exists); `refused` when the add
+ * failed (it fades out, and the error says why).
+ */
+interface PendingLine {
+  key: string;
+  line: Prescription;
+  status: "saving" | "cancelled" | "refused";
 }
 
 function DayEditor({
@@ -897,6 +962,7 @@ function DayEditor({
   referenceFor,
   run,
   editLine,
+  insertLine,
   createExercise,
 }: DayEditorProps) {
   const title = day.label ?? `Day ${index + 1}`;
@@ -915,9 +981,24 @@ function DayEditor({
    */
   const [leavingLines, setLeavingLines] = useState<ReadonlySet<string>>(new Set());
   const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
-  const lines = useMemo(() => day.prescriptions.filter((l) => !gone.has(l.id)), [day.prescriptions, gone]);
+  const [pending, setPending] = useState<readonly PendingLine[]>([]);
+  /** Real row id -> the placeholder's key, so the real row reuses the placeholder's element. */
+  const [aliases, setAliases] = useState<ReadonlyMap<string, string>>(new Map());
+  /** What was typed into a placeholder's cells, applied once it has an id. */
+  const queued = useRef(new Map<string, Map<Exclude<Column, "exercise">, string>>());
+  /** Placeholders whose × was pressed before they had an id. */
+  const cancelled = useRef(new Set<string>());
+  /** Adds go out one at a time, so two quick ones land in the order they were typed. */
+  const adding = useRef<Promise<unknown>>(Promise.resolve());
+  const placeholders = useRef(0);
+  // The grid: the day's lines, then the lines still on their way.
+  const lines = useMemo(
+    () => [...day.prescriptions.filter((l) => !gone.has(l.id)), ...pending.map((p) => p.line)],
+    [day.prescriptions, gone, pending],
+  );
+  const pendingOf = (lineId: string) => pending.find((p) => p.key === lineId) ?? null;
   const lineArrived = useArrivals(
-    lines.map((l) => l.id),
+    lines.map((l) => aliases.get(l.id) ?? l.id),
     day.id,
   );
 
@@ -965,6 +1046,8 @@ function DayEditor({
       event.preventDefault();
       const to = event.key === "ArrowUp" ? row - 1 : row + 1;
       if (to < 0 || to >= lines.length) return;
+      // A line still on its way has no id to put in an order.
+      if (pendingOf(lines[row].id) || pendingOf(lines[to].id)) return;
       const ids = lines.map((l) => l.id);
       [ids[row], ids[to]] = [ids[to], ids[row]];
       void run({ op: "reorder", level: "prescriptions", parentId: day.id, orderedIds: ids }).then(() =>
@@ -1030,6 +1113,12 @@ function DayEditor({
   };
 
   const removeLine = async (line: Prescription) => {
+    if (pendingOf(line.id)) {
+      // No id yet: fade it now, remove it the moment it has one.
+      cancelled.current.add(line.id);
+      setPending((prev) => prev.map((p) => (p.key === line.id ? { ...p, status: "cancelled" } : p)));
+      return;
+    }
     setLeavingLines((prev) => new Set(prev).add(line.id));
     const done = await run({ op: "removePrescription", prescriptionId: line.id });
     if (done !== null) return;
@@ -1043,21 +1132,97 @@ function DayEditor({
     setGone(without);
   };
 
-  const addLine = async (exercise: Exercise) => {
+  /**
+   * "Add exercise". The line is in the grid at once, as a placeholder, with
+   * the keyboard on its Sets cell: what is typed there is held (`queued`) and
+   * sent once the server has given the line an id, never against a row that
+   * does not exist. Claimed, the real row takes the placeholder's place --
+   * the same element, so the focus and anything typed stay put. Refused, the
+   * placeholder fades out and the error says why. docs/coach-motion.md.
+   */
+  const addLine = (exercise: Exercise) => {
     // The exercise's video default pre-ticks the box; the coach can untick it.
     const videoRequired = exercise.videoDefault ? true : undefined;
     // Typed once per variation per program: a new Tempo Bench line inherits
     // the last Tempo Bench line's reference lift. Sent only when there is one.
     const referenceExerciseId = referenceFor(exercise.id) ?? undefined;
-    const id = await run({
-      op: "addPrescription",
+    placeholders.current += 1;
+    const key = `pending-${day.id}-${placeholders.current}`;
+    const placeholder: Prescription = {
+      id: key,
+      programId: day.programId,
+      weekId: day.weekId,
       dayId: day.id,
       exerciseId: exercise.id,
+      position: Number.MAX_SAFE_INTEGER,
       setCount: 1,
-      videoRequired,
-      referenceExerciseId,
+      reps: null,
+      repMax: null,
+      load: null,
+      loadKind: null,
+      restSeconds: null,
+      notes: null,
+      backoff: null,
+      videoRequired: videoRequired ?? false,
+      referenceExerciseId: referenceExerciseId ?? null,
+      updatedAt: "",
+    };
+    setPending((prev) => [...prev, { key, line: placeholder, status: "saving" }]);
+    setFocusAfter({ lineId: key, col: "sets" });
+
+    const claim = (rowId: string, line: Prescription | null): ProgramOpInput[] => {
+      setPending((prev) => prev.filter((p) => p.key !== key));
+      const typed = queued.current.get(key);
+      queued.current.delete(key);
+      if (cancelled.current.has(key)) {
+        setGone((prev) => new Set(prev).add(rowId));
+        return [];
+      }
+      setAliases((prev) => new Map(prev).set(rowId, key));
+      if (!line || !typed) return [];
+      // Each held cell as the cell would have sent it, one on top of the other.
+      const edits: ProgramOpInput[] = [];
+      const refusals: Record<string, string> = {};
+      let current = line;
+      for (const [column, text] of typed) {
+        const result = commitCell(current, column, text, exercises);
+        if ("op" in result) {
+          edits.push(result.op);
+          current = applyLineOp(current, result.op);
+        } else if ("error" in result) {
+          refusals[`${rowId}:${column}`] = result.error;
+        }
+      }
+      if (Object.keys(refusals).length) setErrors((prev) => ({ ...prev, ...refusals }));
+      return edits;
+    };
+
+    adding.current = adding.current.then(async () => {
+      const rowId = await insertLine(
+        {
+          op: "addPrescription",
+          dayId: day.id,
+          exerciseId: exercise.id,
+          setCount: 1,
+          videoRequired,
+          referenceExerciseId,
+        },
+        claim,
+      );
+      if (rowId === null) {
+        queued.current.delete(key);
+        // Already faded if it was cancelled; otherwise it fades now.
+        if (cancelled.current.delete(key)) setPending((prev) => prev.filter((p) => p.key !== key));
+        else setPending((prev) => prev.map((p) => (p.key === key ? { ...p, status: "refused" } : p)));
+        return;
+      }
+      if (cancelled.current.delete(key)) {
+        await run({ op: "removePrescription", prescriptionId: rowId });
+        return;
+      }
+      // Saved: the row's exercise cell says so, once the real row has rendered.
+      requestAnimationFrame(() => flash(exerciseCell(rowId), "saved"));
     });
-    if (id) setFocusAfter({ lineId: id, col: "sets" });
   };
 
   return (
@@ -1166,21 +1331,27 @@ function DayEditor({
               line.referenceExerciseId ? (names.get(line.referenceExerciseId) ?? "another lift") : null,
             );
             const preview = previewFor(line, day);
-            const out = leavingLines.has(line.id);
+            const waiting = pendingOf(line.id);
+            const out = leavingLines.has(line.id) || (waiting !== null && waiting.status !== "saving");
+            const rowKey = aliases.get(line.id) ?? line.id;
             return (
               <tr
-                key={line.id}
+                // A claimed line keeps its placeholder's key, so it is the same row.
+                key={rowKey}
                 data-line={line.id}
                 aria-label={`${title} line ${row + 1}: ${name}`}
+                aria-busy={waiting?.status === "saving" || undefined}
                 aria-hidden={out || undefined}
                 onAnimationEnd={(e) => {
-                  if (out && e.target === e.currentTarget) setGone((prev) => new Set(prev).add(line.id));
+                  if (!out || e.target !== e.currentTarget) return;
+                  if (waiting?.status === "refused") setPending((prev) => prev.filter((p) => p.key !== line.id));
+                  else if (!waiting) setGone((prev) => new Set(prev).add(line.id));
                 }}
                 className={cn(
                   "align-top",
                   // Rows fade rather than slide: a table row is the one
                   // box a transform does not reliably move.
-                  out ? "pointer-events-none animate-row-out" : lineArrived(line.id) && "animate-fade-in",
+                  out ? "pointer-events-none animate-row-out" : lineArrived(rowKey) && "animate-fade-in",
                 )}
               >
                 <td className="flash-host w-48 px-1 py-0.5">
@@ -1222,7 +1393,8 @@ function DayEditor({
                     <button
                       type="button"
                       data-cell={`${row}-0`}
-                      disabled={!editable}
+                      // Swapping the exercise of a line with no id would have nothing to write to.
+                      disabled={!editable || waiting !== null}
                       onClick={() => setSwapping(line.id)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === "F2") {
@@ -1235,6 +1407,7 @@ function DayEditor({
                       className="h-9 w-full truncate rounded-control px-2 text-left font-semibold transition-control hover:bg-surface-2 focus:outline-2 focus:outline-accent-line"
                     >
                       {name}
+                      {waiting ? <span className="ml-2 text-caption font-normal text-muted-2">saving</span> : null}
                     </button>
                   )}
                 </td>
@@ -1261,7 +1434,7 @@ function DayEditor({
                           type="checkbox"
                           data-cell={`${row}-${col}`}
                           aria-label={`Video required, line ${row + 1}`}
-                          disabled={!editable}
+                          disabled={!editable || waiting !== null}
                           checked={line.videoRequired}
                           onChange={(e) => void commit(line, "video", e.target.checked ? "Yes" : "No", e.currentTarget.closest("td"))}
                           onKeyDown={(e) => onKey(e, row, col)}
@@ -1278,9 +1451,17 @@ function DayEditor({
                         // `70% of bench` over a stored `70%` puts the cell back.
                         revision={column === "load" ? (line.referenceExerciseId ?? "") : undefined}
                         onKeyDown={(e) => onKey(e, row, col)}
-                        onBlur={(e) =>
-                          void commit(line, column as Exclude<Column, "exercise">, e.target.value, e.currentTarget.closest("td"))
-                        }
+                        onBlur={(e) => {
+                          const field = column as Exclude<Column, "exercise">;
+                          // No id yet: held, and sent the moment there is one.
+                          if (waiting) {
+                            const held = queued.current.get(line.id) ?? new Map();
+                            held.set(field, e.target.value);
+                            queued.current.set(line.id, held);
+                            return;
+                          }
+                          void commit(line, field, e.target.value, e.currentTarget.closest("td"));
+                        }}
                         className={cn(
                           "h-9 w-full rounded-control border bg-surface-2 px-2 text-foreground tabular-nums transition-control focus:outline-none",
                           errors[key] ? "border-danger-line" : "border-border focus:border-accent-line",

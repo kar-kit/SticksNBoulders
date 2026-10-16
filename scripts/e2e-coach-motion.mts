@@ -9,7 +9,7 @@
  * page polls `document.getAnimations()` every frame and notes each animation
  * and transition the first time it appears -- its kind, its name (keyframes
  * or transitioned property), its target and pseudo-element, and its length --
- * so a 90ms press is caught as reliably as a 900ms tint. Each check then asks
+ * so a 90ms press is caught as reliably as a 400ms tint. Each check then asks
  * the recorder whether the motion it expects ran on the element it expects.
  *
  * Then the same interactions again with `reducedMotion: "reduce"`: every
@@ -19,6 +19,10 @@
  *
  * Run against a build without the motion, every "runs" check fails: that is
  * this script's mutation check.
+ *
+ * It also holds /api/program in the browser (Playwright routing) to prove an
+ * added line is on screen before the server answers, keeps what was typed
+ * into it, and rolls back when the add is refused.
  *
  * Writes through the same ops the editor sends, on throwaway users; deletes
  * only what it created.
@@ -66,6 +70,15 @@ const created = { link: "", programId: "", exercises: [] as string[], bodyweight
 const rowsOf = async (tableId: string, column: string, value: string) =>
   (await db.listRows({ databaseId: D, tableId, queries: [Query.equal(column, value), Query.limit(100)], ttl: 0 }))
     .rows as unknown as Array<Record<string, unknown> & { $id: string }>;
+const poll = async <T,>(read: () => Promise<T>, done: (value: T) => boolean, ms = 20000): Promise<T> => {
+  const until = Date.now() + ms;
+  let value = await read();
+  while (!done(value) && Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 1000));
+    value = await read();
+  }
+  return value;
+};
 const appears = (target: Locator, timeout = 20000) =>
   target
     .first()
@@ -326,6 +339,91 @@ try {
       .catch(() => false),
   );
   await page.waitForTimeout(1500);
+
+  // --- a line on screen before the server answers -----------------------------
+  // /api/program held for 2.5s on addPrescription only, so the placeholder
+  // has to be on screen, pending and typeable, while the write is in flight.
+  const dayRow = (await rowsOf("program_days", "program_id", created.programId)).find((r) => r.label === day1)!;
+  const linesOnDay1 = async () => rowsOf("prescriptions", "day_id", dayRow.$id);
+  const addOp = (route: { request: () => { postDataJSON: () => unknown } }) =>
+    (route.request().postDataJSON() as { op?: string } | null)?.op === "addPrescription";
+  let answered = false;
+  await page.route("**/api/program", async (route) => {
+    if (!addOp(route)) return route.continue();
+    await new Promise((r) => setTimeout(r, 2500));
+    const response = await route.fetch();
+    answered = true;
+    await route.fulfill({ response });
+  });
+  await add.fill("Front Squat");
+  await page.keyboard.press("Enter");
+  const pendingRow = day.getByRole("row", { name: `${day1} line 5: Front Squat` });
+  check("an added line is on screen before the server has answered", (await appears(pendingRow, 1500)) && !answered);
+  check("marked pending", (await pendingRow.getAttribute("aria-busy")) === "true");
+  check(
+    "with the keyboard already on its Sets cell",
+    (await page.evaluate("document.activeElement?.getAttribute('aria-label')")) === "Sets, line 5",
+  );
+  await pendingRow.evaluate((el) => el.setAttribute("data-probe", "placeholder"));
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("4");
+  await page.keyboard.press("Tab");
+  await page
+    .waitForFunction(
+      `(() => { const r = document.querySelector('tr[data-probe="placeholder"]'); return r && !r.hasAttribute('aria-busy') && !r.getAttribute('data-line').startsWith('pending'); })()`,
+      undefined,
+      { timeout: 20000 },
+    )
+    .catch(() => {});
+  check("the server's answer came after it", answered);
+  const claimed = await page.evaluate(`(() => {
+    const r = document.querySelector('tr[data-probe="placeholder"]');
+    const sets = r && r.querySelector('input[aria-label="Sets, line 5"]');
+    return { same: Boolean(r && !r.getAttribute('data-line').startsWith('pending')), sets: sets ? sets.value : null,
+      focus: document.activeElement?.getAttribute('aria-label') ?? null };
+  })()`) as { same: boolean; sets: string | null; focus: string | null };
+  check(
+    "the real row takes the placeholder's place: same element, the typed 4 kept, focus where the coach left it",
+    claimed.same && claimed.sets === "4" && claimed.focus === "Reps, line 5",
+    JSON.stringify(claimed),
+  );
+  const frontSquat = (await linesOnDay1()).find((r) => r.exercise_id === ids["Front Squat"]);
+  const stored = frontSquat
+    ? (await poll(async () => (await linesOnDay1()).find((r) => r.$id === frontSquat.$id), (r) => r?.set_count === 4))?.set_count
+    : null;
+  check("and the 4 typed while it was pending is saved against the real line", stored === 4, `set_count ${stored}`);
+  await page.unroute("**/api/program");
+
+  // Refused: the placeholder goes, the error says why, nothing is stored.
+  const before = (await linesOnDay1()).length;
+  await page.route("**/api/program", async (route) => {
+    if (!addOp(route)) return route.continue();
+    await new Promise((r) => setTimeout(r, 800));
+    await route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ reason: "Refused by the e2e" }) });
+  });
+  await add.fill("Leg Press");
+  await rec.mark();
+  await page.keyboard.press("Enter");
+  const refusedRow = day.getByRole("row", { name: `${day1} line 6: Leg Press` });
+  check("a refused add shows its placeholder first", await appears(refusedRow, 700));
+  check("then says why", await appears(page.getByRole("alert").filter({ hasText: "Refused by the e2e" }), 5000));
+  seen = await rec.since(300);
+  check(
+    "and fades the placeholder out",
+    ran(seen, (e) => e.name === "row-out" && e.target.startsWith(`tr|${day1} line 6`)),
+    show(seen),
+  );
+  check(
+    "until it is gone",
+    await page
+      .locator(`tr[aria-label="${day1} line 6: Leg Press"]`)
+      .waitFor({ state: "detached", timeout: 3000 })
+      .then(() => true)
+      .catch(() => false),
+  );
+  check("with nothing stored", (await linesOnDay1()).length === before);
+  await page.unroute("**/api/program");
+  await page.waitForTimeout(500);
 
   // --- a cell saved, a cell refused ------------------------------------------
   const reps = day.getByRole("textbox", { name: "Reps, line 1" });

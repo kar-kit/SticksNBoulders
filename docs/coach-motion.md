@@ -13,6 +13,7 @@ Joey's rules, in priority order, and how each is met:
 2. **Interactions first.** Every row in the table below says what the motion
    tells the coach. Nothing loops except loading skeletons.
 3. **Then quality of life:** saved / refused tints on cells, optimistic line
+   insert and
    removal, skeletons, the landing tint.
 
 Guardrails: transform and opacity only for anything that moves; colour
@@ -31,7 +32,7 @@ mirrored on `focus-visible`; reduced motion makes all of it instant.
 | `duration-quick` | 120 ms | hover, focus, colour, popups |
 | `duration-base` | 180 ms | rows, panels, views arriving or leaving |
 | `duration-panel` | 240 ms | dialogs, the context drawer |
-| `duration-linger` | 900 ms | the saved / refused / landed tint. Opacity only, never blocks input |
+| `duration-linger` | 400 ms | the saved / refused / landed tint. Opacity only, never blocks input. Was 900 ms; Joey cut it on review (decision 4) |
 | `animate-rise-in` | opacity + 4 px lift, base | something new: a row, a panel, a confirm |
 | `animate-fade-in` | opacity, base | data replacing a skeleton or "Loading…"; table rows |
 | `animate-pop-in` | opacity + scale 0.97, quick | popups anchored to a trigger |
@@ -73,7 +74,7 @@ them. `Dialog`, `Menu` and `Tabs` are used only on coach screens (and the
 | 9 | Landing from a clip ("Adjust program") | `program-editor.tsx` landing | the traced line's cells tint accent and fade |
 | 10 | Exercise typeahead opening | `exercise-typeahead.tsx` (`coach:`) | the list belongs to this field: pops down from it |
 | 11 | Arrow keys in the typeahead | `exercise-typeahead.tsx` (`coach:`) | where Enter will land: the accent rule follows the active option |
-| 12 | Adding a line | `program-editor.tsx` | the new row fades in (only rows added since the page opened) |
+| 12 | Adding a line | `program-editor.tsx` | it is there now: the row fades in at once as a pending placeholder ("saving", `aria-busy`), with the keyboard on its Sets cell, before the server answers. See "Adding a line" below |
 | 13 | Removing a line | `program-editor.tsx` | it is going now: the row fades at once and leaves the grid when the fade ends, before the server answers; a refusal puts it back with the error |
 | 14 | Adding a day (+ Day, calendar + Day) | `program-editor.tsx`, `program-calendar.tsx` | the new day card rises in; on the calendar the day rises into its cell |
 | 15 | Removing a day | `program-editor.tsx` | in flight: the card dims and stops taking input until the tree comes back without it; restored if refused |
@@ -112,9 +113,11 @@ them. `Dialog`, `Menu` and `Tabs` are used only on coach screens (and the
 
 ## Deliberately still
 
-- **Page-to-page navigation.** No route transitions. A coach moves between
-  Roster, Review and athletes dozens of times a session; 200 ms on every hop
-  is a tax, and React's `<ViewTransition>` overlay swallows clicks mid-flight.
+- **Page-to-page navigation.** No route transitions: not needed for now
+  (Joey, review of PR #90, decision 5). For when it is revisited: a coach
+  moves between Roster, Review and athletes dozens of times a session, so
+  200 ms on every hop is a tax, and React's `<ViewTransition>` overlay
+  swallows clicks mid-flight.
 - **Scrolling.** The landing scroll is instant. A smooth scroll down a block
   is the motion most likely to make someone feel ill; the tint does the work.
 - **Dismissals.** Menus, the typeahead list, confirm strips, the bump panel
@@ -128,7 +131,8 @@ them. `Dialog`, `Menu` and `Tabs` are used only on coach screens (and the
   measured in script; rule 1 says no, and in a ten-row table the new order and
   the ▲/▼ are feedback enough.
 - **Layout.** Nothing animates height or width. A removed line fades, then its
-  space closes in one step; an added line's space opens in one step, then it
+  space closes in one step; an added line's placeholder opens its space in one
+  step, then it
   fades in.
 - **Charts** (e1RM, bodyweight) do not draw in. A line that animates from zero
   briefly shows a wrong number.
@@ -137,6 +141,40 @@ them. `Dialog`, `Menu` and `Tabs` are used only on coach screens (and the
   panels) keep their text; skeletons replace only screens that were blank
   (editor, Programs).
 - **The athlete side.** Untouched; see gating above.
+
+## Adding a line (the placeholder row)
+
+Joey's decision 1 on review: show an added line at once rather than after the
+server's row id. `DayEditor.addLine` in `program-editor.tsx`:
+
+- **At once:** a placeholder row (a `Prescription` with a client key for an
+  id) joins the grid after the day's lines, fades in, says "saving", carries
+  `aria-busy`, and takes the keyboard on its Sets cell -- so Add exercise,
+  Enter, type the sets still works without waiting.
+- **Nothing is written against a row that does not exist.** Its exercise swap
+  and video toggle are disabled; anything typed into its other cells is held
+  per cell and not sent. Alt+Up/Down will not move a line past it.
+- **Claimed:** the editor writes the line, reads the tree back and, before
+  showing that tree, hands the new id to the placeholder (`claim`). The held
+  cells become ops, are folded into the tree in that same render, then sent.
+  The real row reuses the placeholder's React key, so it is the same `<tr>`:
+  no jump, the focus and the typed text stay. Its exercise cell tints saved.
+- **Refused:** the placeholder fades out (as a removed line does) and the
+  editor's error says why. What was held is dropped.
+- **× before the id arrives:** the placeholder fades now; the line is removed
+  the moment it exists, and never shows.
+- **Two quick adds:** sent one after another, per day, so they land in the
+  order typed, each placeholder in its place meanwhile.
+- **Another write in flight:** adds do not take the editor's `busy` flag, so
+  the coach keeps typing. [Inference] The read-back after an add can still
+  land over a cell edit whose own save has not finished; that race predates
+  this and applies to every structural write (`run` reads the tree back the
+  same way). It shows the server's value until the edit's save lands.
+
+Days, weeks and blocks are not done the same way. Not the same cheap change:
+a day placeholder carries its date chips, notes and its own add field, and a
+week or block is selected and navigated to; each would need its own pending
+model. They still dim on removal and rise in on arrival.
 
 ## Reduced motion
 
@@ -171,14 +209,19 @@ of the top layer.
   fades, already closed, hidden and with focus back; unmounts at once with
   nothing to play; reopens mid-fade.
 - `components/coach/program-editor.test.tsx` "motion": optimistic line removal
-  and its refusal, saved / refused tints, only added lines marked to arrive,
+  and its refusal; the placeholder row (on screen and focused before the
+  server answers, held cells sent once claimed in the same row, refusal fades
+  it, × before the id removes it on arrival, two quick adds in order, no
+  reorder past it); saved / refused tints, only added lines marked to arrive,
   the drawer kept through its exit, a day dimmed while its removal is in
   flight. `program-editor-landing.test.tsx`: the landing tint on the traced
   line.
 - `components/ui/coach-gate.test.tsx`: shared components carry no motion
   outside the coach shell.
 - `npm run e2e:coach-motion`: real mouse and keyboard at 1440×900 against the
-  live instance, recording `document.getAnimations()` every frame; then the
+  live instance, recording `document.getAnimations()` every frame; holding
+  `/api/program` in the browser to prove an added line is on screen, pending
+  and typeable before the server answers and rolls back when refused; then the
   same with `reducedMotion: "reduce"`, where nothing inside the coach shell may
   run longer than 1 ms.
 - `npm run perf:coach-editor`: frame timing in the editor (below).

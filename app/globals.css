@@ -214,7 +214,7 @@
   --transition-duration-quick: 120ms;
   --transition-duration-base: 180ms;
   --transition-duration-panel: 240ms;
-  --transition-duration-linger: 900ms;
+  --transition-duration-linger: 400ms;
 
   /* Something new on screen: a row, a panel, a confirm strip, a view. */
   --animate-rise-in: rise-in var(--transition-duration-base) var(--ease-out) both;
