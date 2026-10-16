@@ -7,7 +7,7 @@ Branches: `dev` is where work lands. `prod` is the deploy branch (the GitHub def
 ## What was checked
 
 - [Fact] `next build` (Turbopack, the Vercel default) and `next build --webpack` both succeed on Node 24, and the full unit suite passes on Node 24 (2825 tests).
-- [Fact] With `VERCEL_GIT_COMMIT_SHA` set, the built config carries `deploymentId` and the `/sw.js` no-cache header. (On `dev`, between 16 Oct commit `5dc133d` and this change, a stray `module.exports` in `next.config.ts` dropped both. `lib/build/next-config.test.ts` now guards it.)
+- [Fact] Vercel sets `NEXT_DEPLOYMENT_ID` and Next fails the build if the config names a different deploymentId, so `next.config.ts` takes it first (it is a Vercel build, so it is what the service worker caches are named after too). Outside Vercel, with `VERCEL_GIT_COMMIT_SHA` set, the built config carries `deploymentId` and the `/sw.js` no-cache header. (On `dev`, between 16 Oct commit `5dc133d` and this change, a stray `module.exports` in `next.config.ts` dropped both. `lib/build/next-config.test.ts` now guards it.)
 - [Fact] The clip route (`/api/clip/[fileId]`) streams the body unbuffered and forwards `Range`, so it works as a Node function. `vercel.json` gives it `maxDuration: 300`.
 - [Fact] Chunked uploads go from the browser to Appwrite, not through a Vercel function, so Vercel's request-body limit does not apply to video.
 - [Unverified] Not deployed to Vercel yet. Nothing here has run on a real Vercel build.
