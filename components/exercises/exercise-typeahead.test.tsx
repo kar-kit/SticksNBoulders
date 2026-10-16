@@ -234,3 +234,48 @@ describe("assistive technology", () => {
     expect(input).toHaveAttribute("spellcheck", "false");
   });
 });
+
+describe("a library longer than the list", () => {
+  const BIG = Array.from({ length: 30 }, (_, i) => make(`Lift ${String(i).padStart(2, "0")}`));
+
+  it("scrolls inside a capped box rather than clipping what does not fit", async () => {
+    const { user, input } = setup({ exercises: BIG });
+    await user.click(input);
+    const list = screen.getByRole("listbox");
+    expect(list.className).toContain("overflow-y-auto");
+    expect(list.className).toContain("max-h-");
+    expect(list.className).not.toContain("overflow-hidden");
+  });
+
+  it("offers the whole library on an empty field when the caller lifts the cap", async () => {
+    const { user, input } = setup({ exercises: BIG, limit: BIG.length });
+    await user.click(input);
+    expect(options()).toHaveLength(30);
+    expect(options().at(-1)).toContain("Lift 29");
+  });
+
+  it("keeps the cap by default, so the athlete's phone still opens on a short list", async () => {
+    const { user, input } = setup({ exercises: BIG });
+    await user.click(input);
+    expect(options().length).toBeLessThan(30);
+  });
+
+  it("follows the keyboard: the active option is scrolled into view", async () => {
+    const scrolled = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      const { user, input } = setup({ exercises: BIG, limit: BIG.length });
+      await user.click(input);
+      scrolled.mockClear();
+      await user.keyboard("{ArrowUp}");
+      // Wraps from the first option to the last, which is far below the fold.
+      const last = screen.getAllByRole("option").at(-1)!;
+      expect(last).toHaveAttribute("aria-selected", "true");
+      expect(scrolled.mock.contexts.at(-1)).toBe(last);
+      expect(scrolled).toHaveBeenLastCalledWith({ block: "nearest" });
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+});

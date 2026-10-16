@@ -215,7 +215,30 @@ try {
   await page.getByRole("button", { name: "+ Day", exact: true }).click();
   const day1 = page.getByRole("region", { name: "Day 1", exact: true });
   await day1.waitFor({ timeout: 20000 });
-  await day1.getByRole("combobox", { name: "Add exercise to Day 1" }).fill("Squat");
+  // The empty field offers the whole library, and the list scrolls to the end of it.
+  const addField = day1.getByRole("combobox", { name: "Add exercise to Day 1" });
+  await addField.click();
+  const picker = page.getByRole("listbox", { name: "Add exercise to Day 1 results" });
+  await picker.waitFor({ timeout: 20000 });
+  const reach = await picker.evaluate((el) => ({
+    options: el.querySelectorAll('[role="option"]').length,
+    scrolls: el.scrollHeight > el.clientHeight,
+    atTop: el.scrollTop === 0,
+  }));
+  check("an empty field lists more than the old cap of 8", reach.options > 8, String(reach.options));
+  check("and the list is a scroll box, not a clipped one", reach.scrolls && reach.atTop);
+  // Real wheel events, over an option, in steps: one huge delta is clamped.
+  const overOption = (await picker.getByRole("option").nth(2).boundingBox())!;
+  await page.mouse.move(overOption.x + overOption.width / 2, overOption.y + overOption.height / 2);
+  const lastName = (await picker.getByRole("option").last().innerText()).split("\n")[0];
+  let atEnd = false;
+  for (let step = 0; step < 40 && !atEnd; step++) {
+    await page.mouse.wheel(0, 600);
+    await page.waitForTimeout(120);
+    atEnd = await picker.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
+  }
+  check("the mouse wheel scrolls it to the last exercise", atEnd, lastName);
+  await addField.fill("Squat");
   await page.getByRole("option", { name: "Squat", exact: true }).click();
   const cell = (label: string) => day1.getByRole("textbox", { name: label, exact: true });
   const typeCell = async (label: string, value: string) => {
