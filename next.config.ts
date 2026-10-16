@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
 import type { NextConfig } from "next";
+import { execSync } from "node:child_process";
 
 /**
  * One identifier per deploy, shared by the service worker and Next's own skew
@@ -19,15 +19,23 @@ import type { NextConfig } from "next";
 function buildId(): string | undefined {
   if (process.env.SNB_BUILD_ID) return process.env.SNB_BUILD_ID;
   try {
-    return execSync("git rev-parse --short=12 HEAD", { stdio: ["ignore", "pipe", "ignore"] })
-      .toString()
-      .trim() || undefined;
+    return (
+      execSync("git rev-parse --short=12 HEAD", {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim() || undefined
+    );
   } catch {
     return undefined;
   }
 }
 
 const BUILD_ID = buildId();
+
+module.exports = {
+  allowedDevOrigins: ["192.168.1.189"],
+};
 
 const nextConfig: NextConfig = {
   deploymentId: BUILD_ID,
@@ -41,9 +49,18 @@ const nextConfig: NextConfig = {
         // copy is how a deploy strands people on old code.
         source: "/sw.js",
         headers: [
-          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
-          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
-          { key: "Content-Security-Policy", value: "default-src 'self'; script-src 'self'" },
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, must-revalidate",
+          },
+          {
+            key: "Content-Type",
+            value: "application/javascript; charset=utf-8",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: "default-src 'self'; script-src 'self'",
+          },
         ],
       },
     ];
