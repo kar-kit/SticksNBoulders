@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProgramEditor } from "./program-editor";
 import type { ProgramTree } from "@/lib/programming/program";
@@ -1138,5 +1138,145 @@ describe("duplicate with a bump", () => {
     await user.type(within(form).getByRole("textbox", { name: "+ RPE" }), "0.3{Enter}");
     expect(within(form).getByRole("alert")).toHaveTextContent("RPE moves in half points, like 0.5");
     expect(store.send).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * Motion that changes what is on screen and when (docs/coach-motion.md). The
+ * animations themselves are CSS and are proven in a browser by
+ * scripts/e2e-coach-motion.mts; these pin the behaviour around them.
+ */
+describe("motion", () => {
+  const rowOf = (lineId: string) => document.querySelector<HTMLTableRowElement>(`tr[data-line="${lineId}"]`);
+  const cellOf = (input: HTMLElement) => input.closest("td")!;
+  /**
+   * An animation ending. jsdom has no AnimationEvent, so React listens for the
+   * prefixed name there; a browser sends the plain one. Both, so the test
+   * reaches React's handler and native listeners alike.
+   */
+  const ended = (el: Element) =>
+    act(() => {
+      fireEvent.animationEnd(el);
+      el.dispatchEvent(new Event("webkitAnimationEnd", { bubbles: true }));
+    });
+
+  it("takes a removed line off the grid when its fade ends, before the server has answered", async () => {
+    let answer: (value: { rowId: string }) => void = () => {};
+    store.send.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.click(within(day).getByRole("button", { name: "Remove line 2" }));
+
+    // Fading: still in the document, already out of the accessibility tree.
+    const row = rowOf("l2")!;
+    expect(row).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-hidden", "true");
+    expect(within(day).queryByRole("row", { name: /line 2/ })).not.toBeInTheDocument();
+
+    ended(row);
+    expect(rowOf("l2")).toBeNull();
+    expect(rowOf("l1")).not.toBeNull();
+
+    const without = tree();
+    without.blocks[0].weeks[0].days[0].prescriptions.pop();
+    store.tree = without;
+    answer({ rowId: "l2" });
+    await waitFor(() => expect(within(day).queryByRole("button", { name: "Remove line 2" })).not.toBeInTheDocument());
+  });
+
+  it("puts a removed line back where it was when the server refuses", async () => {
+    store.send.mockRejectedValueOnce(new Error("not-allowed"));
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.click(within(day).getByRole("button", { name: "Remove line 2" }));
+    ended(rowOf("l2")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("not-allowed");
+    expect(within(day).getByRole("row", { name: "Squat day line 2: Squat" })).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("tints a cell saved once the server takes it, and refused when it cannot be saved", async () => {
+    const user = userEvent.setup();
+    await ready();
+    const reps = screen.getByRole("textbox", { name: "Reps, line 1" });
+    await user.clear(reps);
+    await user.type(reps, "3");
+    await user.tab();
+    await waitFor(() => expect(cellOf(reps)).toHaveAttribute("data-flash", "saved"));
+
+    const sets = screen.getByRole("textbox", { name: "Sets, line 2" });
+    await user.clear(sets);
+    await user.type(sets, "0");
+    await user.tab();
+    expect(cellOf(sets)).toHaveAttribute("data-flash", "failed");
+  });
+
+  it("tints a cell refused when the server turns the save down", async () => {
+    store.send.mockRejectedValueOnce(new Error("not-allowed"));
+    const user = userEvent.setup();
+    await ready();
+    const reps = screen.getByRole("textbox", { name: "Reps, line 1" });
+    await user.clear(reps);
+    await user.type(reps, "3");
+    await user.tab();
+    await waitFor(() => expect(cellOf(reps)).toHaveAttribute("data-flash", "failed"));
+  });
+
+  it("marks only a line added since the editor opened to arrive, not the ones it opened with", async () => {
+    const user = userEvent.setup();
+    const day = await ready();
+    const added = tree();
+    added.blocks[0].weeks[0].days[0].prescriptions.push(line("l3", "bench", 2, { setCount: 1 }));
+    store.tree = added;
+    store.send.mockResolvedValueOnce({ rowId: "l3" });
+    await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), "bench");
+    await user.click(await screen.findByRole("option", { name: "Bench Press" }));
+    await waitFor(() => expect(rowOf("l3")).not.toBeNull());
+    expect(rowOf("l3")!.className).toContain("animate-fade-in");
+    expect(rowOf("l1")!.className).not.toContain("animate-fade-in");
+  });
+
+  it("keeps the context drawer on screen while it slides out, then unmounts it", async () => {
+    const real = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+      const style = real(el, pseudo);
+      if ((el as Element).tagName !== "ASIDE") return style;
+      return new Proxy(style, {
+        get: (target, key) =>
+          key === "animationName"
+            ? "drawer-out"
+            : key === "animationDuration"
+              ? "0.18s"
+              : key === "animationDelay"
+                ? "0s"
+                : Reflect.get(target, key),
+      });
+    });
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Context" }));
+    const drawer = await screen.findByRole("complementary", { name: "Context" });
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    expect(drawer).toBeInTheDocument();
+    expect(drawer).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("complementary", { name: "Context" })).not.toBeInTheDocument();
+
+    ended(drawer);
+    expect(drawer).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  it("dims a day while its removal is on its way, and brings it back if refused", async () => {
+    let refuse: (error: Error) => void = () => {};
+    store.send.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.click(screen.getByRole("button", { name: "Squat day actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove Squat day" }));
+    await user.click(screen.getByRole("button", { name: "Confirm remove squat day" }));
+    expect(day).toHaveAttribute("aria-busy", "true");
+    expect(day.className).toContain("animate-dim");
+    refuse(new Error("not-allowed"));
+    await waitFor(() => expect(day).not.toHaveAttribute("aria-busy"));
   });
 });
