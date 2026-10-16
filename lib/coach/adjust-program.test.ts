@@ -152,6 +152,7 @@ describe("URLs", () => {
     expect(editorViewFrom({ view: "calendar" })).toBe("calendar");
     expect(editorViewFrom({ view: "month" })).toBe("calendar");
     expect(editorViewFrom({ view: "week" })).toBe("week");
+    expect(editorViewFrom({ view: "progression" })).toBe("progression");
     expect(editorViewFrom({ view: ["week", "calendar"] })).toBe("week");
     // The "Adjust program" links name a place, so they open the week view...
     expect(editorViewFrom({ day: "day1" })).toBe("week");

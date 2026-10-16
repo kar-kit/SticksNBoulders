@@ -844,10 +844,9 @@ describe("dates from the start date", () => {
  * ---------------------------------------------------------------------- */
 
 describe("the kilos under every percentage", () => {
-  it("shows what the percentage resolves to and the max behind it, and what an RPE row means", async () => {
+  it("shows what the percentage resolves to and the max behind it", async () => {
     const day = await ready();
     expect(await within(day).findByText("→ 150 kg · Squat training max 200, set 1 Sep")).toBeInTheDocument();
-    expect(within(day).getByText("Athlete picks · no kilos until their first set")).toBeInTheDocument();
   });
 
   it("adds a missing max from beside the cell, then prices the line off it", async () => {
@@ -994,9 +993,9 @@ describe("the progression view", () => {
   it("lays the block out as slots by week, each cell the line in shorthand with its kilos", async () => {
     const grid = await progression();
     expect(screen.getByRole("tab", { name: "Progression" })).toHaveAttribute("aria-selected", "true");
-    expect(within(grid).getByRole("textbox", { name: "Squat (2nd), Week 1" })).toHaveValue("3x5 75%");
-    expect(within(grid).getByRole("textbox", { name: "Squat (2nd), Week 2" })).toHaveValue("3x5 77.5%");
-    expect(within(grid).getByRole("textbox", { name: "Squat, Week 2" })).toHaveValue("1x5 @8");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 1" })).toHaveValue("3x5 75%");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 2" })).toHaveValue("3x5 77.5%");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat, Week 2" })).toHaveValue("1x5 @8");
     // 77.5% of 200 is 155: the compact line shows the kilos, the title the rest.
     expect(await within(grid).findByText("→ 155 kg")).toHaveAttribute("title", "→ 155 kg · Squat training max 200, set 1 Sep");
   });
@@ -1004,20 +1003,20 @@ describe("the progression view", () => {
   it("edits a week's load in place with one number, sending only the load", async () => {
     const user = userEvent.setup();
     const grid = await progression();
-    const cell = within(grid).getByRole("textbox", { name: "Squat (2nd), Week 2" });
+    const cell = within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 2" });
     await user.clear(cell);
     await user.type(cell, "80%");
     await user.tab();
     await waitFor(() =>
       expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l2b", load: "80%" }),
     );
-    expect(within(grid).getByRole("textbox", { name: "Squat (2nd), Week 2" })).toHaveValue("3x5 80%");
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 2" })).toHaveValue("3x5 80%");
   });
 
   it("adds the missing line to that week's day by typing into its empty cell", async () => {
     const user = userEvent.setup();
     const grid = await progression();
-    const cell = within(grid).getByRole("textbox", { name: "Bench Press, Week 2" });
+    const cell = within(grid).getByRole("textbox", { name: "Squat day · Bench Press, Week 2" });
     expect(cell).toHaveValue("");
     await user.type(cell, "4x6 72.5%");
     await user.tab();
@@ -1037,13 +1036,13 @@ describe("the progression view", () => {
   it("walks the grid with the arrow keys: along a slot's weeks, and down through the slots", async () => {
     const user = userEvent.setup();
     const grid = await progression();
-    await user.click(within(grid).getByRole("textbox", { name: "Squat, Week 1" }));
+    await user.click(within(grid).getByRole("textbox", { name: "Squat day · Squat, Week 1" }));
     await user.keyboard("{End}{ArrowRight}");
-    expect(within(grid).getByRole("textbox", { name: "Squat, Week 2" })).toHaveFocus();
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat, Week 2" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
-    expect(within(grid).getByRole("textbox", { name: "Squat (2nd), Week 2" })).toHaveFocus();
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Squat (2nd), Week 2" })).toHaveFocus();
     await user.keyboard("{Enter}");
-    expect(within(grid).getByRole("textbox", { name: "Bench Press, Week 2" })).toHaveFocus();
+    expect(within(grid).getByRole("textbox", { name: "Squat day · Bench Press, Week 2" })).toHaveFocus();
   });
 
   it("opens a week in the week view from its column heading", async () => {
@@ -1087,5 +1086,57 @@ describe("the context drawer", () => {
     await user.click(screen.getByRole("button", { name: "Context" }));
     expect(await screen.findByText("Their sessions did not load. Nothing here is missing; it is unknown.")).toBeInTheDocument();
     context.sessions = [{ id: "s1" }];
+  });
+});
+
+describe("duplicate with a bump", () => {
+  it("previews where the copy lands and what changes, then writes the copy and steps its lines", async () => {
+    const copy = tree().blocks[0].weeks[0];
+    const copied = {
+      ...copy,
+      id: "w9",
+      position: 2,
+      days: copy.days.map((d) => ({ ...d, id: "d9", weekId: "w9", prescriptions: d.prescriptions.map((l) => ({ ...l, id: `${l.id}-9`, weekId: "w9", dayId: "d9" })) })),
+    };
+    store.send.mockImplementation(async (op) => {
+      if (op.op === "duplicateWeek") {
+        const t = tree();
+        t.blocks[0].weeks.push(copied);
+        store.tree = t;
+        return { rowId: "w9" };
+      }
+      return { rowId: "x" };
+    });
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Week 1 actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate with a bump…" }));
+    const form = screen.getByRole("region", { name: "Duplicate with a bump" });
+    expect(within(form).getByText("Lands as Week 3, 19–25 Oct, at the end of Block 1.")).toBeInTheDocument();
+    await user.type(within(form).getByRole("textbox", { name: "+ %" }), "2.5");
+    await user.type(within(form).getByRole("textbox", { name: "+ RPE" }), "0.5");
+    const changes = within(form).getByRole("list", { name: "Lines that change" });
+    expect(within(changes).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Squat: @8 → @8.5", "Squat: 75% → 77.5%"]);
+    expect(store.send).not.toHaveBeenCalled();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(store.send.mock.calls.map((c) => c[0])).toEqual([
+        { op: "duplicateWeek", weekId: "w1" },
+        { op: "updatePrescription", prescriptionId: "l1-9", load: "@8.5" },
+        { op: "updatePrescription", prescriptionId: "l2-9", load: "77.5%" },
+      ]),
+    );
+    expect(await screen.findByRole("heading", { level: 2, name: "Block 1 · Week 3" })).toBeInTheDocument();
+  });
+
+  it("refuses a step it cannot apply, and writes nothing", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Week 1 actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate with a bump…" }));
+    const form = screen.getByRole("region", { name: "Duplicate with a bump" });
+    await user.type(within(form).getByRole("textbox", { name: "+ RPE" }), "0.3{Enter}");
+    expect(within(form).getByRole("alert")).toHaveTextContent("RPE moves in half points, like 0.5");
+    expect(store.send).not.toHaveBeenCalled();
   });
 });

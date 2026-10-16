@@ -458,15 +458,14 @@ describe("the kilos under a load cell (docs/program-layout.md §1)", () => {
     expect(previewDate(null, now)).toBe(now);
   });
 
-  it("says plainly what it cannot know yet, and what RPE rows and templates do", () => {
+  it("says plainly what it cannot know yet, and what templates do", () => {
     expect(preview(line({ load: "75%" }), "loading")).toEqual({ tone: "quiet", text: "Kilos appear once Joey's maxes load" });
     expect(preview(line({ load: "75%" }), "failed")).toEqual({ tone: "quiet", text: "Could not read Joey's maxes · kilos unknown" });
     expect(preview(line({ load: "75%" }), "template")?.text).toBe("Template · kilos resolve per athlete");
-    expect(preview(line({ load: "@8" }), [max("squat", 190)])?.text).toBe("Athlete picks · no kilos until their first set");
   });
 
-  it("adds nothing where the kind line says it all: fixed, freeform, empty", () => {
-    for (const load of ["142.5", "work up to a heavy single", null]) expect(preview(line({ load }), [])).toBeNull();
+  it("adds nothing where the kind line says it all: fixed, RPE (the athlete picks), freeform, empty", () => {
+    for (const load of ["142.5", "@8", "work up to a heavy single", null]) expect(preview(line({ load }), [])).toBeNull();
   });
 });
 

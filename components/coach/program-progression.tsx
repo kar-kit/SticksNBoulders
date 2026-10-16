@@ -225,7 +225,8 @@ export function ProgramProgression({
                       </th>
                       {slot.cells.map((cell, col) => {
                         const key = `${slot.id}|${cell.weekId}`;
-                        const label = `${slotName}, ${weekName(cell.weekId)}`;
+                        // The day leads: the same lift on two days is two rows.
+                        const label = `${day.title} · ${slotName}, ${weekName(cell.weekId)}`;
                         if (cell.kind === "none") {
                           return (
                             <td key={cell.weekId} className="px-1 py-1 text-muted-2" aria-label={`${label}: not in this week`}>

@@ -104,7 +104,7 @@ export type MaxesRead = EditorMaxes | "loading" | "failed" | "template";
  *   resolved  "→ 142.5 kg · Squat training max 190, set 12 Sep"
  *   missing   "No Squat training max for Joey · they see "75%"", with the
  *             max to add when the coach can add it here
- *   quiet     a plain statement: an RPE row, maxes still loading, a template
+ *   quiet     a plain statement: maxes still loading or unread, a template
  */
 export interface LoadPreview {
   tone: "resolved" | "missing" | "quiet";
@@ -151,14 +151,14 @@ export function previewDate(scheduledOn: string | null, now: Date): Date {
  * numbers came from.
  *
  * Null where the kind line under the cell already says everything: a fixed
- * load, freeform words, an empty cell (`describeLoad` covers those).
+ * load, an RPE, freeform words, an empty cell (`describeLoad` covers those).
  */
 export function loadPreview(line: Prescription, context: PreviewContext): LoadPreview | null {
   const spec = line.load ? parsePrescription(line.load) : null;
-  if (!spec || spec.kind === "fixed" || spec.kind === "freeform") return null;
-  // The phone shows "RPE 8" and lets the athlete pick: an editor estimate
-  // would be a number the athlete never sees, off an [Unverified] chart.
-  if (spec.kind === "rpe") return { tone: "quiet", text: "Athlete picks · no kilos until their first set" };
+  // An RPE row gets no kilos: the phone shows "RPE 8" and lets the athlete
+  // pick, so an editor estimate would be a number the athlete never sees, off
+  // an [Unverified] chart. Its kind line already says "athlete picks".
+  if (!spec || spec.kind === "fixed" || spec.kind === "freeform" || spec.kind === "rpe") return null;
 
   const whose = context.athleteName ? `${context.athleteName}'s` : "the";
   if (context.maxes === "template") return { tone: "quiet", text: "Template · kilos resolve per athlete" };

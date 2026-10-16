@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Menu } from "@/components/ui/menu";
 import { Tabs } from "@/components/ui/tabs";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
+import { BumpWeek } from "@/components/coach/bump-week";
 import { CopyProgram } from "@/components/coach/copy-program";
 import { CellInput, ConfirmStrip, InlineText } from "@/components/coach/program-editor-parts";
 import { LoadPreviewLine } from "@/components/coach/load-preview";
@@ -50,7 +51,8 @@ import {
   WEEKDAYS,
 } from "@/lib/programming/calendar";
 import { copyWeekPlan } from "@/lib/programming/copy";
-import type { BlockTree, DayTree, Prescription, ProgramOpInput, ProgramTree } from "@/lib/programming/program";
+import { bumpPlan, lineAt, type Bump } from "@/lib/programming/bump";
+import type { BlockTree, DayTree, Prescription, ProgramOpInput, ProgramTree, WeekTree } from "@/lib/programming/program";
 import type { EditorLanding, EditorView } from "@/lib/coach/adjust-program";
 import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/programming/program-store";
 
@@ -165,6 +167,8 @@ export function ProgramEditor({
   const [busy, setBusy] = useState(false);
   const [copying, setCopying] = useState(false);
   const [removingWeek, setRemovingWeek] = useState<string | null>(null);
+  /** The week whose "Duplicate with a bump…" form is open. */
+  const [bumping, setBumping] = useState<string | null>(null);
   const [view, setView] = useState<EditorView>(initialView);
   /** The progression view's block, when the coach picked one; else the selected week's. */
   const [progressionBlockId, setProgressionBlockId] = useState<string | null>(null);
@@ -425,6 +429,33 @@ export function ProgramEditor({
   };
 
   /**
+   * "Duplicate with a bump": duplicateWeek, then one updatePrescription per
+   * line the bump changes, on the copy, found by its place in the week (the
+   * copy is written day for day, line for line). A line not where it should
+   * be is left as copied rather than guessed at, and the coach is told.
+   */
+  const duplicateWithBump = async (source: WeekTree, bump: Bump) => {
+    const plan = bumpPlan(source, bump);
+    let skipped = 0;
+    const id = await runMany(async () => {
+      const { rowId } = await sendProgramOp({ op: "duplicateWeek", weekId: source.id });
+      const fresh = await fetchProgramTree(programId);
+      const copy = fresh?.blocks.flatMap((b) => b.weeks).find((w) => w.id === rowId);
+      for (const change of plan) {
+        const line = copy ? lineAt(copy, change) : null;
+        if (!line) skipped += 1;
+        else await sendProgramOp({ op: "updatePrescription", prescriptionId: line.id, load: change.to });
+      }
+      return rowId;
+    });
+    if (skipped > 0) setError(`Copied. ${skipped} ${skipped === 1 ? "line was" : "lines were"} not where expected and kept their load.`);
+    if (id) {
+      setBumping(null);
+      setWeekId(id);
+    }
+  };
+
+  /**
    * The start date, and every day that follows it. Logged days and days
    * already outside their week stay put (redatePlan). When the sessions could
    * not be read, only the start date is saved and the coach is told why.
@@ -662,11 +693,31 @@ export function ProgramEditor({
                             if (id) setWeekId(id);
                           },
                         },
+                        {
+                          // The copy with every load stepped: +%, +kg, +RPE, previewed first.
+                          label: "Duplicate with a bump…",
+                          onSelect: () => {
+                            setRemovingWeek(null);
+                            setBumping(week.id);
+                          },
+                        },
                         { label: `Remove ${weekPhrase(week.id)}`, tone: "danger", onSelect: () => setRemovingWeek(week.id) },
                       ]}
                     />
                   ) : null}
                 </header>
+                {editable && bumping === week.id ? (
+                  <BumpWeek
+                    tree={tree}
+                    block={block}
+                    week={week}
+                    anchor={anchor}
+                    names={names}
+                    busy={busy}
+                    onCancel={() => setBumping(null)}
+                    onDuplicate={(bump) => void duplicateWithBump(week, bump)}
+                  />
+                ) : null}
                 {removingWeek === week.id ? (
                   <ConfirmStrip
                     label={`Remove ${weekPhrase(week.id)}`}
@@ -1102,7 +1153,8 @@ function DayEditor({
                       className={cn(
                         "px-1 py-0.5",
                         column === "sets" || column === "reps" || column === "rest" ? "w-16" : "",
-                        column === "load" ? "w-48" : "",
+                        // Wide enough for "→ 142.5 kg · Squat training max 190, set 12 Sep" on two lines.
+                        column === "load" ? "w-64" : "",
                         column === "backoff" ? "w-36" : "",
                         column === "video" ? "w-16" : "",
                       )}

@@ -58,8 +58,8 @@ That is the number the athlete sees before their first working set.
 
 **RPE rows get no kilos.** [Inference] The phone shows `RPE 8` and lets the
 athlete pick; an editor estimate from e1RM would be a number the athlete never
-sees, off an RPE chart CLAUDE.md marks [Unverified]. The second line says so:
-`Athlete picks · no kilos until their first set`. Decision for Joey.
+sees, off an RPE chart CLAUDE.md marks [Unverified]. Their kind line already
+reads `RPE 8 · athlete picks the weight`, so no second line. Decision for Joey.
 
 ### 2. A progression view (rows are exercise slots, columns are weeks)
 
@@ -115,14 +115,21 @@ open/closed remembered per browser). Read-only, built from existing reads:
 Closed by default: at 1440 the athlete rail, the outline, a 46 rem grid and an
 18 rem drawer do not fit side by side, and the grid matters more.
 
-### 5. Duplicate week with a bump (built only if 1-4 are solid)
+### 5. Duplicate week with a bump (built)
 
-See the PR body for whether it shipped. Shape if so: the week's ⋯ gets
-`Duplicate with a bump…`, a small form taking `+kg`, `+%` and `+RPE`, a preview
-line saying where the copy lands ("Week 5, 3-9 Nov, end of Volume") and what
-changes ("4 lines: 75% → 77.5%"). Written as `duplicateWeek` followed by one
-`updatePrescription` per changed line on the copy. Fixed loads take +kg,
-percentages +%, RPE and caps +RPE (clamped at 10); freeform is untouched.
+The week's ⋯ has `Duplicate with a bump…` beside the plain Duplicate: an
+inline form taking `+ %`, `+ kg` and `+ RPE`, a preview of where the copy
+lands ("Lands as Week 5, 3-9 Nov, at the end of Volume", and that later weeks
+renumber) and the exact lines that change ("Squat: 75% → 77.5%"), before
+anything is written. Pure rules in `lib/programming/bump.ts`.
+
+Written as `duplicateWeek`, then one `updatePrescription` per changed line on
+the copy, found by its place in the week (the copy is written day for day,
+line for line; a line not where expected keeps its copied load and the editor
+says so). Fixed loads take +kg, percentages +%, RPE +RPE, a cap both; RPE
+stays on the 6-10 half-point scale; freeform is untouched; a step that would
+take a load to nothing is not applied. The reference lift travels with the
+copy as before (the bump only rewrites the load text).
 
 ## Deliberately not built
 
