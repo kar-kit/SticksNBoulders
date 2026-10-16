@@ -137,8 +137,12 @@ try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
   const page = await ctx.newPage();
   await signIn(page, coach.email);
-  await page.goto(`${BASE}/coach/programs/${created.programId}?view=calendar`);
   const grid = page.getByRole("grid", { name: "Program calendar" });
+  await page.goto(`${BASE}/coach/programs/${created.programId}`);
+  check("a program opens on the calendar by default", await appears(grid, 30000));
+  await page.goto(`${BASE}/coach/programs/${created.programId}?view=week`);
+  check("?view=week opens the week view", await appears(page.getByRole("region", { name: "Squat day" }), 30000));
+  await page.goto(`${BASE}/coach/programs/${created.programId}?view=calendar`);
   check("?view=calendar opens the calendar", await appears(grid, 30000));
   check(
     "with Calendar selected in the toggle",
@@ -169,9 +173,9 @@ try {
   // --- the toggle --------------------------------------------------------------
   await page.getByRole("tab", { name: "Week" }).click();
   check(
-    "Week drops ?view from the URL",
+    "Week writes ?view=week to the URL",
     await page
-      .waitForURL((u) => !u.searchParams.has("view"))
+      .waitForURL((u) => u.searchParams.get("view") === "week")
       .then(() => true)
       .catch(() => false),
   );
@@ -188,7 +192,7 @@ try {
   // --- click-through -------------------------------------------------------------
   await squat.click();
   const day = page.getByRole("region", { name: "Squat day" });
-  check("a day opens in Week view", (await appears(day)) && viewParam(page) === null);
+  check("a day opens in Week view", (await appears(day)) && viewParam(page) === "week");
   check("on its week", await appears(page.getByRole("heading", { name: "Accumulation · Week 1" })));
   check("scrolled to it", (await day.isVisible()) && (await day.boundingBox())!.y < 900);
   check("with the keyboard inside it", await day.evaluate((el) => el.contains(document.activeElement)));

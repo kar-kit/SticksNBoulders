@@ -123,11 +123,21 @@ export function landingFrom(query: Record<string, string | string[] | undefined>
   return landing;
 }
 
-/** How the editor shows the program: one week at a time, or every week on a calendar. */
+/** How the editor shows the program: every week on a calendar, or one week at a time. */
 export type EditorView = "week" | "calendar";
 
-/** `?view=calendar`, read back. Anything else is the week view, the default. */
+/**
+ * The editor's view, read back out of its URL. The calendar is the default: a
+ * coach planning a block wants every week at a glance before opening one. Two
+ * things open the week view instead: `?view=week`, and a landing on a week,
+ * day or line (the "Adjust program" links), which is a request for that exact
+ * place, so it would otherwise wait behind the calendar. Anything else is the
+ * calendar.
+ */
 export function editorViewFrom(query: Record<string, string | string[] | undefined>): EditorView {
   const first = Array.isArray(query.view) ? query.view[0] : query.view;
-  return first === "calendar" ? "calendar" : "week";
+  if (first === "week") return "week";
+  if (first === "calendar") return "calendar";
+  const { weekId, dayId, lineId } = landingFrom(query);
+  return weekId || dayId || lineId ? "week" : "calendar";
 }
