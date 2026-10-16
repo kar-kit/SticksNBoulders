@@ -13,6 +13,7 @@ import { unreadLabel } from "@/lib/review/feedback";
 import { elapsedMs, formatElapsed, lastSessionLabel, sessionDateLabel } from "@/lib/logging/session";
 import { usePrescribedToday, type PrescribedState } from "@/lib/programming/use-prescribed";
 import { basisMaxesFor, lineSummaries, planDay, referenceLookup, targetsFor } from "@/lib/programming/session-plan";
+import { useUnits } from "@/lib/profile/units-context";
 
 /**
  * Today. One question, answered in under a second: what am I doing, and how do
@@ -141,13 +142,14 @@ export function TodayScreen() {
 
 /**
  * The day at a glance: each exercise with its lines, percentages already
- * turned into kilos against the athlete's current maxes. Nobody should do
+ * turned into weights (in the athlete's unit) against their current maxes. Nobody should do
  * arithmetic between sets, or before them.
  */
 function PrescribedPreview({ state }: { state: Extract<PrescribedState, { status: "ready" }> }) {
   const { state: library } = useExerciseLibrary();
   const names = useMemo(() => new Map(library.exercises.map((e) => [e.id, e.name])), [library.exercises]);
   const { day, prescriptions } = state.day;
+  const { unit } = useUnits();
 
   const exercises = useMemo(() => {
     const now = new Date();
@@ -157,10 +159,10 @@ function PrescribedPreview({ state }: { state: Extract<PrescribedState, { status
       const maxes = basisMaxesFor(planned.exerciseId, state.maxes.entries, state.maxes.estimated, now);
       return {
         id: planned.exerciseId,
-        lines: lineSummaries(planned, targetsFor(planned, maxes, [], references)),
+        lines: lineSummaries(planned, targetsFor(planned, maxes, [], references, unit)),
       };
     });
-  }, [prescriptions, state.maxes, names]);
+  }, [prescriptions, state.maxes, names, unit]);
 
   return (
     <section aria-label="Today's session" className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">

@@ -37,6 +37,12 @@ vi.mock("@/lib/exercises/library-context", () => ({
 
 type Prescribed = ReturnType<typeof import("@/lib/programming/use-prescribed").usePrescribedToday>;
 const NONE: Prescribed = { status: "none", day: null, maxes: { entries: [], estimated: new Map() } };
+// The athlete's unit. Kilos unless a test says otherwise.
+const units = vi.hoisted(() => ({ unit: "kg" as "kg" | "lb" }));
+vi.mock("@/lib/profile/units-context", () => ({
+  useUnits: () => ({ unit: units.unit, setUnit: vi.fn() }),
+}));
+
 const prescribed = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock("@/lib/programming/use-prescribed", () => ({
   usePrescribedToday: () => prescribed.value,
@@ -74,6 +80,7 @@ function setup(overrides: Partial<typeof training.value> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  units.unit = "kg";
   prescribed.value = NONE;
   badge.hasCoach = null;
   badge.unread = 0;
@@ -232,6 +239,14 @@ describe("Today, with a prescribed day", () => {
     prescribed.value = ready();
     setup();
     expect(screen.getByText("4 × 6 · 85 kg (72.5%), stop at RPE 8")).toBeInTheDocument();
+  });
+
+  it("turns it into pounds on pound plates for an athlete who reads them", () => {
+    // 72.5% of 120 kg is 87 kg, or 191.8 lb: 190 on pound plates.
+    units.unit = "lb";
+    prescribed.value = ready();
+    setup();
+    expect(screen.getByText("4 × 6 · 190 lb (72.5%), stop at RPE 8")).toBeInTheDocument();
   });
 
   it("prices a line referencing another lift off that lift's max, and names it", () => {

@@ -7,6 +7,7 @@ import { createMemoryStore } from "@/lib/offline/memory-store";
 import { rememberRest } from "@/lib/logging/rest-store";
 import { attachQueue, enqueue, resetQueueForTests } from "@/lib/offline/client";
 import type { QueueStore } from "@/lib/offline/queue";
+import { UnitsProvider } from "@/lib/profile/units-context";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -99,6 +100,19 @@ vi.mock("@/appwrite/browser-client", () => ({
   }),
 }));
 
+// The athlete's profile, read by the real UnitsProvider in the pounds tests.
+// Nothing else on this screen reads it, and outside the provider it is kilos.
+const profile = vi.hoisted(() => ({ units: "kg" as "kg" | "lb" }));
+vi.mock("@/lib/profile/profile-store", () => ({
+  fetchProfile: async (userId: string) => ({
+    userId,
+    displayName: "Joey",
+    sex: null,
+    units: profile.units,
+    avatarFileId: null,
+  }),
+}));
+
 const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
   id: "s1",
   clientSessionId: "c1",
@@ -111,7 +125,10 @@ const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
 
 const squat: Exercise = { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true };
 
-function setup(overrides: Record<string, unknown> = {}, userOptions: Parameters<typeof userEvent.setup>[0] = {}) {
+function setup(
+  { withUnits = false, ...overrides }: Record<string, unknown> = {},
+  userOptions: Parameters<typeof userEvent.setup>[0] = {},
+) {
   const start = vi.fn(async () => session());
   const finish = vi.fn(async () => {});
   training.value = {
@@ -123,7 +140,15 @@ function setup(overrides: Record<string, unknown> = {}, userOptions: Parameters<
     reload: vi.fn(),
     ...overrides,
   };
-  const { unmount } = render(<LogScreen />);
+  const { unmount } = render(
+    withUnits ? (
+      <UnitsProvider userId="joey">
+        <LogScreen />
+      </UnitsProvider>
+    ) : (
+      <LogScreen />
+    ),
+  );
   return { start, finish, unmount, user: userEvent.setup(userOptions) };
 }
 
@@ -147,6 +172,7 @@ beforeEach(() => {
   targets.value = null;
   linkRead.rows = [];
   linkRead.offline = false;
+  profile.units = "kg";
 });
 
 describe("with no session running", () => {
@@ -1588,5 +1614,69 @@ describe("a set followed into the queue", () => {
     expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("150");
     expect(removeSet).toHaveBeenCalledWith("b", expect.objectContaining({ exerciseId: "squat" }));
     expect((await store.all()).filter((op) => op.kind === "set.delete")).toEqual([]);
+  });
+});
+
+describe("an athlete who reads pounds", () => {
+  // The kg/lb preference used to change nothing: 225 typed by an athlete who
+  // had picked Pounds was stored as 225 kg (test audit 9 Oct 2026, B3).
+  beforeEach(() => {
+    profile.units = "lb";
+  });
+
+  const addSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+  };
+  const press = async (user: ReturnType<typeof userEvent.setup>, keys: string) => {
+    for (const key of [...keys]) {
+      await user.click(screen.getByRole("button", { name: key === "." ? "Decimal point" : key }));
+    }
+  };
+
+  it("stores 225 lb typed on the pad as its kilos, not as 225 kg", async () => {
+    const { user } = setup({ active: session(), withUnits: true });
+    await addSquat(user);
+
+    await user.click(await screen.findByRole("button", { name: "Set 1 weight in pounds" }));
+    expect(screen.getByText("Weight, lb")).toBeInTheDocument();
+    await press(user, "225");
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await press(user, "5");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ loadKg: 102.058, reps: 5 });
+    // And reads back as exactly what was typed.
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("225");
+  });
+
+  it("prefills the next set in pounds, so a straight set needs nothing typed and nothing drifts", async () => {
+    const { user } = setup({ active: session(), withUnits: true });
+    await addSquat(user);
+    await user.click(await screen.findByRole("button", { name: "Set 1 weight in pounds" }));
+    await press(user, "225");
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await press(user, "5");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+
+    expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("225");
+    // Opening the pad on it starts from the same 225, not from its kilos.
+    await user.click(screen.getByRole("button", { name: "Set 2 weight in pounds" }));
+    expect(screen.getByRole("status")).toHaveTextContent("225");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+    expect(logSet.mock.calls[1][0]).toMatchObject({ loadKg: 102.058 });
+  });
+
+  it("shows sets already logged in kilos as pounds", async () => {
+    storedSets.value = [
+      { exerciseId: "squat", clientSetId: "a", loadKg: 100, reps: 5, rpe: 8, isWarmup: false, loggedAt: new Date() },
+    ];
+    setup({ active: session(), withUnits: true });
+    const row = await screen.findByRole("group", { name: "Set 1" });
+    await waitFor(() => expect(row).toHaveTextContent("220.5"));
   });
 });

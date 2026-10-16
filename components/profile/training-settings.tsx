@@ -17,6 +17,7 @@ import {
   type Units,
 } from "@/lib/profile/profile";
 import { ensureMyProfile, saveProfile } from "@/lib/profile/profile-store";
+import { useUnits } from "@/lib/profile/units-context";
 
 /**
  * TRAINING, from the Profile & Settings blueprint.
@@ -24,7 +25,8 @@ import { ensureMyProfile, saveProfile } from "@/lib/profile/profile-store";
  * Three fields, and only one of them is interesting. The name is what a coach
  * sees in their rail -- until this ticket nothing ever wrote a profile row, so
  * that rail was blank for everyone. Units are a display preference; everything
- * is stored in kilograms regardless.
+ * is stored in kilograms regardless. Choosing one here moves every athlete
+ * screen to it at once, through `UnitsProvider`.
  *
  * Sex is the one that matters, because DOTS has two coefficient sets and no
  * sensible default between them. The blueprint calls it required; the column is
@@ -46,6 +48,7 @@ export function TrainingSettings() {
   const [draftName, setDraftName] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { setUnit } = useUnits();
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +88,7 @@ export function TrainingSettings() {
   const apply = async (edit: Partial<Profile>) => {
     const next = { ...profile, ...edit };
     setState({ status: "ready", profile: next });
+    if (edit.units) setUnit(edit.units);
     setSaving(true);
     try {
       await saveProfile(profile.userId, {
@@ -96,6 +100,7 @@ export function TrainingSettings() {
       // Put it back rather than leaving the screen claiming something the
       // server does not hold. A wrong sex here is a wrong DOTS score later.
       setState({ status: "ready", profile });
+      if (edit.units) setUnit(profile.units);
     } finally {
       setSaving(false);
     }

@@ -120,3 +120,23 @@ export async function recordAttempt(fileId: string): Promise<void> {
     undefined,
   );
 }
+
+/**
+ * Takes back an attempt that `recordAttempt` counted up front.
+ *
+ * For a retry that never reached the file -- no session to send it with. The
+ * attempt cap is for files the server keeps failing on, not for an athlete who
+ * was signed out.
+ */
+export async function refundAttempt(fileId: string): Promise<void> {
+  await withStore(
+    "readwrite",
+    async (store) => {
+      const existing = (await promisify(store.get(fileId))) as PendingUpload | undefined;
+      if (existing && existing.attempts > 0) {
+        await promisify(store.put({ ...existing, attempts: existing.attempts - 1 }));
+      }
+    },
+    undefined,
+  );
+}

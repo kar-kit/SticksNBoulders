@@ -1,4 +1,5 @@
 import type { Sex } from "@/lib/profile/profile";
+import { loadNumber, type UnitPreference } from "@/lib/units";
 import type { Exercise } from "@/lib/exercises/match";
 import {
   AVERAGE_DAYS,
@@ -319,6 +320,8 @@ export function dotsFor(input: DotsInput): DotsResult {
  */
 export const formatDots = (score: number): string => score.toFixed(1);
 
-/** "212.5 / 140 / 200", in competition order, as the blueprint writes it. */
-export const formatTotalBreakdown = (lifts: readonly LiftBest[]): string =>
-  lifts.map((lift) => String(Math.round(lift.valueKg * 2) / 2)).join(" / ");
+/** "212.5 / 140 / 200", in competition order, as the blueprint writes it. In the reader's unit. */
+export const formatTotalBreakdown = (lifts: readonly LiftBest[], unit: UnitPreference = "kg"): string =>
+  lifts
+    .map((lift) => (unit === "kg" ? String(Math.round(lift.valueKg * 2) / 2) : loadNumber(lift.valueKg, unit)))
+    .join(" / ");

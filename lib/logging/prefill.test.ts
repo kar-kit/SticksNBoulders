@@ -1,4 +1,5 @@
 import { formatNumber, resolvePrefill } from "./prefill";
+import { loadFromInput } from "@/lib/units";
 
 const prescription = { loadKg: 142.5, reps: 5 };
 const suggestion = { loadKg: 150, fromRpe: 7, fromLoadKg: 142.5 };
@@ -131,5 +132,19 @@ describe("formatNumber", () => {
 
   it("trims floating-point noise rather than showing it to a lifter", () => {
     expect(formatNumber(0.1 + 0.2)).toBe("0.3");
+  });
+});
+
+describe("the suggestion note for an athlete who reads pounds", () => {
+  it("names the set it came from in pounds, so 315 never reads as 142.9", () => {
+    const fromLoadKg = loadFromInput(315, "lb");
+    const prefill = resolvePrefill({ unit: "lb", suggestion: { loadKg: 145, fromRpe: 7, fromLoadKg } });
+    expect(prefill.note).toBe("suggested from RPE 7 @ 315");
+    // The load itself is still the stored kilos; the row converts it.
+    expect(prefill.loadKg).toBe(145);
+  });
+
+  it("is in kilos by default", () => {
+    expect(resolvePrefill({ suggestion }).note).toBe("suggested from RPE 7 @ 142.5");
   });
 });

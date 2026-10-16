@@ -93,3 +93,21 @@ describe("marking a set as a warm-up", () => {
     expect(rpeAfterWarmupChange(false, 8)).toBe(8);
   });
 });
+
+describe("a load typed in pounds", () => {
+  const pounds = (value: number | null = null) => beginEdit("load", value, "lb");
+
+  it("takes one decimal, which is all the screen shows back", () => {
+    expect(padValue(type(pounds(), "225.25"))).toBe(225.2);
+  });
+
+  it("still takes two in kilos, for micro-plates", () => {
+    expect(padValue(type(beginEdit("load", null, "kg"), "142.25"))).toBe(142.25);
+    expect(padValue(type(load(), "142.25"))).toBe(142.25);
+  });
+
+  it("remembers the unit it is typing in, and only for a load", () => {
+    expect(pounds(225).unit).toBe("lb");
+    expect(beginEdit("reps", 5, "lb").unit).toBeUndefined();
+  });
+});

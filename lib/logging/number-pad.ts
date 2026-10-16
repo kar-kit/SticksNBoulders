@@ -9,6 +9,8 @@
  * a wrong number in someone's training log.
  */
 
+import { LOAD_DECIMALS, type UnitPreference } from "@/lib/units";
+
 export type PadField = "load" | "reps";
 export type PadKey = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "." | "back";
 
@@ -18,6 +20,12 @@ export interface PadState {
   text: string;
   /** The next digit replaces everything, the way a selected value behaves. */
   replacing: boolean;
+  /**
+   * The unit a load is being typed in. Absent means kilos. The pad holds the
+   * number as the athlete reads it; the screen converts to kilos on the way
+   * to the set (lib/units.ts `loadFromInput`).
+   */
+  unit?: UnitPreference;
 }
 
 /** Load takes one decimal place beyond the smallest plate; reps are whole. */
@@ -27,13 +35,25 @@ const LIMITS: Record<PadField, { integerDigits: number; decimals: number }> = {
   reps: { integerDigits: 3, decimals: 0 },
 };
 
-export function beginEdit(field: PadField, value: number | null): PadState {
+/** `value` is in the athlete's unit, already converted from the stored kilos. */
+export function beginEdit(field: PadField, value: number | null, unit?: UnitPreference): PadState {
   return {
     field,
     text: value === null || !Number.isFinite(value) ? "" : stripTrailingZeroes(String(value)),
     // True even when empty, so the first keypress behaves the same either way.
     replacing: true,
+    ...(field === "load" && unit ? { unit } : {}),
   };
+}
+
+/**
+ * The pad's limits for a state. A load in pounds takes one decimal, not two:
+ * pound totals move in halves even on micro-plates, and one decimal is what
+ * the screen shows back -- so nothing typed can read back differently.
+ */
+function limitsOf(state: PadState): { integerDigits: number; decimals: number } {
+  const limits = LIMITS[state.field];
+  return state.field === "load" && state.unit ? { ...limits, decimals: LOAD_DECIMALS[state.unit] } : limits;
 }
 
 function stripTrailingZeroes(text: string): string {
@@ -41,7 +61,7 @@ function stripTrailingZeroes(text: string): string {
 }
 
 export function press(state: PadState, key: PadKey): PadState {
-  const limits = LIMITS[state.field];
+  const limits = limitsOf(state);
 
   if (key === "back") {
     // Backspace always edits what is there rather than clearing it: an athlete

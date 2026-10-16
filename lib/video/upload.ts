@@ -6,6 +6,7 @@ import {
   forgetUpload,
   pendingUploads,
   recordAttempt,
+  refundAttempt,
   rememberUpload,
 } from "./pending-store";
 import { uploadResumable } from "./resumable-upload";
@@ -46,7 +47,16 @@ export const MAX_UPLOAD_ATTEMPTS = 5;
 export type UploadResult =
   | { ok: true; fileId: string }
   | ClipRejection
+  /**
+   * Did not finish, but the clip is kept on the phone and goes by itself --
+   * on the next app start or the next sign-in. Never deleted for this.
+   */
+  | { ok: false; reason: "pending"; message: string }
   | { ok: false; reason: "failed"; message: string };
+
+const KEPT_MESSAGE = "That clip didn't finish uploading. Your set is saved — it will carry on by itself.";
+const SIGNED_OUT_MESSAGE =
+  "Your set is saved and the clip is kept on this phone. It will upload once you sign in again.";
 
 export interface UploadOptions {
   /** 0-100, for the progress line under the row. */
@@ -96,16 +106,19 @@ export async function attachClipToSet(
 
   if (!result.ok) {
     // Kept on a retryable failure so the next app start picks it up; dropped
-    // on a permanent one, because a file the server will never accept should
-    // not be retried until the quota fills.
-    if (!result.retryable) await forgetUpload(fileId);
-    return {
-      ok: false,
-      reason: "failed",
-      message: result.retryable
-        ? "That clip didn't finish uploading. Your set is saved — it will carry on by itself."
-        : result.message,
-    };
+    // only on a permanent one, because a file the server will never accept
+    // should not be retried until the quota fills. An expired session is
+    // retryable: the transport already tried one fresh JWT, and what is left
+    // is waiting for the athlete to sign in -- which also re-runs the resume.
+    if (result.retryable) {
+      return {
+        ok: false,
+        reason: "pending",
+        message: result.authExpired ? SIGNED_OUT_MESSAGE : KEPT_MESSAGE,
+      };
+    }
+    await forgetUpload(fileId);
+    return { ok: false, reason: "failed", message: result.message };
   }
 
   await forgetUpload(fileId);
@@ -155,6 +168,9 @@ export async function resumeInterruptedUploads(athleteId: string): Promise<{ res
       resumed += 1;
     } else {
       if (!result.retryable) await forgetUpload(entry.fileId);
+      // Being signed out says nothing about the file. Counted, five app starts
+      // without a session would abandon a clip the server never refused.
+      if (result.authExpired) await refundAttempt(entry.fileId);
       failed += 1;
     }
   }

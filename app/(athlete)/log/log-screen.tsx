@@ -70,6 +70,8 @@ import {
 import { nextSetSuggestion } from "@/lib/logging/suggestion-gate";
 import { setTargetFor } from "@/lib/logging/set-targets";
 import { useSuggestionMode } from "@/lib/coach/use-suggestion-mode";
+import { useUnits } from "@/lib/profile/units-context";
+import { loadFromInput, loadIn, loadNumber, type UnitPreference } from "@/lib/units";
 
 /**
  * Log Session. The screen this product lives or dies on.
@@ -114,6 +116,11 @@ export function LogScreen() {
    * (Order 28). Cached on the device, so it still applies with no signal.
    */
   const { mode: suggestionMode } = useSuggestionMode(athleteId);
+  /**
+   * The athlete's weight unit. Every load in state is kilos; the pad types in
+   * this unit and converts on the way in, the rows convert on the way out.
+   */
+  const { unit } = useUnits();
   const [phase, setPhase] = useState<Phase>("logging");
   /** What Appwrite returned for this session. Replaced whenever it is read. */
   const [stored, setStored] = useState<UnnamedSet[]>([]);
@@ -217,9 +224,9 @@ export function LogScreen() {
       const maxes = basisMaxesFor(exerciseId, prescribed.maxes.entries, prescribed.maxes.estimated, now);
       // A line priced off another lift reads that lift's stored max, never this exercise's sets.
       const references = referenceLookup(prescribed.maxes.entries, prescribed.maxes.estimated, now, nameFor);
-      return targetsFor(planned, maxes, logged.map((s) => ({ ...s, rpe: s.rpe ?? null })), references);
+      return targetsFor(planned, maxes, logged.map((s) => ({ ...s, rpe: s.rpe ?? null })), references, unit);
     },
-    [plan, prescribed.maxes, nameFor],
+    [plan, prescribed.maxes, nameFor, unit],
   );
 
   const readSession = useRef<string | null>(null);
@@ -346,8 +353,8 @@ export function LogScreen() {
       prescribeNewRows(before, after, (exerciseId) => {
         const logged: LoggedForTarget[] = setsOf(exerciseId);
         return { logged, targets: targetsOf(exerciseId, logged) };
-      }),
-    [setsOf, targetsOf],
+      }, unit),
+    [setsOf, targetsOf, unit],
   );
 
   const focused = plans.find((row) => row.clientSetId === focusId) ?? null;
@@ -418,6 +425,7 @@ export function LogScreen() {
       suggestionMode,
       { loadKg: last.loadKg, reps: last.reps, rpe: last.rpe ?? null, isWarmup: last.isWarmup },
       setTargetFor(prescribedNext),
+      unit,
     );
   };
 
@@ -432,7 +440,7 @@ export function LogScreen() {
     setSelectedId(null);
     const next = prescribe(
       plans,
-      addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId, suggestionFor(exerciseId)),
+      addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId, suggestionFor(exerciseId), unit),
     );
     setPlans(next);
     // Nothing was being entered anywhere, so the new row's exercise is now
@@ -452,7 +460,11 @@ export function LogScreen() {
       return;
     }
     setRpeOpen(false);
-    setPad(beginEdit(field, field === "load" ? row.loadKg : row.reps));
+    setPad(
+      field === "load"
+        ? beginEdit("load", row.loadKg === null ? null : loadIn(row.loadKg, unit), unit)
+        : beginEdit("reps", row.reps),
+    );
   };
 
   const updateFocused = (change: (row: PlannedRow) => PlannedRow) => {
@@ -461,7 +473,9 @@ export function LogScreen() {
 
   const applyPad = (next: PadState) => {
     setPad(next);
-    const value = padValue(next);
+    const typed = padValue(next);
+    // A load is typed in the athlete's unit and stored in kilos, always.
+    const value = next.field === "load" && typed !== null ? loadFromInput(typed, next.unit ?? "kg") : typed;
     updateFocused((row) => ({
       ...row,
       [next.field === "load" ? "loadKg" : "reps"]: value,
@@ -693,7 +707,7 @@ export function LogScreen() {
   };
 
   if (phase === "finished") {
-    return <FinishedSummary summary={summary} onDone={() => router.push("/today")} />;
+    return <FinishedSummary summary={summary} unit={unit} onDone={() => router.push("/today")} />;
   }
 
   if (!active) {
@@ -813,6 +827,7 @@ export function LogScreen() {
               planned={rowsOf(plans, block.id)}
               focusedId={pad !== null || rpeOpen ? focusId : null}
               target={targetFor(block.id)}
+              unit={unit}
               onFocus={focusField}
               onConfirm={(id) => void confirmSet(id)}
               onDiscard={discardPlanned}
@@ -1012,9 +1027,11 @@ export function LogScreen() {
  */
 function FinishedSummary({
   summary,
+  unit,
   onDone,
 }: {
   summary: ReturnType<typeof summariseSession>;
+  unit: UnitPreference;
   onDone: () => void;
 }) {
   return (
@@ -1022,7 +1039,10 @@ function FinishedSummary({
       <h1 className="m-0 text-display font-semibold">Session done</h1>
       <dl className="m-0 grid grid-cols-2 gap-3">
         <Stat label="Sets" value={String(summary.setCount)} />
-        <Stat label="Tonnage" value={`${formatNumber(summary.tonnageKg)} kg`} />
+        <Stat
+          label="Tonnage"
+          value={unit === "kg" ? `${formatNumber(summary.tonnageKg)} kg` : `${loadNumber(summary.tonnageKg, unit)} ${unit}`}
+        />
         <Stat label="Exercises" value={String(summary.exerciseCount)} />
         <Stat label="Warm-ups" value={String(summary.warmupCount)} />
       </dl>

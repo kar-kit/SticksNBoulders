@@ -18,6 +18,8 @@ import {
   historyCards,
 } from "@/lib/logging/history";
 import { sessionDateLabel } from "@/lib/logging/session";
+import { useUnits } from "@/lib/profile/units-context";
+import { loadIn } from "@/lib/units";
 import { unsyncedIds } from "@/lib/logging/offline-view";
 import { subscribeToQueue } from "@/lib/offline/client";
 import type { QueuedOp } from "@/lib/offline/queue";
@@ -35,6 +37,7 @@ import type { QueuedOp } from "@/lib/offline/queue";
  */
 export function HistoryScreen() {
   const { state: sessionState } = useSession();
+  const { unit } = useUnits();
   const { state: library } = useExerciseLibrary();
   const { state: training } = useTrainingSessions();
 
@@ -139,7 +142,7 @@ export function HistoryScreen() {
                     ) : null}
                     <CardMeta>
                       {card.setCount} set{card.setCount === 1 ? "" : "s"}
-                      {card.tonnageKg > 0 ? ` · ${formatTonnage(card.tonnageKg)} kg` : ""}
+                      {card.tonnageKg > 0 ? ` · ${formatTonnage(loadIn(card.tonnageKg, unit))} ${unit}` : ""}
                     </CardMeta>
                   </Card>
                 </Link>

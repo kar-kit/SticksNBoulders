@@ -20,6 +20,7 @@ import {
   type DayState,
 } from "@/lib/programming/my-program";
 import { basisMaxesFor, lineSummaries, planDay, referenceLookup, targetsFor } from "@/lib/programming/session-plan";
+import { useUnits } from "@/lib/profile/units-context";
 import { useMyProgram } from "@/lib/programming/use-my-program";
 import type { AthleteMaxes } from "@/lib/programming/use-prescribed";
 
@@ -233,6 +234,7 @@ function DayDetail({
   resuming: boolean;
   onStart: () => void;
 }) {
+  const { unit } = useUnits();
   const exercises = useMemo(() => {
     const now = new Date();
     const references = referenceLookup(maxes.entries, maxes.estimated, now, (id) => names.get(id));
@@ -240,10 +242,10 @@ function DayDetail({
       id: planned.exerciseId,
       lines: lineSummaries(
         planned,
-        targetsFor(planned, basisMaxesFor(planned.exerciseId, maxes.entries, maxes.estimated, now), [], references),
+        targetsFor(planned, basisMaxesFor(planned.exerciseId, maxes.entries, maxes.estimated, now), [], references, unit),
       ),
     }));
-  }, [day.prescriptions, maxes, names]);
+  }, [day.prescriptions, maxes, names, unit]);
 
   return (
     <div className="mx-2 mb-2 flex flex-col gap-3 rounded-control bg-surface-2 p-3">

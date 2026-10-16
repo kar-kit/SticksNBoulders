@@ -23,6 +23,8 @@ export interface RollupSet {
   isWarmup: boolean;
   /** Null where no honest estimate exists. See lib/strength/e1rm.ts. */
   e1rmKg: number | null;
+  /** When the set was logged. Breaks a heaviest-set tie: the later one wins. */
+  loggedAt: Date;
 }
 
 export interface Rollup {
@@ -129,6 +131,7 @@ export function rollupFrom(sets: readonly RollupSet[]): Rollup {
   let bestE1rmKg: number | null = null;
   let bestSingleKg: number | null = null;
   let bestSingleReps: number | null = null;
+  let bestSingleAt = 0;
   let bestReps: number | null = null;
   let bestRepsLoadKg: number | null = null;
 
@@ -140,16 +143,20 @@ export function rollupFrom(sets: readonly RollupSet[]): Rollup {
       bestE1rmKg = set.e1rmKg;
     }
 
-    // Heaviest load, and on a tie the one done for more reps -- 140x5 is a
-    // better week than 140x3, and a rollup that reported them as the same
-    // would flatten exactly the progress an athlete is looking for.
+    // Heaviest load, and on a tie the most recent one (Joey, 11 Oct 2026):
+    // 140x3 logged after 140x5 is the week's heaviest set as it ended. The
+    // same rule personalRecords applies across weeks. Sets logged at the same
+    // instant fall back to input order, later wins, so the result never
+    // depends on a sort the caller may not have done.
+    const at = set.loggedAt.getTime();
     if (
       bestSingleKg === null ||
       set.loadKg > bestSingleKg ||
-      (set.loadKg === bestSingleKg && set.reps > (bestSingleReps ?? 0))
+      (set.loadKg === bestSingleKg && at >= bestSingleAt)
     ) {
       bestSingleKg = set.loadKg;
       bestSingleReps = set.reps;
+      bestSingleAt = at;
     }
 
     // Most reps, and on a tie the heavier one: 100x12 beats 60x12, and a rep

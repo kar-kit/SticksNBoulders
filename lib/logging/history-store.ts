@@ -16,8 +16,12 @@ import type { UnnamedSet } from "./session-store";
  * of twenty-five.
  */
 
-/** Twenty-five sessions of a dozen sets each, with room to spare. */
-const MAX_SETS = 500;
+/**
+ * Rows per page. Twenty-five sessions of a powerlifting day with warm-ups is
+ * 750 sets or more, so one page is not enough and the read pages on a cursor;
+ * 500 keeps a normal screen to two round trips.
+ */
+const PAGE = 500;
 
 interface SetRow {
   $id: string;
@@ -73,13 +77,24 @@ export async function fetchSetsForSessions(sessionIds: readonly string[]): Promi
   if (sessionIds.length === 0) return [];
 
   const { tables, databaseId } = browserAppwrite();
-  const rows = await tables.listRows({
-    databaseId,
-    tableId: "sets",
-    queries: [Query.equal("session_id", [...sessionIds]), Query.limit(MAX_SETS)],
-  });
+  const rows: Array<Record<string, unknown> & { $id: string }> = [];
+  let cursor: string | null = null;
+  // Ordered by $id for the cursor: the one order guaranteed unique, so a page
+  // boundary cannot fall between two sets. setsBySession orders them for show.
+  for (;;) {
+    const queries = [Query.equal("session_id", [...sessionIds]), Query.orderAsc("$id"), Query.limit(PAGE)];
+    if (cursor) queries.push(Query.cursorAfter(cursor));
+    const page: { rows: Array<Record<string, unknown> & { $id: string }> } = await tables.listRows({
+      databaseId,
+      tableId: "sets",
+      queries,
+    });
+    rows.push(...page.rows);
+    if (page.rows.length < PAGE) break;
+    cursor = page.rows[page.rows.length - 1].$id;
+  }
 
-  return authenticRows("sets", rows.rows)
+  return authenticRows("sets", rows)
     .map((row) => toSet(row as unknown as SetRow))
     .filter((set): set is HistorySet => set !== null);
 }

@@ -17,6 +17,8 @@ import { beginEdit, padValue, rpeAfterWarmupChange, type PadState } from "@/lib/
 import { canComplete, type RpeValue } from "@/lib/logging/set";
 import { formatDuration, formatTonnage } from "@/lib/logging/history";
 import { sessionDateLabel, summariseSession, type SessionSet } from "@/lib/logging/session";
+import { useUnits } from "@/lib/profile/units-context";
+import { loadFromInput, loadIn } from "@/lib/units";
 
 /**
  * One past session, every set as it was logged.
@@ -48,6 +50,8 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
   const { state: sessionState } = useSession();
   const { state: library } = useExerciseLibrary();
   const { state: training } = useTrainingSessions();
+  /** Corrections are typed in the athlete's unit and stored in kilos. */
+  const { unit } = useUnits();
 
   const [sets, setSets] = useState<HistorySet[] | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -111,7 +115,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
       rpe: (set.rpe as RpeValue | null) ?? null,
       isWarmup: set.isWarmup,
     });
-    setPad(beginEdit("load", set.loadKg));
+    setPad(beginEdit("load", loadIn(set.loadKg, unit), unit));
     setRpeOpen(false);
   };
 
@@ -131,12 +135,17 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
       return;
     }
     setRpeOpen(false);
-    setPad(beginEdit(field, field === "load" ? draft.loadKg : draft.reps));
+    setPad(
+      field === "load"
+        ? beginEdit("load", draft.loadKg === null ? null : loadIn(draft.loadKg, unit), unit)
+        : beginEdit("reps", draft.reps),
+    );
   };
 
   const applyPad = (next: PadState) => {
     setPad(next);
-    const value = padValue(next);
+    const typed = padValue(next);
+    const value = next.field === "load" && typed !== null ? loadFromInput(typed, next.unit ?? "kg") : typed;
     setDraft((prev) => (prev ? { ...prev, [next.field === "load" ? "loadKg" : "reps"]: value } : prev));
   };
 
@@ -201,7 +210,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
           <p className="m-0 font-mono text-meta text-muted-2">
             {session.finishedAt ? formatDuration(session.finishedAt.getTime() - session.startedAt.getTime()) : "running"}
             {` · ${summary.setCount} set${summary.setCount === 1 ? "" : "s"}`}
-            {summary.tonnageKg > 0 ? ` · ${formatTonnage(summary.tonnageKg)} kg` : ""}
+            {summary.tonnageKg > 0 ? ` · ${formatTonnage(loadIn(summary.tonnageKg, unit))} ${unit}` : ""}
           </p>
         ) : null}
       </header>
@@ -223,7 +232,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                   {block.name} <span aria-hidden className="text-muted-2">›</span>
                 </Link>
               </h2>
-              <SetRowHeader />
+              <SetRowHeader unit={unit} />
               <div className="flex flex-col gap-1.5">
                 {block.sets.map((set, at) => {
                   const index = set.isWarmup
@@ -240,6 +249,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                       onPressReps={() => focusField("reps")}
                       onPressRpe={() => focusField("rpe")}
                       onConfirm={save}
+                      unit={unit}
                     />
                   ) : (
                     <button
@@ -253,6 +263,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                         index={index}
                         set={{ ...set, rpe: (set.rpe as RpeValue | null) ?? null }}
                         state="logged"
+                        unit={unit}
                       />
                     </button>
                   );

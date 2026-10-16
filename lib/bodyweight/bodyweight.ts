@@ -7,6 +7,8 @@
  * average quietly lies.
  */
 
+import { loadFromInput, loadNumber, type UnitPreference } from "@/lib/units";
+
 export interface BodyweightEntry {
   id: string;
   athleteId: string;
@@ -34,20 +36,32 @@ export type WeightRejection =
   | { ok: false; reason: "not-a-number" }
   | { ok: false; reason: "out-of-range" };
 
-export function checkWeight(value: number): { ok: true; weightKg: number } | WeightRejection {
+/**
+ * `value` is what the athlete typed, in their unit. The answer is kilos.
+ *
+ * A pound reading is kept to one decimal in pounds -- what the scale showed --
+ * and stored to the gram rather than to 0.1 kg, because rounding it to a
+ * tenth of a kilo would read 180 lb back as 179.9 (lib/units.ts). The range
+ * is the same kilos either way.
+ */
+export function checkWeight(
+  value: number,
+  unit: UnitPreference = "kg",
+): { ok: true; weightKg: number } | WeightRejection {
   if (!Number.isFinite(value)) return { ok: false, reason: "not-a-number" };
-  if (value < MIN_PLAUSIBLE_KG || value > MAX_PLAUSIBLE_KG) {
+  const asKg = loadFromInput(value, unit);
+  if (asKg < MIN_PLAUSIBLE_KG || asKg > MAX_PLAUSIBLE_KG) {
     return { ok: false, reason: "out-of-range" };
   }
   // One decimal place, which is what a bathroom scale shows. Storing more
   // invents precision nobody measured.
-  return { ok: true, weightKg: Math.round(value * 10) / 10 };
+  return { ok: true, weightKg: loadFromInput(Math.round(value * 10) / 10, unit) };
 }
 
-export const weightRejectionMessage = (rejection: WeightRejection): string =>
+export const weightRejectionMessage = (rejection: WeightRejection, unit: UnitPreference = "kg"): string =>
   rejection.reason === "not-a-number"
     ? "That isn't a number."
-    : `A weight should be between ${MIN_PLAUSIBLE_KG} and ${MAX_PLAUSIBLE_KG} kg — check the decimal point.`;
+    : `A weight should be between ${loadNumber(MIN_PLAUSIBLE_KG, unit)} and ${loadNumber(MAX_PLAUSIBLE_KG, unit)} ${unit} — check the decimal point.`;
 
 /**
  * The day a weigh-in belongs to, in the athlete's own timezone.

@@ -10,6 +10,8 @@ import {
   type DotsResult,
 } from "@/lib/strength/dots";
 import { fetchDots } from "@/lib/strength/dots-store";
+import { useUnits } from "@/lib/profile/units-context";
+import { loadIn } from "@/lib/units";
 
 /**
  * The DOTS figure, on both screens.
@@ -39,6 +41,8 @@ const liftList = (lifts: readonly CompetitionLift[]): string =>
 
 export function DotsBlock({ athleteId, audience }: DotsBlockProps) {
   const [state, setState] = useState<State>({ status: "loading" });
+  // The coach side has no units provider, so a coach reads kilos.
+  const { unit } = useUnits();
 
   useEffect(() => {
     let cancelled = false;
@@ -79,14 +83,15 @@ export function DotsBlock({ athleteId, audience }: DotsBlockProps) {
         <Label />
         <p className="m-0 text-display font-bold tabular-nums">{formatDots(result.score)}</p>
         <p className="m-0 text-ui text-muted tabular-nums">
-          from {formatTotalBreakdown(result.lifts)}
+          from {formatTotalBreakdown(result.lifts, unit)}
           {result.stale ? (
             // The bodyweight behind it is older than the averaging window.
             // Said rather than hidden: the coach's panel exists so he stops
             // having to ask, and an unlabelled figure would read as current.
             <span className="text-muted-2">
               {" "}
-              · at {result.bodyweightKg.toFixed(1)}kg from {dayLabel(result.measuredOn)}
+              · at {loadIn(result.bodyweightKg, unit).toFixed(1)}
+              {unit} from {dayLabel(result.measuredOn)}
             </span>
           ) : null}
         </p>

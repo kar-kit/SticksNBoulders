@@ -30,6 +30,12 @@ vi.mock("@/lib/strength/lift-store", () => ({
   fetchRecentSetsFor: async () => data.sets,
 }));
 
+// The athlete's unit. Kilos unless a test says otherwise.
+const units = vi.hoisted(() => ({ unit: "kg" as "kg" | "lb" }));
+vi.mock("@/lib/profile/units-context", () => ({
+  useUnits: () => ({ unit: units.unit, setUnit: vi.fn() }),
+}));
+
 /** Weeks counted back from now, so range filtering is testable without faking time. */
 const WEEK = 7 * 24 * 60 * 60_000;
 const weeksAgo = (n: number) => new Date(Date.now() - n * WEEK);
@@ -61,6 +67,7 @@ const setup = () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  units.unit = "kg";
   library.exercises = [{ id: "dead", name: "Deadlift", normalisedName: "deadlift", isGlobal: true }];
   data.weeks = [
     point(6, { bestE1rmKg: 205, bestSingleKg: 190, bestSingleReps: 2, bestReps: 10, bestRepsLoadKg: 130 }),
@@ -143,6 +150,30 @@ describe("personal records", () => {
     await user.click(screen.getByRole("button", { name: "8w" }));
     expect(screen.getByLabelText("Personal records")).toHaveTextContent("Heaviest single200 × 1");
   });
+
+  it("takes personal records from every week, not the charted range", async () => {
+    // 40 weeks back is outside the default 12w and the 8w range alike, and it
+    // holds the athlete's best single and best estimate.
+    data.weeks = [
+      ...(data.weeks as WeekPoint[]),
+      point(40, { bestE1rmKg: 230, bestSingleKg: 215, bestSingleReps: 1, bestReps: 3, bestRepsLoadKg: 200 }),
+    ];
+    const { user } = setup();
+    const records = await screen.findByLabelText("Personal records");
+    expect(records).toHaveTextContent("Heaviest single215 × 1");
+    expect(records).toHaveTextContent("Best estimated230 kg");
+    await user.click(screen.getByRole("button", { name: "8w" }));
+    expect(screen.getByLabelText("Personal records")).toHaveTextContent("Heaviest single215 × 1");
+    expect(screen.getByLabelText("Personal records")).toHaveTextContent("Best estimated230 kg");
+  });
+
+  it("shows the reps the heaviest set was done for", async () => {
+    // A heavy double is a double. Showing "200 × 1" undersells it, and the
+    // default fixture cannot tell because its heaviest week is a single.
+    data.weeks = [point(3, { bestSingleKg: 200, bestSingleReps: 2 }), point(1, { bestSingleKg: 190, bestSingleReps: 1 })];
+    setup();
+    expect(await screen.findByLabelText("Personal records")).toHaveTextContent("Heaviest single200 × 2");
+  });
 });
 
 describe("recent sets", () => {
@@ -162,5 +193,19 @@ describe("recent sets", () => {
     expect(await screen.findByLabelText("Recent sets")).toHaveTextContent(
       "No working sets logged against this lift yet.",
     );
+  });
+});
+
+describe("for an athlete who reads pounds", () => {
+  it("shows the estimate, the records and the recent sets in pounds", async () => {
+    units.unit = "lb";
+    setup();
+    const estimate = await screen.findByRole("region", { name: "Estimated 1RM" });
+    expect(estimate).toHaveTextContent("468.5 lb");
+    const records = screen.getByRole("region", { name: "Personal records" });
+    expect(records).toHaveTextContent("440.9 × 1");
+    expect(records).toHaveTextContent("468.5 lb");
+    expect(records).not.toHaveTextContent("kg");
+    expect(await screen.findByText("396.8 × 3")).toBeInTheDocument();
   });
 });
