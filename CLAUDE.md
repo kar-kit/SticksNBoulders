@@ -194,6 +194,10 @@ The Notion blueprints fix **layout, hierarchy and behaviour**. They are not visu
 
 Visual design comes through the Claude Design connector. When generating designs, work from the blueprint for that page and keep the wireframe's structure; if the design wants to change the structure, flag it against the blueprint rather than silently diverging.
 
+### Pull requests
+
+Write the PR body to a file outside the repo and pass it with `gh pr create --body-file`. Do not commit it. It used to live at `.github/pr-body.md`, which every PR rewrote, so every merge conflicted on that one path. The path is now gitignored.
+
 ---
 
 ## People
