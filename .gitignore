@@ -53,3 +53,7 @@ next-env.d.ts
 functions/*/dist/
 
 functions/*/dist.tar.gz
+
+# A PR body is written for `gh pr create --body-file`, never committed: tracked, it
+# conflicted on every merge because every PR rewrote the same path.
+.github/pr-body.md
