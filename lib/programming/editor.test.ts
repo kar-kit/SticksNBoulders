@@ -2,12 +2,17 @@ import {
   applyLineOp,
   cellText,
   commitCell,
+  commitProgression,
   describeLoad,
   draftWeeks,
+  loadPreview,
   moveCell,
   parseRepsCell,
   parseRestCell,
   parseSetsCell,
+  parseShorthand,
+  previewDate,
+  progressionText,
   rememberedReference,
   unresolvedWarning,
   weekState,
@@ -50,9 +55,9 @@ describe("the load cell's indicator", () => {
     expect(describeLoad("75%%").kind).toBe("freeform");
   });
 
-  it("says when there is no load at all", () => {
-    expect(describeLoad("")).toEqual({ kind: null, label: "No load" });
-    expect(describeLoad(null)).toEqual({ kind: null, label: "No load" });
+  it("says what an empty load cell takes, rather than a bare \"No load\" that reads as a fault", () => {
+    expect(describeLoad("")).toEqual({ kind: null, label: "No load yet · type 75%, @8 or 142.5" });
+    expect(describeLoad(null)).toEqual({ kind: null, label: "No load yet · type 75%, @8 or 142.5" });
   });
 });
 
@@ -351,5 +356,217 @@ describe("a percentage of another lift (docs/reference-lift.md)", () => {
       rememberedReference(program([[tempo({ referenceExerciseId: "bench" })], [tempo({ referenceExerciseId: null })]]), "tempo"),
     ).toBeNull();
     expect(rememberedReference(program([[tempo({ referenceExerciseId: "cgbp" })], [line()]]), "tempo")).toBe("cgbp");
+  });
+});
+
+describe("the kilos under a load cell (docs/program-layout.md §1)", () => {
+  const names = new Map([
+    ["squat", "Squat"],
+    ["bench", "Bench Press"],
+    ["tempo", "Tempo Bench"],
+  ]);
+  const max = (exerciseId: string, valueKg: number, kind: "training" | "tested" = "training", effectiveFrom = "2026-09-12T00:00:00Z") => ({
+    id: `${exerciseId}-${kind}-${effectiveFrom}`,
+    exerciseId,
+    kind,
+    valueKg,
+    effectiveFrom,
+    recordedBy: "ruairi",
+  });
+  const asOf = new Date("2026-10-15T09:00:00Z");
+  const preview = (
+    l: Prescription,
+    entries: ReturnType<typeof max>[] | "loading" | "failed" | "template",
+    estimated = new Map<string, { valueKg: number; asOf: string }>(),
+    at = asOf,
+  ) =>
+    loadPreview(l, {
+      maxes: typeof entries === "string" ? entries : { entries, estimated },
+      nameOf: (id) => names.get(id),
+      athleteName: "Joey",
+      asOf: at,
+    });
+
+  it("gives the kilos, rounded down to the plates, and the max and date they come from", () => {
+    expect(preview(line({ load: "75%" }), [max("squat", 190)])).toEqual({
+      tone: "resolved",
+      text: "→ 142.5 kg · Squat training max 190, set 12 Sep",
+    });
+    // 72.5% of 150 is 108.75: down to 107.5, never up to 110.
+    expect(preview(line({ load: "72.5%" }), [max("squat", 150)])?.text).toBe("→ 107.5 kg · Squat training max 150, set 12 Sep");
+  });
+
+  it("keeps a cap's ceiling beside the kilos", () => {
+    expect(preview(line({ load: "75% @8" }), [max("squat", 190)])?.text).toBe(
+      "→ 142.5 kg, stop at RPE 8 · Squat training max 190, set 12 Sep",
+    );
+  });
+
+  it("prices a reference row off the competition lift, never the variation's own max", () => {
+    const tempo = line({ exerciseId: "tempo", load: "70%", referenceExerciseId: "bench" });
+    expect(preview(tempo, [max("tempo", 120), max("bench", 150, "training", "2026-10-01T00:00:00Z")])?.text).toBe(
+      "→ 105 kg · Bench Press training max 150, set 1 Oct",
+    );
+  });
+
+  it("reads the kind the cell names: a tested max, or the e1RM with the date of the set behind it", () => {
+    expect(preview(line({ load: "80% of tested" }), [max("squat", 190), max("squat", 200, "tested")])?.text).toBe(
+      "→ 160 kg · Squat tested max 200, set 12 Sep",
+    );
+    const e1rm = new Map([["squat", { valueKg: 182.4, asOf: "2026-10-09T18:00:00Z" }]]);
+    expect(preview(line({ load: "80% of e1rm" }), [], e1rm)?.text).toBe("→ 145 kg · Squat e1RM 182.5, from 9 Oct");
+  });
+
+  it("says which max is missing for whom, what the athlete will see, and offers to add that max", () => {
+    expect(preview(line({ load: "75%" }), [])).toEqual({
+      tone: "missing",
+      text: 'No Squat training max for Joey · they see "75%"',
+      addMax: { exerciseId: "squat", name: "Squat", kind: "training" },
+    });
+    expect(preview(line({ load: "75% of tested" }), [max("squat", 190)])?.addMax).toEqual({
+      exerciseId: "squat",
+      name: "Squat",
+      kind: "tested",
+    });
+    expect(preview(line({ exerciseId: "tempo", load: "70%", referenceExerciseId: "bench" }), [max("tempo", 120)])?.addMax).toEqual({
+      exerciseId: "bench",
+      name: "Bench Press",
+      kind: "training",
+    });
+  });
+
+  it("does not offer to type an e1RM, which only logged sets make", () => {
+    const missing = preview(line({ load: "80% of e1rm" }), [max("squat", 190)]);
+    expect(missing?.text).toBe('No Squat e1RM yet: nothing logged with an RPE · drop "of e1rm" to use the training max');
+    expect(missing?.addMax).toBeUndefined();
+  });
+
+  it("calls a max set in advance early rather than missing", () => {
+    expect(preview(line({ load: "75%" }), [max("squat", 200, "training", "2026-11-01T00:00:00Z")])?.text).toBe(
+      "Squat training max 200 starts 1 Nov · nothing in effect yet",
+    );
+  });
+
+  it("prices a future day off the max in effect that day", () => {
+    const entries = [max("squat", 190), max("squat", 200, "training", "2026-11-01T00:00:00Z")];
+    const now = new Date("2026-10-15T09:00:00");
+    expect(preview(line({ load: "75%" }), entries, undefined, previewDate("2026-11-03", now))?.text).toBe(
+      "→ 150 kg · Squat training max 200, set 1 Nov",
+    );
+    // A past day the athlete has not opened yet is priced as of today.
+    expect(previewDate("2026-10-01", now)).toBe(now);
+    expect(previewDate(null, now)).toBe(now);
+  });
+
+  it("says plainly what it cannot know yet, and what RPE rows and templates do", () => {
+    expect(preview(line({ load: "75%" }), "loading")).toEqual({ tone: "quiet", text: "Kilos appear once Joey's maxes load" });
+    expect(preview(line({ load: "75%" }), "failed")).toEqual({ tone: "quiet", text: "Could not read Joey's maxes · kilos unknown" });
+    expect(preview(line({ load: "75%" }), "template")?.text).toBe("Template · kilos resolve per athlete");
+    expect(preview(line({ load: "@8" }), [max("squat", 190)])?.text).toBe("Athlete picks · no kilos until their first set");
+  });
+
+  it("adds nothing where the kind line says it all: fixed, freeform, empty", () => {
+    for (const load of ["142.5", "work up to a heavy single", null]) expect(preview(line({ load }), [])).toBeNull();
+  });
+});
+
+describe("shorthand: 5x3 @8 fills sets, reps and load", () => {
+  it.each([
+    ["5x3", { setCount: 5, reps: 3, repMax: null }],
+    ["5 x 3", { setCount: 5, reps: 3, repMax: null }],
+    ["5×3 @8", { setCount: 5, reps: 3, repMax: null, load: "@8" }],
+    ["5x3@8", { setCount: 5, reps: 3, repMax: null, load: "@8" }],
+    ["3x5 75%", { setCount: 3, reps: 5, repMax: null, load: "75%" }],
+    ["3x8-10 @7", { setCount: 3, reps: 8, repMax: 10, load: "@7" }],
+    ["4x4 70% of bench", { setCount: 4, reps: 4, repMax: null, load: "70% of bench" }],
+    ["3x @8", { setCount: 3, reps: null, repMax: null, load: "@8" }],
+  ])("reads %s", (text, value) => {
+    expect(parseShorthand(text)).toEqual({ ok: true, value });
+  });
+
+  it("leaves everything that is not shorthand to its own cell's grammar", () => {
+    for (const text of ["5", "75%", "@8", "142.5", "3x75%", "heavy single"]) expect(parseShorthand(text)).toBeNull();
+  });
+
+  it("refuses shorthand whose numbers are out of range, in the cell's own words", () => {
+    expect(parseShorthand("60x3")).toEqual({ ok: false, reason: "Sets is a whole number, 1 to 50" });
+    expect(parseShorthand("3x10-8")).toEqual({ ok: false, reason: "Reps is a number like 5, or a range like 8-10" });
+  });
+
+  const library: Exercise[] = [
+    { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true },
+    { id: "bench", name: "Bench Press", normalisedName: "bench press", isGlobal: true },
+  ];
+
+  it("in the sets cell, fills sets and reps and leaves the load alone", () => {
+    expect(commitCell(line(), "sets", "5x3", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", setCount: 5, reps: 3, repMax: null },
+    });
+  });
+
+  it("in any of the three cells, fills the load too, sending only what changed", () => {
+    expect(commitCell(line(), "reps", "3x5 @8", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", load: "@8" },
+    });
+    expect(commitCell(line(), "load", "5x3 80%", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", setCount: 5, reps: 3, repMax: null, load: "80%" },
+    });
+    expect(commitCell(line(), "load", "3x5 75%", library)).toEqual({ unchanged: true });
+  });
+
+  it("puts `of <lift>` in the reference column, as the load cell always has", () => {
+    expect(commitCell(line(), "sets", "4x4 70% of bench", library)).toEqual({
+      op: {
+        op: "updatePrescription",
+        prescriptionId: "l1",
+        setCount: 4,
+        reps: 4,
+        repMax: null,
+        load: "70%",
+        referenceExerciseId: "bench",
+      },
+    });
+  });
+
+  it("refuses bad shorthand on the cell and sends nothing", () => {
+    expect(commitCell(line(), "sets", "60x3", library)).toEqual({ error: "Sets is a whole number, 1 to 50" });
+  });
+
+  it("still reads a plain number as the cell's own value", () => {
+    expect(commitCell(line(), "sets", "4", library)).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", setCount: 4 },
+    });
+  });
+});
+
+describe("a progression cell", () => {
+  it("shows a line as one shorthand that reads back unchanged", () => {
+    expect(progressionText(line())).toBe("3x5 75%");
+    expect(progressionText(line({ reps: 8, repMax: 10, load: "@7" }))).toBe("3x8-10 @7");
+    expect(progressionText(line({ reps: null, load: "@8" }))).toBe("3x @8");
+    expect(progressionText(line({ load: null }))).toBe("3x5");
+    expect(commitProgression(line(), "3x5 75%")).toEqual({ unchanged: true });
+    expect(commitProgression(line(), " 3x5  75% ")).toEqual({ unchanged: true });
+  });
+
+  it("takes text without NxM as the load alone: 75% to 77.5% is one number", () => {
+    expect(commitProgression(line(), "77.5%")).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", load: "77.5%" },
+    });
+  });
+
+  it("takes shorthand as the whole line, so leaving the load off clears it", () => {
+    expect(commitProgression(line(), "4x3 80%")).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", setCount: 4, reps: 3, repMax: null, load: "80%" },
+    });
+    expect(commitProgression(line(), "3x5")).toEqual({ op: { op: "updatePrescription", prescriptionId: "l1", load: "" } });
+  });
+
+  it("puts an emptied cell back rather than reading it as remove", () => {
+    expect(commitProgression(line(), "   ")).toEqual({ unchanged: true });
+  });
+
+  it("refuses bad shorthand", () => {
+    expect(commitProgression(line(), "0x5 75%")).toEqual({ error: "Sets is a whole number, 1 to 50" });
   });
 });

@@ -195,7 +195,9 @@ describe("the Week | Calendar toggle", () => {
     store.tree = { ...tree(), athleteId: null, startOn: null };
     render(<ProgramEditor programId="p1" view="calendar" />);
     expect(await screen.findByRole("region", { name: "Squat day" })).toBeInTheDocument();
-    expect(screen.queryByRole("tablist", { name: "View" })).not.toBeInTheDocument();
+    // Week and Progression are offered (neither needs a date); Calendar is not.
+    expect(screen.queryByRole("tab", { name: "Calendar" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Week" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("grid")).not.toBeInTheDocument();
   });
 });
