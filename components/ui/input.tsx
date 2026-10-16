@@ -29,6 +29,9 @@ export function TextField({
         "w-full rounded-control border bg-surface-2 text-foreground",
         "placeholder:text-muted-2",
         "focus:outline-none",
+        // The border easing to accent on focus, on the coach side only: the
+        // athlete's field is also the logger's, unchanged. docs/coach-motion.md.
+        "coach:transition-control",
         SIZES[size],
         invalid ? "border-danger-line" : active ? "border-accent-line" : "border-border",
         !invalid && "focus:border-accent-line",
