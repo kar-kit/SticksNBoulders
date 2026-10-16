@@ -227,7 +227,20 @@ try {
   await coachPage.goto(`${BASE}/coach/athletes/${athlete.$id}`);
   const holdRadio = coachPage.getByRole("radio", { name: /Hold them back/ });
   const directRadio = coachPage.getByRole("radio", { name: /Athlete sees them directly/ });
+  // A compact setting in the header since the dashboard review (16 Oct
+  // 2026): it says its value, and the radios open beneath it on a click.
+  const control = coachPage.getByRole("button", { name: /Load suggestions/ });
+  const openControl = async () => {
+    await control.waitFor({ timeout: 20000 }).catch(() => {});
+    await coachPage.waitForFunction(() => {
+      const el = [...document.querySelectorAll("button")].find((b) => /Load suggestions/i.test(b.textContent ?? ""));
+      return el !== undefined && !(el as HTMLButtonElement).disabled;
+    }, null, { timeout: 20000 }).catch(() => {});
+    if ((await control.getAttribute("aria-expanded").catch(() => null)) !== "true") await control.click();
+  };
+  await openControl();
   await holdRadio.waitFor({ timeout: 20000 }).catch(() => {});
+  check("the compact control in the header says held", /Hold them back/.test((await control.innerText().catch(() => "")) ?? ""));
   check("shows the switch, on held", await holdRadio.isChecked().catch(() => false));
   await directRadio.check();
   await coachPage.waitForTimeout(500);
@@ -238,6 +251,7 @@ try {
   await coachPage.waitForTimeout(500);
   check("and back to held", (await modeOf(linkId)) === "held");
   await coachPage.reload();
+  await openControl();
   await holdRadio.waitFor({ timeout: 20000 }).catch(() => {});
   check("still held after a reload, read from Appwrite", await holdRadio.isChecked().catch(() => false));
 

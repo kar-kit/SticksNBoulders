@@ -4,17 +4,16 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AthleteBodyweight } from "@/components/coach/athlete-bodyweight";
 import { AthleteLifts } from "@/components/coach/athlete-lifts";
+import { AthleteProgram } from "@/components/coach/athlete-program";
 import { AthleteSessions } from "@/components/coach/athlete-sessions";
 import { AthleteVideos } from "@/components/coach/athlete-videos";
 import { CurrentMaxes } from "@/components/coach/current-maxes";
-import { RecentFeedback } from "@/components/coach/recent-feedback";
 import { SuggestionSwitch } from "@/components/coach/suggestion-switch";
-import { DotsBlock } from "@/components/strength/dots-block";
+import { useAthletePanel } from "@/components/coach/use-athlete-panel";
 import { ExportLog } from "@/components/export/export-log";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
-import { adjustProgramHref } from "@/lib/coach/adjust-program";
 import { decideAthleteAccess, shortDate, type AthleteAccess } from "@/lib/coach/athlete-view";
 import { fetchLinkRows } from "@/lib/coach/athlete-view-store";
 import { UserAvatar } from "@/components/profile/user-avatar";
@@ -39,6 +38,27 @@ import { UserAvatar } from "@/components/profile/user-avatar";
  * The link is re-checked when the tab comes back into focus, because the
  * session's list of athletes was read when the app loaded and a coach can sit
  * on this screen for an hour.
+ *
+ * ## Layout (Joey's review of the dashboard, 16 Oct 2026)
+ *
+ * Desktop-first at 1440x900 beside the athlete rail, in order of what a coach
+ * reads on every visit:
+ *
+ * - **Header**: name, a small "linked" pill, the bodyweight figure (which
+ *   opens its history over the page), and load suggestions as a compact
+ *   setting on the right -- set once per athlete, so it shows its value and
+ *   folds its explanation away.
+ * - **Top, two columns**: CURRENT MAXES (squat, bench, deadlift and DOTS in
+ *   one table) with the videos under it; THIS BLOCK, the current week at a
+ *   glance, beside them. The program takes a full column because it is the
+ *   tallest thing on the page and the one the coach acts on.
+ * - **Below, full width, lower priority**: the per-lift e1RM chart, recent
+ *   sessions, and the CSV export. History is read when something above raises
+ *   a question, not first.
+ *
+ * The bodyweight history and an opened clip are dialogs held in the URL (see
+ * use-athlete-panel.ts), so Back closes them and the panels underneath stay
+ * loaded.
  */
 
 type Gate = { status: "checking" } | { status: "decided"; access: AthleteAccess } | { status: "failed" };
@@ -48,6 +68,7 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
   const coachId = session.status === "signed-in" ? session.user.id : "";
   const [gate, setGate] = useState<Gate & { for?: string }>({ status: "checking" });
   const [name, setName] = useState<{ for: string; name: string | null } | null>(null);
+  const { panel, open, close } = useAthletePanel();
 
   useEffect(() => {
     if (!coachId) return;
@@ -144,14 +165,27 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-8" aria-busy={!linked}>
+    <div className="flex flex-col gap-8 p-8" aria-busy={!linked}>
       {linked ? (
-        <header className="flex items-center gap-4">
-          <UserAvatar userId={athleteId} name={displayName ?? "Unnamed athlete"} size={40} />
-          <h1 className="m-0 text-display font-semibold">{displayName ?? "Unnamed athlete"}</h1>
-          {access.linkedAt ? (
-            <span className="text-ui text-muted">linked {shortDate(access.linkedAt)}</span>
-          ) : null}
+        <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+            <UserAvatar userId={athleteId} name={displayName ?? "Unnamed athlete"} size={40} />
+            <h1 className="m-0 text-display font-semibold">{displayName ?? "Unnamed athlete"}</h1>
+            {access.linkedAt ? (
+              // A fact about the link, not about the athlete: small, beside
+              // the name rather than competing with it.
+              <span className="inline-flex h-6 items-center rounded-chip border border-border px-2 font-mono text-meta text-muted">
+                linked {shortDate(access.linkedAt)}
+              </span>
+            ) : null}
+            <AthleteBodyweight
+              athleteId={athleteId}
+              open={panel?.kind === "bodyweight"}
+              onOpen={() => open({ kind: "bodyweight" })}
+              onClose={close}
+            />
+          </div>
+          <SuggestionSwitch athleteId={athleteId} />
         </header>
       ) : (
         <p className="m-0 text-ui text-muted">Loading…</p>
@@ -159,53 +193,30 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
 
       {/* Mounted while checking so the reads start now; hidden until the link
           says they may be shown. */}
-      <div
-        hidden={!linked}
-        className={linked ? "grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-x-10 gap-y-8" : "hidden"}
-      >
-        <div className="flex min-w-0 flex-col gap-10">
-          <CurrentMaxes athleteId={athleteId} />
+      <div hidden={!linked} className={linked ? "flex flex-col gap-12" : "hidden"}>
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-10 gap-y-10">
+          <div className="flex min-w-0 flex-col gap-10">
+            <CurrentMaxes athleteId={athleteId} />
+            <AthleteVideos
+              athleteId={athleteId}
+              athleteName={displayName}
+              // Never over panels that are still hidden behind the gate.
+              openClipId={linked && panel?.kind === "clip" ? panel.clipId : null}
+              onOpen={(clipId) => open({ kind: "clip", clipId })}
+              onClose={close}
+            />
+          </div>
+          <div className="min-w-0">
+            <AthleteProgram athleteId={athleteId} />
+          </div>
+        </div>
+        <div className="flex flex-col gap-10 border-t border-border pt-8">
           <AthleteLifts athleteId={athleteId} />
           <AthleteSessions athleteId={athleteId} />
-        </div>
-        <div className="flex min-w-0 flex-col gap-10">
-          <ProgramSection athleteId={athleteId} />
-          <SuggestionSwitch athleteId={athleteId} />
-          <AthleteBodyweight athleteId={athleteId} />
-          <DotsBlock athleteId={athleteId} audience="coach" />
-          <AthleteVideos athleteId={athleteId} />
-          <RecentFeedback athleteId={athleteId} />
           <ExportLog athleteId={athleteId} audience="coach" />
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * THIS BLOCK, from the blueprint. The block itself is written in the Program
- * Editor (Order 19); "Adjust program" opens it for this athlete -- their
- * current program, their list, or an empty state that says nobody has written
- * one (components/coach/adjust-program.tsx). Same tab: nothing on this screen
- * is lost by leaving it, since every panel re-reads on return. How the athlete
- * is tracking against the block is not built yet; a pointer rather than
- * progress inferred from what was lifted -- a number nobody prescribed is
- * worse than no number.
- */
-function ProgramSection({ athleteId }: { athleteId: string }) {
-  return (
-    <section className="flex flex-col gap-3" aria-labelledby="athlete-program-heading">
-      <h2 id="athlete-program-heading" className="m-0 text-label uppercase tracking-wide text-muted">
-        This block
-      </h2>
-      <Link
-        href={adjustProgramHref(athleteId)}
-        className="inline-flex h-9 items-center self-start rounded-chip border border-border bg-surface px-[14px] text-ui font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
-      >
-        Adjust program
-      </Link>
-      <p className="m-0 text-ui text-muted">How they’re tracking against it will sit here later.</p>
-    </section>
   );
 }
 

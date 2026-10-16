@@ -91,10 +91,17 @@ blinked is the worst outcome this screen has.
 
 ## Athlete View
 
-`RecentFeedback` lists everything said to one athlete, newest first. Read-only:
-replying belongs with the clip, where the video and the numbers are, and a
-second composer here would be a second place to say the same thing with less
-context attached.
+Comments are read back on the clip they are about. Since Joey's review of the
+dashboard (16 Oct 2026) each clip in the Videos list carries its latest comment
+on one line, and opening it shows the clip and its whole thread together, drawn
+by `CommentThread` (exported from `components/coach/comment-box.tsx`, so the
+queue and the Athlete View render the same words the same way). The separate
+`RecentFeedback` list is gone: every comment in it was about one of those clips.
+
+Read-only: replying belongs with the clip in the Review Queue, where the
+context panel carries the prescription, the RPE and recent weeks, and a second
+composer here would be a second place to say the same thing with less context
+attached. A clip still waiting links there.
 
 It exists because the Review Queue is organised around *clearing* — a clip
 leaves the moment it is dealt with — so without this there is nowhere to read

@@ -220,14 +220,24 @@ describe("the current maxes grid", () => {
     expect(estimated[0].usedForPercent).toBe("estimated");
   });
 
-  it("adds any other lift once it has a number, and not before", () => {
+  it("lists only squat, bench and deadlift, even when another lift has numbers", () => {
+    // Joey, 16 Oct 2026: SBD is priority, and no other exercise is listed. A
+    // variation with a stored max and an e1RM is still not a row.
     const rows = maxGrid(
-      [entry({ exerciseId: PAUSE.id })],
+      [entry({ exerciseId: PAUSE.id }), entry({ exerciseId: ROW.id, kind: "tested" })],
       LIBRARY,
-      new Map([[ROW.id, { valueKg: 120, asOf: "2026-09-14" }]]),
+      new Map([
+        [ROW.id, { valueKg: 120, asOf: "2026-09-14" }],
+        [PAUSE.id, { valueKg: 160, asOf: "2026-09-14" }],
+      ]),
       NOW,
     );
-    expect(rows.map((r) => r.exerciseName)).toEqual(["Squat", "Bench Press", "Deadlift", "Pause Squat", "Barbell Row"]);
+    expect(rows.map((r) => r.exerciseName)).toEqual(["Squat", "Bench Press", "Deadlift"]);
+  });
+
+  it("keeps competition order whatever order the library comes back in", () => {
+    const shuffled = [...LIBRARY].reverse();
+    expect(maxGrid([], shuffled, new Map(), NOW).map((r) => r.exerciseName)).toEqual(["Squat", "Bench Press", "Deadlift"]);
   });
 
   it("keeps a future-dated max out of the current number but on the panel", () => {
@@ -352,6 +362,27 @@ describe("the athlete's videos", () => {
     const b = rows.find((r) => r.id === "b")!;
     expect([a.reviewed, a.commentCount]).toEqual([true, 2]);
     expect([b.reviewed, b.commentCount]).toEqual([false, 1]);
+  });
+
+  it("carries the latest thing said on each clip, by either party, whatever order they were read in", () => {
+    const said = (id: string, setId: string, createdAt: string, body: string): Comment => ({
+      ...comment(setId),
+      id,
+      createdAt,
+      body,
+    });
+    const rows = videoRows(
+      [clip("a", "2026-09-01T00:00:00Z"), clip("b", "2026-09-02T00:00:00Z")],
+      new Set(),
+      [
+        said("c2", "a", "2026-09-03T10:00:00Z", "Got it"),
+        said("c1", "a", "2026-09-02T10:00:00Z", "Knees out"),
+        said("c3", "a", "2026-09-01T10:00:00Z", "Older"),
+      ],
+      () => "Squat",
+    );
+    expect(rows.find((r) => r.id === "a")!.latestComment?.body).toBe("Got it");
+    expect(rows.find((r) => r.id === "b")!.latestComment).toBeNull();
   });
 
   it("names an exercise the library missed rather than dropping the clip", () => {

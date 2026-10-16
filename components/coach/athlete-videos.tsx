@@ -1,23 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { ClipPlayer } from "@/components/coach/clip-player";
+import { CommentThread } from "@/components/coach/comment-box";
+import { Dialog } from "@/components/ui/dialog";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchExerciseLibrary } from "@/lib/exercises/library";
 import { fetchClips, fetchClipUrls, fetchReviewedSetIds } from "@/lib/review/queue-store";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
+import type { Comment } from "@/lib/review/comments";
 import { shortDate, videoRows, type VideoRow } from "@/lib/coach/athlete-view";
 import { formatNumber } from "@/lib/logging/prefill";
 import { cn } from "@/lib/cn";
 
 /**
- * Every clip this athlete has filmed, newest first, playable in place.
+ * Every clip this athlete has filmed, newest first, as a compact button each.
  *
  * The Review Queue is organised around clearing, so a clip leaves it the
  * moment it is dealt with. This is the other reading of the same rows: what
- * this person has been filming lately, reviewed or not, and how much has been
- * said about each one. Comments themselves are in Recent feedback beside it.
+ * this person has been filming lately, reviewed or not, and the latest thing
+ * said about each one, against the clip it is about.
+ *
+ * No players on the page (Joey's review, 16 Oct 2026). A button opens the
+ * clip and its whole thread together, over the page, with the Review Queue's
+ * own player and thread components -- the same speeds, loop and frame steps,
+ * the same words in the same layout. In the URL (`?clip=<setId>`), so Back
+ * closes it. Recent feedback used to be a separate list beside this one, and
+ * every comment in it was about one of these clips; it now sits on the clip.
  *
  * Read-only, deliberately. Commenting belongs in the queue, where the context
  * panel carries the prescription, the RPE and recent weeks; a second composer
@@ -25,20 +35,30 @@ import { cn } from "@/lib/cn";
  * clip still waiting says so and points there.
  */
 
-type State =
-  | { status: "loading" }
-  | { status: "ready"; athleteId: string; rows: VideoRow[] }
-  | { status: "failed"; athleteId: string };
+type Loaded = { rows: VideoRow[]; comments: Comment[] };
+type State = { status: "loading" } | { status: "ready"; athleteId: string; data: Loaded } | { status: "failed"; athleteId: string };
 
 /** Enough to cover a fortnight of filmed top sets without a scroll wall. */
 const FIRST_PAGE = 8;
 
-export function AthleteVideos({ athleteId }: { athleteId: string }) {
+export interface AthleteVideosProps {
+  athleteId: string;
+  /** For the thread: their replies are shown under their name. */
+  athleteName: string | null;
+  /** The clip open over the page, from the URL. Ignored unless it is one of this athlete's. */
+  openClipId: string | null;
+  onOpen: (clipId: string) => void;
+  onClose: () => void;
+}
+
+const loadLabel = (row: VideoRow) =>
+  `${formatNumber(row.loadKg)} × ${row.reps}${row.rpe === null ? "" : ` @${formatNumber(row.rpe)}`}`;
+
+export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onClose }: AthleteVideosProps) {
   const { state: session } = useSession();
   const coachId = session.status === "signed-in" ? session.user.id : "";
   const [state, setState] = useState<State>({ status: "loading" });
   const [showAll, setShowAll] = useState(false);
-  const [playing, setPlaying] = useState<{ clipId: string; src: string | null } | null>(null);
 
   useEffect(() => {
     if (!coachId) return;
@@ -53,7 +73,11 @@ export function AthleteVideos({ athleteId }: { athleteId: string }) {
         const comments = await fetchCommentsForSets(clips.map((clip) => clip.id));
         const names = new Map(library.map((e) => [e.id, e.name]));
         if (!cancelled) {
-          setState({ status: "ready", athleteId, rows: videoRows(clips, reviewed, comments, (id) => names.get(id)) });
+          setState({
+            status: "ready",
+            athleteId,
+            data: { rows: videoRows(clips, reviewed, comments, (id) => names.get(id)), comments },
+          });
         }
       } catch {
         if (!cancelled) setState({ status: "failed", athleteId });
@@ -64,36 +88,17 @@ export function AthleteVideos({ athleteId }: { athleteId: string }) {
     };
   }, [athleteId, coachId]);
 
-  const rows = useMemo(
-    () => (state.status === "ready" && state.athleteId === athleteId ? state.rows : null),
-    [state, athleteId],
-  );
+  const data = state.status === "ready" && state.athleteId === athleteId ? state.data : null;
+  const rows = data?.rows ?? null;
   const failed = state.status === "failed" && state.athleteId === athleteId;
+  // A clip deep-linked further down the list than the first page still opens.
+  const opened = rows?.find((row) => row.id === openClipId) ?? null;
   const visible = rows ? (showAll ? rows : rows.slice(0, FIRST_PAGE)) : [];
-  const current = playing && rows?.some((row) => row.id === playing.clipId) ? playing : null;
   const waiting = rows?.filter((row) => !row.reviewed).length ?? 0;
-
-  const play = async (row: VideoRow) => {
-    if (current?.clipId === row.id) {
-      setPlaying(null);
-      return;
-    }
-    setPlaying({ clipId: row.id, src: null });
-    // Minted per clip on demand, not for the whole list: most of the list is
-    // read, not watched, and each URL is a signed ticket with a short life.
-    const urls = await fetchClipUrls([row.videoFileId]).catch(() => new Map<string, string>());
-    setPlaying((now) => (now?.clipId === row.id ? { clipId: row.id, src: urls.get(row.videoFileId) ?? null } : now));
-  };
-
-  // The ticket in `src` lasts five minutes; ClipPlayer asks for a new one
-  // when a seek past that fails.
-  const refreshSrc = async (row: VideoRow): Promise<boolean> => {
-    const urls = await fetchClipUrls([row.videoFileId]).catch(() => new Map<string, string>());
-    const src = urls.get(row.videoFileId);
-    if (!src) return false;
-    setPlaying((now) => (now?.clipId === row.id ? { clipId: row.id, src } : now));
-    return true;
-  };
+  const names = useMemo(
+    () => new Map(athleteName ? [[athleteId, athleteName] as const] : []),
+    [athleteId, athleteName],
+  );
 
   return (
     <section className="flex flex-col gap-3" aria-labelledby="athlete-videos-heading">
@@ -117,47 +122,42 @@ export function AthleteVideos({ athleteId }: { athleteId: string }) {
       ) : null}
 
       {visible.length > 0 ? (
-        <ul className="m-0 flex list-none flex-col p-0">
-          {visible.map((row) => {
-            const open = current?.clipId === row.id;
-            return (
-              <li key={row.id} className="border-b border-border last:border-b-0">
-                <button
-                  type="button"
-                  aria-expanded={open}
-                  onClick={() => void play(row)}
-                  className={cn(
-                    "grid w-full grid-cols-[52px_minmax(0,1fr)_auto] items-baseline gap-3 py-2 text-left",
-                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
-                  )}
-                >
+        <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+          {visible.map((row) => (
+            <li key={row.id}>
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                onClick={() => onOpen(row.id)}
+                className={cn(
+                  "flex w-full flex-col gap-0.5 rounded-control border border-border bg-surface px-3 py-2 text-left hover:bg-surface-2",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
+                )}
+              >
+                <span className="grid w-full grid-cols-[52px_minmax(0,1fr)_auto] items-baseline gap-3">
                   <span className="font-mono text-meta text-muted-2">{shortDate(new Date(row.loggedAt))}</span>
                   <span className="min-w-0 truncate text-ui">
                     <span className="font-semibold">{row.exerciseName}</span>{" "}
-                    <span className="tabular-nums">
-                      {formatNumber(row.loadKg)} × {row.reps}
-                      {row.rpe === null ? "" : ` @${formatNumber(row.rpe)}`}
-                    </span>
+                    <span className="tabular-nums">{loadLabel(row)}</span>
                   </span>
                   <span className={cn("text-caption", row.reviewed ? "text-muted-2" : "text-accent-fill")}>
                     {row.reviewed ? "reviewed" : "waiting"}
                     {row.commentCount > 0 ? ` · ${row.commentCount} comment${row.commentCount === 1 ? "" : "s"}` : ""}
                   </span>
-                </button>
-                {open ? (
-                  <div className="flex flex-col gap-2 pb-3">
-                    {row.notes ? <p className="m-0 text-ui text-muted">“{row.notes}”</p> : null}
-                    <ClipPlayer
-                      src={current?.src ?? null}
-                      clipId={row.id}
-                      hint="Space plays, arrows step a frame."
-                      refreshSrc={() => refreshSrc(row)}
-                    />
-                  </div>
+                </span>
+                {row.latestComment ? (
+                  // The latest word on it, on one line. The whole thread is
+                  // one click away, with the clip.
+                  <span className="truncate pl-[64px] text-caption text-muted">
+                    <span className="text-muted-2">
+                      {row.latestComment.authorId === coachId ? "You" : (athleteName ?? "Your athlete")}:
+                    </span>{" "}
+                    {row.latestComment.body}
+                  </span>
                 ) : null}
-              </li>
-            );
-          })}
+              </button>
+            </li>
+          ))}
         </ul>
       ) : null}
 
@@ -166,6 +166,107 @@ export function AthleteVideos({ athleteId }: { athleteId: string }) {
           Show all {rows.length}
         </button>
       ) : null}
+
+      {opened && data ? (
+        <ClipDialog
+          row={opened}
+          comments={data.comments.filter((comment) => comment.setId === opened.id)}
+          names={names}
+          viewerId={coachId}
+          onClose={onClose}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function ClipDialog({
+  row,
+  comments,
+  names,
+  viewerId,
+  onClose,
+}: {
+  row: VideoRow;
+  comments: Comment[];
+  names: ReadonlyMap<string, string>;
+  viewerId: string;
+  onClose: () => void;
+}) {
+  const heading = useId();
+  const [src, setSrc] = useState<{ clipId: string; url: string | null } | null>(null);
+
+  // Minted per clip on open, not for the whole list: most of the list is read,
+  // not watched, and each URL is a signed ticket with a short life.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchClipUrls([row.videoFileId])
+      .catch(() => new Map<string, string>())
+      .then((urls) => {
+        if (!cancelled) setSrc({ clipId: row.id, url: urls.get(row.videoFileId) ?? null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [row.id, row.videoFileId]);
+
+  // The ticket lasts five minutes; ClipPlayer asks for a new one when a seek
+  // past that fails.
+  const refreshSrc = async (): Promise<boolean> => {
+    const urls = await fetchClipUrls([row.videoFileId]).catch(() => new Map<string, string>());
+    const url = urls.get(row.videoFileId);
+    if (!url) return false;
+    setSrc({ clipId: row.id, url });
+    return true;
+  };
+
+  const current = src?.clipId === row.id ? src : null;
+
+  return (
+    <Dialog labelledBy={heading} onClose={onClose}>
+      <div className="flex flex-col gap-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-0.5">
+            <h2 id={heading} className="m-0 text-title font-semibold">
+              {row.exerciseName} <span className="tabular-nums">{loadLabel(row)}</span>
+              <span className="font-normal text-muted"> · {shortDate(new Date(row.loggedAt))}</span>
+            </h2>
+            <p className={cn("m-0 text-caption", row.reviewed ? "text-muted-2" : "text-accent-fill")}>
+              {row.reviewed ? "Reviewed" : "Waiting in your Review queue"}
+              {row.prescribed ? <span className="text-muted"> · prescribed {row.prescribed}</span> : null}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 rounded-chip border border-border px-3 text-ui text-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,320px)_minmax(0,1fr)] gap-6">
+          <ClipPlayer
+            src={current?.url ?? null}
+            clipId={row.id}
+            hint="Space plays, arrows step a frame."
+            refreshSrc={refreshSrc}
+            unavailable={current && current.url === null ? "The video for this clip could not be loaded." : undefined}
+          />
+          <div className="flex min-w-0 flex-col gap-4">
+            {row.notes ? <p className="m-0 text-ui text-muted">“{row.notes}”</p> : null}
+            <CommentThread comments={comments} names={names} viewerId={viewerId} />
+            {comments.length === 0 ? (
+              <p className="m-0 text-ui text-muted-2">Nothing said on this clip yet.</p>
+            ) : null}
+            {!row.reviewed ? (
+              <Link href="/coach/review" className="self-start text-ui text-accent-fill underline">
+                Comment on it in Review
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </Dialog>
   );
 }

@@ -236,5 +236,5 @@ set was prefilled is stored.
 | `lib/coach/suggestion-mode-store.ts`, `use-suggestion-mode.ts` | Reads, the device cache, the coach's write |
 | `appwrite/documents/suggestion-mode-admin.ts` | Who may set it: the coach on an active link, nobody else |
 | `app/api/link/suggestions/route.ts` | POST, caller from the JWT only |
-| `components/coach/suggestion-switch.tsx` | LOAD SUGGESTIONS on the Athlete View |
+| `components/coach/suggestion-switch.tsx` | LOAD SUGGESTIONS on the Athlete View: a compact control in the page header since 16 Oct 2026 |
 | `components/profile/suggestion-mode-note.tsx` | LOAD SUGGESTIONS on Profile & Settings |
