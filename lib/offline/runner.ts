@@ -6,8 +6,12 @@ import {
   createSession,
   createSet,
   attachVideo,
+  deleteExercise,
+  deleteSession,
   deleteSet,
   finishSession,
+  renameExercise,
+  updateSession,
   updateSet,
   type Actor,
 } from "@/appwrite/documents";
@@ -15,6 +19,9 @@ import { ensureMyCircle } from "@/lib/auth/circle";
 import { ensureMyProfile } from "@/lib/profile/profile-store";
 import { refreshRollup } from "@/lib/strength/rollup-client";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
+import { exerciseInUse } from "@/lib/exercises/usage-store";
+import { sessionHasSets } from "@/lib/logging/history-store";
+import { deleteClipIfSetGone } from "@/lib/video/clip-cleanup";
 import type { QueuedOp } from "./queue";
 
 /**
@@ -135,6 +142,56 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
         if (isNotFound(error)) return;
         throw error;
       }
+      return;
+    }
+    case "session.update": {
+      const sessionId = asString(p.sessionId);
+      // Each field only when the op carries it: a rename must not clear the
+      // notes, and a totals refresh must not clear the name.
+      await updateSession(browserWriteDeps(() => sessionId), actor, {
+        sessionId,
+        ...("name" in p && { name: typeof p.name === "string" ? p.name : null }),
+        ...("notes" in p && { notes: typeof p.notes === "string" ? p.notes : null }),
+        ...(typeof p.setCount === "number" &&
+          typeof p.tonnageKg === "number" && { totals: { setCount: p.setCount, tonnageKg: p.tonnageKg } }),
+      });
+      return;
+    }
+    case "session.delete": {
+      const sessionId = asString(p.sessionId);
+      try {
+        await deleteSession(browserWriteDeps(() => ""), actor, sessionId, {
+          // The set deletes ran in front of this. Any set still there had its
+          // delete refused -- a coach commented on it -- and keeps its session.
+          setsRemain: () => sessionHasSets(sessionId),
+        });
+      } catch (error) {
+        if (isNotFound(error)) return;
+        throw error;
+      }
+      return;
+    }
+    case "exercise.rename": {
+      const exerciseId = asString(p.exerciseId);
+      await renameExercise(browserWriteDeps(() => exerciseId), actor, { rowId: exerciseId, name: asString(p.name) });
+      return;
+    }
+    case "exercise.delete": {
+      const exerciseId = asString(p.exerciseId);
+      try {
+        await deleteExercise(browserWriteDeps(() => ""), actor, exerciseId, {
+          inUse: () => exerciseInUse(actor.userId, exerciseId),
+        });
+      } catch (error) {
+        if (isNotFound(error)) return;
+        throw error;
+      }
+      return;
+    }
+    case "clip.delete": {
+      // Not a row write: a file in storage, deleted with the athlete's own
+      // session, which the file's stamp allows and the coach's does not.
+      await deleteClipIfSetGone(asString(p.setId), asString(p.fileId));
       return;
     }
     case "set.attachVideo": {

@@ -1,6 +1,6 @@
 import { setPermissions } from "@/appwrite/documents/policy";
 import { FakeTables, type FakeRow } from "@/lib/testing/fake-tables";
-import { fetchSetsForSessions } from "./history-store";
+import { fetchSetsForSessions, sessionHasSets } from "./history-store";
 
 /**
  * History's set read against a fake that applies limit and cursor as Appwrite
@@ -66,5 +66,26 @@ describe("fetchSetsForSessions", () => {
   it("asks nothing for no sessions", async () => {
     expect(await fetchSetsForSessions([])).toEqual([]);
     expect(db.tables!.calls).toHaveLength(0);
+  });
+});
+
+describe("sessionHasSets", () => {
+  it("says whether any set the athlete wrote still names the session", async () => {
+    db.tables!.seed("sets", [set("st-1", "s1")]);
+    expect(await sessionHasSets("s1")).toBe(true);
+    expect(await sessionHasSets("s2")).toBe(false);
+  });
+
+  it("ignores a forged set, so a stranger cannot keep someone's session from being deleted", async () => {
+    db.tables!.seed("sets", [{ ...set("st-x", "s1"), $permissions: setPermissions({ athleteId: "stranger" }) }]);
+    expect(await sessionHasSets("s1")).toBe(false);
+  });
+});
+
+describe("a set's clip", () => {
+  it("comes back with the set, so deleting it from History can take the file too", async () => {
+    db.tables!.seed("sets", [{ ...set("st-1", "s1"), video_file_id: "vid-1" }, set("st-2", "s1")]);
+    const sets = await fetchSetsForSessions(["s1"]);
+    expect(sets.map((each) => each.videoFileId)).toEqual(["vid-1", null]);
   });
 });

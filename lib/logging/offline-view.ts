@@ -1,6 +1,6 @@
 import type { QueuedOp } from "@/lib/offline/queue";
 import { failedOps, pendingOps } from "@/lib/offline/queue";
-import { SET_HAS_COACH_COMMENTS } from "@/appwrite/documents/write";
+import { EXERCISE_IN_USE, SESSION_HAS_SETS, SET_HAS_COACH_COMMENTS } from "@/appwrite/documents/write";
 import type { SessionRecord } from "./session";
 import type { UnnamedSet } from "./session-store";
 
@@ -55,7 +55,43 @@ export function queuedSessions(ops: readonly QueuedOp[]): SessionRecord[] {
     }
   }
 
-  return [...sessions.values()];
+  return applyQueuedSessionEdits([...sessions.values()], ops);
+}
+
+/**
+ * Sessions as the athlete last left them, with edits and deletes from History
+ * that have not reached Appwrite yet.
+ *
+ * Applied over the server's copy as well as the queue's. A rename or a set
+ * correction made in a basement is a session that has been renamed or
+ * corrected, not one that will be later -- the same rule as everywhere else
+ * in this file. A session whose delete is queued is simply not there.
+ */
+export function applyQueuedSessionEdits(sessions: readonly SessionRecord[], ops: readonly QueuedOp[]): SessionRecord[] {
+  const pending = pendingOps(ops);
+  const deleted = new Set(
+    pending.filter((op) => op.kind === "session.delete").map((op) => str(op.payload.sessionId)),
+  );
+  const updates = pending.filter((op) => op.kind === "session.update");
+  if (deleted.size === 0 && updates.length === 0) return [...sessions];
+
+  return sessions
+    .filter((session) => !deleted.has(session.id))
+    .map((session) => {
+      let next = session;
+      for (const op of updates) {
+        if (str(op.payload.sessionId) !== session.id) continue;
+        const p = op.payload;
+        next = {
+          ...next,
+          ...("name" in p && { name: typeof p.name === "string" && p.name.trim() ? p.name : null }),
+          ...("notes" in p && { notes: typeof p.notes === "string" && p.notes.trim() ? p.notes : null }),
+          ...(typeof p.setCount === "number" &&
+            typeof p.tonnageKg === "number" && { setCount: p.setCount, tonnageKg: p.tonnageKg }),
+        };
+      }
+      return next;
+    });
 }
 
 /** Sets of one session that are still on their way, minus any already undone. */
@@ -133,9 +169,41 @@ export function refusedDeletes(ops: readonly QueuedOp[]): Map<string, string> {
   return refused;
 }
 
-/** Failed ops that do mean something did not reach the coach. */
+/**
+ * Deletes refused because the thing still matters -- a set the coach spoke
+ * about, a session that kept such a set, an exercise something is logged
+ * against. Nothing was lost in any of them; the row is still there.
+ */
+const REFUSALS: ReadonlyArray<[QueuedOp["kind"], string]> = [
+  ["set.delete", SET_HAS_COACH_COMMENTS],
+  ["session.delete", SESSION_HAS_SETS],
+  ["exercise.delete", EXERCISE_IN_USE],
+];
+
+export const isRefusedDelete = (op: QueuedOp): boolean =>
+  REFUSALS.some(([kind, reason]) => op.kind === kind && op.permanentError === reason);
+
+/**
+ * Sessions or exercises whose delete was refused, keyed by row id, valued by
+ * op id so the notice can be dismissed. `refusedDeletes` is the same for sets.
+ */
+export function refusedRowDeletes(ops: readonly QueuedOp[], row: "session" | "exercise"): Map<string, string> {
+  const kind = row === "session" ? "session.delete" : "exercise.delete";
+  const key = row === "session" ? "sessionId" : "exerciseId";
+  const refused = new Map<string, string>();
+  for (const op of failedOps(ops)) {
+    if (op.kind === kind && isRefusedDelete(op)) refused.set(str(op.payload[key]), op.id);
+  }
+  return refused;
+}
+
+/**
+ * Failed ops that do mean something did not reach the coach.
+ *
+ * A clip delete is housekeeping behind a set that is already gone: if it
+ * cannot run, the sweep reclaims the file, and nothing the coach should see
+ * is missing.
+ */
 export function lostOps(ops: readonly QueuedOp[]): QueuedOp[] {
-  return failedOps(ops).filter(
-    (op) => !(op.kind === "set.delete" && op.permanentError === SET_HAS_COACH_COMMENTS),
-  );
+  return failedOps(ops).filter((op) => !isRefusedDelete(op) && op.kind !== "clip.delete");
 }

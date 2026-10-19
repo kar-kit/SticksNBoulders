@@ -1,4 +1,5 @@
 import { circleTeamId } from "./circle";
+import { exercisePermissions, sessionPermissions } from "./policy";
 import type { RowWriter } from "./row-writer";
 import {
   createCoachLink,
@@ -8,8 +9,15 @@ import {
   createProfile,
   createSession,
   createSet,
+  deleteExercise,
+  deleteSession,
   deleteSet,
+  EXERCISE_IN_USE,
   finishSession,
+  normaliseSessionName,
+  renameExercise,
+  SESSION_HAS_SETS,
+  updateSession,
   SET_HAS_COACH_COMMENTS,
   normaliseExerciseName,
   revokeCoachLink,
@@ -437,5 +445,107 @@ describe("rollups clear what no longer exists", () => {
     });
     expect(last().op).toBe("update");
     expect(last().data.best_e1rm_kg).toBeNull();
+  });
+});
+
+describe("editing a session from History", () => {
+  it("names it, stamped for its athlete like every session write", async () => {
+    const h = harness();
+    await updateSession(h.deps, h.actor, { sessionId: "cs-1", name: "  Heavy   singles " });
+    expect(h.last()).toEqual({
+      op: "update",
+      tableId: "sessions",
+      rowId: "cs-1",
+      data: { name: "Heavy singles" },
+      permissions: sessionPermissions({ athleteId: ATHLETE }),
+    });
+  });
+
+  it("clears a blank name with null, so the old one does not survive", async () => {
+    const h = harness();
+    await updateSession(h.deps, h.actor, { sessionId: "cs-1", name: "   ", notes: "" });
+    expect(h.last().data).toEqual({ name: null, notes: null });
+  });
+
+  it("touches only what it is given", async () => {
+    // A totals refresh after a set edit must not wipe the name, and a rename
+    // must not wipe the totals.
+    const h = harness();
+    await updateSession(h.deps, h.actor, { sessionId: "cs-1", totals: { setCount: 7, tonnageKg: 3150.5 } });
+    expect(h.last().data).toEqual({ set_count: 7, tonnage_kg: 3150.5 });
+    await updateSession(h.deps, h.actor, { sessionId: "cs-1", notes: "Felt fast" });
+    expect(h.last().data).toEqual({ notes: "Felt fast" });
+  });
+
+  it("never moves the session or reassigns it", async () => {
+    const h = harness();
+    await updateSession(h.deps, h.actor, { sessionId: "cs-1", name: "x", notes: "y", totals: { setCount: 1, tonnageKg: 1 } });
+    for (const key of ["started_at", "athlete_id", "program_day_id", "finished_at"]) {
+      expect(h.last().data).not.toHaveProperty(key);
+    }
+  });
+
+  it("caps a name to the column rather than refusing it", () => {
+    expect(normaliseSessionName("a".repeat(200))).toHaveLength(80);
+    expect(normaliseSessionName(null)).toBeNull();
+  });
+
+  it("refuses negative totals", async () => {
+    const h = harness();
+    await expect(
+      updateSession(h.deps, h.actor, { sessionId: "cs-1", totals: { setCount: -1, tonnageKg: 0 } }),
+    ).rejects.toThrow("non-negative");
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe("deleting a session", () => {
+  it("deletes once no set names it", async () => {
+    const { deps, actor, calls } = harness();
+    await deleteSession(deps, actor, "cs-1", { setsRemain: async () => false });
+    expect(calls).toEqual([{ op: "delete", tableId: "sessions", rowId: "cs-1", data: {} }]);
+  });
+
+  it("refuses, permanently, while sets remain -- the ones a coach commented on", async () => {
+    const { classify } = await import("@/lib/offline/queue");
+    const { deps, actor, calls } = harness();
+    const error = await deleteSession(deps, actor, "cs-1", { setsRemain: async () => true }).catch((e) => e);
+    expect(error).toMatchObject({ message: SESSION_HAS_SETS, code: 412 });
+    expect(classify(error)).toBe("permanent");
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("the athlete's own exercises", () => {
+  it("renames one, with the normalised name following and the owner's stamp", async () => {
+    const h = harness();
+    await renameExercise(h.deps, h.actor, { rowId: "ex-1", name: " Romanian  Deadlift " });
+    expect(h.last()).toEqual({
+      op: "update",
+      tableId: "exercises",
+      rowId: "ex-1",
+      data: { name: "Romanian Deadlift", normalised_name: "romanian deadlift" },
+      permissions: exercisePermissions({ athleteId: ATHLETE, isGlobal: false }),
+    });
+  });
+
+  it("will not rename to nothing", async () => {
+    const h = harness();
+    await expect(renameExercise(h.deps, h.actor, { rowId: "ex-1", name: "  " })).rejects.toThrow("name is required");
+  });
+
+  it("deletes an unused one", async () => {
+    const { deps, actor, calls } = harness();
+    await deleteExercise(deps, actor, "ex-1", { inUse: async () => false });
+    expect(calls).toEqual([{ op: "delete", tableId: "exercises", rowId: "ex-1", data: {} }]);
+  });
+
+  it("refuses to orphan sets, maxes or program lines", async () => {
+    const { classify } = await import("@/lib/offline/queue");
+    const { deps, actor, calls } = harness();
+    const error = await deleteExercise(deps, actor, "ex-1", { inUse: async () => true }).catch((e) => e);
+    expect(error).toMatchObject({ message: EXERCISE_IN_USE, code: 412 });
+    expect(classify(error)).toBe("permanent");
+    expect(calls).toEqual([]);
   });
 });

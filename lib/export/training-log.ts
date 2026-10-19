@@ -18,6 +18,8 @@ export interface ExportSession {
   id: string;
   startedAt: Date;
   notes: string | null;
+  /** What the athlete called it, as stored. Null when they never named it. */
+  name?: string | null;
 }
 
 export interface ExportSet {
@@ -64,6 +66,10 @@ export const LOG_COLUMNS = [
   "Notes",
   "Prescription",
   "Session notes",
+  // Appended rather than placed beside "Session", so no existing column moves
+  // under a coach's formulas. The stored name only: the program-day fallback
+  // History shows is a display rule, and the day is already in Prescription.
+  "Session name",
 ] as const;
 
 /**
@@ -161,6 +167,7 @@ export function buildLogRows(
         set.notes,
         prescriptionFor(set),
         session?.notes ?? null,
+        session?.name ?? null,
       ]);
     }
   }

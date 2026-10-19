@@ -32,7 +32,12 @@ export type OpKind =
   | "set.update"
   | "set.delete"
   | "set.attachVideo"
+  | "session.update"
+  | "session.delete"
   | "exercise.create"
+  | "exercise.rename"
+  | "exercise.delete"
+  | "clip.delete"
   | "rollup.refresh";
 
 export interface QueuedOp {
@@ -246,6 +251,50 @@ export function opsDroppedByDelete(
       return !landed || Boolean(op.permanentError) || !tried(op);
     }
     return false;
+  });
+  return { drop, landed };
+}
+
+/**
+ * What deleting a session or an exercise does to the ops still carrying it.
+ *
+ * The same reasoning as `opsDroppedByDelete`, for the two other rows an
+ * athlete creates on the device. A create never attempted cannot be on the
+ * server, so it goes with every edit queued against it and no delete is
+ * needed. A create that has been tried may have landed, so it stays and the
+ * delete runs behind it; an edit never tried is pointless once the row is
+ * going, so it goes.
+ *
+ * Keyed by op kind as well as id, because a set's ops carry `sessionId` too
+ * and are not this function's business -- the sets are withdrawn one by one,
+ * through `withdrawSet`, before a session is.
+ */
+const ROW_OPS = {
+  session: { key: "sessionId", create: "session.create", edits: ["session.finish", "session.update"] },
+  exercise: { key: "exerciseId", create: "exercise.create", edits: ["exercise.rename"] },
+} as const satisfies Record<string, { key: string; create: OpKind; edits: readonly OpKind[] }>;
+
+export type DeletableRow = keyof typeof ROW_OPS;
+
+export function opsDroppedByRowDelete(
+  ops: readonly QueuedOp[],
+  row: DeletableRow,
+  rowId: string,
+  inFlight: string | null = null,
+): { drop: QueuedOp[]; landed: boolean } {
+  const spec = ROW_OPS[row];
+  const edits: readonly OpKind[] = spec.edits;
+  const mine = ops.filter(
+    (op) => op.payload[spec.key] === rowId && (op.kind === spec.create || edits.includes(op.kind)),
+  );
+  const tried = (op: QueuedOp) => op.attempts > 0 || op.id === inFlight;
+
+  const create = mine.find((op) => op.kind === spec.create);
+  const landed = !create || (tried(create) && !create.permanentError);
+
+  const drop = mine.filter((op) => {
+    if (op.kind === spec.create) return !landed;
+    return !landed || Boolean(op.permanentError) || !tried(op);
   });
   return { drop, landed };
 }

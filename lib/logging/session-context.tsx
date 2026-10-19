@@ -8,7 +8,7 @@ import {
   startOrRecoverSession,
 } from "./session-store";
 import { lastFinishedSession, pickActiveSession, type SessionRecord } from "./session";
-import { mergeById, queuedSessions } from "./offline-view";
+import { applyQueuedSessionEdits, mergeById, queuedSessions } from "./offline-view";
 import { forgetActiveSession, recallActiveSession, rememberActiveSession } from "./active-session-cache";
 import { attachQueue, subscribeToQueue } from "@/lib/offline/client";
 import { resumeInterruptedUploads } from "@/lib/video/upload";
@@ -43,6 +43,14 @@ interface TrainingValue {
    */
   start: (options?: { programDayId?: string | null }) => Promise<SessionRecord>;
   finish: (sessionId: string, totals: { setCount: number; tonnageKg: number }) => Promise<void>;
+  /**
+   * Applies an edit made from History to the copy on screen. The write itself
+   * is queued by the caller; this keeps the list right after it has synced,
+   * when the queued op that was standing in for it is gone.
+   */
+  patch: (sessionId: string, patch: Partial<Pick<SessionRecord, "name" | "notes" | "setCount" | "tonnageKg">>) => void;
+  /** Takes a deleted session off screen, and forgets it as the one to resume. */
+  drop: (sessionId: string) => void;
   reload: () => Promise<void>;
 }
 
@@ -118,18 +126,20 @@ export function TrainingSessionProvider({
 
   const sessions = useMemo(
     () =>
-      mergeById(
-        state.sessions,
-        // The remembered session goes behind the queue, so a session that is
-        // both queued and remembered keeps the queue's copy -- the one that
-        // knows whether it has been finished.
-        [...queuedSessions(ops), ...(athleteId ? [recallActiveSession(athleteId)] : [])].filter(
-          (s): s is SessionRecord => s !== null,
+      applyQueuedSessionEdits(
+        mergeById(
+          state.sessions,
+          // The remembered session goes behind the queue, so a session that is
+          // both queued and remembered keeps the queue's copy -- the one that
+          // knows whether it has been finished.
+          [...queuedSessions(ops), ...(athleteId ? [recallActiveSession(athleteId)] : [])].filter(
+            (s): s is SessionRecord => s !== null,
+          ),
+          (s) => s.id,
         ),
-        (s) => s.id,
-      ).sort(
-        (a, b) => b.startedAt.getTime() - a.startedAt.getTime(),
-      ),
+        // Edits and deletes made from History that have not synced yet.
+        ops,
+      ).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime()),
     [state.sessions, ops, athleteId],
   );
 
@@ -182,9 +192,24 @@ export function TrainingSessionProvider({
     [athleteId, finishSessionCall],
   );
 
+  const patch = useCallback<TrainingValue["patch"]>((sessionId, change) => {
+    setState((prev) => ({
+      ...prev,
+      sessions: prev.sessions.map((s) => (s.id === sessionId ? { ...s, ...change } : s)),
+    }));
+  }, []);
+
+  const drop = useCallback<TrainingValue["drop"]>(
+    (sessionId) => {
+      if (athleteId && recallActiveSession(athleteId)?.id === sessionId) forgetActiveSession();
+      setState((prev) => ({ ...prev, sessions: prev.sessions.filter((s) => s.id !== sessionId) }));
+    },
+    [athleteId],
+  );
+
   const value = useMemo<TrainingValue>(
-    () => ({ state: { ...state, sessions }, active, lastFinished, start, finish, reload }),
-    [state, sessions, active, lastFinished, start, finish, reload],
+    () => ({ state: { ...state, sessions }, active, lastFinished, start, finish, patch, drop, reload }),
+    [state, sessions, active, lastFinished, start, finish, patch, drop, reload],
   );
 
   return <TrainingContext.Provider value={value}>{children}</TrainingContext.Provider>;

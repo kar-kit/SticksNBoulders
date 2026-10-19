@@ -40,6 +40,7 @@ interface SessionRow {
   tonnage_kg?: unknown;
   notes?: unknown;
   program_day_id?: unknown;
+  name?: unknown;
 }
 
 const asDate = (value: unknown): Date | null => {
@@ -64,6 +65,7 @@ function toSession(row: SessionRow): SessionRecord | null {
     tonnageKg: asNumber(row.tonnage_kg),
     notes: typeof row.notes === "string" ? row.notes : null,
     programDayId: typeof row.program_day_id === "string" && row.program_day_id ? row.program_day_id : null,
+    name: typeof row.name === "string" && row.name.trim() ? row.name : null,
   };
 }
 

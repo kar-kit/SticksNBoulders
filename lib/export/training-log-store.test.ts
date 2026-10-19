@@ -121,6 +121,7 @@ describe("fetchTrainingLog", () => {
           athlete_id: "ath",
           started_at: "2026-09-14T17:30:00.000+00:00",
           notes: "PB day",
+          name: "Comp prep",
         },
       ],
     });
@@ -139,7 +140,12 @@ describe("fetchTrainingLog", () => {
       notes: null,
       prescribed: "3 x 142.5 kg @ RPE 8",
     });
-    expect(log.sessions[0]).toEqual({ id: "s", startedAt: new Date("2026-09-14T17:30:00Z"), notes: "PB day" });
+    expect(log.sessions[0]).toEqual({
+      id: "s",
+      startedAt: new Date("2026-09-14T17:30:00Z"),
+      notes: "PB day",
+      name: "Comp prep",
+    });
   });
 
   it("counts unreadable rows instead of dropping them silently", async () => {

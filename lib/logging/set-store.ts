@@ -112,9 +112,10 @@ export async function editSet(
  *    tried it may have landed, so it stays and a real delete runs behind it.
  * 2. **A clip still uploading for it** is forgotten, so it stops occupying the
  *    phone's quota and retrying on every app start for a set that is gone.
- *    A clip that already uploaded is left in storage, the same trade
- *    `detachClipFromSet` makes: reclaiming files no set references is a sweep,
- *    and a broken player in the coach's queue is worse than a storage bill.
+ *    A clip that already uploaded is deleted by a `clip.delete` op queued
+ *    behind the set's delete when the caller passes its file id (History
+ *    does); otherwise it is left for the sweep, the trade `detachClipFromSet`
+ *    makes.
  * 3. **The rollup.** Queued behind the delete, so the week is recomputed from
  *    what is left -- volume, tonnage, set count, best e1RM and the best-set PR
  *    all come out of that one recompute, and a week with no working sets left
@@ -125,7 +126,7 @@ export async function editSet(
  */
 export async function removeSet(
   clientSetId: string,
-  set?: { exerciseId: string; loggedAt: Date },
+  set?: { exerciseId: string; loggedAt: Date; videoFileId?: string | null },
 ): Promise<{ queued: boolean }> {
   const { landed } = await withdrawSet(clientSetId);
   void forgetUploadsFor(clientSetId);
@@ -134,6 +135,10 @@ export async function removeSet(
   if (!landed) return { queued: false };
   await enqueue("set.delete", { setId: clientSetId });
   if (set) await queueRollupRefresh(set.exerciseId, set.loggedAt);
+  // History knows the clip's file id; the logger's undo does not and leaves it
+  // to the sweep, as before. Queued behind the delete, so it only runs once
+  // the set is gone -- see lib/video/clip-cleanup.ts.
+  if (set?.videoFileId) await enqueue("clip.delete", { setId: clientSetId, fileId: set.videoFileId });
   return { queued: true };
 }
 

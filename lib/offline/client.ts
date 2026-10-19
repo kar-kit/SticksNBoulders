@@ -8,9 +8,11 @@ import {
   classify,
   newOp,
   opsDroppedByDelete,
+  opsDroppedByRowDelete,
   pendingOps,
   readyPrefix,
   supersededRefresh,
+  type DeletableRow,
   type OpKind,
   type QueueStore,
   type QueuedOp,
@@ -188,6 +190,25 @@ export async function withdrawSet(setId: string): Promise<{ landed: boolean }> {
   // what to send from the cache, and the disk takes a tick per delete: in that
   // gap a drain that had moved on would still find the op and send it, after
   // this has already answered "never landed" and no delete is coming behind.
+  const gone = new Set(drop.map((op) => op.id));
+  if (gone.size > 0) {
+    cache = cache.filter((each) => !gone.has(each.id));
+    announce();
+  }
+  for (const op of drop) await open.remove(op.id);
+  return { landed };
+}
+
+/**
+ * Takes a session or an exercise out of the queue ahead of deleting it.
+ *
+ * `withdrawSet`'s twin, with the same in-memory-first ordering and the same
+ * answer: whether the row may already exist on the server, in which case the
+ * caller queues a real delete behind whatever is left.
+ */
+export async function withdrawRow(row: DeletableRow, rowId: string): Promise<{ landed: boolean }> {
+  const open = await ready();
+  const { drop, landed } = opsDroppedByRowDelete(cache, row, rowId, inFlight);
   const gone = new Set(drop.map((op) => op.id));
   if (gone.size > 0) {
     cache = cache.filter((each) => !gone.has(each.id));

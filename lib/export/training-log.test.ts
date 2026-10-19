@@ -26,14 +26,22 @@ const set = (over: Partial<ExportSet>): ExportSet => ({
 describe("buildLogRows", () => {
   it("writes one row per set with every column in order", () => {
     const rows = buildLogRows(
-      [{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: "Good day" }],
+      [{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: "Good day", name: "Heavy singles" }],
       [set({ loadKg: 140, reps: 5, rpe: 8, e1rmKg: 168.00000000000003, notes: "fast" })],
       names,
     );
     expect(rows).toEqual([
-      ["2026-09-14", 1, "Squat", 1, 140, 5, 8, false, 168, "fast", null, "Good day"],
+      ["2026-09-14", 1, "Squat", 1, 140, 5, 8, false, 168, "fast", null, "Good day", "Heavy singles"],
     ]);
     expect(rows[0]).toHaveLength(LOG_COLUMNS.length);
+  });
+
+  it("appends the session name as the last column, so no existing column moves", () => {
+    expect(LOG_COLUMNS.at(-1)).toBe("Session name");
+    expect(LOG_COLUMNS.indexOf("Session notes")).toBe(11);
+    const rows = buildLogRows([{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: null }], [set({})], names);
+    // A session nobody named exports a blank cell, not the date or a day label.
+    expect(rows[0].at(-1)).toBeNull();
   });
 
   it("numbers sessions oldest first and orders rows by session", () => {

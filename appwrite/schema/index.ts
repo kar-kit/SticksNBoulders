@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 13,
+  version: 14,
   tables: [
     {
       id: "profiles",
@@ -104,6 +104,12 @@ export const schema: DatabaseSpec = {
         // session is the athlete's record, and nothing on the program side
         // writes back to it.
         { key: "program_day_id", type: "string", size: 36, required: false },
+        // What the athlete called it ("Heavy singles", "Comp prep day 2"),
+        // edited from History. Null on every row written before v14 and on any
+        // session nobody named: the screens then show the program day's label,
+        // or the date. 80, the same as a program day's label. No index:
+        // nothing filters or sorts by it.
+        { key: "name", type: "string", size: 80, required: false },
       ],
       indexes: [
         { key: "idx_athlete_started", type: "key", columns: ["athlete_id", "started_at"], orders: ["asc", "desc"] },

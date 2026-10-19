@@ -20,8 +20,10 @@ import {
 import { sessionDateLabel } from "@/lib/logging/session";
 import { useUnits } from "@/lib/profile/units-context";
 import { loadIn } from "@/lib/units";
-import { unsyncedIds } from "@/lib/logging/offline-view";
-import { subscribeToQueue } from "@/lib/offline/client";
+import { refusedRowDeletes, unsyncedIds } from "@/lib/logging/offline-view";
+import { useDayLabels } from "@/lib/logging/use-day-labels";
+import { Button } from "@/components/ui/button";
+import { dismissFailed, subscribeToQueue } from "@/lib/offline/client";
 import type { QueuedOp } from "@/lib/offline/queue";
 
 /**
@@ -52,6 +54,11 @@ export function HistoryScreen() {
 
   useEffect(() => subscribeToQueue(setOps), []);
 
+  // Sessions started from the program are titled with the coach's label for
+  // the day until the athlete names them.
+  const dayLabels = useDayLabels(sessions.map((s) => s.programDayId));
+  const refused = useMemo(() => refusedRowDeletes(ops, "session"), [ops]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -79,9 +86,10 @@ export function HistoryScreen() {
       sessions,
       (sessionId) => exerciseIdsOf(grouped.get(sessionId) ?? []).map(nameOf),
       (sessionId) => unsynced.has(sessionId),
+      (dayId) => dayLabels.get(dayId) ?? null,
     );
     return groupByWeek(cards);
-  }, [sessions, sets, ops, nameOf]);
+  }, [sessions, sets, ops, nameOf, dayLabels]);
 
   const shown = useMemo(() => filterByExercise(weeks, query), [weeks, query]);
   const hasAny = weeks.some((week) => week.sessions.length > 0);
@@ -104,6 +112,22 @@ export function HistoryScreen() {
         ) : null}
       </header>
 
+      {/*
+        A session delete that reached Appwrite after a coach had commented on
+        one of its sets. The commented sets kept the session; nothing was lost.
+      */}
+      {refused.size > 0 ? (
+        <div className="flex items-center justify-between gap-3 rounded-card border border-border bg-surface p-3">
+          <p role="status" className="m-0 text-caption text-muted">
+            {refused.size === 1 ? "A session you deleted was" : `${refused.size} sessions you deleted were`} kept:
+            your coach had commented on it.
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => void dismissFailed([...refused.values()])}>
+            OK
+          </Button>
+        </div>
+      ) : null}
+
       {!hasAny ? (
         signedIn && training.status !== "loading" ? (
           <EmptyState
@@ -125,11 +149,14 @@ export function HistoryScreen() {
                   key={card.sessionId}
                   href={`/history/${card.sessionId}`}
                   className="no-underline"
-                  aria-label={`${sessionDateLabel(card.startedAt)}, ${card.setCount} sets`}
+                  aria-label={`${card.named ? `${card.title}, ` : ""}${sessionDateLabel(card.startedAt)}, ${card.setCount} sets`}
                 >
                   <Card>
                     <span className="flex items-baseline justify-between gap-3">
-                      <CardTitle>{sessionDateLabel(card.startedAt)}</CardTitle>
+                      <span className="flex min-w-0 flex-col">
+                        <CardTitle>{card.title}</CardTitle>
+                        {card.named ? <CardMeta>{sessionDateLabel(card.startedAt)}</CardMeta> : null}
+                      </span>
                       <span className="flex items-center gap-1.5">
                         {card.pendingSync ? <PendingDot /> : null}
                         <CardMeta>

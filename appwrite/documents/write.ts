@@ -169,6 +169,70 @@ export async function createExercise(deps: WriteDeps, actor: Actor, input: Creat
 }
 
 /**
+ * Renames one of the athlete's own exercises, from My exercises.
+ *
+ * Owner-stamped, and only ever for a non-global row: the library's rows are
+ * stamped write-to-nobody, so Appwrite refuses this on one anyway, and the
+ * stamp here could never be right for it. Sets point at the id, not the name,
+ * so every logged set follows the rename.
+ *
+ * The duplicate check -- "you already have Barbell Row" -- is the caller's,
+ * against the loaded library, for the reason resolveOrCreateExercise does it
+ * there: this file writes and does not read.
+ */
+export async function renameExercise(
+  deps: WriteDeps,
+  actor: Actor,
+  input: { rowId: string; name: string },
+) {
+  const name = input.name.replace(/\s+/g, " ").trim();
+  if (!name) throw new Error("renameExercise: name is required");
+  if (!input.rowId) throw new Error("renameExercise: rowId is required");
+
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: input.rowId,
+    data: { name: name.slice(0, 64), normalised_name: normaliseExerciseName(name).slice(0, 64) },
+    permissions: exercisePermissions({ athleteId: actor.userId, isGlobal: false }),
+  });
+}
+
+/**
+ * The refusal an exercise delete gets while anything still points at it.
+ */
+export const EXERCISE_IN_USE = "exercise-in-use";
+
+export interface DeleteExerciseGuard {
+  /** Whether a set, a reference max or a prescription still names it. */
+  inUse: () => Promise<boolean>;
+}
+
+/**
+ * Deletes one of the athlete's own exercises.
+ *
+ * Only an unused one. A set, a reference max or a prescription line pointing
+ * at a deleted exercise shows its raw id where the name should be -- in
+ * History, in Lift Detail, in the coach's program -- and the rollups keyed on
+ * it would chart a lift nobody can name. So the guard is checked at the last
+ * moment, like deleteSet's: a delete queued offline may run after a set was
+ * logged against the same lift.
+ */
+export async function deleteExercise(
+  deps: WriteDeps,
+  _actor: Actor,
+  rowId: string,
+  guard?: DeleteExerciseGuard,
+) {
+  if (guard && (await guard.inUse())) {
+    const refusal = new Error(EXERCISE_IN_USE) as Error & { code: number };
+    refusal.code = 412;
+    throw refusal;
+  }
+  return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: "exercises", rowId });
+}
+
+/**
  * A row in the shared library.
  *
  * Server-only, and permanently so: `exercisePermissions` grants a global
@@ -311,6 +375,111 @@ export async function finishSession(deps: WriteDeps, actor: Actor, input: Finish
     },
     permissions: sessionPermissions({ athleteId: actor.userId }),
   });
+}
+
+/** The `sessions.name` column's size. A name past it is cut, never refused. */
+export const SESSION_NAME_MAX = 80;
+/** The `sessions.notes` column's size. */
+export const SESSION_NOTES_MAX = 1000;
+
+/**
+ * A typed session name as stored: trimmed, whitespace collapsed, capped to the
+ * column. Blank is null, which clears the name and lets the screens fall back
+ * to the program day's label or the date.
+ */
+export function normaliseSessionName(name: string | null | undefined): string | null {
+  const cleaned = (name ?? "").replace(/\s+/g, " ").trim();
+  return cleaned ? cleaned.slice(0, SESSION_NAME_MAX) : null;
+}
+
+export interface UpdateSessionInput {
+  sessionId: string;
+  /** Null or blank clears it. Undefined leaves it alone. */
+  name?: string | null;
+  /** Null or blank clears it. Undefined leaves it alone. */
+  notes?: string | null;
+  /**
+   * The stored totals, recomputed by the caller after a set in this session
+   * was corrected or deleted from History. Both or neither: a count from after
+   * the edit beside a tonnage from before it is the drift this exists to fix.
+   */
+  totals?: { setCount: number; tonnageKg: number };
+}
+
+/**
+ * Edits a finished (or running) session from History: its name, its notes,
+ * and the totals the History card reads.
+ *
+ * The totals are here because `finishSession` was the only thing that ever
+ * wrote them. Correcting a weight or deleting a set from History then left the
+ * card showing the old numbers for good -- there is no GROUP BY to recompute
+ * them on read, so whoever changes the sets has to restate the totals.
+ *
+ * Never touches `started_at`, `athlete_id` or `program_day_id`. Moving a
+ * session's start would move it between History weeks while its sets' own
+ * `logged_at` -- which the rollups bucket by -- stayed put, and the two would
+ * disagree about which week the work belongs to.
+ */
+export async function updateSession(deps: WriteDeps, actor: Actor, input: UpdateSessionInput) {
+  if (!input.sessionId) throw new Error("updateSession: sessionId is required");
+  const { totals } = input;
+  if (totals && (!(totals.setCount >= 0) || !(totals.tonnageKg >= 0))) {
+    throw new Error("updateSession: totals must be non-negative");
+  }
+
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "sessions",
+    rowId: input.sessionId,
+    data: {
+      // Null rather than undefined when clearing, so the old value does not
+      // survive the update.
+      ...(input.name !== undefined && { name: normaliseSessionName(input.name) }),
+      ...(input.notes !== undefined && {
+        notes: input.notes?.trim() ? input.notes.trim().slice(0, SESSION_NOTES_MAX) : null,
+      }),
+      ...(totals && { set_count: Math.round(totals.setCount), tonnage_kg: totals.tonnageKg }),
+    },
+    permissions: sessionPermissions({ athleteId: actor.userId }),
+  });
+}
+
+/**
+ * The refusal a session delete gets while sets still point at it.
+ *
+ * A string, like SET_HAS_COACH_COMMENTS, so it survives IndexedDB.
+ */
+export const SESSION_HAS_SETS = "session-has-sets";
+
+export interface DeleteSessionGuard {
+  /** Whether any set row still names this session. Read at the last moment. */
+  setsRemain: () => Promise<boolean>;
+}
+
+/**
+ * Removes a whole session, after its sets have gone.
+ *
+ * The sets are deleted first, each through `deleteSet` and its own guard, by
+ * the queue ops in front of this one. A set the coach has commented on refuses
+ * its delete -- so by the time this runs, a remaining set means the coach has
+ * spoken about this session, and the session stays with it. A session row
+ * deleted from under its sets would leave them in History's set query with no
+ * card to hang off, and in the coach's view with no date.
+ */
+export async function deleteSession(
+  deps: WriteDeps,
+  _actor: Actor,
+  sessionId: string,
+  guard?: DeleteSessionGuard,
+) {
+  if (guard && (await guard.setsRemain())) {
+    // 412 for the reason deleteSet gives: permanent while the sets exist, and
+    // kept by the queue as evidence rather than retried forever.
+    const refusal = new Error(SESSION_HAS_SETS) as Error & { code: number };
+    refusal.code = 412;
+    throw refusal;
+  }
+  return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: "sessions", rowId: sessionId });
 }
 
 /* -------------------------------------------------------------------------

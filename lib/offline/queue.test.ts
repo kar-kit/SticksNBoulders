@@ -5,6 +5,7 @@ import {
   classify,
   collapsibleCreate,
   opsDroppedByDelete,
+  opsDroppedByRowDelete,
   failedOps,
   newOp,
   pendingClientIds,
@@ -183,5 +184,67 @@ describe("opsDroppedByDelete", () => {
       op("r2", "rollup.refresh", { payload: { exerciseId: "squat" } }),
     ];
     expect(opsDroppedByDelete(ops, "st-9").drop).toEqual([]);
+  });
+});
+
+describe("opsDroppedByRowDelete", () => {
+  const op = (id: string, kind: QueuedOp["kind"], payload: Record<string, unknown>, over: Partial<QueuedOp> = {}): QueuedOp => ({
+    id,
+    kind,
+    payload,
+    sequence: Number(id.replace(/\D/g, "")) || 0,
+    attempts: 0,
+    nextAttemptAt: 0,
+    ...over,
+  });
+
+  it("withdraws a session that never left the phone, with its edits, and needs no delete", () => {
+    const ops = [
+      op("c1", "session.create", { sessionId: "cs-1" }),
+      op("f2", "session.finish", { sessionId: "cs-1" }),
+      op("u3", "session.update", { sessionId: "cs-1", name: "x" }),
+    ];
+    const { drop, landed } = opsDroppedByRowDelete(ops, "session", "cs-1");
+    expect(landed).toBe(false);
+    expect(drop.map((o) => o.id)).toEqual(["c1", "f2", "u3"]);
+  });
+
+  it("leaves the session's sets alone -- they carry sessionId but are withdrawn one by one", () => {
+    const ops = [
+      op("c1", "session.create", { sessionId: "cs-1" }),
+      op("s2", "set.create", { setId: "st-1", sessionId: "cs-1" }),
+      op("r3", "rollup.refresh", { exerciseId: "squat", sessionId: "cs-1" }),
+    ];
+    expect(opsDroppedByRowDelete(ops, "session", "cs-1").drop.map((o) => o.id)).toEqual(["c1"]);
+  });
+
+  it("keeps a create that may have landed, and asks for a real delete", () => {
+    const ops = [
+      op("c1", "session.create", { sessionId: "cs-1" }, { attempts: 1 }),
+      op("u2", "session.update", { sessionId: "cs-1" }),
+    ];
+    const { drop, landed } = opsDroppedByRowDelete(ops, "session", "cs-1");
+    expect(landed).toBe(true);
+    expect(drop.map((o) => o.id)).toEqual(["u2"]);
+  });
+
+  it("treats the op on the wire as tried, whatever its counter says", () => {
+    const ops = [op("c1", "exercise.create", { exerciseId: "ex-1" })];
+    expect(opsDroppedByRowDelete(ops, "exercise", "ex-1", "c1")).toEqual({ drop: [], landed: true });
+  });
+
+  it("needs a delete for a row Appwrite already had before this visit", () => {
+    expect(opsDroppedByRowDelete([], "exercise", "ex-1")).toEqual({ drop: [], landed: true });
+  });
+
+  it("withdraws a queued rename with an unsent exercise", () => {
+    const ops = [
+      op("c1", "exercise.create", { exerciseId: "ex-1", name: "rdl" }),
+      op("n2", "exercise.rename", { exerciseId: "ex-1", name: "RDL" }),
+      op("c3", "exercise.create", { exerciseId: "ex-2", name: "other" }),
+    ];
+    const { drop, landed } = opsDroppedByRowDelete(ops, "exercise", "ex-1");
+    expect(landed).toBe(false);
+    expect(drop.map((o) => o.id)).toEqual(["c1", "n2"]);
   });
 });

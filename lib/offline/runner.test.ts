@@ -67,6 +67,13 @@ vi.mock("@/lib/profile/profile-store", () => ({ ensureMyProfile }));
 vi.mock("@/lib/strength/rollup-client", () => ({ refreshRollup }));
 vi.mock("@/lib/review/comment-store", () => ({ fetchCommentsForSets }));
 
+const sessionHasSets = vi.hoisted(() => vi.fn<(sessionId: string) => Promise<boolean>>());
+const exerciseInUse = vi.hoisted(() => vi.fn<(athleteId: string, exerciseId: string) => Promise<boolean>>());
+const deleteClipIfSetGone = vi.hoisted(() => vi.fn<(setId: string, fileId: string) => Promise<void>>());
+vi.mock("@/lib/logging/history-store", () => ({ sessionHasSets }));
+vi.mock("@/lib/exercises/usage-store", () => ({ exerciseInUse }));
+vi.mock("@/lib/video/clip-cleanup", () => ({ deleteClipIfSetGone }));
+
 const ACTOR = { userId: "athlete-1" };
 const op = (kind: OpKind, payload: Record<string, unknown>) => newOp(kind, payload, 0, "op-1");
 
@@ -261,5 +268,75 @@ describe("set.delete", () => {
     fetchCommentsForSets.mockResolvedValue([{ authorId: "athlete-1" }]);
     await runOp(ACTOR, op("set.delete", { setId: "st-abc" }));
     expect(rows).toEqual([{ op: "delete", tableId: "sets", rowId: "st-abc" }]);
+  });
+});
+
+describe("session.update", () => {
+  it("writes only the fields the op carries", async () => {
+    await runOp(ACTOR, op("session.update", { sessionId: "cs-1", name: "Heavy" }));
+    await runOp(ACTOR, op("session.update", { sessionId: "cs-1", setCount: 4, tonnageKg: 1800 }));
+    await runOp(ACTOR, op("session.update", { sessionId: "cs-1", name: null, notes: "" }));
+    expect(rows).toEqual([
+      { op: "update", tableId: "sessions", rowId: "cs-1", data: { name: "Heavy" } },
+      { op: "update", tableId: "sessions", rowId: "cs-1", data: { set_count: 4, tonnage_kg: 1800 } },
+      { op: "update", tableId: "sessions", rowId: "cs-1", data: { name: null, notes: null } },
+    ]);
+  });
+});
+
+describe("session.delete", () => {
+  beforeEach(() => {
+    sessionHasSets.mockReset().mockResolvedValue(false);
+  });
+
+  it("deletes the row once its sets have gone", async () => {
+    await runOp(ACTOR, op("session.delete", { sessionId: "cs-1" }));
+    expect(sessionHasSets).toHaveBeenCalledWith("cs-1");
+    expect(rows).toEqual([{ op: "delete", tableId: "sessions", rowId: "cs-1" }]);
+  });
+
+  it("keeps a session whose commented sets refused to go", async () => {
+    sessionHasSets.mockResolvedValue(true);
+    await expect(runOp(ACTOR, op("session.delete", { sessionId: "cs-1" }))).rejects.toMatchObject({ code: 412 });
+    expect(rows).toEqual([]);
+  });
+
+  it("counts a session already gone as deleted", async () => {
+    failure.next = { code: 404, message: "Row not found" };
+    await expect(runOp(ACTOR, op("session.delete", { sessionId: "cs-1" }))).resolves.toBeUndefined();
+  });
+});
+
+describe("exercise.rename and exercise.delete", () => {
+  beforeEach(() => {
+    exerciseInUse.mockReset().mockResolvedValue(false);
+  });
+
+  it("renames", async () => {
+    await runOp(ACTOR, op("exercise.rename", { exerciseId: "ex-1", name: "RDL" }));
+    expect(rows).toEqual([
+      { op: "update", tableId: "exercises", rowId: "ex-1", data: { name: "RDL", normalised_name: "rdl" } },
+    ]);
+  });
+
+  it("deletes an exercise nothing points at, checking as this athlete", async () => {
+    await runOp(ACTOR, op("exercise.delete", { exerciseId: "ex-1" }));
+    expect(exerciseInUse).toHaveBeenCalledWith("athlete-1", "ex-1");
+    expect(rows).toEqual([{ op: "delete", tableId: "exercises", rowId: "ex-1" }]);
+  });
+
+  it("refuses one that was logged against in the meantime", async () => {
+    exerciseInUse.mockResolvedValue(true);
+    await expect(runOp(ACTOR, op("exercise.delete", { exerciseId: "ex-1" }))).rejects.toMatchObject({ code: 412 });
+    expect(rows).toEqual([]);
+  });
+});
+
+describe("clip.delete", () => {
+  it("hands the set and file to the cleanup, which checks the set has gone", async () => {
+    deleteClipIfSetGone.mockReset().mockResolvedValue(undefined);
+    await runOp(ACTOR, op("clip.delete", { setId: "st-1", fileId: "vid-1" }));
+    expect(deleteClipIfSetGone).toHaveBeenCalledWith("st-1", "vid-1");
+    expect(rows).toEqual([]);
   });
 });
