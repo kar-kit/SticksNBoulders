@@ -136,14 +136,14 @@ export function Roster() {
   const current = data && data.key === key ? data : null;
   if (!current) {
     return (
-      <p className="m-0 p-8 text-ui text-muted" aria-busy>
+      <p className="m-0 p-4 text-ui text-muted md:p-8" aria-busy>
         Loading…
       </p>
     );
   }
   if ("failed" in current) {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-8">
+      <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">
         <EmptyState title="Couldn’t load your roster" body="Check your connection and refresh to try again." />
       </div>
     );
@@ -161,7 +161,7 @@ export function Roster() {
   const items = needsYou(signals, current.now);
 
   return (
-    <div className="flex flex-col gap-8 p-8">
+    <div className="flex flex-col gap-6 p-4 md:gap-8 md:p-8">
       <header className="flex items-baseline justify-between gap-4">
         <h1 className="m-0 text-display font-semibold">Roster</h1>
         <span className="text-ui text-muted">
@@ -186,7 +186,7 @@ export function Roster() {
 /** Ruairi's first session is this screen. The code is its one action. */
 function RosterEmpty({ links }: { links: CoachLinkRecord[] | null }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-4 md:p-8">
       <EmptyState
         title="No athletes yet"
         body="Share your invite code and they'll appear here as they join, with whatever needs your attention first."
@@ -212,11 +212,14 @@ function NeedsYou({ items }: { items: NeedsYouItem[] }) {
             <li key={`${item.athleteId}:${item.kind}`}>
               <Link
                 href={item.href}
-                className="flex h-10 items-center gap-3 rounded-chip px-3 text-ui hover:bg-surface focus-visible:bg-surface"
+                className="flex min-h-10 items-center gap-3 rounded-chip px-3 py-2 text-ui hover:bg-surface focus-visible:bg-surface md:h-10 md:py-0"
               >
                 <span aria-hidden className="block size-1.5 flex-none rounded-full bg-accent-line" />
-                <span className="font-semibold">{item.athleteName}</span>
-                <span className="text-muted">{item.text}</span>
+                {/* Wraps under the name on a phone rather than running off it. */}
+                <span className="flex min-w-0 flex-wrap gap-x-3">
+                  <span className="font-semibold">{item.athleteName}</span>
+                  <span className="text-muted">{item.text}</span>
+                </span>
               </Link>
             </li>
           ))}
@@ -234,6 +237,11 @@ const HEADERS: { key: SortKey; label: string }[] = [
   { key: "block", label: "Block" },
 ];
 
+/**
+ * Below md each row is a card: name across the top, the four facts in a 2x2
+ * grid under it, the header a wrapping strip of sort buttons. Same elements and
+ * roles at every width; the column template only applies from md.
+ */
 function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; onSort: (key: SortKey) => void }) {
   return (
     <div
@@ -244,8 +252,7 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
     >
       <div
         role="row"
-        className="grid h-[34px] items-center gap-3 border-b border-border bg-surface px-[14px]"
-        style={{ gridTemplateColumns: "var(--table-cols)" }}
+        className="flex flex-wrap items-center gap-x-4 border-b border-border bg-surface px-[14px] py-1 md:grid md:h-[34px] md:grid-cols-(--table-cols) md:gap-3 md:py-0"
       >
         {HEADERS.map(({ key, label }) => {
           const sorted = sort.key === key ? sort.dir : undefined;
@@ -259,7 +266,7 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
                 type="button"
                 onClick={() => onSort(key)}
                 className={cn(
-                  "font-mono text-label-xs uppercase",
+                  "h-8 font-mono text-label-xs uppercase md:h-auto",
                   sorted ? "text-foreground" : "text-muted-2",
                 )}
               >
@@ -275,10 +282,9 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
           key={row.athleteId}
           href={`/coach/athletes/${row.athleteId}`}
           role="row"
-          className="grid h-[42px] items-center gap-3 border-b border-border px-[14px] text-ui last:border-b-0 hover:bg-surface focus-visible:bg-surface"
-          style={{ gridTemplateColumns: "var(--table-cols)" }}
+          className="grid grid-cols-2 items-center gap-x-3 gap-y-1 border-b border-border px-[14px] py-3 text-ui last:border-b-0 hover:bg-surface focus-visible:bg-surface md:h-[42px] md:grid-cols-(--table-cols) md:gap-y-3 md:py-0"
         >
-          <span role="cell" className="flex min-w-0 items-center gap-2.5 font-semibold">
+          <span role="cell" className="col-span-2 flex min-w-0 items-center gap-2.5 font-semibold md:col-span-1">
             <UserAvatar userId={row.athleteId} name={row.name} size={24} />
             <span className="truncate">{row.name}</span>
           </span>
@@ -287,8 +293,16 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
               <span role="cell" className={cn(row.sessionsThisWeek === 0 && "text-muted")}>
                 {weekLabel(row)}
               </span>
-              <span role="cell" className={cn("font-mono", row.videosWaiting === 0 && "text-muted-2")}>
-                {row.videosWaiting === 0 ? "—" : row.videosWaiting}
+              <span role="cell">
+                {/* The header is a strip of sort buttons on a phone, not above
+                    the value, so a bare count needs its word. Hidden from
+                    readers, who already get the column header. */}
+                <span aria-hidden className="text-muted md:hidden">
+                  Videos{" "}
+                </span>
+                <span className={cn("font-mono", row.videosWaiting === 0 && "text-muted-2")}>
+                  {row.videosWaiting === 0 ? "—" : row.videosWaiting}
+                </span>
               </span>
               <span role="cell">
                 <BodyweightCell row={row} now={new Date()} />
@@ -298,7 +312,7 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
               </span>
             </>
           ) : (
-            <span role="cell" className="col-span-4 text-muted">
+            <span role="cell" className="col-span-2 text-muted md:col-span-4">
               Linked, nothing showing yet
             </span>
           )}

@@ -175,6 +175,7 @@ export function CoachLink() {
           <Button
             size="sm"
             variant="secondary"
+            className="min-h-10 md:min-h-0"
             onClick={() => setState({ status: "unlinking-confirm", coach: state.coach })}
           >
             Unlink
