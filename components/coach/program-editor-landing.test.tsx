@@ -128,3 +128,14 @@ it("opens where it always did without a landing, or with one that is not in this
   expect(await screen.findByRole("region", { name: "Opener" })).toBeInTheDocument();
   expect(scrolled).not.toHaveBeenCalled();
 });
+
+it("tints the traced line once it has landed, so the eye finds it after the jump", async () => {
+  render(<ProgramEditor programId="p1" landing={{ weekId: "w3", dayId: "d9", lineId: "l9" }} />);
+  await screen.findByRole("region", { name: "Heavy squat" });
+  await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1));
+  const traced = document.querySelectorAll('tr[data-line="l9"] > td');
+  expect(traced.length).toBeGreaterThan(0);
+  traced.forEach((td) => expect(td).toHaveAttribute("data-flash", "landed"));
+  // The other line on the day is left alone.
+  expect(document.querySelector('tr[data-line="l8"] > td')).not.toHaveAttribute("data-flash");
+});

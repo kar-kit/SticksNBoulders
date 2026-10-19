@@ -26,6 +26,12 @@ import {
  * his hands on the keyboard, so arrows move, Enter selects and Escape dismisses
  * without anything being touched. Building one of those and retrofitting the
  * other at Order 19 would mean rewriting it.
+ *
+ * On the coach side only (the `coach:` variant, globals.css), the list pops
+ * open from the field and the active option's accent rule follows the arrow
+ * keys, so a coach typing fast can see where Enter will land without reading
+ * every row. The athlete's logger renders exactly as before: none of those
+ * classes match outside the coach shell. docs/coach-motion.md.
  */
 
 export interface ExerciseTypeaheadProps {
@@ -198,7 +204,10 @@ export function ExerciseTypeahead({
           // Scrolls rather than clips: a library longer than the list was
           // unreachable by browsing, only by typing. Capped at half the
           // viewport so the page under it stays in view.
-          className="m-0 flex max-h-[min(24rem,50vh)] list-none flex-col overflow-y-auto overscroll-contain rounded-control border border-border bg-surface p-0"
+          className={cn(
+            "m-0 flex max-h-[min(24rem,50vh)] list-none flex-col overflow-y-auto overscroll-contain rounded-control border border-border bg-surface p-0",
+            "coach:origin-top coach:motion-safe:animate-pop-in",
+          )}
         >
           {options.map((option, index) => {
             const active = index === clamped;
@@ -223,6 +232,7 @@ export function ExerciseTypeahead({
                   className={cn(
                     "flex min-h-[52px] w-full items-center justify-between gap-3 px-3 text-left",
                     "border-b border-border last:border-b-0",
+                    "coach:relative coach:transition-control coach:rule-l coach:aria-selected:rule-on",
                     // The raised surface marks the active option. Accent is a
                     // line token here, never a fill behind a 13px name: it is
                     // 4.22:1 and the palette says so at the token.

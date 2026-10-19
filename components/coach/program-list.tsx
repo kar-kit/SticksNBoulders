@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FieldLabel, TextField } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { useSession } from "@/lib/auth/session-context";
 import { addDays, localDay, type Program } from "@/lib/programming/program";
@@ -22,6 +23,9 @@ import { fetchPrograms, sendProgramOp } from "@/lib/programming/program-store";
  * Templates are not offered. The tables already hold them (a program with no
  * athlete), but whether Ruairi reuses a skeleton across athletes is still
  * question 6/7 for him, and the blueprint keeps them out of the MVP.
+ *
+ * Motion (docs/coach-motion.md): a skeleton while it loads and a fade as the
+ * list arrives; the New block form rises in where the button was.
  */
 
 interface Person {
@@ -84,7 +88,19 @@ export function ProgramList() {
     );
   }
 
-  if (programs === null) return <div className="p-8" aria-busy />;
+  if (programs === null) {
+    return (
+      <div className="flex flex-col gap-8 p-8" aria-busy>
+        <Skeleton className="h-8 w-40" />
+        {[0, 1].map((n) => (
+          <div key={n} className="flex flex-col gap-3">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   const create = async (athleteId: string, name: string, startOn: string) => {
     // Program, its first block and first week in one go, so the editor opens
@@ -96,7 +112,7 @@ export function ProgramList() {
   };
 
   return (
-    <div className="flex flex-col gap-8 p-8">
+    <div className="flex flex-col gap-8 p-8 animate-fade-in">
       <h1 className="m-0 text-display font-semibold">Programs</h1>
       {people.length === 1 ? (
         <p className="m-0 text-body text-muted">
@@ -129,7 +145,7 @@ export function ProgramList() {
                   <li key={program.id}>
                     <Link
                       href={`/coach/programs/${program.id}`}
-                      className="flex items-center justify-between rounded-control border border-border bg-surface px-4 py-3 text-body"
+                      className="flex items-center justify-between rounded-control border border-border bg-surface px-4 py-3 text-body transition-control press-wide hover:bg-surface-2 focus-visible:bg-surface-2"
                     >
                       <span className="font-semibold">{program.name}</span>
                       <span className="text-ui text-muted">
@@ -162,7 +178,7 @@ function NewProgramForm({
 
   return (
     <form
-      className="flex flex-wrap items-end gap-3 rounded-card border border-border bg-surface p-4"
+      className="flex flex-wrap items-end gap-3 rounded-card border border-border bg-surface p-4 motion-safe:animate-rise-in"
       onSubmit={async (event) => {
         event.preventDefault();
         if (!name.trim()) return setError("Give the block a name.");
@@ -197,7 +213,7 @@ function NewProgramForm({
         Cancel
       </Button>
       {error ? (
-        <p role="alert" className="m-0 w-full text-ui text-danger-line">
+        <p role="alert" className="m-0 w-full text-ui text-danger-line motion-safe:animate-rise-in">
           {error}
         </p>
       ) : null}

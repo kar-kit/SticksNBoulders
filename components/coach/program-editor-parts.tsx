@@ -93,7 +93,7 @@ export function InlineText({
         if (next !== value.trim()) void onCommit(next);
       }}
       className={cn(
-        "min-w-0 rounded-control border border-transparent bg-transparent px-1 text-foreground",
+        "min-w-0 rounded-control border border-transparent bg-transparent px-1 text-foreground transition-control",
         "placeholder:text-muted-2 hover:border-border focus:border-accent-line focus:outline-none",
         className,
       )}
@@ -104,7 +104,8 @@ export function InlineText({
 /**
  * Removal asks once, inline, rather than in a dialog that steals the keyboard.
  * Opened from a ⋯ menu's "Remove …" item; the confirm takes the focus so the
- * keyboard lands on it.
+ * keyboard lands on it. It rises in beside the thing it would remove, so the
+ * question is seen to belong to that thing.
  */
 export function ConfirmStrip({
   label,
@@ -120,7 +121,11 @@ export function ConfirmStrip({
   className?: string;
 }) {
   return (
-    <span role="group" aria-label={`${label}?`} className={cn("flex flex-wrap items-center gap-2", className)}>
+    <span
+      role="group"
+      aria-label={`${label}?`}
+      className={cn("flex flex-wrap items-center gap-2 motion-safe:animate-rise-in", className)}
+    >
       <span className="text-ui text-muted">Logged sessions keep what was done.</span>
       <Button
         variant="danger"

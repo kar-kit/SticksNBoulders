@@ -175,6 +175,253 @@
 }
 
 /*
+ * Motion. Defined once, here; every component reaches for these names, never
+ * for a millisecond of its own. docs/coach-motion.md lists every interaction
+ * that uses them and what each one tells the coach.
+ *
+ * Coach side only. The athlete's screens keep their own two hand-set
+ * transitions (set-row swipe, upload bar) and gain nothing from this block:
+ * shared components opt in through the `coach:` variant below, which matches
+ * only inside the coach shell.
+ *
+ * `static` so the variables are always on :root, whether or not a utility
+ * happens to use them -- the keyframe shorthands below refer to them.
+ */
+@custom-variant coach (&:where(.coach-scale, .coach-scale *));
+
+@theme static {
+  /*
+   * Cleared first, like the colour and type namespaces above: Tailwind's own
+   * ease-in/out curves and spin/ping/bounce would otherwise compile beside
+   * these and drift into use.
+   */
+  --ease-*: initial;
+  --animate-*: initial;
+
+  /* Arriving or answering: fast out of the gate, settles gently. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  /* Leaving: gathers speed, gets out of the way. */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  /* Moving between two resting places: a selection rule changing tab. */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /*
+   * Routine motion stays at or under 200ms; dialogs and the drawer get 240.
+   * `linger` is the one long value and it never moves anything: it is how
+   * long a saved / landed tint stays readable while it fades.
+   */
+  --transition-duration-press: 90ms;
+  --transition-duration-quick: 120ms;
+  --transition-duration-base: 180ms;
+  --transition-duration-panel: 240ms;
+  --transition-duration-linger: 400ms;
+
+  /* Something new on screen: a row, a panel, a confirm strip, a view. */
+  --animate-rise-in: rise-in var(--transition-duration-base) var(--ease-out) both;
+  /* Data arriving where a skeleton or "Loading" was. Opacity only. */
+  --animate-fade-in: fade-in var(--transition-duration-base) var(--ease-out) both;
+  /* A popup anchored to its trigger: menus, the typeahead list, the gear panel. */
+  --animate-pop-in: pop-in var(--transition-duration-quick) var(--ease-out) both;
+  /* The context drawer, in from the edge it lives on, and back out. */
+  --animate-drawer-in: drawer-in var(--transition-duration-panel) var(--ease-out) both;
+  --animate-drawer-out: drawer-out var(--transition-duration-base) var(--ease-in) both;
+  /* A line leaving the grid ahead of the server's answer. */
+  --animate-row-out: row-out var(--transition-duration-base) var(--ease-in) both;
+  /* A day or week being removed: dimmed, held, until the tree comes back without it. */
+  --animate-dim: dim var(--transition-duration-base) var(--ease-out) both;
+  /* The tint behind a saved cell or a landed line. */
+  --animate-flash: flash var(--transition-duration-linger) var(--ease-out) both;
+  /* Loading skeletons. The one loop on the coach side; motion-safe only. */
+  --animate-shimmer: shimmer 1400ms linear infinite;
+
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      scale: 0.97;
+    }
+  }
+  @keyframes drawer-in {
+    from {
+      opacity: 0;
+      translate: 12px 0;
+    }
+  }
+  @keyframes drawer-out {
+    to {
+      opacity: 0;
+      translate: 12px 0;
+    }
+  }
+  @keyframes row-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes dim {
+    to {
+      opacity: 0.4;
+    }
+  }
+  @keyframes flash {
+    0% {
+      opacity: 0;
+    }
+    15% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes shimmer {
+    from {
+      translate: -100% 0;
+    }
+    to {
+      translate: 100% 0;
+    }
+  }
+}
+
+/*
+ * Reduced motion, as a floor under every coach-side component: nothing
+ * animates, nothing transitions, everything lands in its end state at once.
+ * Components also gate their transforms behind `motion-safe:`, so this is the
+ * net for anything that forgets, not the only line. Scoped to the coach shell
+ * for the same reason as the tokens. The 0.01ms rather than 0 is deliberate:
+ * an animation of zero length fires no `animationend`, and the dialogs and
+ * the drawer wait on that event to unmount.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .coach-scale,
+  .coach-scale *,
+  .coach-scale *::before,
+  .coach-scale *::after,
+  .coach-scale *::backdrop {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * The transition every coach control shares: colour on hover and focus, and
+ * the press. Colour is paint, not layout, so it is allowed beside transform
+ * and opacity (button.tsx already transitioned colour before this). Nothing
+ * here changes a box's size or position in the flow.
+ */
+@utility transition-control {
+  transition-property: color, background-color, border-color, opacity, scale, translate, rotate;
+  transition-duration: var(--transition-duration-quick);
+  transition-timing-function: var(--ease-out);
+}
+
+/*
+ * The press: a control gives a little under the pointer or the key. Two sizes,
+ * because 3% of a full-width row is a lurch where 3% of a button is a nudge.
+ */
+@utility press {
+  @media (prefers-reduced-motion: no-preference) {
+    &:active:not(:disabled, [aria-disabled="true"]) {
+      scale: 0.97;
+      transition-duration: var(--transition-duration-press);
+    }
+  }
+}
+@utility press-wide {
+  @media (prefers-reduced-motion: no-preference) {
+    &:active:not(:disabled, [aria-disabled="true"]) {
+      scale: 0.99;
+      transition-duration: var(--transition-duration-press);
+    }
+  }
+}
+
+/*
+ * The 2px accent rule that marks the selected tab, week, clip or option. It
+ * is always there, scaled to nothing, and grows in when `rule-on` applies
+ * (behind an aria- variant at the call site), so a new selection reads as the
+ * mark arriving rather than a box repainting. Transform only. The element
+ * needs `relative`.
+ */
+@utility rule-b {
+  &::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 2px;
+    background: var(--accent-fill);
+    scale: 0 1;
+    transition: scale var(--transition-duration-base) var(--ease-in-out);
+    pointer-events: none;
+  }
+}
+@utility rule-l {
+  &::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: 2px;
+    background: var(--accent-fill);
+    scale: 1 0;
+    transition: scale var(--transition-duration-base) var(--ease-in-out);
+    pointer-events: none;
+  }
+}
+@utility rule-on {
+  &::before,
+  &::after {
+    scale: 1;
+  }
+}
+
+/*
+ * A tint laid over an element and faded out, for "saved", "didn't save" and
+ * "you landed here". Opacity on a pseudo-element, so the row under it is not
+ * repainted per frame. Set by `flash()` in components/ui/motion.ts, which
+ * writes `data-flash` and clears it when the animation ends.
+ */
+@utility flash-host {
+  position: relative;
+  &[data-flash]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    animation: var(--animate-flash);
+  }
+  &[data-flash="saved"]::after {
+    background: color-mix(in srgb, var(--success) 14%, transparent);
+    box-shadow: inset 0 0 0 1px var(--success);
+  }
+  &[data-flash="failed"]::after {
+    background: color-mix(in srgb, var(--danger-line) 16%, transparent);
+    box-shadow: inset 0 0 0 1px var(--danger-line);
+  }
+  &[data-flash="landed"]::after {
+    background: color-mix(in srgb, var(--accent-fill) 16%, transparent);
+    box-shadow: inset 0 0 0 2px var(--accent-line);
+  }
+}
+
+/*
  * Tabular lining figures everywhere, not just on numeric components. A digit
  * that changes width as a value ticks over makes a set row jitter mid-session
  * and a coach's table columns crawl. Set once, globally, so no component can
