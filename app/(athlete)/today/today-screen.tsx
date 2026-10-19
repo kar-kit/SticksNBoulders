@@ -55,7 +55,7 @@ export function TodayScreen() {
   };
 
   return (
-    <div className="pt-safe-8 flex flex-1 flex-col gap-5 pb-6">
+    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
       <header className="flex flex-col gap-1">
         <h1 className="m-0 text-display font-semibold">{sessionDateLabel(new Date())}</h1>
         {day ? (

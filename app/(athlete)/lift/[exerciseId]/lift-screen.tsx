@@ -81,7 +81,7 @@ export function LiftScreen({ exerciseId }: { exerciseId: string }) {
   const showChart = canChart(inRange);
 
   return (
-    <div className="pt-safe-8 flex flex-1 flex-col gap-6 pb-6">
+    <div className="pt-8 flex flex-1 flex-col gap-6 pb-6">
       <header className="flex flex-col items-start gap-1">
         <Button variant="ghost" size="sm" onClick={() => router.back()} aria-label="Back">
           ← Back
