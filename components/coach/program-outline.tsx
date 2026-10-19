@@ -27,6 +27,10 @@ import type { BlockTree, ProgramTree } from "@/lib/programming/program";
  * Keyboard: Tab reaches the selected week, Up and Down walk every week in the
  * program, Enter shows it.
  *
+ * On a phone the outline sits above the week instead of beside it, and each
+ * block's weeks are one row of chips that scrolls sideways, so switching week
+ * costs a short strip of screen rather than a column.
+ *
  * Motion (docs/coach-motion.md): the selected week's accent rule grows in as
  * the selection moves; a week or block added rises in where it landed; one
  * being removed dims until it is gone; a state mark that changes (Draft to
@@ -96,7 +100,7 @@ export function ProgramOutline({
     <nav
       aria-label="Program outline"
       onKeyDown={walk}
-      className="flex w-56 flex-none flex-col gap-4 self-stretch border-r border-border py-5 pr-3 pl-4"
+      className="flex min-w-0 flex-none flex-col gap-4 border-b border-border px-4 py-4 md:w-56 md:self-stretch md:border-r md:border-b-0 md:py-5 md:pr-3 md:pl-4"
     >
       {tree.blocks.length === 0 ? <p className="m-0 text-ui text-muted">No blocks yet.</p> : null}
       {tree.blocks.map((block) => {
@@ -116,7 +120,7 @@ export function ProgramOutline({
                 <InlineText
                   label={`${block.name} name`}
                   value={block.name}
-                  className="h-8 flex-1 text-ui font-semibold"
+                  className="h-10 flex-1 text-action font-semibold md:h-8 md:text-ui"
                   onCommit={(name) => (name ? onRenameBlock(block, name) : null)}
                 />
               ) : (
@@ -152,7 +156,7 @@ export function ProgramOutline({
                 }}
               />
             ) : null}
-            <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+            <ul className="m-0 flex list-none gap-1 overflow-x-auto p-0 [scrollbar-width:none] md:flex-col md:gap-0.5 md:overflow-x-visible">
               {block.weeks.map((week) => {
                 const at = allWeeks.findIndex((w) => w.id === week.id);
                 const state = weekState(tree, week, logged);
@@ -162,6 +166,7 @@ export function ProgramOutline({
                   <li
                     key={week.id}
                     className={cn(
+                      "flex-none md:flex-auto",
                       week.id === leavingWeekId
                         ? "pointer-events-none animate-dim"
                         : // A new block's first week arrives with its block, not on top of it.
@@ -176,7 +181,9 @@ export function ProgramOutline({
                       tabIndex={selected || (!selectedWeekId && at === 0) ? 0 : -1}
                       onClick={() => onSelect(week.id)}
                       className={cn(
-                        "relative flex w-full items-center justify-between gap-2 overflow-hidden rounded-chip px-2 py-1.5 text-left",
+                        "relative flex min-h-10 w-full items-center justify-between gap-2 overflow-hidden rounded-chip px-2 py-1.5 text-left md:min-h-0",
+                        // A chip in the phone strip needs its own edge; the column's rows do not.
+                        "max-md:min-w-32 max-md:border max-md:border-border",
                         "transition-control press-wide rule-l aria-[current=true]:rule-on",
                         "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-line",
                         selected ? "bg-surface-2" : "hover:bg-surface-2/60 focus-visible:bg-surface-2/60",
@@ -207,7 +214,7 @@ export function ProgramOutline({
                     : "Starts an empty week"
                 }
                 onClick={() => onAddWeek(block)}
-                className="h-8 rounded-chip px-2 text-left text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground disabled:text-muted-2 focus-visible:outline-2 focus-visible:outline-accent-line"
+                className="h-10 self-start rounded-chip px-2 text-left text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground disabled:text-muted-2 focus-visible:outline-2 focus-visible:outline-accent-line md:h-8 md:self-auto"
               >
                 + Week
               </button>
@@ -216,7 +223,7 @@ export function ProgramOutline({
         );
       })}
       {editable ? (
-        <Button variant="secondary" size="sm" disabled={busy} onClick={onAddBlock} className="self-start">
+        <Button variant="secondary" size="sm" disabled={busy} onClick={onAddBlock} className="self-start max-md:h-10">
           + Block
         </Button>
       ) : null}

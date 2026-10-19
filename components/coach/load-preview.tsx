@@ -91,7 +91,7 @@ export function LoadPreviewLine({
         </button>
       ) : null}
       {!compact && adding && add ? (
-        <span className="mt-1 flex items-center gap-1 motion-safe:animate-rise-in">
+        <span className="mt-1 flex items-center gap-2 motion-safe:animate-rise-in md:gap-1">
           <input
             aria-label={field}
             inputMode="decimal"
@@ -109,7 +109,7 @@ export function LoadPreviewLine({
                 setError(null);
               }
             }}
-            className="h-7 w-20 rounded-control border border-border bg-surface-2 px-2 text-caption text-foreground tabular-nums transition-control focus:border-accent-line focus:outline-none"
+            className="h-10 w-24 flex-none rounded-control border border-border bg-surface-2 px-2 text-action text-foreground tabular-nums transition-control focus:border-accent-line focus:outline-none md:h-7 md:w-20 md:text-caption"
           />
           <span className="text-caption text-muted-2">Enter saves, from today</span>
         </span>

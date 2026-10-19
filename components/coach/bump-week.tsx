@@ -53,11 +53,12 @@ export function BumpWeek({
     if (parsed.ok && !busy) onDuplicate(parsed.value);
   };
   const field = (key: keyof typeof fields, label: string, placeholder: string) => (
-    <label className="flex flex-col gap-1 text-label uppercase text-muted-2">
+    <label className="flex min-w-0 flex-col gap-1 text-label uppercase text-muted-2">
       {label}
+      {/* No inputMode="decimal": iOS's decimal pad has no minus, and a
+          deload is a step of -5. */}
       <input
         aria-label={label}
-        inputMode="decimal"
         placeholder={placeholder}
         value={fields[key]}
         autoFocus={key === "percent"}
@@ -69,7 +70,7 @@ export function BumpWeek({
           }
           if (e.key === "Escape") onCancel();
         }}
-        className="h-9 w-24 rounded-control border border-border bg-surface-2 px-2 text-ui text-foreground tabular-nums normal-case transition-control focus:border-accent-line focus:outline-none"
+        className="h-10 w-full rounded-control border border-border bg-surface-2 px-2 text-action text-foreground tabular-nums normal-case transition-control focus:border-accent-line focus:outline-none md:h-9 md:w-24 md:text-ui"
       />
     </label>
   );
@@ -77,17 +78,18 @@ export function BumpWeek({
   return (
     <section
       aria-label="Duplicate with a bump"
-      className="flex flex-col gap-3 rounded-card border border-border p-4 motion-safe:animate-rise-in"
+      className="flex flex-col gap-3 rounded-card border border-border p-3 motion-safe:animate-rise-in md:p-4"
     >
-      <div className="flex flex-wrap items-end gap-3">
+      {/* Phone: the three steps share one row, the buttons wrap under them. */}
+      <div className="grid grid-cols-3 items-end gap-3 md:flex md:flex-wrap">
         {field("percent", "+ %", "2.5")}
         {field("kg", "+ kg", "5")}
         {field("rpe", "+ RPE", "0.5")}
-        <span className="flex-1" />
-        <Button size="sm" disabled={busy || !parsed.ok} onClick={submit}>
+        <span className="hidden flex-1 md:block" />
+        <Button size="sm" disabled={busy || !parsed.ok} onClick={submit} className="col-span-2 max-md:h-10">
           Duplicate with bump
         </Button>
-        <Button variant="ghost" size="sm" onClick={onCancel}>
+        <Button variant="ghost" size="sm" onClick={onCancel} className="max-md:h-10">
           Cancel
         </Button>
       </div>

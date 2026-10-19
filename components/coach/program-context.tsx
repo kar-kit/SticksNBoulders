@@ -25,6 +25,8 @@ import type { ClipSet } from "@/lib/review/queue";
  * not on every week switch: the week changes which exercises are shown, not
  * what was logged. Each half fails on its own, and says so.
  *
+ * On a phone there is no "beside": it is a full-width section under the week.
+ *
  * Opened and closed from the week header, it slides in from the edge it lives
  * on and back out (docs/coach-motion.md), so the coach sees where it went. A
  * drawer that was already open when the editor loaded simply is there.
@@ -129,13 +131,13 @@ export function ProgramContext({
       aria-hidden={leaving || undefined}
       inert={leaving || undefined}
       className={cn(
-        "flex w-72 shrink-0 flex-col gap-5 border-l border-border bg-surface px-4 py-5 text-ui",
+        "flex w-full shrink-0 flex-col gap-5 border-t border-border bg-surface px-4 py-5 text-ui md:w-72 md:border-t-0 md:border-l",
         leaving ? "motion-safe:animate-drawer-out" : animateIn && "motion-safe:animate-drawer-in",
       )}
     >
       <header className="flex items-center justify-between gap-2">
         <h2 className="m-0 text-title font-semibold">Context</h2>
-        <Button variant="ghost" size="sm" onClick={onClose}>
+        <Button variant="ghost" size="sm" onClick={onClose} className="max-md:h-10">
           Close
         </Button>
       </header>

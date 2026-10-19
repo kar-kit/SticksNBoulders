@@ -25,6 +25,9 @@ import type { DayTree, Prescription, ProgramTree } from "@/lib/programming/progr
  * Keyboard: one tab stop for the grid; arrows walk the cells, Home and End go
  * to the ends of a row, Enter opens a day or adds one.
  *
+ * Seven weekdays do not fit a phone legibly, so below md the grid keeps a
+ * 44rem floor and scrolls sideways inside its own wrapper, never the page.
+ *
  * Motion (docs/coach-motion.md): days answer hover and focus, an empty cell's
  * "+ Day" fades up under the pointer or the keyboard, and a day just added
  * rises into its cell. Opening a day is the week view's landing tint.
@@ -125,15 +128,16 @@ export function ProgramCalendar({
   const stop = (row: number, col: number) => (stopRow === row && active.col === col ? 0 : -1);
 
   return (
+    <div className="max-md:-mx-4 max-md:overflow-x-auto max-md:px-4">
     <table
       role="grid"
       aria-label="Program calendar"
       onKeyDown={onKeyDown}
       onFocus={onFocus}
-      className="w-full table-fixed border-collapse text-ui"
+      className="w-full min-w-[44rem] table-fixed border-collapse text-ui md:min-w-0"
     >
       <colgroup>
-        <col className="w-36" />
+        <col className="w-24 md:w-36" />
         {WEEKDAYS.map((name) => (
           <col key={name} />
         ))}
@@ -289,7 +293,8 @@ export function ProgramCalendar({
                             }}
                             className={cn(
                               "mt-1 w-full rounded-chip px-1.5 py-1 text-left text-caption text-muted",
-                              "opacity-0 transition-control group-hover:opacity-100 focus-visible:opacity-100 hover:bg-surface-2 hover:text-foreground",
+                              // No hover on a touch screen to reveal it, so it is always shown there.
+                              "opacity-0 transition-control group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-surface-2 hover:text-foreground",
                               "focus-visible:outline-2 focus-visible:outline-accent-line aria-disabled:text-muted-2",
                             )}
                           >
@@ -306,5 +311,6 @@ export function ProgramCalendar({
         );
       })}
     </table>
+    </div>
   );
 }

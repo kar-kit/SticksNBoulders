@@ -82,7 +82,7 @@ export function AdjustProgram({ athleteId, lineId }: { athleteId: string; lineId
 
   if (current.status === "checking") {
     return (
-      <div className="p-8 text-ui text-muted" aria-busy>
+      <div className="p-4 text-ui text-muted md:p-8" aria-busy>
         Opening their program…
       </div>
     );
@@ -141,7 +141,7 @@ export function AdjustProgram({ athleteId, lineId }: { athleteId: string; lineId
   }
 
   return (
-    <div className="flex flex-col gap-4 p-8">
+    <div className="flex flex-col gap-4 p-4 md:p-8">
       <h1 className="m-0 text-display font-semibold">{name ?? "Their programs"}</h1>
       <p className="m-0 text-body text-muted">
         Nothing of theirs is published, so there is no current block to open. Pick one to carry on with.
@@ -152,9 +152,9 @@ export function AdjustProgram({ athleteId, lineId }: { athleteId: string; lineId
             <Link
               href={`/coach/programs/${program.id}`}
               autoFocus={at === 0}
-              className="flex items-center justify-between rounded-control border border-border bg-surface px-4 py-3 text-body"
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 rounded-control border border-border bg-surface px-4 py-3 text-body md:flex-nowrap"
             >
-              <span className="font-semibold">{program.name}</span>
+              <span className="min-w-0 font-semibold break-words">{program.name}</span>
               <span className="text-ui text-muted">
                 {STATUS_LABEL[program.status]}
                 {program.startOn ? ` · from ${program.startOn}` : ""}
@@ -177,5 +177,5 @@ function ProgramsLink() {
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex h-full flex-col items-center justify-center p-8">{children}</div>;
+  return <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">{children}</div>;
 }
