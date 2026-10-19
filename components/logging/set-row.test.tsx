@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SetRow, SetRowHeader } from "./set-row";
 import type { LoggableSet } from "@/lib/logging/set";
@@ -248,5 +248,55 @@ describe("SetRow — an athlete who reads pounds", () => {
     render(<SetRowHeader unit="lb" />);
     expect(screen.getByText("LB")).toBeInTheDocument();
     expect(screen.queryByText("KG")).not.toBeInTheDocument();
+  });
+});
+
+describe("SetRow — swipe to delete", () => {
+  const reveal = (container: HTMLElement) => container.querySelector("[data-swipe-reveal]");
+
+  it("shows nothing behind a row at rest", () => {
+    const { container } = render(<SetRow index={1} set={set()} state="logged" onDelete={() => {}} />);
+    expect(reveal(container)).toBeNull();
+  });
+
+  it("uncovers a red Delete as the row slides, and arms it past the threshold", () => {
+    const onDelete = vi.fn();
+    const { container } = render(<SetRow index={1} set={set()} state="logged" onDelete={onDelete} />);
+    const row = screen.getByRole("group", { name: "Set 1" });
+
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 260, clientY: 10 });
+    expect(reveal(container)).toHaveTextContent("Delete");
+    expect(reveal(container)).toHaveAttribute("data-swipe-reveal", "showing");
+    // Decorative: the tap-to-open Delete button is what a screen reader uses.
+    expect(reveal(container)).toHaveAttribute("aria-hidden", "true");
+
+    fireEvent.pointerMove(row, { clientX: 180, clientY: 10 });
+    expect(reveal(container)).toHaveAttribute("data-swipe-reveal", "armed");
+
+    fireEvent.pointerUp(row, { clientX: 180, clientY: 10 });
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(reveal(container)).toBeNull();
+  });
+
+  it("hides the reveal again when a short drag is let go", () => {
+    const onDelete = vi.fn();
+    const { container } = render(<SetRow index={1} set={set()} state="logged" onDelete={onDelete} />);
+    const row = screen.getByRole("group", { name: "Set 1" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 250, clientY: 10 });
+    fireEvent.pointerUp(row, { clientX: 250, clientY: 10 });
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(reveal(container)).toBeNull();
+  });
+
+  it("offers no swipe on a set the coach has commented on", () => {
+    const { container } = render(
+      <SetRow index={1} set={set()} state="logged" onDelete={() => {}} deleteBlocked="Your coach commented." />,
+    );
+    const row = screen.getByRole("group", { name: "Set 1" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 180, clientY: 10 });
+    expect(reveal(container)).toBeNull();
   });
 });

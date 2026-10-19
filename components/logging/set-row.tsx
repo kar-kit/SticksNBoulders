@@ -121,126 +121,147 @@ export function SetRow({
 
   return (
     <div className="flex flex-col">
-      <div
-        role="group"
-        aria-label={setLabel}
-        tabIndex={selectable ? 0 : undefined}
-        onClick={selectable ? swipe.guardClick(onSelect) : undefined}
-        onKeyDown={selectable ? (event) => activateOnKey(event, onSelect) : undefined}
-        {...swipe.handlers}
-        style={
-          {
-            gridTemplateColumns: GRID,
-            "--set-row-last": editing ? "56px" : "34px",
-            ...swipe.style,
-          } as unknown as React.CSSProperties
-        }
-        className={cn(
-          "grid items-center gap-2",
-          editing
-            ? cn(
-                "h-16 rounded-row border bg-surface-2 pr-2 pl-2.5",
-                // The row the pad is typing into, or the next one to log.
-                // A planned row waiting behind it stays quiet.
-                active || focused ? "border-accent-line" : "border-border",
-              )
-            : cn(
-                "bg-surface px-2.5",
-                warmup ? "h-12" : "h-14",
-                uploading && !selected ? "rounded-t-control" : "rounded-control",
-                selectable && "cursor-pointer focus-visible:outline-2 focus-visible:outline-accent-line",
-                selected && "outline outline-1 outline-border",
-              ),
-        )}
-      >
-        <span
-          className={cn(
-            "font-semibold",
-            warmup ? "text-caption text-muted-2" : "text-sm",
-            active ? "text-foreground" : "text-muted-2",
-          )}
-        >
-          {index}
-        </span>
-
-        <LoadCell
-          value={set.loadKg === null ? null : loadIn(set.loadKg, unit)}
-          size={size}
-          align="left"
-          editable={editing}
-          placeholder={editing ? unit.toUpperCase() : "—"}
-          onPress={onPressLoad}
-          label={`${setLabel} weight in ${unitName(unit)}`}
-          marker={editing && suggested ? "Suggested" : undefined}
-        />
-
-        <LoadCell
-          value={set.reps}
-          size={size}
-          align={editing ? "center" : "left"}
-          editable={editing}
-          placeholder={editing ? "REPS" : "—"}
-          onPress={onPressReps}
-          label={`${setLabel} reps`}
-        />
-
-        {showCameraInRpeCell ? (
-          <button
-            type="button"
-            onClick={onFilm}
-            aria-label={`Film ${setLabel} — video required before it can be logged`}
-            className="flex h-12 items-center justify-center rounded-chip border border-accent-fill bg-surface text-accent-fill"
-          >
-            <CameraIcon width={18} height={18} />
-          </button>
-        ) : (
-          <LoadCell
-            value={set.rpe}
-            size={size}
-            align={editing ? "center" : "left"}
-            // Warm-ups never ask for RPE, so the cell is inert rather than empty.
-            editable={editing && !warmup}
-            placeholder={editing && !warmup ? "RPE" : "—"}
-            onPress={onPressRpe}
-            label={`${setLabel} RPE`}
-          />
-        )}
-
-        {active ? (
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={!confirmable}
-            aria-label={`Log ${setLabel}`}
+      {/*
+        The swipe's reveal: a red Delete behind the row, uncovered as the row
+        slides left, iOS-style, so the gesture says what it will do before it
+        does it. It turns solid once letting go would delete. Decorative to a
+        screen reader -- the tap-to-open Delete button is the accessible path.
+      */}
+      <div className="relative">
+        {swipe.offset < 0 ? (
+          <div
+            aria-hidden="true"
+            data-swipe-reveal={swipe.armed ? "armed" : "showing"}
             className={cn(
-              "flex h-14 items-center justify-center rounded-chip text-value-lg font-bold",
-              confirmable
-                ? "bg-accent-fill text-on-accent"
-                : "border border-border bg-surface text-border",
+              "absolute inset-0 flex items-center justify-end rounded-control bg-danger-fill pr-4",
+              "text-ui font-semibold text-on-danger-fill",
+              swipe.armed ? "opacity-100" : "opacity-70",
             )}
           >
-            ✓
-          </button>
-        ) : planned ? (
-          // Not a confirm: a planned row is logged by becoming the active row.
-          // Only one square on the screen means "log this", so the thumb
-          // never has to check which one it is on.
-          <button
-            type="button"
-            onClick={onDiscard}
-            aria-label={`Remove planned ${setLabel}`}
-            className="flex h-14 items-center justify-center rounded-chip border border-border bg-surface text-title text-muted"
+            Delete
+          </div>
+        ) : null}
+        <div
+          role="group"
+          aria-label={setLabel}
+          tabIndex={selectable ? 0 : undefined}
+          onClick={selectable ? swipe.guardClick(onSelect) : undefined}
+          onKeyDown={selectable ? (event) => activateOnKey(event, onSelect) : undefined}
+          {...swipe.handlers}
+          style={
+            {
+              gridTemplateColumns: GRID,
+              "--set-row-last": editing ? "56px" : "34px",
+              ...swipe.style,
+            } as unknown as React.CSSProperties
+          }
+          className={cn(
+            "relative grid items-center gap-2",
+            editing
+              ? cn(
+                  "h-16 rounded-row border bg-surface-2 pr-2 pl-2.5",
+                  // The row the pad is typing into, or the next one to log.
+                  // A planned row waiting behind it stays quiet.
+                  active || focused ? "border-accent-line" : "border-border",
+                )
+              : cn(
+                  "bg-surface px-2.5",
+                  warmup ? "h-12" : "h-14",
+                  uploading && !selected ? "rounded-t-control" : "rounded-control",
+                  selectable && "cursor-pointer focus-visible:outline-2 focus-visible:outline-accent-line",
+                  selected && "outline outline-1 outline-border",
+                ),
+          )}
+        >
+          <span
+            className={cn(
+              "font-semibold",
+              warmup ? "text-caption text-muted-2" : "text-sm",
+              active ? "text-foreground" : "text-muted-2",
+            )}
           >
-            ×
-          </button>
-        ) : (
-          <span className="flex items-center justify-end gap-1.5">
-            {pendingSync ? <PendingDot /> : null}
-            <span aria-label="Logged" className="text-action text-success">
-              ✓
-            </span>
+            {index}
           </span>
-        )}
+
+          <LoadCell
+            value={set.loadKg === null ? null : loadIn(set.loadKg, unit)}
+            size={size}
+            align="left"
+            editable={editing}
+            placeholder={editing ? unit.toUpperCase() : "—"}
+            onPress={onPressLoad}
+            label={`${setLabel} weight in ${unitName(unit)}`}
+            marker={editing && suggested ? "Suggested" : undefined}
+          />
+
+          <LoadCell
+            value={set.reps}
+            size={size}
+            align={editing ? "center" : "left"}
+            editable={editing}
+            placeholder={editing ? "REPS" : "—"}
+            onPress={onPressReps}
+            label={`${setLabel} reps`}
+          />
+
+          {showCameraInRpeCell ? (
+            <button
+              type="button"
+              onClick={onFilm}
+              aria-label={`Film ${setLabel} — video required before it can be logged`}
+              className="flex h-12 items-center justify-center rounded-chip border border-accent-fill bg-surface text-accent-fill"
+            >
+              <CameraIcon width={18} height={18} />
+            </button>
+          ) : (
+            <LoadCell
+              value={set.rpe}
+              size={size}
+              align={editing ? "center" : "left"}
+              // Warm-ups never ask for RPE, so the cell is inert rather than empty.
+              editable={editing && !warmup}
+              placeholder={editing && !warmup ? "RPE" : "—"}
+              onPress={onPressRpe}
+              label={`${setLabel} RPE`}
+            />
+          )}
+
+          {active ? (
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={!confirmable}
+              aria-label={`Log ${setLabel}`}
+              className={cn(
+                "flex h-14 items-center justify-center rounded-chip text-value-lg font-bold",
+                confirmable
+                  ? "bg-accent-fill text-on-accent"
+                  : "border border-border bg-surface text-border",
+              )}
+            >
+              ✓
+            </button>
+          ) : planned ? (
+            // Not a confirm: a planned row is logged by becoming the active row.
+            // Only one square on the screen means "log this", so the thumb
+            // never has to check which one it is on.
+            <button
+              type="button"
+              onClick={onDiscard}
+              aria-label={`Remove planned ${setLabel}`}
+              className="flex h-14 items-center justify-center rounded-chip border border-border bg-surface text-title text-muted"
+            >
+              ×
+            </button>
+          ) : (
+            <span className="flex items-center justify-end gap-1.5">
+              {pendingSync ? <PendingDot /> : null}
+              <span aria-label="Logged" className="text-action text-success">
+                ✓
+              </span>
+            </span>
+          )}
+        </div>
       </div>
 
       {uploading ? <UploadBar percent={uploadPercent} flush /> : null}
@@ -304,10 +325,14 @@ function useSwipeToDelete(onDelete?: () => void) {
   };
 
   if (!onDelete) {
-    return { handlers: {}, style: {}, guardClick: (fn?: () => void) => fn };
+    return { handlers: {}, style: {}, offset: 0, armed: false, guardClick: (fn?: () => void) => fn };
   }
 
   return {
+    /** How far the row has been dragged, negative to the left. */
+    offset: dx,
+    /** Letting go here deletes. */
+    armed: dx <= -SWIPE_DELETE_PX,
     handlers: {
       onPointerDown: (event: PointerEvent) => {
         origin.current = { x: event.clientX, y: event.clientY };

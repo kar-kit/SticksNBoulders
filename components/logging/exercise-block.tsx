@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { SetRow, SetRowHeader } from "./set-row";
 import type { LoggableSet, RpeValue } from "@/lib/logging/set";
@@ -72,6 +72,14 @@ export interface ExerciseBlockProps {
   target?: readonly string[] | null;
   /** The athlete's unit, for every load in the block. Kilos when absent. */
   unit?: UnitPreference;
+  /**
+   * Takes the whole exercise out of the session: its rows, and every set
+   * logged into it. The screen holds the undo; this only asks first when there
+   * is logged work to lose.
+   */
+  onRemove?: () => void;
+  /** Why the exercise cannot be removed, if it cannot. Shown in place of the button. */
+  removeBlocked?: string | null;
 }
 
 /**
@@ -103,9 +111,20 @@ export function ExerciseBlock({
   camera,
   target = null,
   unit = "kg",
+  onRemove,
+  removeBlocked = null,
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const open = planned.length > 0;
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  // Nothing logged means nothing to lose: it goes straight to the undo toast.
+  // Logged work asks once, inline, because the toast alone is five seconds
+  // between an athlete and a whole exercise of sets.
+  const askRemove = () => {
+    if (sets.length === 0 && !removeBlocked) onRemove?.();
+    else setConfirmingRemove(true);
+  };
 
   return (
     <section aria-label={name} className="flex flex-col gap-2">
@@ -122,7 +141,53 @@ export function ExerciseBlock({
             {name}
           </button>
         )}
+        {onRemove && !confirmingRemove ? (
+          // Text, not an icon, and quiet: it sits a long way from the confirm
+          // square and Add set, and a remove that looks like neither is one a
+          // thumb mid-set does not hit by accident.
+          <button
+            type="button"
+            onClick={askRemove}
+            aria-label={`Remove ${name} from this session`}
+            className="flex h-11 flex-none items-center px-2 text-ui text-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+          >
+            Remove
+          </button>
+        ) : null}
       </header>
+
+      {confirmingRemove ? (
+        <div
+          role="group"
+          aria-label={`Remove ${name}?`}
+          className="flex flex-col gap-3 rounded-card border border-border bg-surface p-3"
+        >
+          {removeBlocked ? (
+            <p className="m-0 text-caption text-muted">{removeBlocked}</p>
+          ) : (
+            <p className="m-0 text-body">
+              Remove {name}? Its {sets.length} logged set{sets.length === 1 ? "" : "s"} will be deleted.
+            </p>
+          )}
+          <div className="flex gap-3">
+            {removeBlocked ? null : (
+              <Button
+                variant="danger"
+                block
+                onClick={() => {
+                  setConfirmingRemove(false);
+                  onRemove?.();
+                }}
+              >
+                Remove exercise
+              </Button>
+            )}
+            <Button variant="secondary" block onClick={() => setConfirmingRemove(false)}>
+              Keep
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {target && target.length > 0 ? (
         <ul aria-label={`${name} prescribed`} className="m-0 flex list-none flex-col gap-0.5 p-0">
