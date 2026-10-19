@@ -6,6 +6,7 @@ import { StateMark } from "@/components/coach/program-outline";
 import { CellInput } from "@/components/coach/program-editor-parts";
 import { LoadPreviewLine } from "@/components/coach/load-preview";
 import { cn } from "@/lib/cn";
+import { flash } from "@/components/ui/motion";
 import type { Exercise } from "@/lib/exercises/match";
 import { rangeLabel, weekIndexOf, weekRange } from "@/lib/programming/calendar";
 import {
@@ -40,6 +41,10 @@ import { progressionGrid, type ProgressionCell } from "@/lib/programming/progres
  *
  * Keyboard: arrows walk the grid (sideways from a cell's edge), Enter commits
  * and moves down, Tab walks the row, Escape puts a cell back.
+ *
+ * Motion is the week view's (docs/coach-motion.md): a cell tints saved or
+ * refused when the answer comes back, the kilos under it rise in when they
+ * change, and switching block crossfades the grid.
  */
 
 export interface ProgramProgressionProps {
@@ -125,26 +130,32 @@ export function ProgramProgression({
     }
   };
 
-  const commit = async (cell: ProgressionCell, exerciseId: string, key: string, text: string) => {
+  /** `td` is the grid cell, tinted saved or refused once the answer is in. */
+  const commit = async (cell: ProgressionCell, exerciseId: string, key: string, text: string, td: Element | null) => {
+    const refuse = (message: string) => {
+      setError(key, message);
+      flash(td, "failed");
+    };
     if (cell.kind === "line") {
       const result = commitProgression(cell.line, text, exercises);
       if ("unchanged" in result) return setError(key, null);
-      if ("error" in result) return setError(key, result.error);
+      if ("error" in result) return refuse(result.error);
       setError(key, null);
       const failed = await editLine(cell.line, result.op);
-      if (failed) setError(key, failed);
+      if (failed) refuse(failed);
+      else flash(td, "saved");
       return;
     }
     if (cell.kind !== "empty" || !text.trim()) return;
     // A new line in that week's day: shorthand, or the load alone on one set.
     const shorthand = parseShorthand(text);
-    if (shorthand && !shorthand.ok) return setError(key, shorthand.reason);
+    if (shorthand && !shorthand.ok) return refuse(shorthand.reason);
     const fields = shorthand?.value ?? { setCount: 1, reps: null, repMax: null, load: text.trim() };
     const { load, reference } = splitReference(fields.load ?? "", exercises);
-    if (load.length > 120) return setError(key, "Load is 120 characters at most");
+    if (load.length > 120) return refuse("Load is 120 characters at most");
     setError(key, null);
     const referenceExerciseId = reference === undefined ? (referenceFor(exerciseId) ?? undefined) : reference;
-    await run({
+    const added = await run({
       op: "addPrescription",
       dayId: cell.day.id,
       exerciseId,
@@ -154,6 +165,8 @@ export function ProgramProgression({
       ...(load ? { load } : {}),
       ...(referenceExerciseId ? { referenceExerciseId } : {}),
     });
+    // `run` shows its own error; the cell only says which one it was.
+    flash(td, added === null ? "failed" : "saved");
   };
 
   const empty = rows.length === 0;
@@ -173,7 +186,7 @@ export function ProgramProgression({
           No lines in {block.name} yet. Write the first week in the week view and its lines become the rows here.
         </p>
       ) : (
-        <div className="overflow-x-auto">
+        <div key={block.id} className="overflow-x-auto animate-fade-in">
           <table aria-label={`${block.name} progression`} className="w-full border-collapse text-ui">
             <thead>
               <tr className="text-left align-bottom">
@@ -188,7 +201,7 @@ export function ProgramProgression({
                         type="button"
                         onClick={() => onOpenWeek(week.id)}
                         aria-label={`Open ${weekName(week.id)} in the week view`}
-                        className="flex w-full flex-col rounded-chip px-1 text-left hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent-line"
+                        className="flex w-full flex-col rounded-chip px-1 text-left transition-control press-wide hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent-line"
                       >
                         <span className="text-ui font-semibold text-foreground">{weekName(week.id)}</span>
                         <span className="text-caption text-muted-2">
@@ -236,7 +249,7 @@ export function ProgramProgression({
                         }
                         const value = cell.kind === "line" ? progressionText(cell.line) : "";
                         return (
-                          <td key={cell.weekId} className="px-1 py-1">
+                          <td key={cell.weekId} className="flash-host px-1 py-1">
                             <CellInput
                               data-pcell={`${row}-${col}`}
                               aria-label={label}
@@ -245,9 +258,9 @@ export function ProgramProgression({
                               value={value}
                               placeholder={cell.kind === "empty" ? "+ 3x5 75%" : undefined}
                               onKeyDown={(e) => onKey(e, row, col)}
-                              onBlur={(e) => void commit(cell, slot.exerciseId, key, e.target.value)}
+                              onBlur={(e) => void commit(cell, slot.exerciseId, key, e.target.value, e.currentTarget.closest("td"))}
                               className={cn(
-                                "h-9 w-full rounded-control border bg-surface-2 px-2 text-foreground tabular-nums placeholder:text-muted-2 focus:outline-none",
+                                "h-9 w-full rounded-control border bg-surface-2 px-2 text-foreground tabular-nums placeholder:text-muted-2 transition-control focus:outline-none",
                                 errors[key] ? "border-danger-line" : "border-border focus:border-accent-line",
                                 cell.kind === "empty" && "border-dashed bg-transparent",
                               )}
@@ -261,7 +274,7 @@ export function ProgramProgression({
                               />
                             ) : null}
                             {errors[key] ? (
-                              <span role="alert" className="block px-1 pt-0.5 text-caption text-danger-line">
+                              <span role="alert" className="block px-1 pt-0.5 text-caption text-danger-line motion-safe:animate-rise-in">
                                 {errors[key]}
                               </span>
                             ) : null}

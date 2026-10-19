@@ -131,6 +131,8 @@ export function AthleteLifts({ athleteId }: { athleteId: string }) {
             </div>
           </div>
           <LiftPanel
+            // A new lift is a new panel: keyed, it crossfades in under the tab.
+            key={active.exerciseId}
             tab={active}
             range={range}
             onRange={setRange}
@@ -158,7 +160,7 @@ function LiftPanel({
   const records = personalRecords(tab.weeks);
 
   return (
-    <div role="tabpanel" aria-label={tab.name} className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-6">
+    <div role="tabpanel" aria-label={tab.name} className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-6 animate-fade-in">
       <div className="flex flex-col gap-3">
         <p className="m-0 flex items-baseline gap-3">
           <span className="text-display font-semibold tabular-nums">
@@ -190,9 +192,11 @@ function LiftPanel({
               onClick={() => onRange(option)}
               aria-pressed={range === option}
               className={cn(
-                "h-8 rounded-chip px-3 font-mono text-label uppercase",
+                "h-8 rounded-chip px-3 font-mono text-label uppercase transition-control press",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
-                range === option ? "bg-accent-fill font-bold text-on-accent" : "bg-surface-2 text-muted",
+                range === option
+                  ? "bg-accent-fill font-bold text-on-accent"
+                  : "bg-surface-2 text-muted hover:text-foreground focus-visible:text-foreground",
               )}
             >
               {option}

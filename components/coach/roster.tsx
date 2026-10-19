@@ -161,7 +161,8 @@ export function Roster() {
   const items = needsYou(signals, current.now);
 
   return (
-    <div className="flex flex-col gap-8 p-8">
+    // Fades in over "Loading…", once; re-sorting and live updates are still.
+    <div className="flex flex-col gap-8 p-8 animate-fade-in">
       <header className="flex items-baseline justify-between gap-4">
         <h1 className="m-0 text-display font-semibold">Roster</h1>
         <span className="text-ui text-muted">
@@ -212,7 +213,7 @@ function NeedsYou({ items }: { items: NeedsYouItem[] }) {
             <li key={`${item.athleteId}:${item.kind}`}>
               <Link
                 href={item.href}
-                className="flex h-10 items-center gap-3 rounded-chip px-3 text-ui hover:bg-surface focus-visible:bg-surface"
+                className="flex h-10 items-center gap-3 rounded-chip px-3 text-ui transition-control press-wide hover:bg-surface focus-visible:bg-surface"
               >
                 <span aria-hidden className="block size-1.5 flex-none rounded-full bg-accent-line" />
                 <span className="font-semibold">{item.athleteName}</span>
@@ -259,8 +260,8 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
                 type="button"
                 onClick={() => onSort(key)}
                 className={cn(
-                  "font-mono text-label-xs uppercase",
-                  sorted ? "text-foreground" : "text-muted-2",
+                  "font-mono text-label-xs uppercase transition-control",
+                  sorted ? "text-foreground" : "text-muted-2 hover:text-foreground focus-visible:text-foreground",
                 )}
               >
                 {label}
@@ -275,7 +276,7 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
           key={row.athleteId}
           href={`/coach/athletes/${row.athleteId}`}
           role="row"
-          className="grid h-[42px] items-center gap-3 border-b border-border px-[14px] text-ui last:border-b-0 hover:bg-surface focus-visible:bg-surface"
+          className="grid h-[42px] items-center gap-3 border-b border-border px-[14px] text-ui transition-control last:border-b-0 hover:bg-surface focus-visible:bg-surface"
           style={{ gridTemplateColumns: "var(--table-cols)" }}
         >
           <span role="cell" className="flex min-w-0 items-center gap-2.5 font-semibold">
