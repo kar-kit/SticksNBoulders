@@ -82,6 +82,9 @@ export interface CurrentMaxesProps {
   athleteId: string;
 }
 
+/** A row: a three-column grid on a phone, a table row from md. */
+const ROW = "grid grid-cols-3 border-border md:table-row";
+
 const todayInput = (): string => {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -184,31 +187,43 @@ export function CurrentMaxes({ athleteId }: CurrentMaxesProps) {
       ) : null}
       {state.status === "ready" && state.rows.length > 0 ? (
         <>
-          <table className="w-full table-fixed border-collapse text-ui">
-            <thead>
-              <tr className="border-b border-border">
-                <th scope="col" className="w-[28%] py-2 pr-3 text-left font-mono text-label-xs font-normal uppercase text-muted-2">
+          {/* On a phone each row becomes a grid: the lift's name across the
+              top, its three numbers in three columns under it. Same table,
+              display swapped at md; the explicit roles keep it a table to a
+              screen reader once display is no longer table. */}
+          <table role="table" className="block w-full border-collapse text-ui md:table md:table-fixed">
+            <thead role="rowgroup" className="block md:table-header-group">
+              <tr role="row" className={cn(ROW, "border-b")}>
+                <th scope="col" role="columnheader" className="hidden py-2 pr-3 text-left font-mono text-label-xs font-normal uppercase text-muted-2 md:table-cell md:w-[28%]">
                   Lift
                 </th>
-                <th scope="col" className="py-2 pr-3 text-left font-mono text-label-xs font-normal uppercase text-muted-2">
+                <th scope="col" role="columnheader" className="py-2 pr-3 text-left font-mono text-label-xs font-normal uppercase text-muted-2 md:table-cell">
                   Tested
                 </th>
-                <th scope="col" className="py-2 pr-3 text-left font-mono text-label-xs font-normal uppercase text-muted-2">
+                <th scope="col" role="columnheader" className="py-2 pr-3 text-left font-mono text-label-xs font-normal uppercase text-muted-2 md:table-cell">
                   Training
                 </th>
-                <th scope="col" className="py-2 text-left font-mono text-label-xs font-normal uppercase text-muted-2">
+                <th scope="col" role="columnheader" className="py-2 text-left font-mono text-label-xs font-normal uppercase text-muted-2 md:table-cell">
                   e1RM
                 </th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup" className="block md:table-row-group">
               {state.rows.map((row) => (
-                <tr key={row.exerciseId} className="border-b border-border align-top last:border-0">
-                  <th scope="row" className="py-2.5 pr-3 text-left font-normal">
+                <tr key={row.exerciseId} role="row" className={cn(ROW, "border-b align-top last:border-0")}>
+                  <th scope="row" role="rowheader" className="col-span-3 pt-2.5 pr-3 text-left font-semibold md:table-cell md:py-2.5 md:font-normal">
                     {row.exerciseName}
                   </th>
                   {(["tested", "training"] as const).map((kind) => (
-                    <td key={kind} className="py-2.5 pr-3">
+                    <td
+                      key={kind}
+                      role="cell"
+                      className={cn(
+                        "py-2.5 pr-3 md:table-cell",
+                        // The editor needs the row's full width on a phone.
+                        editing?.exerciseId === row.exerciseId && editing.kind === kind && "col-span-3",
+                      )}
+                    >
                       {editing?.exerciseId === row.exerciseId && editing.kind === kind ? (
                         <MaxEditor
                           athleteId={athleteId}
@@ -235,7 +250,7 @@ export function CurrentMaxes({ athleteId }: CurrentMaxesProps) {
                       )}
                     </td>
                   ))}
-                  <td className="py-2.5">
+                  <td role="cell" className="py-2.5 md:table-cell">
                     <MaxCell
                       max={row.estimated}
                       upcoming={null}
@@ -265,11 +280,11 @@ export function CurrentMaxes({ athleteId }: CurrentMaxesProps) {
  */
 function DotsRow({ result }: { result: DotsResult }) {
   return (
-    <tr className="border-t border-border align-top">
-      <th scope="row" className="py-2.5 pr-3 text-left font-normal">
+    <tr role="row" className={cn(ROW, "border-t align-top")}>
+      <th scope="row" role="rowheader" className="col-span-3 pt-2.5 pr-3 text-left font-semibold md:table-cell md:py-2.5 md:font-normal">
         DOTS
       </th>
-      <td colSpan={3} className="py-2.5">
+      <td colSpan={3} role="cell" className="col-span-3 py-2.5 md:table-cell">
         {result.status === "ready" ? (
           <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span className="font-semibold tabular-nums">{formatDots(result.score)}</span>
@@ -350,7 +365,7 @@ function MaxCell({
       aria-label={editLabel}
       data-flash={justSaved ? "saved" : undefined}
       className={cn(
-        "flash-host -m-1 rounded-chip p-1 text-left transition-control press hover:bg-surface-2 focus-visible:bg-surface-2",
+        "flash-host -m-1 min-h-10 w-full rounded-chip p-1 text-left transition-control press hover:bg-surface-2 focus-visible:bg-surface-2 md:min-h-0 md:w-auto",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
       )}
     >
@@ -430,7 +445,7 @@ function MaxEditor({
           aria-label={`${kindLabel(kind)} for ${exerciseName}, kg`}
           value={value}
           onChange={(event) => setValue(event.target.value)}
-          className="h-8 w-[72px] rounded-chip border border-border bg-surface-2 px-2 tabular-nums transition-control focus:border-accent-line focus:outline-none"
+          className="h-10 w-24 rounded-chip border border-border bg-surface-2 px-2 text-action tabular-nums transition-control focus:border-accent-line focus:outline-none md:h-8 md:w-[72px] md:text-ui"
           placeholder="kg"
         />
         <input
@@ -438,21 +453,21 @@ function MaxEditor({
           aria-label={`Takes effect from`}
           value={date}
           onChange={(event) => setDate(event.target.value)}
-          className="h-8 min-w-0 flex-1 rounded-chip border border-border bg-surface-2 px-1.5 text-caption focus:border-accent-line focus:outline-none"
+          className="h-10 min-w-0 flex-1 rounded-chip border border-border bg-surface-2 px-1.5 text-action focus:border-accent-line focus:outline-none md:h-8 md:text-caption"
         />
       </div>
       <div className="flex items-center gap-2">
         <button
           type="submit"
           disabled={busy}
-          className="h-7 rounded-chip bg-accent-fill px-2.5 text-caption font-bold text-on-accent transition-control press enabled:hover:opacity-90 disabled:bg-surface-2 disabled:text-muted-2"
+          className="h-10 rounded-chip bg-accent-fill px-4 text-caption font-bold text-on-accent transition-control press enabled:hover:opacity-90 disabled:bg-surface-2 disabled:text-muted-2 md:h-7 md:px-2.5"
         >
           {busy ? "Saving…" : "Save"}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="h-7 px-1 text-caption text-muted transition-control hover:text-foreground focus-visible:text-foreground"
+          className="h-10 px-2 text-caption text-muted transition-control hover:text-foreground focus-visible:text-foreground md:h-7 md:px-1"
         >
           Cancel
         </button>

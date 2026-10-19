@@ -24,7 +24,7 @@ import {
 export function NotLinkedState({ state }: { state: Exclude<AthleteLinkState, { kind: "linked" }> }) {
   const copy = notLinkedCopy(state);
   return (
-    <div className="flex h-full flex-col items-center justify-center p-8">
+    <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">
       <EmptyState
         title={copy.title}
         body={copy.body}
@@ -137,9 +137,9 @@ export function AthleteLinkGate({ athleteId, children }: { athleteId: string; ch
     // in: a coach with a flaky connection still sees an athlete they are
     // linked to, and nobody is shown panels the session never granted.
     if (inSession) return <>{children}</>;
-    if (current === null) return <p className="m-0 p-8 text-ui text-muted" aria-busy>Loading…</p>;
+    if (current === null) return <p className="m-0 p-4 text-ui text-muted md:p-8" aria-busy>Loading…</p>;
     return (
-      <div className="flex h-full flex-col items-center justify-center p-8">
+      <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">
         <EmptyState title="Couldn’t load this athlete" body="Refresh to try again." />
       </div>
     );

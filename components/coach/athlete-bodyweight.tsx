@@ -116,7 +116,8 @@ export function AthleteBodyweight({ athleteId, open, onOpen, onClose }: AthleteB
         onClick={onOpen}
         aria-haspopup="dialog"
         className={cn(
-          "inline-flex h-8 items-baseline gap-2 self-center rounded-chip border border-border bg-surface px-3 pt-[7px] text-left",
+          "inline-flex h-10 items-baseline gap-2 self-center rounded-chip border border-border bg-surface px-3 pt-[11px] text-left",
+          "md:h-8 md:pt-[7px]",
           "transition-control press hover:bg-surface-2 focus-visible:bg-surface-2",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
         )}
@@ -203,7 +204,7 @@ function BodyweightHistory({
           <button
             type="button"
             onClick={onClose}
-            className="h-9 rounded-chip border border-border px-3 text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+            className="h-10 shrink-0 rounded-chip border border-border px-3 text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
           >
             Close
           </button>
@@ -229,7 +230,7 @@ function BodyweightHistory({
                 aria-pressed={range === option}
                 onClick={() => setRange(option)}
                 className={cn(
-                  "h-8 rounded-chip px-3 font-mono text-label uppercase transition-control press",
+                  "h-10 rounded-chip px-3 font-mono text-label uppercase transition-control press md:h-8",
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                   range === option ? "bg-accent-fill font-bold text-on-accent" : "bg-surface-2 text-muted",
                 )}
@@ -244,7 +245,7 @@ function BodyweightHistory({
           <h3 id={`${heading}-recent`} className="m-0 font-mono text-label uppercase text-muted-2">
             Recent weigh-ins
           </h3>
-          <ul className="m-0 grid list-none grid-cols-2 gap-x-8 p-0">
+          <ul className="m-0 grid list-none grid-cols-2 gap-x-4 p-0 md:gap-x-8">
             {entries.slice(0, HISTORY_ROWS).map((entry) => (
               <li
                 key={entry.id}

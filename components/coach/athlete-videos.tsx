@@ -142,13 +142,19 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                 )}
               >
-                <span className="grid w-full grid-cols-[52px_minmax(0,1fr)_auto] items-baseline gap-3">
+                <span className="grid w-full grid-cols-[52px_minmax(0,1fr)] items-baseline gap-x-3 md:grid-cols-[52px_minmax(0,1fr)_auto]">
                   <span className="font-mono text-meta text-muted-2">{shortDate(new Date(row.loggedAt))}</span>
                   <span className="min-w-0 truncate text-ui">
                     <span className="font-semibold">{row.exerciseName}</span>{" "}
                     <span className="tabular-nums">{loadLabel(row)}</span>
                   </span>
-                  <span className={cn("text-caption", row.reviewed ? "text-muted-2" : "text-accent-fill")}>
+                  {/* Under the name on a phone, so the load is never what truncates. */}
+                  <span
+                    className={cn(
+                      "col-start-2 text-caption md:col-start-auto",
+                      row.reviewed ? "text-muted-2" : "text-accent-fill",
+                    )}
+                  >
                     {row.reviewed ? "reviewed" : "waiting"}
                     {row.commentCount > 0 ? ` · ${row.commentCount} comment${row.commentCount === 1 ? "" : "s"}` : ""}
                   </span>
@@ -244,7 +250,7 @@ function ClipDialog({
     <Dialog labelledBy={heading} onClose={onClose} leaving={leaving} onExited={onExited}>
       <div className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-4">
-          <div className="flex flex-col gap-0.5">
+          <div className="flex min-w-0 flex-col gap-0.5">
             <h2 id={heading} className="m-0 text-title font-semibold">
               {row.exerciseName} <span className="tabular-nums">{loadLabel(row)}</span>
               <span className="font-normal text-muted"> · {shortDate(new Date(row.loggedAt))}</span>
@@ -257,13 +263,13 @@ function ClipDialog({
           <button
             type="button"
             onClick={onClose}
-            className="h-9 rounded-chip border border-border px-3 text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+            className="h-10 shrink-0 rounded-chip border border-border px-3 text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
           >
             Close
           </button>
         </div>
 
-        <div className="grid grid-cols-[minmax(0,320px)_minmax(0,1fr)] gap-6">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
           <ClipPlayer
             src={current?.url ?? null}
             clipId={row.id}

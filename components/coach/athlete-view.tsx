@@ -56,6 +56,9 @@ import { UserAvatar } from "@/components/profile/user-avatar";
  *   sessions, and the CSV export. History is read when something above raises
  *   a question, not first.
  *
+ * On a phone (Ruairi uses one) the same tree collapses to one column at md
+ * and below; nothing is hidden or duplicated for it.
+ *
  * The bodyweight history and an opened clip are dialogs held in the URL (see
  * use-athlete-panel.ts), so Back closes them and the panels underneath stay
  * loaded.
@@ -165,7 +168,7 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
   }
 
   return (
-    <div className="flex flex-col gap-8 p-8" aria-busy={!linked}>
+    <div className="flex flex-col gap-6 p-4 md:gap-8 md:p-8" aria-busy={!linked}>
       {linked ? (
         <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
           <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
@@ -193,8 +196,10 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
 
       {/* Mounted while checking so the reads start now; hidden until the link
           says they may be shown. */}
-      <div hidden={!linked} className={linked ? "flex flex-col gap-12" : "hidden"}>
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-10 gap-y-10">
+      <div hidden={!linked} className={linked ? "flex flex-col gap-10 md:gap-12" : "hidden"}>
+        {/* One column on a phone, in the same reading order: maxes, videos,
+            then the block. */}
+        <div className="grid grid-cols-1 gap-x-10 gap-y-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div className="flex min-w-0 flex-col gap-10">
             <CurrentMaxes athleteId={athleteId} />
             <AthleteVideos
@@ -221,5 +226,5 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex h-full flex-col items-center justify-center p-8">{children}</div>;
+  return <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">{children}</div>;
 }

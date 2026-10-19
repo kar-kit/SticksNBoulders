@@ -102,14 +102,18 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                         aria-controls={panelId}
                         onClick={() => setOpen(expanded ? null : card.sessionId)}
                         className={cn(
-                          "grid w-full grid-cols-[150px_minmax(0,1fr)_auto] items-baseline gap-3 rounded-chip py-2 text-left",
+                          // Phone: date and totals on one line, the exercises under them.
+                          "grid w-full grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-0.5 rounded-chip py-2.5 text-left",
+                          "md:grid-cols-[150px_minmax(0,1fr)_auto] md:gap-3 md:py-2",
                           "transition-control press-wide hover:bg-surface focus-visible:bg-surface",
                           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                         )}
                       >
                         <span className="text-ui font-semibold">{sessionDateLabel(card.startedAt)}</span>
-                        <span className="truncate text-ui text-muted">{card.exerciseNames.join(", ")}</span>
-                        <span className="font-mono text-meta text-muted tabular-nums">
+                        <span className="col-span-2 row-start-2 truncate text-ui text-muted md:col-span-1 md:row-start-auto">
+                          {card.exerciseNames.join(", ")}
+                        </span>
+                        <span className="col-start-2 row-start-1 text-right font-mono text-meta text-muted tabular-nums md:col-start-auto md:row-start-auto md:text-left">
                           {card.setCount} set{card.setCount === 1 ? "" : "s"}
                           {card.tonnageKg > 0 ? ` · ${formatTonnage(card.tonnageKg)} kg` : ""}
                           {" · "}
@@ -120,7 +124,7 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                         // Rises out of the row it belongs to. Collapsing is
                         // instant: the coach is done with it, and a closing
                         // panel would hold the rows below it in place.
-                        <div id={panelId} className="flex flex-col gap-2 pb-3 pl-[162px] motion-safe:animate-rise-in">
+                        <div id={panelId} className="flex flex-col gap-2 pb-3 motion-safe:animate-rise-in md:pl-[162px]">
                           {view.notes.get(card.sessionId) ? (
                             // The athlete's own words about the session: the
                             // one thing on this card nobody could infer.
