@@ -134,7 +134,7 @@ export function CommentBox({
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Button onClick={() => void post()} disabled={busy} className="flex-1 md:flex-none">
           Comment &amp; next
         </Button>

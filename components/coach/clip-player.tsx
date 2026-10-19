@@ -135,7 +135,9 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="relative aspect-[3/4] w-full max-w-[420px] overflow-hidden rounded-control bg-surface-2">
+      {/* Capped on a phone so the set context and comment box are not a full
+          screen below the video. */}
+      <div className="relative aspect-[3/4] max-h-[50svh] w-full max-w-[420px] overflow-hidden md:max-h-none rounded-control bg-surface-2">
         {src && !failed ? (
           <video
             // Keyed on the clip so switching swaps the element rather than
