@@ -130,6 +130,7 @@ export function CopyProgram({
           autoComplete="off"
           value={target ? target.name : query}
           placeholder="Type an athlete's name"
+          className="max-md:text-action"
           onChange={(e) => {
             setTarget(null);
             setQuery(e.target.value);
@@ -139,7 +140,7 @@ export function CopyProgram({
           <ul aria-label="Athletes" className="m-0 flex list-none flex-wrap gap-1 p-0">
             {matches.map((p) => (
               <li key={p.id}>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setTarget(p)}>
+                <Button type="button" variant="ghost" size="sm" className="max-md:h-10" onClick={() => setTarget(p)}>
                   {p.name}
                 </Button>
               </li>
@@ -152,14 +153,20 @@ export function CopyProgram({
       </div>
       <div className="flex flex-wrap items-end gap-4">
         {block && tree.blocks.length > 1 ? (
-          <label className="flex items-center gap-2 text-ui">
+          <label className="flex min-h-10 items-center gap-2 text-ui md:min-h-0">
             <input type="checkbox" checked={onlyBlock} onChange={(e) => setOnlyBlock(e.target.checked)} />
             Only {block.name}
           </label>
         ) : null}
         <div className="flex flex-col gap-1">
           <FieldLabel htmlFor="copy-start">Starts</FieldLabel>
-          <TextField id="copy-start" type="date" value={startOn} onChange={(e) => setStartOn(e.target.value)} />
+          <TextField
+            id="copy-start"
+            type="date"
+            value={startOn}
+            className="max-md:text-action"
+            onChange={(e) => setStartOn(e.target.value)}
+          />
         </div>
       </div>
       <p className="m-0 text-ui text-muted">

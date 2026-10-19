@@ -22,6 +22,8 @@ import type { ClipSet } from "@/lib/review/queue";
  * `fetchReviewedSetIds`). Read once per athlete when the drawer first opens,
  * not on every week switch: the week changes which exercises are shown, not
  * what was logged. Each half fails on its own, and says so.
+ *
+ * On a phone there is no "beside": it is a full-width section under the week.
  */
 
 type Read<T> = { status: "loading" } | { status: "failed" } | { status: "ready"; value: T };
@@ -102,11 +104,11 @@ export function ProgramContext({
   return (
     <aside
       aria-label="Context"
-      className="flex w-72 shrink-0 flex-col gap-5 border-l border-border bg-surface px-4 py-5 text-ui"
+      className="flex w-full shrink-0 flex-col gap-5 border-t border-border bg-surface px-4 py-5 text-ui md:w-72 md:border-t-0 md:border-l"
     >
       <header className="flex items-center justify-between gap-2">
         <h2 className="m-0 text-title font-semibold">Context</h2>
-        <Button variant="ghost" size="sm" onClick={onClose}>
+        <Button variant="ghost" size="sm" onClick={onClose} className="max-md:h-10">
           Close
         </Button>
       </header>

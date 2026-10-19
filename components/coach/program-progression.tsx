@@ -38,6 +38,9 @@ import { progressionGrid, type ProgressionCell } from "@/lib/programming/progres
  * week's day. A dash is a week without the day, or one where an added line
  * would land in a different slot (lib/programming/progression.ts).
  *
+ * On a phone the table scrolls sideways in its own wrapper, with the
+ * exercise column pinned so a row stays readable across the weeks.
+ *
  * Keyboard: arrows walk the grid (sideways from a cell's edge), Enter commits
  * and moves down, Tab walks the row, Escape puts a cell back.
  */
@@ -177,7 +180,10 @@ export function ProgramProgression({
           <table aria-label={`${block.name} progression`} className="w-full border-collapse text-ui">
             <thead>
               <tr className="text-left align-bottom">
-                <th scope="col" className="w-48 px-2 pb-2 font-mono text-label font-normal uppercase text-muted-2">
+                <th
+                  scope="col"
+                  className="w-32 px-2 pb-2 font-mono text-label font-normal uppercase text-muted-2 max-md:sticky max-md:left-0 max-md:z-10 max-md:bg-background md:w-48"
+                >
                   Exercise
                 </th>
                 {grid.weeks.map((week) => {
@@ -211,7 +217,8 @@ export function ProgramProgression({
                     colSpan={grid.weeks.length + 1}
                     className="border-t-2 border-border px-2 pt-3 pb-1 text-left text-ui font-semibold text-foreground"
                   >
-                    {day.title}
+                    {/* Pinned left while the weeks scroll under it on a phone. */}
+                    <span className="max-md:sticky max-md:left-2">{day.title}</span>
                   </th>
                 </tr>
                 {day.rows.map((slot) => {
@@ -220,7 +227,10 @@ export function ProgramProgression({
                   const slotName = slot.occurrence > 0 ? `${name} (${ORDINAL[slot.occurrence] ?? `#${slot.occurrence + 1}`})` : name;
                   return (
                     <tr key={slot.id} aria-label={`${day.title}: ${slotName}`} className="align-top">
-                      <th scope="row" className="px-2 py-1 text-left font-semibold text-foreground">
+                      <th
+                        scope="row"
+                        className="px-2 py-1 text-left font-semibold text-foreground max-md:sticky max-md:left-0 max-md:z-10 max-md:max-w-32 max-md:bg-background"
+                      >
                         <span className="block truncate">{slotName}</span>
                       </th>
                       {slot.cells.map((cell, col) => {
@@ -230,7 +240,7 @@ export function ProgramProgression({
                         if (cell.kind === "none") {
                           return (
                             <td key={cell.weekId} className="px-1 py-1 text-muted-2" aria-label={`${label}: not in this week`}>
-                              <span className="block h-9 px-2 leading-9">–</span>
+                              <span className="block h-10 px-2 leading-10 md:h-9 md:leading-9">–</span>
                             </td>
                           );
                         }
@@ -247,7 +257,7 @@ export function ProgramProgression({
                               onKeyDown={(e) => onKey(e, row, col)}
                               onBlur={(e) => void commit(cell, slot.exerciseId, key, e.target.value)}
                               className={cn(
-                                "h-9 w-full rounded-control border bg-surface-2 px-2 text-foreground tabular-nums placeholder:text-muted-2 focus:outline-none",
+                                "h-10 w-full rounded-control border bg-surface-2 px-2 text-action text-foreground tabular-nums placeholder:text-muted-2 focus:outline-none md:h-9 md:text-ui",
                                 errors[key] ? "border-danger-line" : "border-border focus:border-accent-line",
                                 cell.kind === "empty" && "border-dashed bg-transparent",
                               )}

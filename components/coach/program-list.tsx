@@ -84,7 +84,7 @@ export function ProgramList() {
     );
   }
 
-  if (programs === null) return <div className="p-8" aria-busy />;
+  if (programs === null) return <div className="p-4 md:p-8" aria-busy />;
 
   const create = async (athleteId: string, name: string, startOn: string) => {
     // Program, its first block and first week in one go, so the editor opens
@@ -96,7 +96,7 @@ export function ProgramList() {
   };
 
   return (
-    <div className="flex flex-col gap-8 p-8">
+    <div className="flex flex-col gap-6 p-4 md:gap-8 md:p-8">
       <h1 className="m-0 text-display font-semibold">Programs</h1>
       {people.length === 1 ? (
         <p className="m-0 text-body text-muted">
@@ -110,7 +110,7 @@ export function ProgramList() {
             <header className="flex items-center justify-between gap-3">
               <h2 className="m-0 text-title font-semibold">{person.name}</h2>
               {creating === person.id ? null : (
-                <Button variant="secondary" size="sm" onClick={() => setCreating(person.id)}>
+                <Button variant="secondary" size="sm" className="max-md:h-10" onClick={() => setCreating(person.id)}>
                   New block
                 </Button>
               )}
@@ -129,9 +129,9 @@ export function ProgramList() {
                   <li key={program.id}>
                     <Link
                       href={`/coach/programs/${program.id}`}
-                      className="flex items-center justify-between rounded-control border border-border bg-surface px-4 py-3 text-body"
+                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 rounded-control border border-border bg-surface px-4 py-3 text-body md:flex-nowrap"
                     >
-                      <span className="font-semibold">{program.name}</span>
+                      <span className="min-w-0 font-semibold break-words">{program.name}</span>
                       <span className="text-ui text-muted">
                         {STATUS_LABEL[program.status]}
                         {program.startOn ? ` · from ${program.startOn}` : ""}
@@ -176,19 +176,26 @@ function NewProgramForm({
         }
       }}
     >
-      <div className="flex min-w-64 flex-1 flex-col gap-1">
+      <div className="flex w-full flex-col gap-1 md:w-auto md:min-w-64 md:flex-1">
         <FieldLabel htmlFor="new-program-name">Name</FieldLabel>
         <TextField
           id="new-program-name"
           autoFocus
           value={name}
           placeholder="Hypertrophy block, Oct–Nov"
+          className="max-md:text-action"
           onChange={(e) => setName(e.target.value)}
         />
       </div>
-      <div className="flex flex-col gap-1">
+      <div className="flex w-full flex-col gap-1 md:w-auto">
         <FieldLabel htmlFor="new-program-start">Starts</FieldLabel>
-        <TextField id="new-program-start" type="date" value={startOn} onChange={(e) => setStartOn(e.target.value)} />
+        <TextField
+          id="new-program-start"
+          type="date"
+          value={startOn}
+          className="max-md:text-action"
+          onChange={(e) => setStartOn(e.target.value)}
+        />
       </div>
       <Button type="submit" disabled={busy}>
         {busy ? "Creating…" : "Create"}
@@ -206,5 +213,5 @@ function NewProgramForm({
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return <div className="flex h-full flex-col items-center justify-center p-8">{children}</div>;
+  return <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">{children}</div>;
 }

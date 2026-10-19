@@ -100,6 +100,11 @@ import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/progra
  *
  * Seams left: backoff rules (21) and video-required (30) are columns after
  * Notes.
+ *
+ * On a phone (below md) the same tree restacks: the outline above the week,
+ * the context drawer under it, and each grid row as a small card -- exercise,
+ * then sets and reps, then load with its kilos, then rest and note. Ruairi
+ * does edit from his phone (October 2026), so it stays fully editable there.
  */
 
 type Load =
@@ -120,6 +125,29 @@ const COLUMN_LABEL: Record<Column, string> = {
 };
 
 const STATE_WORD = { draft: "Draft", live: "Live", logged: "Logged" } as const;
+
+/**
+ * A grid cell below md: a block in its row's six-column card, with its column
+ * name drawn above it from `data-label` (CSS content, so no second text node
+ * for tests or screen readers -- the input already has its aria-label).
+ */
+const PHONE_CELL =
+  "max-md:before:mb-1 max-md:before:block max-md:before:font-mono max-md:before:text-label max-md:before:text-muted-2 max-md:before:uppercase max-md:before:content-[attr(data-label)]";
+
+/**
+ * Columns each cell spans in the phone card: sets | reps, load alone (its
+ * kilos line needs the width), rest | note, backoff | video. The exercise
+ * takes five of the first row and remove the sixth.
+ */
+const PHONE_SPAN: Record<Exclude<Column, "exercise">, string> = {
+  sets: "col-span-3",
+  reps: "col-span-3",
+  load: "col-span-6",
+  rest: "col-span-2",
+  notes: "col-span-4",
+  backoff: "col-span-4",
+  video: "col-span-2",
+};
 
 const VIEWS = [
   { value: "week", label: "Week" },
@@ -364,10 +392,10 @@ export function ProgramEditor({
     }
   };
 
-  if (load.status === "loading") return <div className="p-8" aria-busy />;
+  if (load.status === "loading") return <div className="p-4 md:p-8" aria-busy />;
   if (load.status === "missing" || load.status === "failed" || !tree) {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-8">
+      <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">
         <EmptyState
           title={load.status === "failed" ? "This program did not load" : "No such program"}
           body={
@@ -492,7 +520,7 @@ export function ProgramEditor({
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border px-6 pt-5 pb-4">
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border px-4 pt-4 pb-4 md:px-6 md:pt-5">
         <div className="flex min-w-0 flex-col gap-1">
           <Link href="/coach/programs" className="text-ui text-muted">
             ← Programs
@@ -512,7 +540,7 @@ export function ProgramEditor({
               : ""}
           </p>
         </div>
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 max-md:flex-wrap">
           <Tabs label="View" tabs={tree.athleteId === null ? TEMPLATE_VIEWS : VIEWS} value={shown} onChange={changeView} />
           <label className="flex flex-col gap-1 text-label uppercase text-muted-2">
             Starts
@@ -527,7 +555,7 @@ export function ProgramEditor({
                 if (value !== tree.startOn) void changeStart(value);
               }}
               className={cn(
-                "h-9 rounded-control border bg-surface-2 px-2 text-ui text-foreground",
+                "h-10 rounded-control border bg-surface-2 px-2 text-action text-foreground md:h-9 md:text-ui",
                 !tree.startOn && tree.athleteId ? "border-accent-line" : "border-border",
               )}
             />
@@ -536,6 +564,7 @@ export function ProgramEditor({
             <Menu
               label="Program actions"
               disabled={busy}
+              className="max-md:[&>button]:size-10"
               items={[
                 { label: "Copy to…", onSelect: () => setCopying(true) },
                 (tree.status !== "published" || drafts > 0) && {
@@ -551,19 +580,19 @@ export function ProgramEditor({
       </header>
 
       {editable && copying ? (
-        <div className="px-6 pt-4">
+        <div className="px-4 pt-4 md:px-6">
           <CopyProgram tree={tree} blockId={block?.id ?? null} open onClose={() => setCopying(false)} />
         </div>
       ) : null}
 
       {error ? (
-        <p role="alert" className="mx-6 mt-4 mb-0 rounded-card border border-danger-line p-3 text-ui">
+        <p role="alert" className="mx-4 mt-4 mb-0 rounded-card border border-danger-line p-3 text-ui md:mx-6">
           {error}
         </p>
       ) : null}
 
       {shown === "progression" ? (
-        <section aria-label="Progression" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5">
+        <section aria-label="Progression" className="flex min-w-0 flex-1 flex-col gap-5 px-4 py-4 md:px-6 md:py-5">
           {progressionBlock ? (
             <ProgramProgression
               tree={tree}
@@ -595,7 +624,7 @@ export function ProgramEditor({
           )}
         </section>
       ) : shown === "calendar" ? (
-        <section aria-label="Calendar" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5">
+        <section aria-label="Calendar" className="flex min-w-0 flex-1 flex-col gap-5 px-4 py-4 md:px-6 md:py-5">
           {startPrompt}
           {anchor && tree.blocks.length > 0 ? (
             <ProgramCalendar
@@ -614,7 +643,7 @@ export function ProgramEditor({
           ) : null}
         </section>
       ) : (
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           <ProgramOutline
             tree={tree}
             selectedWeekId={week?.id ?? null}
@@ -636,7 +665,7 @@ export function ProgramEditor({
             }}
           />
 
-          <section aria-label="Week" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5">
+          <section aria-label="Week" className="flex min-w-0 flex-1 flex-col gap-5 px-4 py-4 md:px-6 md:py-5">
             {startPrompt}
 
             {block && week ? (
@@ -655,6 +684,7 @@ export function ProgramEditor({
                     <Button
                       variant="ghost"
                       size="sm"
+                      className="max-md:h-10"
                       aria-pressed={contextOpen}
                       onClick={() => setContextOpen(!contextOpen)}
                     >
@@ -669,13 +699,19 @@ export function ProgramEditor({
                       <Button
                         variant="secondary"
                         size="sm"
+                        className="max-md:h-10"
                         disabled={busy}
                         onClick={() => void run({ op: "updateWeek", weekId: week.id, status: "draft" })}
                       >
                         Unpublish {weekPhrase(week.id)}
                       </Button>
                     ) : (
-                      <Button size="sm" disabled={busy} onClick={() => void run({ op: "publishWeek", weekId: week.id })}>
+                      <Button
+                        size="sm"
+                        className="max-md:h-10"
+                        disabled={busy}
+                        onClick={() => void run({ op: "publishWeek", weekId: week.id })}
+                      >
                         Publish {weekPhrase(week.id)}
                       </Button>
                     )
@@ -684,6 +720,7 @@ export function ProgramEditor({
                     <Menu
                       label={`${weekName(week.id)} actions`}
                       disabled={busy}
+                      className="max-md:[&>button]:size-10"
                       items={[
                         {
                           // A copy at the end of this block, as a draft.
@@ -983,7 +1020,7 @@ function DayEditor({
       aria-label={title}
       // Focusable from script only: where the calendar lands a day with no line to focus.
       tabIndex={-1}
-      className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4 focus-visible:outline-2 focus-visible:outline-accent-line"
+      className="flex flex-col gap-3 rounded-card border border-border bg-surface p-3 focus-visible:outline-2 focus-visible:outline-accent-line md:p-4"
     >
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-1">
@@ -999,6 +1036,7 @@ function DayEditor({
             <Menu
               label={`${title} actions`}
               disabled={busy}
+              className="max-md:[&>button]:size-10"
               items={[{ label: `Remove ${title}`, tone: "danger", onSelect: () => setRemoving(true) }]}
             />
           ) : null}
@@ -1006,8 +1044,13 @@ function DayEditor({
         {template ? null : (
           // The day's date is its weekday in its week. A day dated outside
           // its week (the old per-day picker) shows where it is and moves
-          // only when a weekday is picked.
-          <div role="group" aria-label={`${title} weekday`} className="flex items-center gap-1">
+          // only when a weekday is picked. On a phone the seven chips share
+          // the card's width equally, so the row never outgrows 360px.
+          <div
+            role="group"
+            aria-label={`${title} weekday`}
+            className="grid w-full grid-cols-7 gap-1 md:flex md:w-auto md:items-center"
+          >
             {WEEKDAYS.map((name, weekday) => {
               const on = placement.kind === "on" && placement.weekday === weekday;
               return (
@@ -1021,7 +1064,7 @@ function DayEditor({
                     void run({ op: "updateDay", dayId: day.id, scheduledOn: scheduledOnFor(anchor, weekIndex, weekday) });
                   }}
                   className={cn(
-                    "h-7 min-w-10 rounded-chip px-2 text-caption",
+                    "h-10 min-w-0 rounded-chip px-0 text-caption md:h-7 md:min-w-10 md:px-2",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                     on ? "bg-accent-fill font-bold text-on-accent" : "border border-border text-muted disabled:text-muted-2",
                   )}
@@ -1054,9 +1097,13 @@ function DayEditor({
         />
       ) : null}
 
-      <div className="overflow-x-auto">
-      <table className="w-full min-w-[46rem] border-collapse text-ui">
-        <thead>
+      {/* md and up, a sheet that scrolls sideways when it must. Below md each
+          row is a six-column grid card instead (PHONE_CELL), headers hidden
+          and each cell carrying its own label; the cells keep their order, so
+          Tab, the arrows and data-cell all work as on desktop. */}
+      <div className="md:overflow-x-auto">
+      <table className="block w-full border-collapse text-ui md:table md:min-w-[46rem]">
+        <thead className="max-md:hidden">
           <tr className="text-left font-mono text-label uppercase text-muted-2">
             {COLUMNS.map((column) => (
               <th key={column} scope="col" className="px-1 pb-1 font-normal">
@@ -1066,7 +1113,7 @@ function DayEditor({
             <th aria-label="Actions" />
           </tr>
         </thead>
-        <tbody ref={grid}>
+        <tbody ref={grid} className="block md:table-row-group">
           {lines.map((line, row) => {
             const name = names.get(line.exerciseId) ?? "Exercise";
             const loadKind = describeLoad(
@@ -1075,13 +1122,21 @@ function DayEditor({
             );
             const preview = previewFor(line, day);
             return (
-              <tr key={line.id} aria-label={`${title} line ${row + 1}: ${name}`} className="align-top">
-                <td className="w-48 px-1 py-0.5">
+              <tr
+                key={line.id}
+                aria-label={`${title} line ${row + 1}: ${name}`}
+                className={cn(
+                  "align-top",
+                  "max-md:grid max-md:grid-cols-6 max-md:gap-x-2 max-md:gap-y-2 max-md:border-t max-md:border-border max-md:py-3 max-md:first:border-t-0 max-md:first:pt-0",
+                )}
+              >
+                <td className="col-span-5 px-0 md:w-48 md:px-1 md:py-0.5">
                   {swapping === line.id ? (
                     // Escape with the list already shut, or leaving the field,
                     // backs out of the swap with the line as it was; picking
                     // one puts the keyboard back on the exercise cell.
                     <div
+                      className="max-md:[&_input]:text-action"
                       onKeyDown={(e) => {
                         if (e.key !== "Escape" || e.currentTarget.querySelector('[aria-expanded="true"]')) return;
                         e.preventDefault();
@@ -1137,7 +1192,7 @@ function DayEditor({
                         }
                         onKey(e, row, 0);
                       }}
-                      className="h-9 w-full truncate rounded-control px-2 text-left font-semibold focus:outline-2 focus:outline-accent-line"
+                      className="h-10 w-full truncate rounded-control px-2 text-left text-action font-semibold focus:outline-2 focus:outline-accent-line md:h-9 md:text-ui"
                     >
                       {name}
                     </button>
@@ -1150,13 +1205,16 @@ function DayEditor({
                   return (
                     <td
                       key={column}
+                      data-label={COLUMN_LABEL[column]}
                       className={cn(
-                        "px-1 py-0.5",
-                        column === "sets" || column === "reps" || column === "rest" ? "w-16" : "",
+                        "px-0 md:px-1 md:py-0.5",
+                        PHONE_CELL,
+                        PHONE_SPAN[column as Exclude<Column, "exercise">],
+                        column === "sets" || column === "reps" || column === "rest" ? "md:w-16" : "",
                         // Wide enough for "→ 142.5 kg · Squat training max 190, set 12 Sep" on two lines.
-                        column === "load" ? "w-64" : "",
-                        column === "backoff" ? "w-36" : "",
-                        column === "video" ? "w-16" : "",
+                        column === "load" ? "md:w-64" : "",
+                        column === "backoff" ? "md:w-36" : "",
+                        column === "video" ? "md:w-16" : "",
                       )}
                     >
                       {column === "video" ? (
@@ -1170,7 +1228,7 @@ function DayEditor({
                           checked={line.videoRequired}
                           onChange={(e) => void commit(line, "video", e.target.checked ? "Yes" : "No")}
                           onKeyDown={(e) => onKey(e, row, col)}
-                          className="mx-3 mt-2.5 size-4 accent-accent-fill focus:outline-2 focus:outline-accent-line"
+                          className="mt-2 size-6 accent-accent-fill focus:outline-2 focus:outline-accent-line md:mx-3 md:mt-2.5 md:size-4"
                         />
                       ) : (
                       <CellInput
@@ -1185,7 +1243,7 @@ function DayEditor({
                         onKeyDown={(e) => onKey(e, row, col)}
                         onBlur={(e) => void commit(line, column as Exclude<Column, "exercise">, e.target.value)}
                         className={cn(
-                          "h-9 w-full rounded-control border bg-surface-2 px-2 text-foreground tabular-nums focus:outline-none",
+                          "h-10 w-full rounded-control border bg-surface-2 px-2 text-action text-foreground tabular-nums focus:outline-none md:h-9 md:text-ui",
                           errors[key] ? "border-danger-line" : "border-border focus:border-accent-line",
                         )}
                       />
@@ -1217,13 +1275,14 @@ function DayEditor({
                     </td>
                   );
                 })}
-                <td className="w-10 px-1 py-0.5 text-right">
+                {/* Phone: top right of the card, beside the exercise. */}
+                <td className="col-start-6 row-start-1 px-0 text-right md:w-10 md:px-1 md:py-0.5">
                   {editable ? (
                     <button
                       type="button"
                       aria-label={`Remove line ${row + 1}`}
                       onClick={() => void run({ op: "removePrescription", prescriptionId: line.id })}
-                      className="h-9 rounded-control px-2 text-muted hover:text-foreground"
+                      className="h-10 min-w-10 rounded-control px-2 text-muted hover:text-foreground md:h-9 md:min-w-0"
                     >
                       ×
                     </button>
@@ -1237,7 +1296,7 @@ function DayEditor({
       </div>
 
       {editable ? (
-        <div className="max-w-sm" data-add-line>
+        <div className="max-w-sm max-md:[&_input]:text-action" data-add-line>
           <ExerciseTypeahead
             exercises={exercises}
             limit={exercises.length || undefined}
@@ -1258,7 +1317,7 @@ function DayEditor({
         value={day.notes ?? ""}
         placeholder="A note for the athlete, shown under Today's card"
         disabled={!editable}
-        className="text-ui"
+        className="h-10 text-action md:h-auto md:text-ui"
         onCommit={(notes) => run({ op: "updateDay", dayId: day.id, notes })}
       />
     </section>
