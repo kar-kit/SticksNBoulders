@@ -135,7 +135,9 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="relative aspect-[3/4] w-full max-w-[420px] overflow-hidden rounded-control bg-surface-2">
+      {/* Capped on a phone so the set context and comment box are not a full
+          screen below the video. */}
+      <div className="relative aspect-[3/4] max-h-[50svh] w-full max-w-[420px] overflow-hidden md:max-h-none rounded-control bg-surface-2">
         {src && !failed ? (
           <video
             // Keyed on the clip so switching swaps the element rather than
@@ -171,7 +173,7 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
               onClick={() => setSpeed(option)}
               aria-pressed={speed === option}
               className={cn(
-                "h-9 rounded-chip px-3 text-ui font-medium transition-control press",
+                "h-10 rounded-chip px-3 text-ui font-medium transition-control press md:h-9",
                 speed === option
                   ? "bg-accent-fill text-on-accent"
                   : "border border-border text-muted hover:text-foreground focus-visible:text-foreground",
@@ -187,7 +189,7 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
           onClick={() => setLoop((on) => !on)}
           aria-pressed={loop}
           className={cn(
-            "h-9 rounded-chip px-3 text-ui font-medium transition-control press",
+            "h-10 rounded-chip px-3 text-ui font-medium transition-control press md:h-9",
             loop
               ? "bg-accent-fill text-on-accent"
               : "border border-border text-muted hover:text-foreground focus-visible:text-foreground",
@@ -200,21 +202,22 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
           <button
             type="button"
             onClick={() => step(-1)}
-            className="h-9 rounded-chip border border-border px-3 text-ui font-medium text-muted transition-control press hover:text-foreground focus-visible:text-foreground"
+            className="h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9"
           >
             ‹ Frame
           </button>
           <button
             type="button"
             onClick={() => step(1)}
-            className="h-9 rounded-chip border border-border px-3 text-ui font-medium text-muted transition-control press hover:text-foreground focus-visible:text-foreground"
+            className="h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9"
           >
             Frame ›
           </button>
         </div>
       </div>
 
-      <p className="m-0 text-ui text-muted-2">{hint}</p>
+      {/* Keyboard shortcuts mean nothing to a thumb. */}
+      <p className="m-0 hidden text-ui text-muted-2 md:block">{hint}</p>
     </div>
   );
 }

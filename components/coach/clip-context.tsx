@@ -56,7 +56,7 @@ export function ClipContext({ item, sessionSets, recent, previousBestKg }: ClipC
       <div>
         <h2 className="m-0 flex items-center gap-2.5 text-title font-semibold">
           <UserAvatar userId={item.athleteId} name={item.athleteName} size={28} />
-          <span>
+          <span className="min-w-0">
             {item.athleteName} — {item.exerciseName}
           </span>
         </h2>
@@ -81,7 +81,7 @@ export function ClipContext({ item, sessionSets, recent, previousBestKg }: ClipC
         href={adjustProgramHref(item.athleteId, item.prescriptionId)}
         target="_blank"
         rel="noopener"
-        className="self-start text-ui text-muted underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+        className="inline-flex min-h-10 items-center self-start text-ui text-muted underline md:min-h-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
       >
         Adjust program<span className="sr-only"> (opens in a new tab)</span> ↗
       </Link>

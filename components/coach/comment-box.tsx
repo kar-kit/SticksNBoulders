@@ -71,7 +71,9 @@ export function CommentBox({
 
   useEffect(() => {
     // Focused on arrival: the coach's hands are already on the keyboard, and
-    // the blueprint's whole ask is that they stay there.
+    // the blueprint's whole ask is that they stay there. Not on a phone, where
+    // focusing would scroll past the video and can raise the keyboard over it.
+    if (window.matchMedia?.("(max-width: 47.98rem)").matches) return;
     box.current?.focus();
   }, [clipId]);
 
@@ -113,7 +115,8 @@ export function CommentBox({
           placeholder="What did you see?"
           aria-invalid={error ? true : undefined}
           className={cn(
-            "w-full resize-y rounded-control border bg-surface-2 p-3 text-body text-foreground transition-control",
+            // 16px below md: iOS Safari zooms the page on focus under that.
+            "w-full resize-y rounded-control border bg-surface-2 p-3 text-[16px]/[1.6] text-foreground transition-control md:text-body",
             "placeholder:text-muted-2 focus:outline-none focus:ring-2 focus:ring-accent-line",
             error ? "border-danger-line" : "border-border",
           )}
@@ -121,7 +124,7 @@ export function CommentBox({
 
         <div className="flex items-center justify-between gap-3">
           <p className={cn("m-0 text-ui", error ? "text-foreground" : "text-muted-2")}>
-            {error ?? "⌘/Ctrl + Enter posts and moves on."}
+            {error ?? <span className="hidden md:inline">⌘/Ctrl + Enter posts and moves on.</span>}
           </p>
           {remaining < 200 ? (
             <p className={cn("m-0 shrink-0 text-ui tabular-nums", remaining < 0 ? "text-foreground" : "text-muted-2")}>
@@ -131,8 +134,8 @@ export function CommentBox({
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <Button onClick={() => void post()} disabled={busy}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={() => void post()} disabled={busy} className="flex-1 md:flex-none">
           Comment &amp; next
         </Button>
         <Button variant="secondary" onClick={onSkip} disabled={busy}>

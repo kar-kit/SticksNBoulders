@@ -242,6 +242,24 @@ export function ReviewQueue() {
   const clipId = current?.id ?? null;
   const detail = loaded && loaded.clipId === clipId ? loaded.detail : EMPTY_DETAIL;
 
+  // Phone only, where the page is one column. Comment & next is pressed at the
+  // bottom of it, so the next clip's video would otherwise be a scroll away;
+  // and the strip of chips scrolls sideways to keep the open clip in sight.
+  // Keyed on the id, not the item, so a realtime refresh never moves anything.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!clipId) return;
+    const strip = stripRef.current;
+    const chip = strip?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (strip && chip && strip.scrollWidth > strip.clientWidth) {
+      strip.scrollTo({ left: Math.max(0, chip.offsetLeft - 16) });
+    }
+    if (window.matchMedia?.("(max-width: 47.98rem)").matches) {
+      rootRef.current?.scrollIntoView({ block: "start" });
+    }
+  }, [clipId]);
+
   useEffect(() => {
     if (!current) return;
     let cancelled = false;
@@ -352,12 +370,12 @@ export function ReviewQueue() {
   }, [clear, current]);
 
   if (load === "loading") {
-    return <div className="p-8 text-ui text-muted" aria-busy>Loading the queue…</div>;
+    return <div className="p-4 text-ui text-muted md:p-8" aria-busy>Loading the queue…</div>;
   }
 
   if (load === "failed") {
     return (
-      <div className="flex h-full flex-col items-center justify-center p-8">
+      <div className="flex h-full flex-col items-center justify-center p-4 md:p-8">
         <EmptyState
           title="The queue would not load"
           body="Your athletes' clips are still there. Reload the page, and if it keeps happening the instance is probably down."
@@ -370,9 +388,9 @@ export function ReviewQueue() {
 
   if (!current) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 p-8">
+      <div className="flex h-full flex-col items-center justify-center gap-4 p-4 md:p-8">
         {droppedNotice ? (
-          <p role="status" className="m-0 max-w-[420px] text-center text-ui text-muted">
+          <p role="status" className="m-0 w-full max-w-[420px] text-center text-ui text-muted">
             {droppedNotice}
           </p>
         ) : null}
@@ -398,13 +416,18 @@ export function ReviewQueue() {
   const currentUrl = urls.get(current.videoFileId) ?? null;
   const commentCounts = countBySet(comments);
 
+  // Phone: one column, scrolled by the shell's <main>. The queue is a
+  // sideways strip of chips over the clip, and the clip, its context and the
+  // comment box stack under it. Comment & next and Skip advance on their own,
+  // so the strip is for jumping, not for every clip. md and up: the 184px list
+  // beside a pane that scrolls itself.
   return (
-    <div className="flex h-full min-h-0">
+    <div ref={rootRef} className="flex flex-col md:h-full md:min-h-0 md:flex-row">
       <nav
         aria-label="Queue"
-        className="w-[184px] flex-none overflow-y-auto border-r border-border p-4"
+        className="flex-none border-b border-border p-4 pb-3 md:w-[184px] md:overflow-y-auto md:border-r md:border-b-0 md:pb-4"
       >
-        <p className="m-0 mb-3 text-ui font-semibold text-muted">
+        <p className="m-0 mb-2 text-ui font-semibold text-muted md:mb-3">
           {items.length} waiting
         </p>
         {droppedNotice ? (
@@ -412,52 +435,58 @@ export function ReviewQueue() {
             {droppedNotice}
           </p>
         ) : null}
-        {groups.map((group) => (
-          <div key={group.athleteId} className="mb-4">
-            <p className="m-0 mb-1 flex items-center gap-2 text-ui font-semibold">
-              <UserAvatar userId={group.athleteId} name={group.athleteName} size={20} />
-              <span className="truncate">{group.athleteName}</span>
-            </p>
-            <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-              {group.items.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => setCurrentId(item.id)}
-                    aria-current={item.id === current.id}
-                    className={cn(
-                      "relative w-full overflow-hidden rounded-chip px-2 py-1 text-left text-ui",
-                      "transition-control press-wide rule-l aria-[current=true]:rule-on",
-                      item.id === current.id
-                        ? "bg-surface-2 font-semibold text-foreground"
-                        : "text-muted hover:bg-surface-2/60 hover:text-foreground focus-visible:bg-surface-2/60 focus-visible:text-foreground",
-                      arrived(item.id) && "motion-safe:animate-rise-in",
-                    )}
-                  >
-                    {item.exerciseName}
-                    {commentCounts.has(item.id) ? (
-                      // A clip already spoken about. Marked rather than hidden:
-                      // it is still waiting to be cleared, and the coach should
-                      // know they have been here before opening it.
-                      <span className="ml-1 text-muted-2" aria-label="already commented">
-                        ·
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        <div
+          ref={stripRef}
+          className="relative -mx-4 flex gap-5 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:block md:overflow-x-visible md:px-0"
+        >
+          {groups.map((group) => (
+            <div key={group.athleteId} className="flex-none md:mb-4">
+              <p className="m-0 mb-1 flex items-center gap-2 text-ui font-semibold">
+                <UserAvatar userId={group.athleteId} name={group.athleteName} size={20} />
+                <span className="max-w-[12rem] truncate md:max-w-none">{group.athleteName}</span>
+              </p>
+              <ul className="m-0 flex list-none gap-1 p-0 md:flex-col md:gap-0.5">
+                {group.items.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentId(item.id)}
+                      aria-current={item.id === current.id}
+                      className={cn(
+                        "relative h-10 overflow-hidden whitespace-nowrap rounded-chip border px-3 text-left text-ui",
+                        "md:h-auto md:w-full md:whitespace-normal md:border-0 md:px-2 md:py-1",
+                        "transition-control press-wide rule-l aria-[current=true]:rule-on",
+                        item.id === current.id
+                          ? "border-transparent bg-surface-2 font-semibold text-foreground"
+                          : "border-border text-muted hover:bg-surface-2/60 hover:text-foreground focus-visible:bg-surface-2/60 focus-visible:text-foreground",
+                        arrived(item.id) && "motion-safe:animate-rise-in",
+                      )}
+                    >
+                      {item.exerciseName}
+                      {commentCounts.has(item.id) ? (
+                        // A clip already spoken about. Marked rather than hidden:
+                        // it is still waiting to be cleared, and the coach should
+                        // know they have been here before opening it.
+                        <span className="ml-1 text-muted-2" aria-label="already commented">
+                          ·
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
       </nav>
 
-      <div className="flex min-h-0 flex-1 gap-8 overflow-y-auto p-8">
-        <div className="flex-none">
+      <div className="flex flex-col gap-6 p-4 md:min-h-0 md:flex-1 md:flex-row md:gap-8 md:overflow-y-auto md:p-8">
+        <div className="md:flex-none">
           {noPlayback > 0 ? (
             // The clips in a failed batch still show in the rail and can still
             // be cleared; only their video is missing. Said once, with a way
             // to try again, rather than left as a player that loads forever.
-            <div role="alert" className="mb-3 flex max-w-[420px] items-center justify-between gap-3 text-ui text-muted">
+            <div role="alert" className="mb-3 flex w-full max-w-[420px] items-center justify-between gap-3 text-ui text-muted">
               <span>
                 {noPlayback === 1
                   ? "1 clip could not be prepared for playback."

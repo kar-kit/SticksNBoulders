@@ -97,13 +97,19 @@ export function InviteCodePanel({ labelled = true }: InviteCodePanelProps) {
 
       {state.status === "ready" ? (
         <>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {/* Selectable, and mono so a 5 and an S are told apart when it is
                 read off a screen across a gym floor. */}
-            <span className="select-all font-mono text-title font-semibold">
+            <span className="select-all break-all font-mono text-title font-semibold">
               {state.code}
             </span>
-            <Button size="sm" variant="secondary" onClick={() => void copy(state.code)}>
+            {/* min-h, not h: Button's own h-9 would tie with an h override. */}
+            <Button
+              size="sm"
+              variant="secondary"
+              className="min-h-10 md:min-h-0"
+              onClick={() => void copy(state.code)}
+            >
               {copied ? "Copied" : "Copy"}
             </Button>
           </div>
