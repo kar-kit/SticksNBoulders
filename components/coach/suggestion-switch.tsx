@@ -131,7 +131,7 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
   const summary = current.status === "ready" ? SUGGESTION_MODE_LABEL[current.mode] : "Loading…";
 
   return (
-    <div ref={wrapper} className="relative">
+    <div ref={wrapper} className="relative w-full md:w-auto">
       <button
         ref={trigger}
         type="button"
@@ -140,7 +140,7 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
         disabled={current.status !== "ready"}
         onClick={() => setOpen((was) => !was)}
         className={cn(
-          "inline-flex h-8 items-center gap-2 rounded-chip border border-border px-3 text-caption text-muted",
+          "inline-flex h-10 items-center gap-2 rounded-chip border border-border px-3 text-caption text-muted md:h-8",
           "hover:text-foreground disabled:text-muted-2",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
         )}
@@ -162,7 +162,9 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
       {open && current.status === "ready" ? (
         <div
           id={`${name}-panel`}
-          className="absolute right-0 top-full z-20 mt-2 flex w-[340px] flex-col gap-3 rounded-control border border-border bg-surface p-4"
+          // In the flow on a phone: the trigger sits at the left of its own
+          // line there, and a right-anchored 340px panel would run off-screen.
+          className="mt-2 flex w-full flex-col gap-3 rounded-control border border-border bg-surface p-4 md:absolute md:right-0 md:top-full md:z-20 md:w-[340px]"
         >
           <p id={`${name}-heading`} className="m-0 text-label uppercase tracking-wide text-muted">
             Load suggestions

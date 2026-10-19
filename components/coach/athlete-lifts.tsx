@@ -118,10 +118,12 @@ export function AthleteLifts({ athleteId }: { athleteId: string }) {
                 onChange={(event) => setFilter(event.target.value)}
                 aria-label="Filter lifts"
                 placeholder="Filter lifts"
-                className="h-[34px] w-[160px] text-ui"
+                className="h-10 w-full text-action md:h-[34px] md:w-[160px] md:text-ui"
               />
             ) : null}
-            <div className="min-w-0 overflow-x-auto">
+            {/* The tab row scrolls on its own on a phone rather than wrapping
+                lift names or widening the page. */}
+            <div className="min-w-0 max-w-full overflow-x-auto max-md:[&_[role=tab]]:whitespace-nowrap">
               <Tabs
                 label="Lifts"
                 tabs={shownTabs.map((tab) => ({ value: tab.exerciseId, label: tab.name }))}
@@ -158,9 +160,9 @@ function LiftPanel({
   const records = personalRecords(tab.weeks);
 
   return (
-    <div role="tabpanel" aria-label={tab.name} className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-6">
-      <div className="flex flex-col gap-3">
-        <p className="m-0 flex items-baseline gap-3">
+    <div role="tabpanel" aria-label={tab.name} className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="flex min-w-0 flex-col gap-3">
+        <p className="m-0 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span className="text-display font-semibold tabular-nums">
             {summary.currentE1rmKg === null ? "—" : `${formatNumber(summary.currentE1rmKg)} kg`}
           </span>
@@ -190,7 +192,7 @@ function LiftPanel({
               onClick={() => onRange(option)}
               aria-pressed={range === option}
               className={cn(
-                "h-8 rounded-chip px-3 font-mono text-label uppercase",
+                "h-10 rounded-chip px-3 font-mono text-label uppercase md:h-8",
                 "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                 range === option ? "bg-accent-fill font-bold text-on-accent" : "bg-surface-2 text-muted",
               )}

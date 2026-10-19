@@ -86,7 +86,7 @@ export function AthleteProgram({ athleteId }: { athleteId: string }) {
         </h2>
         <Link
           href={adjustProgramHref(athleteId)}
-          className="inline-flex h-9 items-center rounded-chip border border-border bg-surface px-[14px] text-ui font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+          className="inline-flex h-10 shrink-0 items-center rounded-chip border border-border bg-surface px-[14px] text-ui font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line md:h-9"
         >
           Adjust program
         </Link>
