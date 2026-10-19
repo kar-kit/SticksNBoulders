@@ -554,6 +554,33 @@ describe("finishing", () => {
     expect(finish).toHaveBeenCalledWith("s1", { setCount: 1, tonnageKg: 712.5 });
   });
 
+  it("keeps the totals on the summary after the session closes", async () => {
+    // The real provider clears the active session on finish, and every list on
+    // the page is keyed to it. The summary used to recompute from the emptied
+    // lists and show 0 sets, 0 kg.
+    storedSets.value = [
+      { exerciseId: "squat", clientSetId: "w", loadKg: 100, reps: 5, rpe: null, isWarmup: true, loggedAt: new Date() },
+      { exerciseId: "squat", clientSetId: "a", loadKg: 142.5, reps: 5, rpe: 8, isWarmup: false, loggedAt: new Date() },
+    ];
+    const finish = vi.fn(async () => {
+      training.value = { ...training.value, active: null };
+    });
+    const { user } = setup({ active: session(), finish });
+    await screen.findByRole("region", { name: "Squat" });
+
+    await user.click(screen.getByRole("button", { name: "Finish session" }));
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+
+    expect(await screen.findByText("Session done")).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.getByText("Sets").nextElementSibling).toHaveTextContent("1");
+    expect(screen.getByText("Tonnage").nextElementSibling).toHaveTextContent("712.5 kg");
+    expect(screen.getByText("Exercises").nextElementSibling).toHaveTextContent("1");
+    expect(screen.getByText("Warm-ups").nextElementSibling).toHaveTextContent("1");
+  });
+
   it("shows the summary, then goes back to Today", async () => {
     const { user } = setup({ active: session() });
     await user.click(screen.getByRole("button", { name: "Finish session" }));

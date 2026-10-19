@@ -52,6 +52,7 @@ import {
   groupByExercise,
   summariseSession,
   type SessionSet,
+  type SessionSummary,
 } from "@/lib/logging/session";
 import { formatNumber } from "@/lib/logging/prefill";
 import { usePrescribedSession } from "@/lib/programming/use-prescribed";
@@ -122,6 +123,14 @@ export function LogScreen() {
    */
   const { unit } = useUnits();
   const [phase, setPhase] = useState<Phase>("logging");
+  /**
+   * The totals as they stood when the athlete tapped Finish.
+   *
+   * Finishing clears the active session, which empties every list on this
+   * page -- they are all keyed to it -- so a summary computed live would read
+   * zero the moment it is shown. The finished screen reads this instead.
+   */
+  const [finished, setFinished] = useState<SessionSummary | null>(null);
   /** What Appwrite returned for this session. Replaced whenever it is read. */
   const [stored, setStored] = useState<UnnamedSet[]>([]);
   /**
@@ -697,9 +706,11 @@ export function LogScreen() {
     // queued before the finish that reports those totals.
     commitDelete();
     setBusy(true);
+    const totals = summary;
     try {
-      await finish(active.id, { setCount: summary.setCount, tonnageKg: summary.tonnageKg });
+      await finish(active.id, { setCount: totals.setCount, tonnageKg: totals.tonnageKg });
       changeRest(null);
+      setFinished(totals);
       setPhase("finished");
     } finally {
       setBusy(false);
@@ -707,7 +718,7 @@ export function LogScreen() {
   };
 
   if (phase === "finished") {
-    return <FinishedSummary summary={summary} unit={unit} onDone={() => router.push("/today")} />;
+    return <FinishedSummary summary={finished ?? summary} unit={unit} onDone={() => router.push("/today")} />;
   }
 
   if (!active) {
@@ -1030,7 +1041,7 @@ function FinishedSummary({
   unit,
   onDone,
 }: {
-  summary: ReturnType<typeof summariseSession>;
+  summary: SessionSummary;
   unit: UnitPreference;
   onDone: () => void;
 }) {
