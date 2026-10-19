@@ -5,6 +5,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { ClipPlayer } from "@/components/coach/clip-player";
 import { CommentThread } from "@/components/coach/comment-box";
 import { Dialog } from "@/components/ui/dialog";
+import { useArrivals, usePresence } from "@/components/ui/motion";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchExerciseLibrary } from "@/lib/exercises/library";
 import { fetchClips, fetchClipUrls, fetchReviewedSetIds } from "@/lib/review/queue-store";
@@ -99,6 +100,12 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
     () => new Map(athleteName ? [[athleteId, athleteName] as const] : []),
     [athleteId, athleteName],
   );
+  // The dialog outlives the URL by its fade-out; "Show all" rows rise in.
+  const dialog = usePresence(data ? opened : null);
+  const isNew = useArrivals(
+    visible.map((row) => row.id),
+    athleteId,
+  );
 
   return (
     <section className="flex flex-col gap-3" aria-labelledby="athlete-videos-heading">
@@ -124,13 +131,14 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
       {visible.length > 0 ? (
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
           {visible.map((row) => (
-            <li key={row.id}>
+            <li key={row.id} className={cn(isNew(row.id) && "motion-safe:animate-rise-in")}>
               <button
                 type="button"
                 aria-haspopup="dialog"
                 onClick={() => onOpen(row.id)}
                 className={cn(
-                  "flex w-full flex-col gap-0.5 rounded-control border border-border bg-surface px-3 py-2 text-left hover:bg-surface-2",
+                  "flex w-full flex-col gap-0.5 rounded-control border border-border bg-surface px-3 py-2 text-left",
+                  "transition-control press-wide hover:bg-surface-2 focus-visible:bg-surface-2",
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                 )}
               >
@@ -168,18 +176,24 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
       ) : null}
 
       {rows && rows.length > FIRST_PAGE && !showAll ? (
-        <button type="button" onClick={() => setShowAll(true)} className="self-start text-ui text-muted underline">
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="self-start text-ui text-muted underline transition-control hover:text-foreground focus-visible:text-foreground"
+        >
           Show all {rows.length}
         </button>
       ) : null}
 
-      {opened && data ? (
+      {dialog.shown && data ? (
         <ClipDialog
-          row={opened}
-          comments={data.comments.filter((comment) => comment.setId === opened.id)}
+          row={dialog.shown}
+          comments={data.comments.filter((comment) => comment.setId === dialog.shown?.id)}
           names={names}
           viewerId={coachId}
           onClose={onClose}
+          leaving={dialog.leaving}
+          onExited={dialog.exited}
         />
       ) : null}
     </section>
@@ -192,12 +206,16 @@ function ClipDialog({
   names,
   viewerId,
   onClose,
+  leaving,
+  onExited,
 }: {
   row: VideoRow;
   comments: Comment[];
   names: ReadonlyMap<string, string>;
   viewerId: string;
   onClose: () => void;
+  leaving: boolean;
+  onExited: () => void;
 }) {
   const heading = useId();
   const [src, setSrc] = useState<{ clipId: string; url: string | null } | null>(null);
@@ -229,7 +247,7 @@ function ClipDialog({
   const current = src?.clipId === row.id ? src : null;
 
   return (
-    <Dialog labelledBy={heading} onClose={onClose}>
+    <Dialog labelledBy={heading} onClose={onClose} leaving={leaving} onExited={onExited}>
       <div className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 flex-col gap-0.5">
@@ -245,7 +263,7 @@ function ClipDialog({
           <button
             type="button"
             onClick={onClose}
-            className="h-10 shrink-0 rounded-chip border border-border px-3 text-ui text-muted hover:text-foreground md:h-9 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+            className="h-10 shrink-0 rounded-chip border border-border px-3 text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
           >
             Close
           </button>

@@ -103,8 +103,9 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                         onClick={() => setOpen(expanded ? null : card.sessionId)}
                         className={cn(
                           // Phone: date and totals on one line, the exercises under them.
-                          "grid w-full grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-0.5 py-2.5 text-left",
+                          "grid w-full grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-0.5 rounded-chip py-2.5 text-left",
                           "md:grid-cols-[150px_minmax(0,1fr)_auto] md:gap-3 md:py-2",
+                          "transition-control press-wide hover:bg-surface focus-visible:bg-surface",
                           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                         )}
                       >
@@ -120,7 +121,10 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                         </span>
                       </button>
                       {expanded ? (
-                        <div id={panelId} className="flex flex-col gap-2 pb-3 md:pl-[162px]">
+                        // Rises out of the row it belongs to. Collapsing is
+                        // instant: the coach is done with it, and a closing
+                        // panel would hold the rows below it in place.
+                        <div id={panelId} className="flex flex-col gap-2 pb-3 motion-safe:animate-rise-in md:pl-[162px]">
                           {view.notes.get(card.sessionId) ? (
                             // The athlete's own words about the session: the
                             // one thing on this card nobody could infer.

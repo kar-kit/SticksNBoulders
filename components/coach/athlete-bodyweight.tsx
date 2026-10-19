@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from "react";
 import { BodyweightChart } from "@/components/bodyweight/bodyweight-chart";
 import { Dialog } from "@/components/ui/dialog";
+import { usePresence } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
 import {
   AVERAGE_DAYS,
@@ -64,6 +65,8 @@ export interface AthleteBodyweightProps {
 
 export function AthleteBodyweight({ athleteId, open, onOpen, onClose }: AthleteBodyweightProps) {
   const [state, setState] = useState<State & { for?: string }>({ status: "loading" });
+  // Held through its fade-out after the URL says closed (components/ui/motion.ts).
+  const history = usePresence(open);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,7 +118,8 @@ export function AthleteBodyweight({ athleteId, open, onOpen, onClose }: AthleteB
         className={cn(
           "inline-flex h-10 items-baseline gap-2 self-center rounded-chip border border-border bg-surface px-3 pt-[11px] text-left",
           "md:h-8 md:pt-[7px]",
-          "hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
+          "transition-control press hover:bg-surface-2 focus-visible:bg-surface-2",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
         )}
       >
         <span className="font-mono text-label-xs uppercase text-muted-2">Bodyweight</span>
@@ -135,7 +139,15 @@ export function AthleteBodyweight({ athleteId, open, onOpen, onClose }: AthleteB
           ›
         </span>
       </button>
-      {open ? <BodyweightHistory entries={entries} today={today} onClose={onClose} /> : null}
+      {history.shown ? (
+        <BodyweightHistory
+          entries={entries}
+          today={today}
+          onClose={onClose}
+          leaving={history.leaving}
+          onExited={history.exited}
+        />
+      ) : null}
     </>
   );
 }
@@ -144,10 +156,14 @@ function BodyweightHistory({
   entries,
   today,
   onClose,
+  leaving,
+  onExited,
 }: {
   entries: BodyweightEntry[];
   today: string;
   onClose: () => void;
+  leaving: boolean;
+  onExited: () => void;
 }) {
   const heading = useId();
   // Ninety days first: long enough to show a cut, short enough to still have
@@ -161,7 +177,7 @@ function BodyweightHistory({
   const newest = latestEntry(entries)!;
 
   return (
-    <Dialog labelledBy={heading} onClose={onClose} size="md">
+    <Dialog labelledBy={heading} onClose={onClose} size="md" leaving={leaving} onExited={onExited}>
       <div className="flex flex-col gap-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex flex-col gap-1">
@@ -188,7 +204,7 @@ function BodyweightHistory({
           <button
             type="button"
             onClick={onClose}
-            className="h-10 shrink-0 rounded-chip border border-border px-3 text-ui text-muted hover:text-foreground md:h-9 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+            className="h-10 shrink-0 rounded-chip border border-border px-3 text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
           >
             Close
           </button>
@@ -214,7 +230,7 @@ function BodyweightHistory({
                 aria-pressed={range === option}
                 onClick={() => setRange(option)}
                 className={cn(
-                  "h-10 rounded-chip px-3 font-mono text-label uppercase md:h-8",
+                  "h-10 rounded-chip px-3 font-mono text-label uppercase transition-control press md:h-8",
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                   range === option ? "bg-accent-fill font-bold text-on-accent" : "bg-surface-2 text-muted",
                 )}

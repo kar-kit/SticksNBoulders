@@ -38,7 +38,7 @@ export function MePanel() {
   if (state.status !== "signed-in") return null;
 
   return (
-    <div className="pt-safe-8 flex flex-col gap-5 pb-6">
+    <div className="pt-8 flex flex-col gap-5 pb-6">
       <h1 className="m-0 text-display font-semibold">Me</h1>
 
       <div className="flex flex-col gap-1">

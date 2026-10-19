@@ -73,6 +73,9 @@ interface Saved {
   athleteId: string;
   rowId: string;
   label: string;
+  /** Which cell it was, so that cell can say so. */
+  exerciseId: string;
+  kind: StoredKind;
 }
 
 export interface CurrentMaxesProps {
@@ -161,7 +164,7 @@ export function CurrentMaxes({ athleteId }: CurrentMaxesProps) {
           Current maxes
         </h2>
         {saved ? (
-          <p className="m-0 text-ui text-muted" role="status">
+          <p key={saved.rowId} className="m-0 text-ui text-muted motion-safe:animate-rise-in" role="status">
             Saved {saved.label}.{" "}
             <button type="button" onClick={() => void undo()} className="underline">
               Undo
@@ -236,6 +239,7 @@ export function CurrentMaxes({ athleteId }: CurrentMaxesProps) {
                           max={row[kind]}
                           upcoming={row.upcoming[kind]}
                           used={row.usedForPercent === kind}
+                          justSaved={saved?.exerciseId === row.exerciseId && saved.kind === kind}
                           source={row[kind] ? maxSource(row[kind]!, state.entries, viewerId, athleteId) : ""}
                           onEdit={() => {
                             setSaved(null);
@@ -315,6 +319,7 @@ function MaxCell({
   source,
   onEdit,
   editLabel,
+  justSaved = false,
 }: {
   max: ResolvedMax | null;
   upcoming: ReferenceMaxEntry | null;
@@ -322,6 +327,8 @@ function MaxCell({
   source: string;
   onEdit?: () => void;
   editLabel?: string;
+  /** The cell the coach just saved: tinted once as it comes back (flash-host, globals.css). */
+  justSaved?: boolean;
 }) {
   const body = (
     <span className="flex flex-col items-start gap-0.5">
@@ -356,8 +363,9 @@ function MaxCell({
       type="button"
       onClick={onEdit}
       aria-label={editLabel}
+      data-flash={justSaved ? "saved" : undefined}
       className={cn(
-        "-m-1 min-h-10 w-full rounded-chip p-1 text-left hover:bg-surface-2 md:min-h-0 md:w-auto",
+        "flash-host -m-1 min-h-10 w-full rounded-chip p-1 text-left transition-control press hover:bg-surface-2 focus-visible:bg-surface-2 md:min-h-0 md:w-auto",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
       )}
     >
@@ -408,7 +416,7 @@ function MaxEditor({
     setError(null);
     try {
       const rowId = await setReferenceMax({ athleteId, exerciseId, kind, valueKg, effectiveFrom });
-      onSaved({ athleteId, rowId, label: `${formatMaxKg(valueKg)} ${kindLabel(kind)} on ${exerciseName}` });
+      onSaved({ athleteId, rowId, label: `${formatMaxKg(valueKg)} ${kindLabel(kind)} on ${exerciseName}`, exerciseId, kind });
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Couldn’t save that. Try again.");
       setBusy(false);
@@ -417,7 +425,7 @@ function MaxEditor({
 
   return (
     <form
-      className="flex flex-col gap-1.5"
+      className="flex flex-col gap-1.5 motion-safe:animate-rise-in"
       onSubmit={(event) => {
         event.preventDefault();
         void save();
@@ -437,7 +445,7 @@ function MaxEditor({
           aria-label={`${kindLabel(kind)} for ${exerciseName}, kg`}
           value={value}
           onChange={(event) => setValue(event.target.value)}
-          className="h-10 w-24 rounded-chip border border-border bg-surface-2 px-2 text-action tabular-nums focus:border-accent-line focus:outline-none md:h-8 md:w-[72px] md:text-ui"
+          className="h-10 w-24 rounded-chip border border-border bg-surface-2 px-2 text-action tabular-nums transition-control focus:border-accent-line focus:outline-none md:h-8 md:w-[72px] md:text-ui"
           placeholder="kg"
         />
         <input
@@ -452,16 +460,20 @@ function MaxEditor({
         <button
           type="submit"
           disabled={busy}
-          className="h-10 rounded-chip bg-accent-fill px-4 text-caption font-bold text-on-accent disabled:bg-surface-2 disabled:text-muted-2 md:h-7 md:px-2.5"
+          className="h-10 rounded-chip bg-accent-fill px-4 text-caption font-bold text-on-accent transition-control press enabled:hover:opacity-90 disabled:bg-surface-2 disabled:text-muted-2 md:h-7 md:px-2.5"
         >
           {busy ? "Saving…" : "Save"}
         </button>
-        <button type="button" onClick={onCancel} className="h-10 px-2 text-caption text-muted md:h-7 md:px-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="h-10 px-2 text-caption text-muted transition-control hover:text-foreground focus-visible:text-foreground md:h-7 md:px-1"
+        >
           Cancel
         </button>
       </div>
       {error ? (
-        <p className="m-0 text-caption text-danger-line" role="alert">
+        <p className="m-0 text-caption text-danger-line motion-safe:animate-rise-in" role="alert">
           {error}
         </p>
       ) : null}

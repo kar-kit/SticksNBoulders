@@ -86,7 +86,7 @@ export function AthleteProgram({ athleteId }: { athleteId: string }) {
         </h2>
         <Link
           href={adjustProgramHref(athleteId)}
-          className="inline-flex h-10 shrink-0 items-center rounded-chip border border-border bg-surface px-[14px] text-ui font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line md:h-9"
+          className="inline-flex h-10 shrink-0 items-center rounded-chip border border-border bg-surface px-[14px] text-ui font-medium text-foreground transition-control press hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line md:h-9"
         >
           Adjust program
         </Link>
@@ -106,9 +106,10 @@ export function AthleteProgram({ athleteId }: { athleteId: string }) {
   );
 }
 
+/** Fades in over "Loading…" when the block arrives: the panel filled, not the page jumped. */
 function Glance({ shown, week }: { shown: ShownProgram; week: WeekGlance | null }) {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 animate-fade-in">
       <div className="flex flex-col gap-1">
         <p className="m-0 flex flex-wrap items-center gap-2">
           <span className="text-title font-semibold">{shown.program.name}</span>
