@@ -57,7 +57,7 @@ export function ProgramScreen() {
   const loaded = useMyProgram(athleteId);
 
   return (
-    <div className="pt-safe-8 flex flex-1 flex-col gap-5 pb-6">
+    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
       <header className="flex flex-col gap-1">
         <Link href="/today" className="text-ui text-muted">
           ← Today
