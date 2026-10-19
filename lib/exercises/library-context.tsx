@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { fetchExerciseLibrary } from "./library";
 import { cacheLibrary, cachedLibrary } from "./library-cache";
+import { normaliseExerciseName } from "@/appwrite/documents/write";
 import type { Exercise } from "./match";
 
 /**
@@ -25,6 +26,10 @@ interface LibraryValue {
   state: LibraryState;
   /** Adds a just-created exercise locally, so the list never lags the typing. */
   remember: (exercise: Exercise) => void;
+  /** Applies a rename from My exercises locally; the write itself is queued by the caller. */
+  rename: (exerciseId: string, name: string) => void;
+  /** Takes a deleted exercise out of the typeahead. */
+  forget: (exerciseId: string) => void;
   reload: () => Promise<void>;
 }
 
@@ -103,6 +108,20 @@ export function ExerciseLibraryProvider({
           // Cached as well as held, so a lift typed with no signal is still in
           // the typeahead after a reload -- and its queued sets still show a
           // name rather than an id.
+          if (userId) cacheLibrary(userId, exercises);
+          return { ...prev, exercises };
+        }),
+      rename: (exerciseId, name) =>
+        setState((prev) => {
+          const exercises = prev.exercises.map((e) =>
+            e.id === exerciseId ? { ...e, name, normalisedName: normaliseExerciseName(name) } : e,
+          );
+          if (userId) cacheLibrary(userId, exercises);
+          return { ...prev, exercises };
+        }),
+      forget: (exerciseId) =>
+        setState((prev) => {
+          const exercises = prev.exercises.filter((e) => e.id !== exerciseId);
           if (userId) cacheLibrary(userId, exercises);
           return { ...prev, exercises };
         }),

@@ -35,6 +35,7 @@ interface SetRow {
   is_warmup?: unknown;
   logged_at?: unknown;
   e1rm_kg?: unknown;
+  video_file_id?: unknown;
 }
 
 /** A set with the session it belongs to, and where it sat in its exercise. */
@@ -42,6 +43,8 @@ export interface HistorySet extends UnnamedSet {
   sessionId: string;
   setIndex: number;
   e1rmKg: number | null;
+  /** The attached clip, so deleting the set from History can take it too. */
+  videoFileId?: string | null;
 }
 
 const asNumber = (value: unknown): number =>
@@ -64,6 +67,7 @@ function toSet(raw: SetRow): HistorySet | null {
     isWarmup: raw.is_warmup === true,
     e1rmKg: typeof raw.e1rm_kg === "number" ? raw.e1rm_kg : null,
     loggedAt,
+    videoFileId: typeof raw.video_file_id === "string" && raw.video_file_id ? raw.video_file_id : null,
   };
 }
 
@@ -137,4 +141,20 @@ export function exerciseIdsOf(sets: readonly HistorySet[]): string[] {
   const seen: string[] = [];
   for (const set of sets) if (!seen.includes(set.exerciseId)) seen.push(set.exerciseId);
   return seen;
+}
+
+/**
+ * Whether a set row still names this session. The session delete's guard.
+ *
+ * Only rows the athlete wrote count: a forged set naming somebody's session
+ * must not be able to pin it in place.
+ */
+export async function sessionHasSets(sessionId: string): Promise<boolean> {
+  const { tables, databaseId } = browserAppwrite();
+  const page = await tables.listRows({
+    databaseId,
+    tableId: "sets",
+    queries: [Query.equal("session_id", sessionId), Query.limit(25)],
+  });
+  return authenticRows("sets", page.rows).length > 0;
 }

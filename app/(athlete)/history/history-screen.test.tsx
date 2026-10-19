@@ -40,6 +40,9 @@ vi.mock("@/lib/logging/history-store", async (importOriginal) => ({
   fetchSetsForSessions: async () => loaded.sets,
 }));
 
+const dayLabels = vi.hoisted(() => ({ map: new Map<string, string>() }));
+vi.mock("@/lib/programming/program-store", () => ({ fetchDayLabels: async () => dayLabels.map }));
+
 const exercises: Exercise[] = [
   { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true },
   { id: "dead", name: "Deadlift", normalisedName: "deadlift", isGlobal: true },
@@ -91,6 +94,7 @@ function setup(sessions: SessionRecord[] = [session()]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dayLabels.map = new Map();
   units.unit = "kg";
   library.exercises = exercises;
   loaded.sets = [set()];
@@ -168,5 +172,26 @@ describe("search", () => {
     await screen.findByRole("link", { name: /8 sets/ });
     await user.type(screen.getByRole("searchbox"), "curl");
     expect(await screen.findByRole("status")).toHaveTextContent("Nothing matching");
+  });
+});
+
+describe("session names", () => {
+  it("titles a named session by its name, with the date underneath", async () => {
+    setup([session({ name: "Heavy singles" })]);
+    const card = await screen.findByRole("link", { name: /^Heavy singles, / });
+    expect(card).toHaveTextContent("Heavy singles");
+    expect(card).toHaveTextContent(/\w+day \d+ \w{3}/);
+  });
+
+  it("titles a prescribed session by its program day until it is named", async () => {
+    dayLabels.map = new Map([["day-1", "Heavy squat"]]);
+    setup([session({ programDayId: "day-1" })]);
+    expect(await screen.findByRole("link", { name: /^Heavy squat, / })).toBeInTheDocument();
+  });
+
+  it("keeps the date as the title of a session with neither", async () => {
+    setup();
+    const card = await screen.findByRole("link", { name: /8 sets/ });
+    expect(card.getAttribute("aria-label")).toMatch(/^\w+day \d+ \w{3}, 8 sets$/);
   });
 });

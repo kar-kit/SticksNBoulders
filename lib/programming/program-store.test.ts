@@ -1,5 +1,5 @@
 import { FakeTables, type FakeRow } from "@/lib/testing/fake-tables";
-import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "./program-store";
+import { fetchDayLabels, fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "./program-store";
 
 /**
  * The real read and write path behind the program editor. The editor's own
@@ -175,5 +175,26 @@ describe("sendProgramOp", () => {
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("/api/program");
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer jwt-1");
+  });
+});
+
+describe("fetchDayLabels", () => {
+  it("returns the coach's label for each day asked about, in one query, and skips blank ones", async () => {
+    db.tables = fakeTables();
+    db.tables.seed("program_days", [
+      { $id: "d1", ...base, label: "Heavy squat" },
+      { $id: "d2", ...base, label: "   " },
+      { $id: "d3", ...base, label: null },
+      { $id: "d4", ...base, label: "Not asked for" },
+    ]);
+    const labels = await fetchDayLabels(["d1", "d2", "d3", "d1", "gone"]);
+    expect(labels).toEqual(new Map([["d1", "Heavy squat"]]));
+    expect(db.tables.callsTo("program_days")).toHaveLength(1);
+  });
+
+  it("asks nothing when there are no days", async () => {
+    db.tables = fakeTables();
+    expect(await fetchDayLabels([])).toEqual(new Map());
+    expect(db.tables.calls).toEqual([]);
   });
 });

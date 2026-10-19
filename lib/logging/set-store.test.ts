@@ -125,3 +125,20 @@ describe("removeSet", () => {
     expect(forgetUpload).not.toHaveBeenCalledWith("f-other");
   });
 });
+
+describe("removeSet with a clip", () => {
+  it("queues the clip's delete behind the set's, so the file only goes once the set has", async () => {
+    // A set from an earlier visit: nothing for it in this queue, so it may have landed.
+    await removeSet("st-1", { exerciseId: "squat", loggedAt: LOGGED_AT, videoFileId: "vid-1" });
+    expect(kinds(await store.all())).toEqual([
+      ["set.delete", "st-1"],
+      ["rollup.refresh", "squat"],
+      ["clip.delete", "st-1"],
+    ]);
+  });
+
+  it("queues no clip delete when the caller does not know of one", async () => {
+    await removeSet("st-1", { exerciseId: "squat", loggedAt: LOGGED_AT });
+    expect(kinds(await store.all()).map(([kind]) => kind)).not.toContain("clip.delete");
+  });
+});

@@ -12,6 +12,8 @@ import type { SessionRecord } from "./session";
 
 const card = (over: Partial<HistoryCard> = {}): HistoryCard => ({
   sessionId: "s1",
+  title: "Monday 14 Sep",
+  named: false,
   startedAt: new Date("2026-09-14T09:00:00Z"),
   finishedAt: new Date("2026-09-14T10:12:00Z"),
   durationMs: 72 * 60_000,
@@ -150,5 +152,39 @@ describe("historyCards", () => {
   it("marks a session the server has not heard of", () => {
     const [built] = historyCards([session()], () => [], (id) => id === "s1");
     expect(built.pendingSync).toBe(true);
+  });
+
+  it("titles a session by its name, else its program day, else its date", () => {
+    const labels = (id: string) => (id === "d1" ? "Heavy squat" : null);
+    const [named, prescribed, free] = historyCards(
+      [session({ name: "Comp prep" }), session({ id: "s2", programDayId: "d1" }), session({ id: "s3" })],
+      () => [],
+      () => false,
+      labels,
+    );
+    expect(named).toMatchObject({ title: "Comp prep", named: true });
+    expect(prescribed).toMatchObject({ title: "Heavy squat", named: true });
+    expect(free.named).toBe(false);
+    expect(free.title).toMatch(/14 Sep$/);
+  });
+});
+
+describe("searching by a session's name", () => {
+  it("finds a named session as well as one by exercise", () => {
+    const weeks = groupByWeek(
+      [
+        card({ sessionId: "a", title: "Heavy singles", named: true, exerciseNames: ["Squat"] }),
+        card({ sessionId: "b", exerciseNames: ["Heavy carry"] }),
+        card({ sessionId: "c", exerciseNames: ["Bench Press"] }),
+      ],
+      NOW,
+    );
+    const found = filterByExercise(weeks, "heavy").flatMap((week) => week.sessions.map((c) => c.sessionId));
+    expect(found.sort()).toEqual(["a", "b"]);
+  });
+
+  it("does not match the date of an unnamed session", () => {
+    const weeks = groupByWeek([card({ exerciseNames: ["Squat"] })], NOW);
+    expect(filterByExercise(weeks, "monday")).toEqual([]);
   });
 });

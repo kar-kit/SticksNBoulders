@@ -51,7 +51,9 @@ const SET_COLUMNS = [
   "notes",
   "prescribed",
 ];
-const SESSION_COLUMNS = ["athlete_id", "started_at", "notes"];
+// `name` needs schema v14 on the instance: Appwrite refuses a select of a
+// column it does not have, so run `npm run appwrite:setup` before deploying.
+const SESSION_COLUMNS = ["athlete_id", "started_at", "notes", "name"];
 
 const date = z
   .string()
@@ -67,6 +69,7 @@ const SessionRow = z.object({
   $id: z.string().min(1),
   started_at: date,
   notes: optionalText,
+  name: optionalText,
 });
 
 const SetRow = z.object({
@@ -134,7 +137,12 @@ export async function fetchTrainingLog(
       skipped++;
       continue;
     }
-    sessions.push({ id: parsed.data.$id, startedAt: parsed.data.started_at, notes: parsed.data.notes });
+    sessions.push({
+      id: parsed.data.$id,
+      startedAt: parsed.data.started_at,
+      notes: parsed.data.notes,
+      name: parsed.data.name,
+    });
   }
 
   const sets: ExportSet[] = [];

@@ -384,11 +384,24 @@ describe("the program tables (Order 19)", () => {
   });
 });
 
+describe("session names (v14)", () => {
+  it("are one nullable string with no default, so applying it rewrites no session", () => {
+    expect(schema.version).toBe(14);
+    expect(table("sessions").columns.find((c) => c.key === "name")).toEqual({
+      key: "name",
+      type: "string",
+      size: 80,
+      required: false,
+    });
+    expect(table("sessions").indexes.some((i) => i.columns.includes("name"))).toBe(false);
+  });
+});
+
 describe("profile pictures (v13)", () => {
   const bucket = schema.buckets.find((b) => b.id === "avatars")!;
 
   it("point at a file with one nullable id, so every existing profile is untouched", () => {
-    expect(schema.version).toBe(13);
+    expect(schema.version).toBeGreaterThanOrEqual(13);
     expect(table("profiles").columns.find((c) => c.key === "avatar_file_id")).toEqual({
       key: "avatar_file_id",
       type: "string",

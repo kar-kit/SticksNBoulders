@@ -15,9 +15,11 @@ tap ✓ ──► IndexedDB ──► flush ──► Appwrite
                          in order)
 ```
 
-Four kinds of op, all carrying their own Appwrite row id: `session.create`,
-`session.finish`, `set.create`, `set.delete`, plus `exercise.create` for a lift
-typed on the spot.
+Ops carry their own Appwrite row id: `session.create`, `session.finish`,
+`set.create`, `set.update`, `set.delete`, `set.attachVideo`, `exercise.create`
+for a lift typed on the spot, and `rollup.refresh` behind every set write.
+History and My exercises add `session.update`, `session.delete`,
+`exercise.rename`, `exercise.delete` and `clip.delete` (see the last sections).
 
 ## One id, not two
 
@@ -182,6 +184,73 @@ someone else's comment and says so instead of offering Delete. A refused delete
 is a permanent op, but not lost work: the set reappears, and the notice can be
 dismissed. The athlete corrects the numbers from History instead, which keeps
 the thread attached to its set.
+
+## Editing and deleting a session from History
+
+`session.update` carries only the fields that changed: a name, notes, or the
+restated totals. **The totals are the fix for a real bug.** History cards read
+`sessions.set_count` and `tonnage_kg`, and `finishSession` was the only thing
+that ever wrote them, so correcting or deleting a set from History left the card
+showing the finish-time numbers for good. Session Detail now recomputes them
+with `summariseSession` (warm-ups excluded, as at finish) after every set edit
+or delete, counting sets still in the queue, and queues the update behind the
+set's own op. `applyQueuedSessionEdits` projects a queued update or delete over
+the server's copy, so a rename made with no signal reads as done.
+
+`started_at` is not editable. History weeks are bucketed by the session's
+start; rollups by each set's `logged_at`. Moving one without the other makes the
+History week and the chart bar disagree, and moving both means rewriting every
+set and refreshing two weeks of rollups -- not cheap, so not in this pass.
+
+Deleting a session asks once (inline, not a modal), then:
+
+1. **Checks for coach feedback, online.** `checkSessionDeletable` reads the
+   comments on the session's landed sets. Any comment by someone other than the
+   athlete blocks the delete with a message. This is the one part that needs
+   signal; a session none of whose sets reached Appwrite skips it. Without the
+   check up front the queue would still refuse the commented sets, but one by
+   one and possibly an hour later, and the athlete would watch a deleted session
+   come back half-empty.
+2. **Removes every set through `removeSet`**, the single-set path: queued sets
+   are withdrawn, landed ones get `set.delete` (with its own last-moment comment
+   guard), a `rollup.refresh` for their (exercise, week) -- duplicates collapse
+   to the last one -- and a `clip.delete` when the set had a clip.
+3. **Then the session.** `withdrawRow("session", id)` drops a create that never
+   left the phone (nothing is sent at all); otherwise `session.delete` queues
+   last. Its guard (`sessionHasSets`) refuses with 412 `session-has-sets` if any
+   set survived -- i.e. a coach commented after step 1 -- so the session stays
+   with its commented sets. History shows a dismissible notice for that case.
+
+Review marks (`set_reviews`) do not block. They carry no words, the athlete
+cannot delete them, and a mark on a set that no longer exists drops out of the
+Review Queue's sets-with-video-minus-reviews maths without trace. The athlete's
+own replies on a deleted set are left orphaned, as single-set delete already
+does.
+
+**Clips.** `clip.delete` runs strictly behind its set's delete. It reads the
+set: gone means the file is deleted now (no wait for `clips:sweep`); still there
+means the delete was refused and the coach may be watching it, so the file
+stays. Single-set deletes from History pass the clip id too; the logger's undo
+does not, and leaves it to the sweep as before.
+
+## My exercises
+
+Me → My exercises lists the athlete's own `exercises` rows (`is_global: false`,
+`owner_id` = them). Rename is `exercise.rename` through `renameExercise`, refused
+on screen if another library row normalises to the same name (the same reason
+`resolveOrCreateExercise` refuses a duplicate). Sets reference the id, so every
+logged set follows.
+
+**Delete is blocked, not archived, for an exercise anything points at**: this
+athlete's sets (on the server or still queued), a reference max, or a
+prescription line written for them (as the lift or as `reference_exercise_id`).
+An archive would need a column, a filter in every library reader and a way
+back, to hide a name that renaming already fixes. The check runs on screen
+first (needs signal unless the exercise never left the phone) and again as the
+`exercise.delete` guard (`exerciseInUse`, 412 `exercise-in-use`). One gap: a
+coach's *template* that borrowed the exercise is not readable by the athlete,
+so it is not checked; the template would show an id, and nothing the athlete
+logged is affected.
 
 ## Testing it
 

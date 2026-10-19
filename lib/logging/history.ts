@@ -1,5 +1,6 @@
 import { weekStart } from "@/lib/strength/rollup";
 import { calendarDayLabel, type SessionRecord } from "./session";
+import { sessionTitle } from "./session-edit";
 
 /**
  * The History list.
@@ -16,6 +17,10 @@ import { calendarDayLabel, type SessionRecord } from "./session";
 
 export interface HistoryCard {
   sessionId: string;
+  /** The athlete's name for it, else the program day's label, else the date. */
+  title: string;
+  /** Whether `title` is a name rather than the date, so the date goes underneath. */
+  named: boolean;
   startedAt: Date;
   finishedAt: Date | null;
   /** Null while a session is still running. */
@@ -108,8 +113,11 @@ export function filterByExercise(weeks: readonly HistoryWeek[], query: string): 
   return weeks
     .map((week) => ({
       ...week,
-      sessions: week.sessions.filter((card) =>
-        card.exerciseNames.some((name) => name.toLowerCase().includes(needle)),
+      // A session's own name counts too: "heavy" should find "Heavy singles".
+      sessions: week.sessions.filter(
+        (card) =>
+          (card.named && card.title.toLowerCase().includes(needle)) ||
+          card.exerciseNames.some((name) => name.toLowerCase().includes(needle)),
       ),
     }))
     .filter((week) => week.sessions.length > 0);
@@ -133,9 +141,11 @@ export function historyCards(
   sessions: readonly SessionRecord[],
   exercisesOf: (sessionId: string) => string[],
   isPending: (sessionId: string) => boolean = () => false,
+  dayLabelOf: (programDayId: string) => string | null = () => null,
 ): HistoryCard[] {
   return sessions.map((session) => ({
     sessionId: session.id,
+    ...sessionTitle(session, session.programDayId ? dayLabelOf(session.programDayId) : null),
     startedAt: session.startedAt,
     finishedAt: session.finishedAt,
     durationMs: session.finishedAt

@@ -102,6 +102,26 @@ export async function fetchLoggedDayIds(athleteId: string, dayIds: readonly stri
   );
 }
 
+/**
+ * The coach's label for each of these program days, for naming the sessions
+ * started from them in History. One query on the ids, two columns.
+ *
+ * A day the athlete can no longer read (unlinked coach, deleted program) is
+ * simply absent, and its session falls back to the date.
+ */
+export async function fetchDayLabels(dayIds: readonly string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(dayIds.filter(Boolean))];
+  const labels = new Map<string, string>();
+  if (unique.length === 0) return labels;
+  const rows = await listAll("program_days", [Query.equal("$id", unique), Query.select(["$id", "label"])]);
+  for (const row of rows as Array<{ $id?: unknown; label?: unknown }>) {
+    if (typeof row.$id === "string" && typeof row.label === "string" && row.label.trim()) {
+      labels.set(row.$id, row.label.trim());
+    }
+  }
+  return labels;
+}
+
 /** Programs for an athlete, or written by a coach, newest first. Templates are `{ coachId, athleteId: null }`. */
 export async function fetchPrograms(filter: { athleteId: string } | { coachId: string }): Promise<Program[]> {
   const query =

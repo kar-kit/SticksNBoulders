@@ -62,6 +62,16 @@ export function MePanel() {
         <span className="text-ui text-muted">Log &amp; trend ›</span>
       </Link>
 
+      {/* The lifts this athlete typed into existence, which until now could
+          only be seen in the typeahead and never corrected. */}
+      <Link
+        href="/me/exercises"
+        className="flex items-center justify-between rounded-control border border-border px-3 py-2.5"
+      >
+        <span className="text-body">My exercises</span>
+        <span className="text-ui text-muted">Rename &amp; tidy ›</span>
+      </Link>
+
       <CoachLink />
 
       <SuggestionModeNote athleteId={state.user.id} isCoach={state.coach.isCoach} />

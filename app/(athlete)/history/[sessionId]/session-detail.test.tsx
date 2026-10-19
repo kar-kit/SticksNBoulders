@@ -29,10 +29,13 @@ vi.mock("@/lib/logging/session-context", () => ({
   useTrainingSessions: () => training.value,
 }));
 
-const loaded = vi.hoisted(() => ({ sets: [] as unknown[] }));
+const loaded = vi.hoisted(() => ({ sets: [] as unknown[], fail: false }));
 vi.mock("@/lib/logging/history-store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/logging/history-store")>()),
-  fetchSetsForSessions: async () => loaded.sets,
+  fetchSetsForSessions: async () => {
+    if (loaded.fail) throw new TypeError("Failed to fetch");
+    return loaded.sets;
+  },
 }));
 
 const editSet = vi.hoisted(() =>
@@ -42,6 +45,19 @@ const removeSet = vi.hoisted(() =>
   vi.fn<(id: string, set?: Record<string, unknown>) => Promise<void>>(),
 );
 vi.mock("@/lib/logging/set-store", () => ({ editSet, removeSet }));
+
+const sessionEdits = vi.hoisted(() => ({
+  reviseSession: vi.fn(async () => {}),
+  reviseSessionTotals: vi.fn(async () => {}),
+  checkSessionDeletable: vi.fn(async (): Promise<{ ok: true } | { ok: false; reason: string; message: string }> => ({
+    ok: true,
+  })),
+  deleteSessionAndSets: vi.fn(async () => ({ queued: true })),
+}));
+vi.mock("@/lib/logging/session-edit-store", () => sessionEdits);
+
+const patch = vi.fn();
+const drop = vi.fn();
 
 // The real row, with a hand on the active row's confirm. The button is
 // disabled for an incomplete draft, so the only way to reach save() with one
@@ -88,13 +104,15 @@ const set = (over: Partial<HistorySet> = {}): HistorySet => ({
   ...over,
 });
 
-function setup() {
+function setup(over: Partial<SessionRecord> = {}) {
   training.value = {
-    state: { status: "ready", sessions: [session] },
+    state: { status: "ready", sessions: [{ ...session, ...over }] },
     active: null,
     lastFinished: null,
     start: vi.fn(),
     finish: vi.fn(),
+    patch,
+    drop,
     reload: vi.fn(),
   };
   render(<SessionDetail sessionId="s1" />);
@@ -103,6 +121,7 @@ function setup() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loaded.fail = false;
   activeConfirm.current = undefined;
   units.unit = "kg";
   editSet.mockResolvedValue(undefined);
@@ -199,6 +218,7 @@ describe("correcting a set", () => {
     await waitFor(() => expect(removeSet).toHaveBeenCalledWith("st-1", {
       exerciseId: "squat",
       loggedAt: new Date("2026-09-14T09:30:00Z"),
+      videoFileId: null,
     }));
     await waitFor(() => expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("150"));
   });
@@ -269,5 +289,159 @@ describe("for an athlete who reads pounds", () => {
     await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
     expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 142.882, reps: 5, rpe: 8, isWarmup: false });
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("315");
+  });
+});
+
+describe("the session's stored totals", () => {
+  // The bug: History cards read set_count and tonnage_kg off the session row,
+  // which only finishSession ever wrote. Correcting or deleting a set here
+  // left the card showing finish-time numbers for good.
+  it("are restated after a correction, from the sets as they now are", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    for (let i = 0; i < 3; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+    for (const key of ["1", "4", "5"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+
+    // 145 x 5 + 150 x 3. The warm-up counts toward neither, as at finish.
+    const totals = { setCount: 2, tonnageKg: 1175 };
+    await waitFor(() => expect(sessionEdits.reviseSessionTotals).toHaveBeenCalledWith("s1", totals));
+    expect(patch).toHaveBeenCalledWith("s1", totals);
+    // Behind the set's own write, so the totals land after the change they describe.
+    expect(editSet.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionEdits.reviseSessionTotals.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("are restated after a delete", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    await user.click(screen.getByRole("button", { name: "Delete set" }));
+    await waitFor(() =>
+      expect(sessionEdits.reviseSessionTotals).toHaveBeenCalledWith("s1", { setCount: 1, tonnageKg: 450 }),
+    );
+  });
+
+  it("are left alone when they already match", async () => {
+    // Marking set 2 a warm-up and back again is no change at all.
+    const { user } = setup({ setCount: 2, tonnageKg: 1150 });
+    await user.click(await screen.findByRole("button", { name: "Edit set 2 of Squat" }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 2$/ }));
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(sessionEdits.reviseSessionTotals).not.toHaveBeenCalled();
+  });
+});
+
+describe("a set's clip", () => {
+  it("goes with the set when it is deleted from History", async () => {
+    loaded.sets = [set({ clientSetId: "st-1", videoFileId: "vid-1" })];
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    await user.click(screen.getByRole("button", { name: "Delete set" }));
+    await waitFor(() =>
+      expect(removeSet).toHaveBeenCalledWith("st-1", expect.objectContaining({ videoFileId: "vid-1" })),
+    );
+  });
+});
+
+describe("naming a session", () => {
+  it("titles it by its name, with the date underneath", async () => {
+    setup({ name: "Heavy singles" });
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("Heavy singles");
+    expect(screen.getByText(/Monday 14 Sep ·/)).toBeInTheDocument();
+  });
+
+  it("saves a name and notes, and shows them at once", async () => {
+    const { user } = setup();
+    await screen.findByRole("region", { name: "Squat" });
+    await user.click(screen.getByRole("button", { name: "Edit name and notes" }));
+    // Blank shows what it would be called without one.
+    expect(screen.getByLabelText("Name")).toHaveAttribute("placeholder", "Monday 14 Sep");
+    await user.type(screen.getByLabelText("Name"), "  Heavy singles ");
+    await user.type(screen.getByLabelText("Notes"), "Knees felt good");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const change = { name: "Heavy singles", notes: "Knees felt good" };
+    expect(patch).toHaveBeenCalledWith("s1", change);
+    await waitFor(() => expect(sessionEdits.reviseSession).toHaveBeenCalledWith("s1", change));
+  });
+
+  it("clears a name back to the default when it is emptied", async () => {
+    const { user } = setup({ name: "Old name" });
+    await screen.findByRole("region", { name: "Squat" });
+    await user.click(screen.getByRole("button", { name: "Edit name and notes" }));
+    await user.clear(screen.getByLabelText("Name"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(sessionEdits.reviseSession).toHaveBeenCalledWith("s1", { name: null, notes: null }));
+  });
+
+  it("puts the old name back when the change cannot be written", async () => {
+    sessionEdits.reviseSession.mockRejectedValueOnce(new DOMException("Quota exceeded", "QuotaExceededError"));
+    const { user } = setup({ name: "Old name" });
+    await screen.findByRole("region", { name: "Squat" });
+    await user.click(screen.getByRole("button", { name: "Edit name and notes" }));
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "New name");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(patch).toHaveBeenLastCalledWith("s1", { name: "Old name", notes: null }));
+    expect(screen.getByRole("status")).toHaveTextContent("wasn't saved");
+  });
+});
+
+describe("deleting a whole session", () => {
+  it("asks first, then deletes every set in it and leaves for History", async () => {
+    const { user } = setup();
+    await screen.findByRole("region", { name: "Squat" });
+    await user.click(screen.getByRole("button", { name: "Delete session" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("all 3 sets");
+    expect(sessionEdits.deleteSessionAndSets).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Delete session" }));
+    await waitFor(() => expect(sessionEdits.deleteSessionAndSets).toHaveBeenCalledTimes(1));
+    expect(sessionEdits.checkSessionDeletable).toHaveBeenCalledWith("joey", ["st-w", "st-1", "st-2"]);
+    const [id, sets] = sessionEdits.deleteSessionAndSets.mock.calls[0] as unknown as [string, HistorySet[]];
+    expect(id).toBe("s1");
+    expect(sets.map((each) => each.clientSetId)).toEqual(["st-w", "st-1", "st-2"]);
+    expect(drop).toHaveBeenCalledWith("s1");
+    expect(push).toHaveBeenCalledWith("/history");
+  });
+
+  it("keeps it, and says why, when the coach has commented on it", async () => {
+    sessionEdits.checkSessionDeletable.mockResolvedValueOnce({
+      ok: false,
+      reason: "coach-feedback",
+      message: "Your coach has commented on this session, so it stays.",
+    });
+    const { user } = setup();
+    await screen.findByRole("region", { name: "Squat" });
+    await user.click(screen.getByRole("button", { name: "Delete session" }));
+    await user.click(screen.getByRole("button", { name: "Delete session" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Your coach has commented");
+    expect(sessionEdits.deleteSessionAndSets).not.toHaveBeenCalled();
+    expect(drop).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("will not delete on a set list it could not read", async () => {
+    // An empty list from a failed read is not "no sets": deleting on it would
+    // skip every set's coach-comment check and leave the sets orphaned.
+    loaded.fail = true;
+    const { user } = setup();
+    await screen.findByText("Nothing in this session");
+    await user.click(screen.getByRole("button", { name: "Delete session" }));
+    await user.click(screen.getByRole("button", { name: "Delete session" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("needs signal");
+    expect(sessionEdits.checkSessionDeletable).not.toHaveBeenCalled();
+    expect(sessionEdits.deleteSessionAndSets).not.toHaveBeenCalled();
+  });
+
+  it("can be backed out of", async () => {
+    const { user } = setup();
+    await screen.findByRole("region", { name: "Squat" });
+    await user.click(screen.getByRole("button", { name: "Delete session" }));
+    await user.click(screen.getByRole("button", { name: "Keep it" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(sessionEdits.checkSessionDeletable).not.toHaveBeenCalled();
   });
 });

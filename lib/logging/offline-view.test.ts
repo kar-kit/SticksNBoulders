@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { newOp, type QueuedOp } from "@/lib/offline/queue";
-import { lostOps, mergeById, queuedSessions, queuedSets, refusedDeletes, unsyncedIds } from "./offline-view";
+import {
+  applyQueuedSessionEdits,
+  lostOps,
+  mergeById,
+  queuedSessions,
+  queuedSets,
+  refusedDeletes,
+  refusedRowDeletes,
+  unsyncedIds,
+} from "./offline-view";
+import { EXERCISE_IN_USE, SESSION_HAS_SETS } from "@/appwrite/documents/write";
 import type { SessionRecord } from "./session";
 
 let sequence = 0;
@@ -101,5 +111,76 @@ describe("refused deletes", () => {
   it("does not count them as lost work", () => {
     const ops = [failedDelete("op-1", "st-a", "set-has-coach-comments"), failedDelete("op-2", "st-b", "rejected")];
     expect(lostOps(ops).map((op) => op.id)).toEqual(["op-2"]);
+  });
+});
+
+describe("applyQueuedSessionEdits", () => {
+  const server: SessionRecord = {
+    id: "s1",
+    clientSessionId: "s1",
+    startedAt: new Date(STARTED),
+    finishedAt: new Date("2026-09-14T10:00:00.000Z"),
+    setCount: 10,
+    tonnageKg: 5000,
+    notes: "old",
+    name: null,
+  };
+
+  it("shows a rename made with no signal as done", () => {
+    const [session] = applyQueuedSessionEdits([server], [op("session.update", { sessionId: "s1", name: "Heavy" })]);
+    expect(session).toMatchObject({ name: "Heavy", notes: "old", setCount: 10 });
+  });
+
+  it("applies restated totals without touching the name", () => {
+    const [session] = applyQueuedSessionEdits(
+      [{ ...server, name: "Kept" }],
+      [op("session.update", { sessionId: "s1", setCount: 9, tonnageKg: 4550 })],
+    );
+    expect(session).toMatchObject({ name: "Kept", setCount: 9, tonnageKg: 4550 });
+  });
+
+  it("applies edits in the order they were made", () => {
+    const [session] = applyQueuedSessionEdits(
+      [server],
+      [op("session.update", { sessionId: "s1", name: "First" }), op("session.update", { sessionId: "s1", name: null })],
+    );
+    expect(session.name).toBeNull();
+  });
+
+  it("hides a session whose delete is still queued", () => {
+    expect(applyQueuedSessionEdits([server], [op("session.delete", { sessionId: "s1" })])).toEqual([]);
+  });
+
+  it("brings a session back once its delete was refused", () => {
+    const refused = { ...op("session.delete", { sessionId: "s1" }), permanentError: SESSION_HAS_SETS };
+    expect(applyQueuedSessionEdits([server], [refused])).toHaveLength(1);
+  });
+
+  it("applies to a session still in the queue as well", () => {
+    const [session] = queuedSessions([
+      op("session.create", { sessionId: "cs-9", startedAt: STARTED }),
+      op("session.update", { sessionId: "cs-9", name: "Basement day" }),
+    ]);
+    expect(session.name).toBe("Basement day");
+  });
+});
+
+describe("refused row deletes", () => {
+  it("keys a refused session or exercise delete by its row, and keeps them out of the lost list", () => {
+    const session = { ...op("session.delete", { sessionId: "s1" }), permanentError: SESSION_HAS_SETS };
+    const exercise = { ...op("exercise.delete", { exerciseId: "ex-1" }), permanentError: EXERCISE_IN_USE };
+    expect(refusedRowDeletes([session, exercise], "session")).toEqual(new Map([["s1", session.id]]));
+    expect(refusedRowDeletes([session, exercise], "exercise")).toEqual(new Map([["ex-1", exercise.id]]));
+    expect(lostOps([session, exercise])).toEqual([]);
+  });
+
+  it("does not hide a clip delete that failed, nor count it as lost training", () => {
+    const clip = { ...op("clip.delete", { setId: "st-1", fileId: "f" }), permanentError: "rejected" };
+    expect(lostOps([clip])).toEqual([]);
+  });
+
+  it("still reports a rename that could not be saved", () => {
+    const rename = { ...op("session.update", { sessionId: "s1", name: "x" }), permanentError: "Unknown attribute" };
+    expect(lostOps([rename])).toEqual([rename]);
   });
 });

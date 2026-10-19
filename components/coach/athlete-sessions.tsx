@@ -111,6 +111,8 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                       >
                         <span className="text-ui font-semibold">{sessionDateLabel(card.startedAt)}</span>
                         <span className="col-span-2 row-start-2 truncate text-ui text-muted md:col-span-1 md:row-start-auto">
+                          {/* The athlete's own name for the session, when they gave one. */}
+                          {card.named ? <span className="text-foreground">{card.title} · </span> : null}
                           {card.exerciseNames.join(", ")}
                         </span>
                         <span className="col-start-2 row-start-1 text-right font-mono text-meta text-muted tabular-nums md:col-start-auto md:row-start-auto md:text-left">

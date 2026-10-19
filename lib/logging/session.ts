@@ -17,6 +17,8 @@ export interface SessionRecord {
   notes?: string | null;
   /** The prescribed day this was started from. Absent or null for free logging. */
   programDayId?: string | null;
+  /** What the athlete called it, from History. Null shows the day's label or the date. */
+  name?: string | null;
 }
 
 export interface SessionSet {
