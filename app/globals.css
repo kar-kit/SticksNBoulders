@@ -472,7 +472,16 @@ body {
  * too, so the height is divided back down or the shell would always scroll.
  */
 @utility coach-scale {
-  --coach-zoom: 1.2;
+  --coach-zoom: 1;
   zoom: var(--coach-zoom);
   min-height: calc(100dvh / var(--coach-zoom));
+
+  /*
+   * Laptop and up only. On a phone the 1.2 zoom shrank a 390px screen to an
+   * effective 325px, which is what broke the coach side for Ruairi on mobile;
+   * there the px scale is already the phone-sized one the athlete side uses.
+   */
+  @media (width >= 64rem) {
+    --coach-zoom: 1.2;
+  }
 }
