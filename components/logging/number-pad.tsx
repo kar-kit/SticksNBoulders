@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/cn";
-import { padDisplay, press, type PadKey, type PadState } from "@/lib/logging/number-pad";
+import { canStepDown, padDisplay, press, step, stepSize, type PadKey, type PadState } from "@/lib/logging/number-pad";
 
 /**
  * The number pad. Every number in this product is typed here, because no
@@ -36,6 +36,16 @@ const KEYS: PadKey[][] = [
 const fieldLabel = (state: PadState): string =>
   state.field === "load" ? `Weight, ${state.unit ?? "kg"}` : "Reps";
 
+/** "weight by 2.5 kg", "reps by 1": what a screen reader says a stepper does. */
+const stepLabel = (state: PadState): string =>
+  state.field === "load" ? `weight by ${stepSize(state)} ${state.unit ?? "kg"}` : "reps by 1";
+
+const STEPPER =
+  "flex h-12 w-14 flex-none items-center justify-center rounded-control border border-border bg-surface-2 " +
+  "text-value-sm font-semibold text-foreground active:bg-accent-pressed active:text-on-accent-pressed " +
+  "disabled:bg-surface disabled:text-muted-2 " +
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line";
+
 export function NumberPad({
   state,
   onChange,
@@ -52,11 +62,33 @@ export function NumberPad({
       aria-label={`${fieldLabel(state)} keypad`}
       className="flex flex-none flex-col gap-3 border-t border-border bg-surface px-3 pt-3.5 pb-[22px]"
     >
-      <div className="flex items-center justify-between px-1">
-        <span className="font-mono text-label uppercase text-muted-2">{fieldLabel(state)}</span>
-        <output className="text-value-lg font-semibold tabular-nums text-foreground">
+      {/*
+        − and + either side of the value: the next plate pair on, or one rep
+        more, without retyping the number. Beside the value rather than in the
+        key grid, so the 3×4 digits stay where a thumb already knows them.
+      */}
+      <div className="flex items-center gap-2 px-1">
+        <span className="flex-1 font-mono text-label uppercase text-muted-2">{fieldLabel(state)}</span>
+        <button
+          type="button"
+          onClick={() => onChange(step(state, -1))}
+          disabled={!canStepDown(state)}
+          aria-label={`Decrease ${stepLabel(state)}`}
+          className={STEPPER}
+        >
+          −
+        </button>
+        <output className="min-w-[4.5ch] text-center text-value-lg font-semibold tabular-nums text-foreground">
           {padDisplay(state)}
         </output>
+        <button
+          type="button"
+          onClick={() => onChange(step(state, 1))}
+          aria-label={`Increase ${stepLabel(state)}`}
+          className={STEPPER}
+        >
+          +
+        </button>
       </div>
 
       <div className="grid grid-cols-3 gap-2">

@@ -1,4 +1,15 @@
-import { beginEdit, padDisplay, padValue, press, rpeAfterWarmupChange, type PadKey, type PadState } from "./number-pad";
+import {
+  beginEdit,
+  canStepDown,
+  padDisplay,
+  padValue,
+  press,
+  rpeAfterWarmupChange,
+  step,
+  stepSize,
+  type PadKey,
+  type PadState,
+} from "./number-pad";
 
 const type = (state: PadState, keys: string): PadState =>
   [...keys].reduce((s, k) => press(s, k as PadKey), state);
@@ -109,5 +120,54 @@ describe("a load typed in pounds", () => {
   it("remembers the unit it is typing in, and only for a load", () => {
     expect(pounds(225).unit).toBe("lb");
     expect(beginEdit("reps", 5, "lb").unit).toBeUndefined();
+  });
+});
+
+describe("the − / + steppers", () => {
+  it("moves a kilo load by 2.5 and reps by 1", () => {
+    expect(padValue(step(load(140), 1))).toBe(142.5);
+    expect(padValue(step(load(140), -1))).toBe(137.5);
+    expect(padValue(step(reps(5), 1))).toBe(6);
+    expect(padValue(step(reps(5), -1))).toBe(4);
+  });
+
+  it("moves a pound load by 5, the pound gym's plate pair", () => {
+    const lb = beginEdit("load", 225, "lb");
+    expect(stepSize(lb)).toBe(5);
+    expect(padValue(step(lb, 1))).toBe(230);
+    expect(step(lb, 1).unit).toBe("lb");
+  });
+
+  it("adds to what was typed rather than snapping it to the plate grid", () => {
+    expect(padValue(step(load(141), 1))).toBe(143.5);
+  });
+
+  it("never goes below zero", () => {
+    expect(padValue(step(load(1), -1))).toBe(0);
+    expect(padValue(step(load(0), -1))).toBe(0);
+    expect(padValue(step(reps(0), -1))).toBe(0);
+    expect(canStepDown(reps(0))).toBe(false);
+    expect(canStepDown(reps(1))).toBe(true);
+  });
+
+  it("starts an empty field from zero", () => {
+    expect(padValue(step(load(), 1))).toBe(2.5);
+    expect(padValue(step(reps(), 1))).toBe(1);
+    expect(canStepDown(load())).toBe(false);
+  });
+
+  it("keeps float noise off the screen", () => {
+    let state = load(0.1);
+    for (let i = 0; i < 3; i++) state = step(state, 1);
+    expect(padDisplay(state)).toBe("7.6");
+  });
+
+  it("selects the result, so the next digit replaces it", () => {
+    expect(padValue(type(step(load(140), 1), "9"))).toBe(9);
+  });
+
+  it("stops at what the pad would let you type", () => {
+    expect(padValue(step(reps(999), 1))).toBe(999);
+    expect(padValue(step(load(9999), 1))).toBe(9999);
   });
 });

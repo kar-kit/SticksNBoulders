@@ -10,6 +10,7 @@
  */
 
 import { LOAD_DECIMALS, type UnitPreference } from "@/lib/units";
+import { LOADABLE_INCREMENT_KG, LOADABLE_INCREMENT_LB } from "@/lib/strength/plates";
 
 export type PadField = "load" | "reps";
 export type PadKey = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "." | "back";
@@ -98,6 +99,43 @@ export function padValue(state: PadState): number | null {
   const parsed = Number(state.text);
   return Number.isFinite(parsed) ? parsed : null;
 }
+
+/**
+ * What one tap of the pad's − or + moves the field by, in the unit on screen.
+ *
+ * A load moves by the plate pair the plate maths already uses: 2.5 kg, or
+ * 5 lb in a pound gym (lib/strength/plates.ts). Reps move by one.
+ */
+export function stepSize(state: PadState): number {
+  if (state.field === "reps") return 1;
+  return state.unit === "lb" ? LOADABLE_INCREMENT_LB : LOADABLE_INCREMENT_KG;
+}
+
+/**
+ * The − / + steppers.
+ *
+ * Plain addition from whatever is on screen, not a snap to the plate grid:
+ * 141 + 2.5 is 143.5. An athlete who typed 141 did it on purpose -- collars,
+ * a calibrated bar, a machine -- and a stepper that rewrote it to 142.5 would
+ * be the app second-guessing them. Never below zero, never past what the pad
+ * itself would accept, and rounded to the field's decimals so 0.1 + 0.2 never
+ * reaches the screen.
+ *
+ * The result is selected, like a freshly opened field: the next digit typed
+ * replaces it rather than appending to it.
+ */
+export function step(state: PadState, direction: 1 | -1): PadState {
+  const limits = limitsOf(state);
+  const scale = 10 ** limits.decimals;
+  const current = padValue(state) ?? 0;
+  const raw = Math.max(0, current + direction * stepSize(state));
+  const next = Math.round(raw * scale) / scale;
+  if (next >= 10 ** limits.integerDigits) return state;
+  return { ...state, text: stripTrailingZeroes(String(next)), replacing: true };
+}
+
+/** Whether − can do anything: nothing goes below zero. */
+export const canStepDown = (state: PadState): boolean => (padValue(state) ?? 0) > 0;
 
 /** What the pad shows. Never empty, so the cell does not collapse mid-edit. */
 export function padDisplay(state: PadState): string {

@@ -1,13 +1,13 @@
 "use client";
 
-import { cn } from "@/lib/cn";
 import { formatRest, restRemainingMs, type RestTimer } from "@/lib/logging/rest-timer";
 
 /**
  * The rest timer, pinned under the session.
  *
- * It appears when a set is logged and stays until it is skipped or another set
- * replaces it. It is the only thing on this screen that is not about entering a
+ * It appears when a set is logged and stays until it is skipped, another set
+ * replaces it, or it reaches zero -- the screen takes it down then, with a
+ * short buzz where the phone supports one. It is the only thing on this screen that is not about entering a
  * number, so it is deliberately the quietest: one line, no progress ring, no
  * colour that reads as a warning. An athlete glances at it between sets and
  * otherwise ignores it.
@@ -26,7 +26,6 @@ export interface RestBarProps {
 
 export function RestBar({ timer, now, onExtend, onSkip }: RestBarProps) {
   const remaining = restRemainingMs(timer, now);
-  const over = remaining < 0;
 
   return (
     <section
@@ -37,15 +36,7 @@ export function RestBar({ timer, now, onExtend, onSkip }: RestBarProps) {
       className="flex flex-none items-center gap-3 border-t border-border bg-surface px-3 pt-3 pb-[22px]"
     >
       <span className="font-mono text-label uppercase text-muted-2">Rest</span>
-      <span
-        className={cn(
-          "font-mono text-title tabular-nums",
-          // The number turning negative is the whole signal. It changes weight
-          // rather than colour, because every colour that reads as "over" also
-          // reads as "wrong", and resting longer is not a mistake.
-          over ? "text-muted" : "font-semibold text-foreground",
-        )}
-      >
+      <span className="font-mono text-title font-semibold tabular-nums text-foreground">
         {formatRest(remaining)}
       </span>
 

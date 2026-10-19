@@ -1,5 +1,5 @@
 import { readLocal, removeLocal, writeLocal } from "@/lib/local-store";
-import type { RestTimer } from "./rest-timer";
+import { isRestOver, type RestTimer } from "./rest-timer";
 
 /**
  * The running rest, remembered across a reload.
@@ -15,9 +15,8 @@ const KEY = "snb.rest-timer";
 /**
  * How old a stored rest can be and still mean anything.
  *
- * Nobody comes back to a rest an hour later. Without this, a phone reopened the
- * next morning shows a timer counting up through the night, which is both
- * absurd and a number the athlete has to work out how to get rid of.
+ * Belt and braces since the bar dismisses itself at zero (see recallRest): a
+ * restMs pushed absurdly high by a bad write still cannot outlive an hour.
  */
 const MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -35,5 +34,12 @@ export function recallRest(now: Date = new Date()): RestTimer | null {
   const startedAt = new Date(stored.startedAt);
   if (Number.isNaN(startedAt.getTime())) return null;
   if (now.getTime() - startedAt.getTime() > MAX_AGE_MS) return null;
-  return { startedAt, restMs: stored.restMs };
+  const timer = { startedAt, restMs: stored.restMs };
+  // A rest that ran out while the page was gone is over, not overtime: the
+  // bar dismisses itself at zero, so a reload past the end shows no bar.
+  if (isRestOver(timer, now)) {
+    removeLocal(KEY);
+    return null;
+  }
+  return timer;
 }

@@ -5,6 +5,8 @@ import type { SessionRecord } from "@/lib/logging/session";
 import type { Exercise } from "@/lib/exercises/match";
 import { createMemoryStore } from "@/lib/offline/memory-store";
 import { rememberRest } from "@/lib/logging/rest-store";
+import { weekStart } from "@/lib/strength/rollup";
+import { REST_BUZZ } from "@/lib/logging/rest-timer";
 import { attachQueue, enqueue, resetQueueForTests } from "@/lib/offline/client";
 import type { QueueStore } from "@/lib/offline/queue";
 import { UnitsProvider } from "@/lib/profile/units-context";
@@ -59,6 +61,18 @@ vi.mock("@/lib/logging/set-store", async (importOriginal) => {
     newClientSetId: () => `cs-${++clientIds}`,
   };
 });
+
+// The Log landing's "This week" rollup read. Rows are this week's by default.
+const weekRollups = vi.hoisted(() => ({
+  value: [] as { weekStart: string; setCount: number; tonnageKg: number }[],
+  fail: false,
+}));
+vi.mock("@/lib/logging/week-summary-store", () => ({
+  fetchWeekRollupsFor: async () => {
+    if (weekRollups.fail) throw new TypeError("Failed to fetch");
+    return weekRollups.value;
+  },
+}));
 
 const comments = vi.hoisted(() => ({ value: [] as { setId: string; authorId: string }[] }));
 vi.mock("@/lib/review/comment-store", () => ({
@@ -173,6 +187,8 @@ beforeEach(() => {
   linkRead.rows = [];
   linkRead.offline = false;
   profile.units = "kg";
+  weekRollups.value = [];
+  weekRollups.fail = false;
 });
 
 describe("with no session running", () => {
@@ -1705,5 +1721,274 @@ describe("an athlete who reads pounds", () => {
     setup({ active: session(), withUnits: true });
     const row = await screen.findByRole("group", { name: "Set 1" });
     await waitFor(() => expect(row).toHaveTextContent("220.5"));
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+/* Owner's Log Session feedback, Oct 2026                                   */
+/* ------------------------------------------------------------------------ */
+
+describe("the rest timer at zero", () => {
+  const withVibrate = () => {
+    const vibrate = vi.fn(() => true);
+    Object.defineProperty(navigator, "vibrate", { value: vibrate, configurable: true, writable: true });
+    return vibrate;
+  };
+  afterEach(() => {
+    delete (navigator as unknown as Record<string, unknown>).vibrate;
+  });
+
+  it("dismisses itself when it reaches zero, and buzzes once", async () => {
+    const vibrate = withVibrate();
+    rememberRest({ startedAt: new Date(Date.now() - 119_000), restMs: 120_000 });
+    setup({ active: session() });
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+
+    await waitFor(() => expect(screen.queryByRole("timer")).not.toBeInTheDocument(), { timeout: 3_000 });
+    expect(vibrate).toHaveBeenCalledTimes(1);
+    expect(vibrate).toHaveBeenCalledWith([...REST_BUZZ]);
+    // Gone from storage too, so a reload does not bring it back.
+    expect(localStorage.getItem("snb.rest-timer")).toBeNull();
+    // And the bottom of the screen goes back to adding an exercise.
+    expect(screen.getByRole("combobox", { name: "Add exercise" })).toBeInTheDocument();
+  });
+
+  it("never shows a negative number on the way down", async () => {
+    rememberRest({ startedAt: new Date(Date.now() - 119_500), restMs: 120_000 });
+    setup({ active: session() });
+    const timer = screen.queryByRole("timer");
+    if (timer) expect(timer.textContent).not.toMatch(/-/);
+    await waitFor(() => expect(screen.queryByRole("timer")).not.toBeInTheDocument(), { timeout: 3_000 });
+  });
+
+  it("comes back dismissed after a reload past the end, without buzzing", async () => {
+    const vibrate = withVibrate();
+    rememberRest({ startedAt: new Date(Date.now() - 5 * 60_000), restMs: 120_000 });
+    setup({ active: session() });
+    await screen.findByRole("combobox", { name: "Add exercise" });
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    expect(vibrate).not.toHaveBeenCalled();
+  });
+
+  it("does not throw on a phone with no vibration", async () => {
+    rememberRest({ startedAt: new Date(Date.now() - 119_000), restMs: 120_000 });
+    setup({ active: session() });
+    await waitFor(() => expect(screen.queryByRole("timer")).not.toBeInTheDocument(), { timeout: 3_000 });
+  });
+});
+
+describe("adding an exercise mid-rest", () => {
+  const bench: Exercise = { id: "bench", name: "Bench Press", normalisedName: "bench press", isGlobal: true };
+
+  const logSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("combobox", { name: "Add exercise" }));
+    await user.click(await screen.findByRole("option", { name: "Squat" }));
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    for (const key of ["1", "4", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "5" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+  };
+
+  it("opens the box from the end of the list without skipping the rest", async () => {
+    library.exercises = [squat, bench];
+    const { user } = setup({ active: session() });
+    await logSquat(user);
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "+ Add exercise" }));
+    // The rest stays where it was; the box opens in the list.
+    expect(screen.getByRole("timer")).toBeInTheDocument();
+    await user.type(screen.getByRole("combobox", { name: "Add exercise" }), "bench");
+    await user.click(await screen.findByRole("option", { name: "Bench Press" }));
+
+    expect(await screen.findByRole("region", { name: "Bench Press" })).toBeInTheDocument();
+    expect(screen.getByRole("timer")).toBeInTheDocument();
+    // Picked, so the box closes and the button is back.
+    expect(screen.queryByRole("combobox", { name: "Add exercise" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ Add exercise" })).toBeInTheDocument();
+  });
+
+  it("only ever shows one Add exercise box", async () => {
+    const { user } = setup({ active: session() });
+    // Nothing holds the bottom: the box is there, and no button duplicates it.
+    expect(screen.getByRole("combobox", { name: "Add exercise" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Add exercise" })).not.toBeInTheDocument();
+
+    await logSquat(user);
+    await user.click(await screen.findByRole("button", { name: "+ Add exercise" }));
+    expect(screen.getAllByRole("combobox", { name: "Add exercise" })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("combobox", { name: "Add exercise" })).not.toBeInTheDocument();
+  });
+});
+
+describe("removing an exercise", () => {
+  const squatSets = () => {
+    storedSets.value = [
+      logged("a", 140, 30, { setIndex: 1 }),
+      logged("b", 150, 20, { setIndex: 2 }),
+      logged("w", 60, 40, { setIndex: 3, isWarmup: true }),
+    ];
+  };
+
+  it("asks first, then takes the block and its sets off with one undoable toast", async () => {
+    squatSets();
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+
+    await user.click(screen.getByRole("button", { name: "Remove Squat from this session" }));
+    expect(screen.getByText(/Its 3 logged sets will be deleted/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove exercise" }));
+
+    expect(screen.queryByRole("region", { name: "Squat" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Squat removed · 3 sets deleted");
+    expect(removeSet).not.toHaveBeenCalled();
+  });
+
+  it("deletes every set through removeSet once the undo window passes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      squatSets();
+      const { user } = setup({ active: session() }, { advanceTimers: vi.advanceTimersByTime });
+      await screen.findByRole("group", { name: "Set 2" });
+      await user.click(screen.getByRole("button", { name: "Remove Squat from this session" }));
+      await user.click(screen.getByRole("button", { name: "Remove exercise" }));
+
+      await act(async () => {
+        vi.advanceTimersByTime(UNDO_MS + 10);
+      });
+      expect(removeSet.mock.calls.map((c) => c[0]).sort()).toEqual(["a", "b", "w"]);
+      // With exercise and time, so each set's week rollup is refreshed.
+      for (const call of removeSet.mock.calls) expect(call[1]).toMatchObject({ exerciseId: "squat" });
+      expect(screen.queryByRole("region", { name: "Squat" })).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("brings the block back on Undo, and writes nothing", async () => {
+    squatSets();
+    const { user, unmount } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+    await user.click(screen.getByRole("button", { name: "Remove Squat from this session" }));
+    await user.click(screen.getByRole("button", { name: "Remove exercise" }));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+
+    expect(screen.getByRole("region", { name: "Squat" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("150");
+    unmount();
+    expect(removeSet).not.toHaveBeenCalled();
+  });
+
+  it("keeps the session's totals honest at finish", async () => {
+    squatSets();
+    const { user, finish } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+    await user.click(screen.getByRole("button", { name: "Remove Squat from this session" }));
+    await user.click(screen.getByRole("button", { name: "Remove exercise" }));
+    await user.click(screen.getByRole("button", { name: "Finish session" }));
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+    expect(removeSet).toHaveBeenCalledTimes(3);
+    expect(finish).toHaveBeenCalledWith("s1", { setCount: 0, tonnageKg: 0 });
+  });
+
+  it("takes the rest down when the block holds the set it was for, and Undo restores it", async () => {
+    squatSets();
+    rememberRest({ startedAt: new Date(), restMs: 120_000 });
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove Squat from this session" }));
+    await user.click(screen.getByRole("button", { name: "Remove exercise" }));
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("timer")).toBeInTheDocument();
+  });
+
+  it("removes an exercise with nothing logged straight away, still undoable", async () => {
+    const { user } = setup({ active: session() });
+    await user.click(screen.getByRole("combobox", { name: "Add exercise" }));
+    await user.click(await screen.findByRole("option", { name: "Squat" }));
+    await user.click(screen.getByRole("button", { name: "Remove Squat from this session" }));
+
+    expect(screen.queryByRole("region", { name: "Squat" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Squat removed");
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    // Its planned row comes back with it.
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeInTheDocument();
+  });
+
+  it("refuses when the coach has commented on one of its sets, and says why", async () => {
+    squatSets();
+    comments.value = [{ setId: "b", authorId: "coach_ruairi" }];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove Squat from this session" })).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Remove Squat from this session" }));
+    expect(await screen.findByText(/Your coach has commented on a set here/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove exercise" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the pad's steppers", () => {
+  it("steps the load by 2.5 kg and the reps by 1, into the row", async () => {
+    const { user } = setup({ active: session() });
+    await user.click(screen.getByRole("combobox", { name: "Add exercise" }));
+    await user.click(await screen.findByRole("option", { name: "Squat" }));
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    for (const key of ["1", "4", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Increase weight by 2.5 kg" }));
+    await user.click(screen.getByRole("button", { name: "Increase weight by 2.5 kg" }));
+    await user.click(screen.getByRole("button", { name: "Decrease weight by 2.5 kg" }));
+    expect(screen.getByRole("button", { name: /weight in kilograms/ })).toHaveTextContent("142.5");
+
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    expect(screen.getByRole("button", { name: "Decrease reps by 1" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Increase reps by 1" }));
+    await user.click(screen.getByRole("button", { name: "Increase reps by 1" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    expect(logSet).toHaveBeenCalledWith(expect.objectContaining({ loadKg: 142.5, reps: 2 }));
+  });
+});
+
+describe("this week, on the Log landing", () => {
+  const thisWeek = weekStart(new Date()).toISOString();
+
+  it("sums this week's rollups and counts finished sessions, above Start", async () => {
+    weekRollups.value = [
+      { weekStart: thisWeek, setCount: 6, tonnageKg: 4200 },
+      { weekStart: thisWeek, setCount: 4, tonnageKg: 1800 },
+    ];
+    const done = session({ id: "old", startedAt: new Date(), finishedAt: new Date() });
+    setup({ state: { status: "ready", sessions: [done] } });
+
+    const card = await screen.findByRole("region", { name: "This week" });
+    await waitFor(() => expect(within(card).getByText("10")).toBeInTheDocument());
+    expect(within(card).getByText("6000")).toBeInTheDocument();
+    expect(within(card).getByText("1")).toBeInTheDocument();
+    // Above the Start button, in document order.
+    const start = screen.getByRole("button", { name: "Start a session" });
+    expect(card.compareDocumentPosition(start) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("says so for an empty week rather than showing a row of zeros alone", async () => {
+    setup();
+    expect(await screen.findByText("Nothing logged yet this week.")).toBeInTheDocument();
+  });
+
+  it("keeps the session count and dashes the totals with no signal", async () => {
+    weekRollups.fail = true;
+    const done = session({ id: "old", startedAt: new Date(), finishedAt: new Date() });
+    setup({ state: { status: "ready", sessions: [done] } });
+    expect(await screen.findByText(/Set totals load when there/)).toBeInTheDocument();
+    const card = screen.getByRole("region", { name: "This week" });
+    expect(within(card).getAllByText("—")).toHaveLength(2);
+    expect(within(card).getByText("1")).toBeInTheDocument();
+  });
+
+  it("is not shown once a session is running", () => {
+    setup({ active: session() });
+    expect(screen.queryByRole("region", { name: "This week" })).not.toBeInTheDocument();
   });
 });
