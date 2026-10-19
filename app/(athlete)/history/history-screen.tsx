@@ -87,7 +87,7 @@ export function HistoryScreen() {
   const hasAny = weeks.some((week) => week.sessions.length > 0);
 
   return (
-    <div className="pt-safe-8 flex flex-1 flex-col gap-5 pb-6">
+    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
       <header className="flex flex-col gap-3">
         <h1 className="m-0 text-display font-semibold">History</h1>
         {hasAny ? (

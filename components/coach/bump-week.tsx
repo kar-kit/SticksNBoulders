@@ -13,7 +13,9 @@ import type { BlockTree, ProgramTree, WeekTree } from "@/lib/programming/program
  * week's ⋯; the plain Duplicate stays beside it. docs/program-layout.md §5.
  *
  * Inline rather than a dialog, like ConfirmStrip: the keyboard stays on the
- * page. Enter in any field duplicates, Escape closes.
+ * page. Enter in any field duplicates, Escape closes. It rises in under the
+ * week header it came from; the list of changed lines below it updates on
+ * every keystroke and is deliberately still -- it is being read while typed.
  */
 export function BumpWeek({
   tree,
@@ -68,13 +70,16 @@ export function BumpWeek({
           }
           if (e.key === "Escape") onCancel();
         }}
-        className="h-10 w-full rounded-control border border-border bg-surface-2 px-2 text-action text-foreground tabular-nums normal-case focus:border-accent-line focus:outline-none md:h-9 md:w-24 md:text-ui"
+        className="h-10 w-full rounded-control border border-border bg-surface-2 px-2 text-action text-foreground tabular-nums normal-case transition-control focus:border-accent-line focus:outline-none md:h-9 md:w-24 md:text-ui"
       />
     </label>
   );
 
   return (
-    <section aria-label="Duplicate with a bump" className="flex flex-col gap-3 rounded-card border border-border p-3 md:p-4">
+    <section
+      aria-label="Duplicate with a bump"
+      className="flex flex-col gap-3 rounded-card border border-border p-3 motion-safe:animate-rise-in md:p-4"
+    >
       {/* Phone: the three steps share one row, the buttons wrap under them. */}
       <div className="grid grid-cols-3 items-end gap-3 md:flex md:flex-wrap">
         {field("percent", "+ %", "2.5")}

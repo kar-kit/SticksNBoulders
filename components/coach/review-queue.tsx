@@ -5,6 +5,7 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/profile/user-avatar";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useArrivals } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
@@ -79,6 +80,12 @@ export function ReviewQueue() {
   const [posting, setPosting] = useState(false);
   const [athleteNames, setAthleteNames] = useState<Map<string, string>>(new Map());
   const [dropped, setDropped] = useState<ReadonlyMap<string, string>>(new Map());
+  // A clip that joins the rail after it loaded -- one arriving live, or put
+  // back by Undo -- rises in; the first load does not.
+  const arrived = useArrivals(
+    items.map((item) => item.id),
+    load,
+  );
 
   // Order 16.6. Read through refs so the queue can compare what it is about to
   // show with what it showed, and correct the session, without either becoming
@@ -383,6 +390,10 @@ export function ReviewQueue() {
   }
 
   const groups = groupByAthlete(items);
+  // Motion (docs/coach-motion.md): the selection rule follows the clip, the
+  // clip's details crossfade when it changes, and a clip put back by Undo
+  // rises into the rail. A cleared clip simply leaves: the next one arriving
+  // is what the coach is looking at.
   const noPlayback = items.filter((item) => urlsFailed.has(item.videoFileId)).length;
   const currentUrl = urls.get(current.videoFileId) ?? null;
   const commentCounts = countBySet(comments);
@@ -415,10 +426,12 @@ export function ReviewQueue() {
                     onClick={() => setCurrentId(item.id)}
                     aria-current={item.id === current.id}
                     className={cn(
-                      "w-full rounded-chip px-2 py-1 text-left text-ui",
+                      "relative w-full overflow-hidden rounded-chip px-2 py-1 text-left text-ui",
+                      "transition-control press-wide rule-l aria-[current=true]:rule-on",
                       item.id === current.id
                         ? "bg-surface-2 font-semibold text-foreground"
-                        : "text-muted hover:text-foreground",
+                        : "text-muted hover:bg-surface-2/60 hover:text-foreground focus-visible:bg-surface-2/60 focus-visible:text-foreground",
+                      arrived(item.id) && "motion-safe:animate-rise-in",
                     )}
                   >
                     {item.exerciseName}
@@ -466,12 +479,14 @@ export function ReviewQueue() {
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col justify-between gap-8">
-          <ClipContext
-            item={current}
-            sessionSets={detail.sessionSets}
-            recent={detail.recent}
-            previousBestKg={detail.previousBestKg}
-          />
+          <div key={current.id} className="animate-fade-in">
+            <ClipContext
+              item={current}
+              sessionSets={detail.sessionSets}
+              recent={detail.recent}
+              previousBestKg={detail.previousBestKg}
+            />
+          </div>
 
           <div className="flex flex-col gap-3">
             <CommentBox
@@ -484,7 +499,7 @@ export function ReviewQueue() {
               onSkip={() => clear(current)}
             />
             {lastCleared ? (
-              <Button variant="ghost" size="sm" onClick={undo} className="self-start">
+              <Button variant="ghost" size="sm" onClick={undo} className="self-start motion-safe:animate-rise-in">
                 Undo
               </Button>
             ) : null}

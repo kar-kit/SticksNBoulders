@@ -4,6 +4,7 @@ import { useState, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Menu } from "@/components/ui/menu";
 import { ConfirmStrip, InlineText } from "@/components/coach/program-editor-parts";
+import { useArrivals, useChanged } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
 import { blockRange, rangeLabel, weekRange } from "@/lib/programming/calendar";
 import { weekState, type WeekState } from "@/lib/programming/editor";
@@ -29,6 +30,11 @@ import type { BlockTree, ProgramTree } from "@/lib/programming/program";
  * On a phone the outline sits above the week instead of beside it, and each
  * block's weeks are one row of chips that scrolls sideways, so switching week
  * costs a short strip of screen rather than a column.
+ *
+ * Motion (docs/coach-motion.md): the selected week's accent rule grows in as
+ * the selection moves; a week or block added rises in where it landed; one
+ * being removed dims until it is gone; a state mark that changes (Draft to
+ * Live on Publish) pops.
  */
 
 /** Quick names for a block. [Inference] The four Calgary Barbell phases, plus deload. */
@@ -39,6 +45,8 @@ export const STATE_LABEL: Record<WeekState, string> = { draft: "Draft", live: "L
 export interface ProgramOutlineProps {
   tree: ProgramTree;
   selectedWeekId: string | null;
+  /** A week whose removal is in flight. */
+  leavingWeekId?: string | null;
   onSelect: (weekId: string) => void;
   editable: boolean;
   busy: boolean;
@@ -49,12 +57,13 @@ export interface ProgramOutlineProps {
   onAddWeek: (block: BlockTree) => void;
   onAddBlock: () => void;
   onRenameBlock: (block: BlockTree, name: string) => void;
-  onRemoveBlock: (block: BlockTree) => void;
+  onRemoveBlock: (block: BlockTree) => unknown;
 }
 
 export function ProgramOutline({
   tree,
   selectedWeekId,
+  leavingWeekId = null,
   onSelect,
   editable,
   busy,
@@ -67,7 +76,16 @@ export function ProgramOutline({
   onRemoveBlock,
 }: ProgramOutlineProps) {
   const [removing, setRemoving] = useState<string | null>(null);
+  const [leavingBlock, setLeavingBlock] = useState<string | null>(null);
   const allWeeks = tree.blocks.flatMap((b) => b.weeks);
+  const weekArrived = useArrivals(
+    allWeeks.map((w) => w.id),
+    tree.id,
+  );
+  const blockArrived = useArrivals(
+    tree.blocks.map((b) => b.id),
+    tree.id,
+  );
 
   const walk = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -88,7 +106,15 @@ export function ProgramOutline({
       {tree.blocks.map((block) => {
         const range = blockRange(tree, block.id);
         return (
-          <section key={block.id} aria-label={block.name} className="flex flex-col gap-1">
+          <section
+            key={block.id}
+            aria-label={block.name}
+            aria-busy={leavingBlock === block.id || undefined}
+            className={cn(
+              "flex flex-col gap-1",
+              leavingBlock === block.id ? "pointer-events-none animate-dim" : blockArrived(block.id) && "motion-safe:animate-rise-in",
+            )}
+          >
             <div className="flex items-center gap-1">
               {editable ? (
                 <InlineText
@@ -123,7 +149,11 @@ export function ProgramOutline({
                 disabled={busy}
                 className="px-1"
                 onCancel={() => setRemoving(null)}
-                onConfirm={() => onRemoveBlock(block)}
+                onConfirm={async () => {
+                  setLeavingBlock(block.id);
+                  await onRemoveBlock(block);
+                  setLeavingBlock(null);
+                }}
               />
             ) : null}
             <ul className="m-0 flex list-none gap-1 overflow-x-auto p-0 [scrollbar-width:none] md:flex-col md:gap-0.5 md:overflow-x-visible">
@@ -133,7 +163,16 @@ export function ProgramOutline({
                 const selected = week.id === selectedWeekId;
                 const name = weekName(week.id);
                 return (
-                  <li key={week.id} className="flex-none md:flex-auto">
+                  <li
+                    key={week.id}
+                    className={cn(
+                      "flex-none md:flex-auto",
+                      week.id === leavingWeekId
+                        ? "pointer-events-none animate-dim"
+                        : // A new block's first week arrives with its block, not on top of it.
+                          weekArrived(week.id) && !blockArrived(block.id) && "motion-safe:animate-rise-in",
+                    )}
+                  >
                     <button
                       type="button"
                       data-outline-week
@@ -142,13 +181,12 @@ export function ProgramOutline({
                       tabIndex={selected || (!selectedWeekId && at === 0) ? 0 : -1}
                       onClick={() => onSelect(week.id)}
                       className={cn(
-                        "flex min-h-10 w-full items-center justify-between gap-2 rounded-chip px-2 py-1.5 text-left md:min-h-0",
+                        "relative flex min-h-10 w-full items-center justify-between gap-2 overflow-hidden rounded-chip px-2 py-1.5 text-left md:min-h-0",
                         // A chip in the phone strip needs its own edge; the column's rows do not.
                         "max-md:min-w-32 max-md:border max-md:border-border",
+                        "transition-control press-wide rule-l aria-[current=true]:rule-on",
                         "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-line",
-                        selected
-                          ? "bg-surface-2 shadow-[inset_2px_0_0_var(--accent-fill)]"
-                          : "hover:bg-surface-2/60",
+                        selected ? "bg-surface-2" : "hover:bg-surface-2/60 focus-visible:bg-surface-2/60",
                       )}
                     >
                       <span className="flex min-w-0 flex-col">
@@ -176,7 +214,7 @@ export function ProgramOutline({
                     : "Starts an empty week"
                 }
                 onClick={() => onAddWeek(block)}
-                className="h-10 self-start rounded-chip px-2 text-left text-ui text-muted hover:text-foreground disabled:text-muted-2 focus-visible:outline-2 focus-visible:outline-accent-line md:h-8 md:self-auto"
+                className="h-10 self-start rounded-chip px-2 text-left text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground disabled:text-muted-2 focus-visible:outline-2 focus-visible:outline-accent-line md:h-8 md:self-auto"
               >
                 + Week
               </button>
@@ -195,8 +233,16 @@ export function ProgramOutline({
 
 /** Draft is hollow, live is filled, logged is ticked. The word is there too: colour never carries it alone. */
 export function StateMark({ state }: { state: WeekState }) {
+  // Publishing or unpublishing changes it under the coach's eye: the new mark
+  // pops, keyed so each change plays. A mark that was already there is still.
+  const changed = useChanged(state);
   return (
-    <span aria-hidden="true" data-state={state} className="flex flex-none items-center gap-1 text-caption">
+    <span
+      key={state}
+      aria-hidden="true"
+      data-state={state}
+      className={cn("flex flex-none items-center gap-1 text-caption", changed && "motion-safe:animate-pop-in")}
+    >
       {state === "logged" ? (
         <span className="text-success">✓</span>
       ) : (

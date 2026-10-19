@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { railName } from "@/lib/auth/role";
 import { UserAvatar } from "@/components/profile/user-avatar";
 import { useRequireSession } from "@/lib/auth/session-context";
+import { useChanged } from "@/components/ui/motion";
 
 /**
  * The coach shell. A desktop tool that degrades to read-only on a phone.
@@ -14,6 +15,10 @@ import { useRequireSession } from "@/lib/auth/session-context";
  * The athlete rail is persistent on every coach screen, so switching between
  * people never costs a round trip through a menu. The review count in the top
  * nav is the one number Ruairi should see the moment he opens a tab.
+ *
+ * Motion (docs/coach-motion.md): the active section's rule grows in under it,
+ * links answer hover and keyboard focus alike, and the review count pops when
+ * it changes while the coach is elsewhere -- the reason it is in the nav.
  */
 
 export interface CoachAthlete {
@@ -66,16 +71,15 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
                   href={href}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex h-8 items-center gap-[7px] rounded-chip px-3 text-ui",
+                    "relative flex h-8 items-center gap-[7px] overflow-hidden rounded-chip px-3 text-ui",
+                    "transition-control press rule-b aria-[current=page]:rule-on",
                     active
-                      ? "bg-surface-2 font-semibold text-foreground shadow-[inset_0_-2px_0_var(--accent-fill)]"
-                      : "text-muted",
+                      ? "bg-surface-2 font-semibold text-foreground"
+                      : "text-muted hover:bg-surface-2/60 hover:text-foreground focus-visible:bg-surface-2/60 focus-visible:text-foreground",
                   )}
                 >
                   {label}
-                  {label === "Review" && reviewCount ? (
-                    <span className="font-mono text-caption font-medium text-accent-fill">{reviewCount}</span>
-                  ) : null}
+                  {label === "Review" && reviewCount ? <ReviewCount count={reviewCount} /> : null}
                 </Link>
               );
             })}
@@ -88,7 +92,7 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
           <button
             type="button"
             onClick={() => router.push("/today")}
-            className="flex h-[30px] items-center rounded-chip border border-border px-3 text-sm text-muted"
+            className="flex h-[30px] items-center rounded-chip border border-border px-3 text-sm text-muted transition-control press hover:text-foreground focus-visible:text-foreground"
           >
             Athlete mode
           </button>
@@ -112,8 +116,10 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
                   href={href}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex h-9 items-center justify-between rounded-chip px-2.5 text-ui",
-                    active ? "bg-surface-2 font-semibold" : "text-foreground",
+                    "flex h-9 items-center justify-between rounded-chip px-2.5 text-ui transition-control press-wide",
+                    active
+                      ? "bg-surface-2 font-semibold"
+                      : "text-foreground hover:bg-surface-2/60 focus-visible:bg-surface-2/60",
                   )}
                 >
                   <span className="flex min-w-0 items-center gap-2">
@@ -132,5 +138,18 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
         <main className="min-w-0 flex-1 overflow-y-auto">{children}</main>
       </div>
     </div>
+  );
+}
+
+/** The Review badge. A new number pops in, so a clip arriving mid-session is noticed. */
+function ReviewCount({ count }: { count: number }) {
+  const changed = useChanged(count);
+  return (
+    <span
+      key={count}
+      className={cn("font-mono text-caption font-medium text-accent-fill", changed && "motion-safe:animate-pop-in")}
+    >
+      {count}
+    </span>
   );
 }

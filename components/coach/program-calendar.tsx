@@ -3,6 +3,7 @@
 import { useState, type FocusEvent, type KeyboardEvent } from "react";
 import { StateMark, STATE_LABEL } from "@/components/coach/program-outline";
 import { cn } from "@/lib/cn";
+import { useArrivals } from "@/components/ui/motion";
 import { blockRange, placeDay, rangeLabel, scheduledOnFor, weekRange, WEEKDAYS } from "@/lib/programming/calendar";
 import { dayDateLabel, weekState } from "@/lib/programming/editor";
 import type { DayTree, Prescription, ProgramTree } from "@/lib/programming/program";
@@ -26,6 +27,10 @@ import type { DayTree, Prescription, ProgramTree } from "@/lib/programming/progr
  *
  * Seven weekdays do not fit a phone legibly, so below md the grid keeps a
  * 44rem floor and scrolls sideways inside its own wrapper, never the page.
+ *
+ * Motion (docs/coach-motion.md): days answer hover and focus, an empty cell's
+ * "+ Day" fades up under the pointer or the keyboard, and a day just added
+ * rises into its cell. Opening a day is the week view's landing tint.
  */
 
 /** Exercise names shown in a cell before "+N more". */
@@ -85,6 +90,10 @@ export function ProgramCalendar({
   const allWeeks = tree.blocks.flatMap((b) => b.weeks);
   const rows = allWeeks.length;
   const rowOf = new Map(allWeeks.map((w, at) => [w.id, at]));
+  const dayArrived = useArrivals(
+    allWeeks.flatMap((w) => w.days.map((d) => d.id)),
+    tree.id,
+  );
 
   const cellOf = (el: Element | null) => {
     const at = el?.closest<HTMLElement>("[data-cal-cell]")?.dataset.calCell;
@@ -196,7 +205,7 @@ export function ProgramCalendar({
                           type="button"
                           aria-label={`${title}, ${where}`}
                           onClick={() => onOpenDay(week.id, day.id)}
-                          className="mt-1 block w-full truncate rounded-chip px-1 text-left text-caption text-danger-line hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent-line"
+                          className="mt-1 block w-full truncate rounded-chip px-1 text-left text-caption text-danger-line transition-control press-wide hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent-line"
                         >
                           {title} · {where}
                         </button>
@@ -248,7 +257,9 @@ export function ProgramCalendar({
                               onClick={() => onOpenDay(week.id, day.id)}
                               className={cn(
                                 "mt-0.5 flex w-full min-w-0 flex-col rounded-chip border-l-2 bg-surface-2 px-1.5 py-1 text-left",
-                                "hover:bg-surface-2/60 focus-visible:outline-2 focus-visible:outline-accent-line",
+                                "transition-control press-wide hover:bg-surface-2/60 focus-visible:bg-surface-2/60",
+                                "focus-visible:outline-2 focus-visible:outline-accent-line",
+                                dayArrived(day.id) && "motion-safe:animate-rise-in",
                                 done ? "border-success" : state === "draft" ? "border-muted-2" : "border-accent-fill",
                               )}
                             >
@@ -283,7 +294,7 @@ export function ProgramCalendar({
                             className={cn(
                               "mt-1 w-full rounded-chip px-1.5 py-1 text-left text-caption text-muted",
                               // No hover on a touch screen to reveal it, so it is always shown there.
-                              "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-surface-2 hover:text-foreground",
+                              "opacity-0 transition-control group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:bg-surface-2 hover:text-foreground",
                               "focus-visible:outline-2 focus-visible:outline-accent-line aria-disabled:text-muted-2",
                             )}
                           >

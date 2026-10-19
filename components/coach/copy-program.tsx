@@ -108,14 +108,15 @@ export function CopyProgram({
   return (
     <form
       aria-label="Copy program"
-      className="flex w-[min(40rem,100%)] flex-col gap-3 rounded-card border border-border bg-surface p-4"
+      // Rises in under the header it was opened from (docs/coach-motion.md).
+      className="flex w-[min(40rem,100%)] flex-col gap-3 rounded-card border border-border bg-surface p-4 motion-safe:animate-rise-in"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
       {copied ? (
-        <p role="status" className="m-0 text-body">
+        <p role="status" className="m-0 text-body motion-safe:animate-rise-in">
           Copied to {copied.to} as a draft.{" "}
           <Link href={`/coach/programs/${copied.id}`} className="font-semibold underline">
             Open the copy
@@ -192,7 +193,7 @@ export function CopyProgram({
         </Button>
       </div>
       {error ? (
-        <p role="alert" className="m-0 text-ui text-danger-line">
+        <p role="alert" className="m-0 text-ui text-danger-line motion-safe:animate-rise-in">
           {error}
         </p>
       ) : null}

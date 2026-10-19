@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/cn";
+import { flash, useChanged } from "@/components/ui/motion";
 import { parseKg } from "@/lib/coach/athlete-view";
 import type { LoadPreview } from "@/lib/programming/editor";
 import { kindLabel } from "@/lib/strength/reference-max";
@@ -20,6 +21,10 @@ import { setReferenceMax } from "@/lib/strength/reference-max-store";
  *
  * `compact` is the progression grid's cell: the first clause only, the rest
  * in the title, and no form -- there is no room in a cell to type a max.
+ *
+ * When the line changes under the coach -- a max just saved turning "no max"
+ * into kilos, a load edited -- the new line rises in, and a max saved here
+ * tints its cell saved. The lines that were there on load are still.
  */
 export function LoadPreviewLine({
   preview,
@@ -38,6 +43,7 @@ export function LoadPreviewLine({
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const changed = useChanged(preview?.text ?? null);
   if (!preview) return null;
 
   const tone =
@@ -47,7 +53,7 @@ export function LoadPreviewLine({
   const add = preview.addMax;
   const field = add ? `${add.name} ${kindLabel(add.kind)}, kg` : "";
 
-  const save = async (raw: string) => {
+  const save = async (raw: string, cell: Element | null) => {
     if (!add || !athleteId) return;
     const valueKg = parseKg(raw);
     if (valueKg === null) return setError("A max is a weight, like 182.5");
@@ -56,6 +62,7 @@ export function LoadPreviewLine({
     try {
       await setReferenceMax({ athleteId, exerciseId: add.exerciseId, kind: add.kind, valueKg });
       setAdding(false);
+      flash(cell, "saved");
       onMaxAdded?.();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "That max did not save.");
@@ -66,20 +73,25 @@ export function LoadPreviewLine({
 
   return (
     <span className="block px-1 pt-0.5">
-      <span className={cn("text-caption tabular-nums", tone)} data-kind={kind} title={compact ? preview.text : undefined}>
+      <span
+        key={preview.text}
+        className={cn("text-caption tabular-nums", tone, changed && "inline-block motion-safe:animate-rise-in")}
+        data-kind={kind}
+        title={compact ? preview.text : undefined}
+      >
         {shown}
       </span>
       {!compact && add && editable && athleteId && !adding ? (
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="ml-1 rounded-chip px-1 text-caption font-semibold text-accent-fill underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent-line"
+          className="ml-1 rounded-chip px-1 text-caption font-semibold text-accent-fill underline-offset-2 transition-control press hover:underline focus-visible:outline-2 focus-visible:outline-accent-line"
         >
           Add one
         </button>
       ) : null}
       {!compact && adding && add ? (
-        <span className="mt-1 flex items-center gap-2 md:gap-1">
+        <span className="mt-1 flex items-center gap-2 motion-safe:animate-rise-in md:gap-1">
           <input
             aria-label={field}
             inputMode="decimal"
@@ -89,7 +101,7 @@ export function LoadPreviewLine({
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                void save(e.currentTarget.value);
+                void save(e.currentTarget.value, e.currentTarget.closest("td"));
               }
               if (e.key === "Escape") {
                 e.preventDefault();
@@ -97,13 +109,13 @@ export function LoadPreviewLine({
                 setError(null);
               }
             }}
-            className="h-10 w-24 flex-none rounded-control border border-border bg-surface-2 px-2 text-action text-foreground tabular-nums focus:border-accent-line focus:outline-none md:h-7 md:w-20 md:text-caption"
+            className="h-10 w-24 flex-none rounded-control border border-border bg-surface-2 px-2 text-action text-foreground tabular-nums transition-control focus:border-accent-line focus:outline-none md:h-7 md:w-20 md:text-caption"
           />
           <span className="text-caption text-muted-2">Enter saves, from today</span>
         </span>
       ) : null}
       {error ? (
-        <span role="alert" className="block text-caption text-danger-line">
+        <span role="alert" className="block text-caption text-danger-line motion-safe:animate-rise-in">
           {error}
         </span>
       ) : null}

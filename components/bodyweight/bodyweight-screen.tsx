@@ -96,12 +96,12 @@ export function BodyweightScreen() {
   }, [athleteId]);
 
   if (state.status === "loading") {
-    return <p className="pt-safe-8 m-0 p-5 text-body text-muted" aria-busy>Loading…</p>;
+    return <p className="pt-8 m-0 p-5 text-body text-muted" aria-busy>Loading…</p>;
   }
 
   if (state.status === "failed") {
     return (
-      <div className="pt-safe-8 flex flex-col gap-4 p-5">
+      <div className="pt-8 flex flex-col gap-4 p-5">
         <Header />
         <EmptyState
           title="Couldn't load your weigh-ins"
@@ -143,7 +143,7 @@ export function BodyweightScreen() {
   const loggedToday = entries.some((entry) => entry.measuredOn === today);
 
   return (
-    <div className="pt-safe-8 flex flex-col gap-6 p-5 pb-8">
+    <div className="pt-8 flex flex-col gap-6 p-5 pb-8">
       <Header />
 
       {newest ? (

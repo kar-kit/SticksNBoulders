@@ -33,6 +33,10 @@ import {
  * commands. Escape or a click elsewhere folds it away, and an error stays
  * visible on the folded control until the next change, so a refused write is
  * never hidden by closing the panel.
+ *
+ * Motion (docs/coach-motion.md): the gear turns and the caret flips as the
+ * panel pops open under the control, and both turn back as it closes; a
+ * refused change arrives with its sentence rather than a silent snap back.
  */
 
 type State =
@@ -141,20 +145,20 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
         onClick={() => setOpen((was) => !was)}
         className={cn(
           "inline-flex h-8 items-center gap-2 rounded-chip border border-border px-3 text-caption text-muted",
-          "hover:text-foreground disabled:text-muted-2",
+          "transition-control press hover:bg-surface-2 hover:text-foreground focus-visible:bg-surface-2 focus-visible:text-foreground disabled:text-muted-2",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
         )}
       >
-        <GearIcon />
+        <GearIcon open={open} />
         <span className="font-mono text-label-xs uppercase text-muted-2">Load suggestions</span>
         <span className="text-foreground">{summary}</span>
-        <span aria-hidden className="text-muted-2">
-          {open ? "▴" : "▾"}
+        <span aria-hidden className={cn("inline-block text-muted-2 transition-control", open && "rotate-180")}>
+          ▾
         </span>
       </button>
 
       {current.status === "ready" && current.error && !open ? (
-        <p role="alert" className="m-0 mt-1 max-w-[320px] text-caption text-danger-line">
+        <p role="alert" className="m-0 mt-1 max-w-[320px] text-caption text-danger-line motion-safe:animate-rise-in">
           {current.error}
         </p>
       ) : null}
@@ -162,7 +166,7 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
       {open && current.status === "ready" ? (
         <div
           id={`${name}-panel`}
-          className="absolute right-0 top-full z-20 mt-2 flex w-[340px] flex-col gap-3 rounded-control border border-border bg-surface p-4"
+          className="absolute right-0 top-full z-20 mt-2 flex w-[340px] origin-top-right flex-col gap-3 rounded-control border border-border bg-surface p-4 motion-safe:animate-pop-in"
         >
           <p id={`${name}-heading`} className="m-0 text-label uppercase tracking-wide text-muted">
             Load suggestions
@@ -186,9 +190,9 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
               </label>
             ))}
           </div>
-          {current.saving ? <p className="m-0 text-caption text-muted">Saving…</p> : null}
+          {current.saving ? <p className="m-0 text-caption text-muted animate-fade-in">Saving…</p> : null}
           {current.error ? (
-            <p role="alert" className="m-0 text-caption text-danger-line">
+            <p role="alert" className="m-0 text-caption text-danger-line motion-safe:animate-rise-in">
               {current.error}
             </p>
           ) : null}
@@ -198,9 +202,17 @@ export function SuggestionSwitch({ athleteId }: { athleteId: string }) {
   );
 }
 
-function GearIcon() {
+/** Turns an eighth while the panel is open: a setting being adjusted, not a page opening. */
+function GearIcon({ open }: { open: boolean }) {
   return (
-    <svg aria-hidden viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.4">
+    <svg
+      aria-hidden
+      viewBox="0 0 16 16"
+      className={cn("size-3.5 transition-control", open && "rotate-45")}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+    >
       <circle cx="8" cy="8" r="2.2" />
       <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
     </svg>

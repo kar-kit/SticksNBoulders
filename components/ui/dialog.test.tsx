@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { Dialog } from "./dialog";
+import { usePresence } from "./motion";
 
 function Harness({ onClose }: { onClose: () => void }) {
   const [open, setOpen] = useState(false);
@@ -73,5 +74,94 @@ describe("Dialog", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(opener).toHaveFocus();
+  });
+
+  describe("leaving", () => {
+    /** Opened by a button, closed by the URL; kept mounted by usePresence, as the Athlete View does. */
+    function Presence({ onExited }: { onExited?: () => void }) {
+      const [open, setOpen] = useState(false);
+      const shown = usePresence(open);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open it
+          </button>
+          {shown.shown ? (
+            <Dialog
+              labelledBy="t"
+              onClose={() => setOpen(false)}
+              leaving={shown.leaving}
+              onExited={() => {
+                onExited?.();
+                shown.exited();
+              }}
+            >
+              <h2 id="t">Bodyweight</h2>
+            </Dialog>
+          ) : null}
+        </>
+      );
+    }
+
+    function fading(ms: number) {
+      const real = window.getComputedStyle;
+      vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+        const style = real(el, pseudo);
+        if (!(el instanceof HTMLDialogElement)) return style;
+        return new Proxy(style, {
+          get: (target, key) =>
+            key === "transitionDuration" ? `${ms / 1000}s` : key === "transitionDelay" ? "0s" : Reflect.get(target, key),
+        });
+      });
+    }
+
+    afterEach(() => vi.restoreAllMocks());
+
+    it("stays mounted while it fades out -- closed, hidden and focus already handed back -- then unmounts", async () => {
+      fading(180);
+      const onExited = vi.fn();
+      const user = userEvent.setup();
+      render(<Presence onExited={onExited} />);
+      const opener = screen.getByRole("button", { name: "Open it" });
+      await user.click(opener);
+      const dialog = screen.getByRole("dialog", { name: "Bodyweight" });
+
+      fireEvent.keyDown(dialog, { key: "Escape" });
+
+      // Still in the document, fading...
+      expect(dialog).toBeInTheDocument();
+      expect(dialog).not.toHaveAttribute("open");
+      // ...but already gone for everyone using it.
+      expect(dialog).toHaveAttribute("aria-hidden", "true");
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(opener).toHaveFocus();
+      expect(onExited).not.toHaveBeenCalled();
+
+      fireEvent.transitionEnd(dialog);
+      expect(onExited).toHaveBeenCalledTimes(1);
+      expect(dialog).not.toBeInTheDocument();
+    });
+
+    it("unmounts at once when there is nothing to play (reduced motion)", async () => {
+      const user = userEvent.setup();
+      render(<Presence />);
+      await user.click(screen.getByRole("button", { name: "Open it" }));
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(document.querySelector("dialog")).toBeNull();
+    });
+
+    it("opens again if asked mid-fade, and can be closed again", async () => {
+      fading(180);
+      const user = userEvent.setup();
+      render(<Presence />);
+      const opener = screen.getByRole("button", { name: "Open it" });
+      await user.click(opener);
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      await user.click(opener);
+      const dialog = screen.getByRole("dialog", { name: "Bodyweight" });
+      expect(dialog).toHaveAttribute("open");
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
   });
 });
