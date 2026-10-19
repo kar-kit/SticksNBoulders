@@ -102,7 +102,8 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                         aria-controls={panelId}
                         onClick={() => setOpen(expanded ? null : card.sessionId)}
                         className={cn(
-                          "grid w-full grid-cols-[150px_minmax(0,1fr)_auto] items-baseline gap-3 py-2 text-left",
+                          "grid w-full grid-cols-[150px_minmax(0,1fr)_auto] items-baseline gap-3 rounded-chip py-2 text-left",
+                          "transition-control press-wide hover:bg-surface focus-visible:bg-surface",
                           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                         )}
                       >
@@ -116,7 +117,10 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                         </span>
                       </button>
                       {expanded ? (
-                        <div id={panelId} className="flex flex-col gap-2 pb-3 pl-[162px]">
+                        // Rises out of the row it belongs to. Collapsing is
+                        // instant: the coach is done with it, and a closing
+                        // panel would hold the rows below it in place.
+                        <div id={panelId} className="flex flex-col gap-2 pb-3 pl-[162px] motion-safe:animate-rise-in">
                           {view.notes.get(card.sessionId) ? (
                             // The athlete's own words about the session: the
                             // one thing on this card nobody could infer.

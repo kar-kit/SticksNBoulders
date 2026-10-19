@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProgramEditor } from "./program-editor";
 import type { ProgramTree } from "@/lib/programming/program";
@@ -1138,5 +1138,277 @@ describe("duplicate with a bump", () => {
     await user.type(within(form).getByRole("textbox", { name: "+ RPE" }), "0.3{Enter}");
     expect(within(form).getByRole("alert")).toHaveTextContent("RPE moves in half points, like 0.5");
     expect(store.send).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * Motion that changes what is on screen and when (docs/coach-motion.md). The
+ * animations themselves are CSS and are proven in a browser by
+ * scripts/e2e-coach-motion.mts; these pin the behaviour around them.
+ */
+describe("motion", () => {
+  const rowOf = (lineId: string) => document.querySelector<HTMLTableRowElement>(`tr[data-line="${lineId}"]`);
+  const cellOf = (input: HTMLElement) => input.closest("td")!;
+  /**
+   * An animation ending. jsdom has no AnimationEvent, so React listens for the
+   * prefixed name there; a browser sends the plain one. Both, so the test
+   * reaches React's handler and native listeners alike.
+   */
+  const ended = (el: Element) =>
+    act(() => {
+      fireEvent.animationEnd(el);
+      el.dispatchEvent(new Event("webkitAnimationEnd", { bubbles: true }));
+    });
+
+  it("takes a removed line off the grid when its fade ends, before the server has answered", async () => {
+    let answer: (value: { rowId: string }) => void = () => {};
+    store.send.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.click(within(day).getByRole("button", { name: "Remove line 2" }));
+
+    // Fading: still in the document, already out of the accessibility tree.
+    const row = rowOf("l2")!;
+    expect(row).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-hidden", "true");
+    expect(within(day).queryByRole("row", { name: /line 2/ })).not.toBeInTheDocument();
+
+    ended(row);
+    expect(rowOf("l2")).toBeNull();
+    expect(rowOf("l1")).not.toBeNull();
+
+    const without = tree();
+    without.blocks[0].weeks[0].days[0].prescriptions.pop();
+    store.tree = without;
+    answer({ rowId: "l2" });
+    await waitFor(() => expect(within(day).queryByRole("button", { name: "Remove line 2" })).not.toBeInTheDocument());
+  });
+
+  it("puts a removed line back where it was when the server refuses", async () => {
+    store.send.mockRejectedValueOnce(new Error("not-allowed"));
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.click(within(day).getByRole("button", { name: "Remove line 2" }));
+    ended(rowOf("l2")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("not-allowed");
+    expect(within(day).getByRole("row", { name: "Squat day line 2: Squat" })).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("tints a cell saved once the server takes it, and refused when it cannot be saved", async () => {
+    const user = userEvent.setup();
+    await ready();
+    const reps = screen.getByRole("textbox", { name: "Reps, line 1" });
+    await user.clear(reps);
+    await user.type(reps, "3");
+    await user.tab();
+    await waitFor(() => expect(cellOf(reps)).toHaveAttribute("data-flash", "saved"));
+
+    const sets = screen.getByRole("textbox", { name: "Sets, line 2" });
+    await user.clear(sets);
+    await user.type(sets, "0");
+    await user.tab();
+    expect(cellOf(sets)).toHaveAttribute("data-flash", "failed");
+  });
+
+  it("tints a cell refused when the server turns the save down", async () => {
+    store.send.mockRejectedValueOnce(new Error("not-allowed"));
+    const user = userEvent.setup();
+    await ready();
+    const reps = screen.getByRole("textbox", { name: "Reps, line 1" });
+    await user.clear(reps);
+    await user.type(reps, "3");
+    await user.tab();
+    await waitFor(() => expect(cellOf(reps)).toHaveAttribute("data-flash", "failed"));
+  });
+
+  it("marks only a line added since the editor opened to arrive, not the ones it opened with", async () => {
+    const user = userEvent.setup();
+    const day = await ready();
+    const added = tree();
+    added.blocks[0].weeks[0].days[0].prescriptions.push(line("l3", "bench", 2, { setCount: 1 }));
+    store.tree = added;
+    store.send.mockResolvedValueOnce({ rowId: "l3" });
+    await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), "bench");
+    await user.click(await screen.findByRole("option", { name: "Bench Press" }));
+    await waitFor(() => expect(rowOf("l3")).not.toBeNull());
+    expect(rowOf("l3")!.className).toContain("animate-fade-in");
+    expect(rowOf("l1")!.className).not.toContain("animate-fade-in");
+  });
+
+  it("keeps the context drawer on screen while it slides out, then unmounts it", async () => {
+    const real = window.getComputedStyle;
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el, pseudo) => {
+      const style = real(el, pseudo);
+      if ((el as Element).tagName !== "ASIDE") return style;
+      return new Proxy(style, {
+        get: (target, key) =>
+          key === "animationName"
+            ? "drawer-out"
+            : key === "animationDuration"
+              ? "0.18s"
+              : key === "animationDelay"
+                ? "0s"
+                : Reflect.get(target, key),
+      });
+    });
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Context" }));
+    const drawer = await screen.findByRole("complementary", { name: "Context" });
+    await user.click(within(drawer).getByRole("button", { name: "Close" }));
+
+    expect(drawer).toBeInTheDocument();
+    expect(drawer).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("complementary", { name: "Context" })).not.toBeInTheDocument();
+
+    ended(drawer);
+    expect(drawer).not.toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
+  it("dims a day while its removal is on its way, and brings it back if refused", async () => {
+    let refuse: (error: Error) => void = () => {};
+    store.send.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
+    const user = userEvent.setup();
+    const day = await ready();
+    await user.click(screen.getByRole("button", { name: "Squat day actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove Squat day" }));
+    await user.click(screen.getByRole("button", { name: "Confirm remove squat day" }));
+    expect(day).toHaveAttribute("aria-busy", "true");
+    expect(day.className).toContain("animate-dim");
+    refuse(new Error("not-allowed"));
+    await waitFor(() => expect(day).not.toHaveAttribute("aria-busy"));
+  });
+
+  describe("adding a line before the server answers", () => {
+    type Deferred = { resolve: (v: { rowId: string }) => void; reject: (e: Error) => void };
+    /** Holds every addPrescription until the test answers it; anything else goes through. */
+    const holdAdds = () => {
+      const held: Deferred[] = [];
+      store.send.mockImplementation((op) =>
+        op.op === "addPrescription"
+          ? new Promise((resolve, reject) => held.push({ resolve, reject }))
+          : Promise.resolve({ rowId: "ok" }),
+      );
+      return held;
+    };
+    const withLine = (id: string, exerciseId: string, over: Record<string, unknown> = {}) => {
+      const next = tree();
+      const lines = next.blocks[0].weeks[0].days[0].prescriptions;
+      lines.push(line(id, exerciseId, lines.length, { setCount: 1, ...over }));
+      return next;
+    };
+    const add = async (user: ReturnType<typeof userEvent.setup>, day: HTMLElement, typed: string, option: string) => {
+      await user.type(within(day).getByRole("combobox", { name: "Add exercise to Squat day" }), typed);
+      await user.click(await screen.findByRole("option", { name: option }));
+    };
+
+    it("shows the line at once, pending, with the keyboard on its Sets cell", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+
+      const row = within(day).getByRole("row", { name: "Squat day line 3: Bench Press" });
+      expect(held).toHaveLength(1);
+      expect(row).toHaveAttribute("aria-busy", "true");
+      await waitFor(() => expect(within(row).getByRole("textbox", { name: "Sets, line 3" })).toHaveFocus());
+      // Nothing to write to yet: no exercise swap, no video toggle.
+      expect(within(row).getByRole("button", { name: /Bench Press/ })).toBeDisabled();
+      expect(within(row).getByRole("checkbox")).toBeDisabled();
+    });
+
+    it("holds what is typed into it, then sends it once the line has an id, in the same row", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      const row = within(day).getByRole("row", { name: "Squat day line 3: Bench Press" });
+      const sets = within(row).getByRole("textbox", { name: "Sets, line 3" });
+      await waitFor(() => expect(sets).toHaveFocus());
+      await user.clear(sets);
+      await user.type(sets, "4");
+      await user.tab(); // reps
+      await user.tab(); // load
+      await user.keyboard("75%");
+      await user.tab(); // rest
+      expect(store.send).toHaveBeenCalledTimes(1); // the add, and nothing against a row that does not exist
+
+      store.tree = withLine("l3", "bench");
+      held[0].resolve({ rowId: "l3" });
+      await waitFor(() =>
+        expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l3", setCount: 4 }),
+      );
+      expect(store.send).toHaveBeenCalledWith(
+        expect.objectContaining({ op: "updatePrescription", prescriptionId: "l3", load: "75%" }),
+      );
+      // The real row is the placeholder's element: nothing jumped, the text stayed.
+      const real = rowOf("l3")!;
+      expect(real).toBe(row);
+      expect(real).not.toHaveAttribute("aria-busy");
+      expect(sets).toBeInTheDocument();
+      expect(sets).toHaveValue("4");
+      expect(within(real).getByRole("textbox", { name: "Rest, line 3" })).toHaveFocus();
+      // Folded into the tree the real row first renders from, so what the cell
+      // shows under it already reads the held load.
+      expect(within(real).getByText("Percent · 75% of training max")).toBeInTheDocument();
+    });
+
+    it("will not move a line past one that has no id yet", async () => {
+      holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      const sets2 = within(day).getByRole("textbox", { name: "Sets, line 2" });
+      sets2.focus();
+      await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
+      expect(store.send.mock.calls.some(([op]) => op.op === "reorder")).toBe(false);
+    });
+
+    it("fades the line out and says why when the add is refused", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      const row = within(day).getByRole("row", { name: "Squat day line 3: Bench Press" });
+      held[0].reject(new Error("not-allowed"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("not-allowed");
+      expect(row).toHaveAttribute("aria-hidden", "true");
+      ended(row);
+      expect(row).not.toBeInTheDocument();
+    });
+
+    it("removes a line whose × was pressed before it had an id, as soon as it has one", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      await user.click(within(day).getByRole("button", { name: "Remove line 3" }));
+      expect(within(day).queryByRole("row", { name: /line 3/ })).not.toBeInTheDocument();
+
+      store.tree = withLine("l3", "bench");
+      held[0].resolve({ rowId: "l3" });
+      await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "removePrescription", prescriptionId: "l3" }));
+      expect(within(day).queryByRole("row", { name: /line 3/ })).not.toBeInTheDocument();
+    });
+
+    it("sends two quick adds one after the other, in the order they were typed", async () => {
+      const held = holdAdds();
+      const user = userEvent.setup();
+      const day = await ready();
+      await add(user, day, "bench", "Bench Press");
+      await add(user, day, "dead", "Deadlift");
+      expect(within(day).getByRole("row", { name: "Squat day line 3: Bench Press" })).toBeInTheDocument();
+      expect(within(day).getByRole("row", { name: "Squat day line 4: Deadlift" })).toBeInTheDocument();
+      expect(held).toHaveLength(1);
+
+      store.tree = withLine("l3", "bench");
+      held[0].resolve({ rowId: "l3" });
+      await waitFor(() => expect(held).toHaveLength(2));
+      expect(store.send.mock.calls.filter(([op]) => op.op === "addPrescription").map(([op]) => op.exerciseId)).toEqual([
+        "bench",
+        "deadlift",
+      ]);
+    });
   });
 });

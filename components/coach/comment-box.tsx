@@ -116,7 +116,7 @@ export function CommentBox({
           aria-invalid={error ? true : undefined}
           className={cn(
             // 16px below md: iOS Safari zooms the page on focus under that.
-            "w-full resize-y rounded-control border bg-surface-2 p-3 text-[16px]/[1.6] text-foreground md:text-body",
+            "w-full resize-y rounded-control border bg-surface-2 p-3 text-[16px]/[1.6] text-foreground transition-control md:text-body",
             "placeholder:text-muted-2 focus:outline-none focus:ring-2 focus:ring-accent-line",
             error ? "border-danger-line" : "border-border",
           )}

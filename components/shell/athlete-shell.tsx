@@ -26,7 +26,13 @@ export function AthleteShell({ children }: { children: React.ReactNode }) {
   const coaching = state.status === "signed-in" && canCoach(state.prefs, state.coach.isCoach);
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
+    // h-dvh, not min-h-dvh: a min-height lets a long screen grow the document,
+    // and then the body scrolls instead of <main>. On an iPhone that pushed
+    // the tab bar below the fold and slid the header up under the translucent
+    // status bar. Pinned to the viewport, only <main> scrolls.
+    <div className="flex h-dvh flex-col overflow-hidden bg-background">
+      {/* The one safe-area inset for every athlete screen. Screens pad with
+          pt-8, not pt-safe-8, or the notch is counted twice. */}
       <div className="pt-safe flex-none" />
       {/* The way back to the roster, on every athlete screen, for anyone who
           coaches. Not a fifth tab: athletes who never coach never see it.

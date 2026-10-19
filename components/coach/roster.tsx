@@ -161,7 +161,8 @@ export function Roster() {
   const items = needsYou(signals, current.now);
 
   return (
-    <div className="flex flex-col gap-6 p-4 md:gap-8 md:p-8">
+    // Fades in over "Loading…", once; re-sorting and live updates are still.
+    <div className="flex flex-col gap-6 p-4 animate-fade-in md:gap-8 md:p-8">
       <header className="flex items-baseline justify-between gap-4">
         <h1 className="m-0 text-display font-semibold">Roster</h1>
         <span className="text-ui text-muted">
@@ -212,7 +213,7 @@ function NeedsYou({ items }: { items: NeedsYouItem[] }) {
             <li key={`${item.athleteId}:${item.kind}`}>
               <Link
                 href={item.href}
-                className="flex min-h-10 items-center gap-3 rounded-chip px-3 py-2 text-ui hover:bg-surface focus-visible:bg-surface md:h-10 md:py-0"
+                className="flex min-h-10 items-center gap-3 rounded-chip px-3 py-2 text-ui transition-control press-wide hover:bg-surface focus-visible:bg-surface md:h-10 md:py-0"
               >
                 <span aria-hidden className="block size-1.5 flex-none rounded-full bg-accent-line" />
                 {/* Wraps under the name on a phone rather than running off it. */}
@@ -266,8 +267,8 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
                 type="button"
                 onClick={() => onSort(key)}
                 className={cn(
-                  "h-8 font-mono text-label-xs uppercase md:h-auto",
-                  sorted ? "text-foreground" : "text-muted-2",
+                  "h-8 font-mono text-label-xs uppercase transition-control md:h-auto",
+                  sorted ? "text-foreground" : "text-muted-2 hover:text-foreground focus-visible:text-foreground",
                 )}
               >
                 {label}
@@ -282,7 +283,7 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
           key={row.athleteId}
           href={`/coach/athletes/${row.athleteId}`}
           role="row"
-          className="grid grid-cols-2 items-center gap-x-3 gap-y-1 border-b border-border px-[14px] py-3 text-ui last:border-b-0 hover:bg-surface focus-visible:bg-surface md:h-[42px] md:grid-cols-(--table-cols) md:gap-y-3 md:py-0"
+          className="grid grid-cols-2 items-center gap-x-3 gap-y-1 border-b border-border px-[14px] py-3 text-ui transition-control last:border-b-0 hover:bg-surface focus-visible:bg-surface md:h-[42px] md:grid-cols-(--table-cols) md:gap-y-3 md:py-0"
         >
           <span role="cell" className="col-span-2 flex min-w-0 items-center gap-2.5 font-semibold md:col-span-1">
             <UserAvatar userId={row.athleteId} name={row.name} size={24} />

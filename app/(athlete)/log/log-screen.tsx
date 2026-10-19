@@ -712,7 +712,7 @@ export function LogScreen() {
 
   if (!active) {
     return (
-      <div className="pt-safe-8 flex flex-1 flex-col gap-5 pb-6">
+      <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
         <h1 className="m-0 text-display font-semibold">Log</h1>
         <EmptyState
           title="No session running"
@@ -790,7 +790,7 @@ export function LogScreen() {
     pad !== null ? "pad" : rpeOpen ? "rpe" : phase === "confirming" ? "confirm" : rest ? "rest" : "add";
 
   return (
-    <div className="pt-safe-8 flex flex-1 flex-col gap-5 pb-6">
+    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
       <header className="flex items-baseline justify-between gap-3">
         <h1 className="m-0 text-display font-semibold">Session</h1>
         {/* The clock is the finish control, per the blueprint: tap it, confirm. */}
@@ -1035,7 +1035,7 @@ function FinishedSummary({
   onDone: () => void;
 }) {
   return (
-    <div className="pt-safe-8 flex flex-1 flex-col gap-5 pb-6">
+    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
       <h1 className="m-0 text-display font-semibold">Session done</h1>
       <dl className="m-0 grid grid-cols-2 gap-3">
         <Stat label="Sets" value={String(summary.setCount)} />

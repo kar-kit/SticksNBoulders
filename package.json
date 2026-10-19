@@ -60,7 +60,9 @@
     "e2e:video-required": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-video-required.mts",
     "e2e:editor": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-editor.mts",
     "e2e:calendar": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-calendar.mts",
-    "e2e:program-layout": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-program-layout.mts"
+    "e2e:program-layout": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-program-layout.mts",
+    "e2e:coach-motion": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/e2e-coach-motion.mts",
+    "perf:coach-editor": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/e2e-run.mts scripts/perf-coach-editor.mts"
   },
   "dependencies": {
     "appwrite": "^26.2.0",

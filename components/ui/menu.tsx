@@ -13,6 +13,10 @@ import { cn } from "@/lib/cn";
  * move between items; Escape closes and hands the focus back to the trigger;
  * Tab or a click anywhere else just closes. Choosing an item closes the menu
  * first, so an action that removes the row the menu sat on leaves nothing open.
+ *
+ * It pops in from the trigger's corner (docs/coach-motion.md) and closes at
+ * once: by the time a menu is dismissed the coach has moved on, and an exit
+ * that lingers over the row is in the way of the next click.
  */
 
 export interface MenuItem {
@@ -114,8 +118,8 @@ export function Menu({ label, items, disabled, className }: MenuProps) {
         onClick={() => (open ? close(false) : show("first"))}
         onKeyDown={onTriggerKey}
         className={cn(
-          "inline-flex size-8 items-center justify-center rounded-chip text-muted",
-          "hover:bg-surface-2 hover:text-foreground disabled:text-muted-2",
+          "inline-flex size-8 items-center justify-center rounded-chip text-muted transition-control press",
+          "hover:bg-surface-2 hover:text-foreground focus-visible:bg-surface-2 focus-visible:text-foreground disabled:text-muted-2",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
           open && "bg-surface-2 text-foreground",
         )}
@@ -131,7 +135,7 @@ export function Menu({ label, items, disabled, className }: MenuProps) {
           role="menu"
           aria-label={label}
           onKeyDown={onListKey}
-          className="absolute top-full right-0 z-30 mt-1 flex min-w-52 flex-col rounded-card border border-border bg-surface p-1 shadow-lg"
+          className="absolute top-full right-0 z-30 mt-1 flex min-w-52 origin-top-right flex-col rounded-card border border-border bg-surface p-1 shadow-lg motion-safe:animate-pop-in"
         >
           {shown.map((item) => (
             <button
@@ -145,7 +149,7 @@ export function Menu({ label, items, disabled, className }: MenuProps) {
                 item.onSelect();
               }}
               className={cn(
-                "flex h-9 items-center rounded-chip px-3 text-left text-ui whitespace-nowrap",
+                "flex h-9 items-center rounded-chip px-3 text-left text-ui whitespace-nowrap transition-control",
                 "hover:bg-surface-2 focus:bg-surface-2 focus:outline-none disabled:text-muted-2",
                 item.tone === "danger" ? "text-danger-line" : "text-foreground",
               )}

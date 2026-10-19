@@ -145,7 +145,9 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
             key={clipId}
             ref={video}
             src={src}
-            className="size-full object-contain"
+            // A new clip fades up rather than cutting in, so a switch reads
+            // as a switch (docs/coach-motion.md). Opacity only.
+            className="size-full object-contain animate-fade-in"
             controls
             loop={loop}
             playsInline
@@ -171,10 +173,10 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
               onClick={() => setSpeed(option)}
               aria-pressed={speed === option}
               className={cn(
-                "h-10 rounded-chip px-3 text-ui font-medium md:h-9",
+                "h-10 rounded-chip px-3 text-ui font-medium transition-control press md:h-9",
                 speed === option
                   ? "bg-accent-fill text-on-accent"
-                  : "border border-border text-muted hover:text-foreground",
+                  : "border border-border text-muted hover:text-foreground focus-visible:text-foreground",
               )}
             >
               {option}x
@@ -187,8 +189,10 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
           onClick={() => setLoop((on) => !on)}
           aria-pressed={loop}
           className={cn(
-            "h-10 rounded-chip px-3 text-ui font-medium md:h-9",
-            loop ? "bg-accent-fill text-on-accent" : "border border-border text-muted hover:text-foreground",
+            "h-10 rounded-chip px-3 text-ui font-medium transition-control press md:h-9",
+            loop
+              ? "bg-accent-fill text-on-accent"
+              : "border border-border text-muted hover:text-foreground focus-visible:text-foreground",
           )}
         >
           Loop
@@ -198,14 +202,14 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
           <button
             type="button"
             onClick={() => step(-1)}
-            className="h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted hover:text-foreground md:h-9"
+            className="h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9"
           >
             ‹ Frame
           </button>
           <button
             type="button"
             onClick={() => step(1)}
-            className="h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted hover:text-foreground md:h-9"
+            className="h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9"
           >
             Frame ›
           </button>

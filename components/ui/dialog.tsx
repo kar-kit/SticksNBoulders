@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { afterExit } from "@/components/ui/motion";
 
 /**
  * A modal over the coach's screen: the browser's own `<dialog>`, opened with
@@ -21,7 +22,16 @@ import { cn } from "@/lib/cn";
  * arrive as both a key event and the dialog's `cancel`, and a close that walks
  * history back twice takes the coach off the page.
  *
- * No animation, on purpose: a separate ticket owns motion.
+ * Opening and closing are animated (docs/coach-motion.md): it settles in from
+ * slightly small and below over a fading backdrop, and leaves the same way.
+ * Both are CSS transitions on the native element -- `@starting-style` for the
+ * entry, `display` and `overlay` transitioned discretely so a closed dialog
+ * stays painted in the top layer while it fades. What CSS cannot do is outlive
+ * React removing it, so a caller that wants the exit passes `leaving` (from
+ * `usePresence`) and unmounts on `onExited`. Leaving closes the native dialog
+ * at once: the page is live again, focus is back on the opener and the dialog
+ * is out of the accessibility tree before the fade has started, so nothing
+ * waits on the animation.
  */
 
 export interface DialogProps {
@@ -35,6 +45,17 @@ export interface DialogProps {
    * order rather than by intent.
    */
   size?: "md" | "lg";
+  /** Closed and fading out; see `usePresence`. Omitted, it is open while mounted. */
+  leaving?: boolean;
+  /** The fade-out has played and it can be unmounted. */
+  onExited?: () => void;
+}
+
+/** Focus back to whoever had it when the dialog opened, once. */
+function handBack(opener: { current: HTMLElement | null }) {
+  const to = opener.current;
+  opener.current = null;
+  if (to && to.isConnected) to.focus();
 }
 
 const WIDTH = {
@@ -42,27 +63,47 @@ const WIDTH = {
   lg: "w-[min(880px,calc(100vw-4rem))]",
 } as const;
 
-export function Dialog({ labelledBy, onClose, children, size = "lg" }: DialogProps) {
+export function Dialog({ labelledBy, onClose, children, size = "lg", leaving = false, onExited }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const requested = useRef(false);
   const onCloseRef = useRef(onClose);
+  const onExitedRef = useRef(onExited);
+  /** Whoever had the focus when it opened, handed it back exactly once. */
+  const opener = useRef<HTMLElement | null>(null);
   useEffect(() => {
     onCloseRef.current = onClose;
+    onExitedRef.current = onExited;
   });
 
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (leaving) {
+      // Closed now, faded after: see the comment at the top.
+      if (typeof element.close === "function") {
+        if (element.open) element.close();
+      } else {
+        element.removeAttribute("open");
+      }
+      handBack(opener);
+      return afterExit(element, () => onExitedRef.current?.());
+    }
+    // Opening, or opening again before a fade-out finished.
+    requested.current = false;
+    opener.current ??= document.activeElement instanceof HTMLElement ? document.activeElement : null;
     // jsdom has no showModal; the attribute is the same dialog, just not modal.
     if (typeof element.showModal === "function") {
       if (!element.open) element.showModal();
     } else {
       element.setAttribute("open", "");
     }
+  }, [leaving]);
+
+  useEffect(() => {
+    const element = ref.current;
     return () => {
-      if (typeof element.close === "function" && element.open) element.close();
-      if (opener && opener.isConnected) opener.focus();
+      if (element && typeof element.close === "function" && element.open) element.close();
+      handBack(opener);
     };
   }, []);
 
@@ -78,6 +119,8 @@ export function Dialog({ labelledBy, onClose, children, size = "lg" }: DialogPro
     <dialog
       ref={ref}
       aria-labelledby={labelledBy}
+      aria-hidden={leaving || undefined}
+      inert={leaving || undefined}
       onCancel={(event) => {
         // Kept open until the caller unmounts it, so the URL and the screen
         // change together.
@@ -99,6 +142,18 @@ export function Dialog({ labelledBy, onClose, children, size = "lg" }: DialogPro
         // Preflight zeroes the margin the browser centres a modal with.
         "m-auto max-h-[calc(100dvh-4rem)] overflow-hidden rounded-card border border-border bg-background p-0 text-foreground",
         "backdrop:bg-black/70",
+        // Rest (closed) state, open state, and where opening starts from.
+        // Scale and lift only when motion is welcome; the fade always, and
+        // the reduced-motion floor in globals.css makes even that instant.
+        "opacity-0 motion-safe:translate-y-1 motion-safe:scale-[0.98]",
+        "open:translate-y-0 open:scale-100 open:opacity-100",
+        "starting:open:opacity-0 motion-safe:starting:open:translate-y-1 motion-safe:starting:open:scale-[0.98]",
+        "backdrop:opacity-0 open:backdrop:opacity-100 starting:open:backdrop:opacity-0",
+        "transition-[opacity,scale,translate,overlay,display] transition-discrete",
+        "backdrop:transition-[opacity,overlay,display] backdrop:transition-discrete",
+        leaving
+          ? "duration-base ease-in backdrop:duration-base backdrop:ease-in"
+          : "duration-panel ease-out backdrop:duration-panel backdrop:ease-out",
         WIDTH[size],
       )}
     >

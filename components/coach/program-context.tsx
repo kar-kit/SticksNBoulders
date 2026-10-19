@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { afterExit } from "@/components/ui/motion";
+import { cn } from "@/lib/cn";
 import { fetchRecentSessions } from "@/lib/logging/session-store";
 import { fetchSetsForSessions } from "@/lib/logging/history-store";
 import { fetchClips, fetchReviewedSetIds } from "@/lib/review/queue-store";
@@ -22,6 +24,10 @@ import type { ClipSet } from "@/lib/review/queue";
  * `fetchReviewedSetIds`). Read once per athlete when the drawer first opens,
  * not on every week switch: the week changes which exercises are shown, not
  * what was logged. Each half fails on its own, and says so.
+ *
+ * Opened and closed from the week header, it slides in from the edge it lives
+ * on and back out (docs/coach-motion.md), so the coach sees where it went. A
+ * drawer that was already open when the editor loaded simply is there.
  */
 
 type Read<T> = { status: "loading" } | { status: "failed" } | { status: "ready"; value: T };
@@ -57,6 +63,9 @@ export function ProgramContext({
   exerciseIds,
   names,
   onClose,
+  animateIn = false,
+  leaving = false,
+  onExited,
 }: {
   athleteId: string;
   coachId: string;
@@ -65,7 +74,21 @@ export function ProgramContext({
   exerciseIds: readonly string[];
   names: ReadonlyMap<string, string>;
   onClose: () => void;
+  /** Opened by the coach just now, rather than remembered open from last time. */
+  animateIn?: boolean;
+  /** Closed and sliding out; see `usePresence`. */
+  leaving?: boolean;
+  onExited?: () => void;
 }) {
+  const panel = useRef<HTMLElement>(null);
+  const onExitedRef = useRef(onExited);
+  useEffect(() => {
+    onExitedRef.current = onExited;
+  });
+  useEffect(() => {
+    if (!leaving) return;
+    return afterExit(panel.current, () => onExitedRef.current?.());
+  }, [leaving]);
   const [sets, setSets] = useState<Read<ContextSet[]>>({ status: "loading" });
   const [clips, setClips] = useState<Read<{ clips: ClipSet[]; reviewed: Set<string> }>>({ status: "loading" });
 
@@ -101,8 +124,14 @@ export function ProgramContext({
 
   return (
     <aside
+      ref={panel}
       aria-label="Context"
-      className="flex w-72 shrink-0 flex-col gap-5 border-l border-border bg-surface px-4 py-5 text-ui"
+      aria-hidden={leaving || undefined}
+      inert={leaving || undefined}
+      className={cn(
+        "flex w-72 shrink-0 flex-col gap-5 border-l border-border bg-surface px-4 py-5 text-ui",
+        leaving ? "motion-safe:animate-drawer-out" : animateIn && "motion-safe:animate-drawer-in",
+      )}
     >
       <header className="flex items-center justify-between gap-2">
         <h2 className="m-0 text-title font-semibold">Context</h2>

@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Menu } from "@/components/ui/menu";
+import { flash, useArrivals, useChanged, usePresence } from "@/components/ui/motion";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs } from "@/components/ui/tabs";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 import { BumpWeek } from "@/components/coach/bump-week";
@@ -100,6 +102,12 @@ import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/progra
  *
  * Seams left: backoff rules (21) and video-required (30) are columns after
  * Notes.
+ *
+ * Motion (docs/coach-motion.md) says what just happened and nothing more: a
+ * view or week arriving, a line, day or week added or going, a cell saved or
+ * refused, the line a calendar or clip landed on. All of it is CSS from
+ * app/globals.css; components/ui/motion.ts only tells CSS which rows are new
+ * and replays a tint.
  */
 
 type Load =
@@ -167,12 +175,17 @@ export function ProgramEditor({
   const [busy, setBusy] = useState(false);
   const [copying, setCopying] = useState(false);
   const [removingWeek, setRemovingWeek] = useState<string | null>(null);
+  /** The week whose removal is on its way: dimmed in the outline and on the page meanwhile. */
+  const [leavingWeek, setLeavingWeek] = useState<string | null>(null);
   /** The week whose "Duplicate with a bump…" form is open. */
   const [bumping, setBumping] = useState<string | null>(null);
   const [view, setView] = useState<EditorView>(initialView);
   /** The progression view's block, when the coach picked one; else the selected week's. */
   const [progressionBlockId, setProgressionBlockId] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useContextDrawer();
+  /** Opened or closed by the coach this visit, so it slides; remembered-open just is. */
+  const contextToggled = useChanged(contextOpen);
+  const drawer = usePresence(contextOpen);
 
   const readMaxes = useCallback(async (athleteId: string) => {
     try {
@@ -224,6 +237,8 @@ export function ProgramEditor({
   const allWeeks = useMemo(() => tree?.blocks.flatMap((b) => b.weeks) ?? [], [tree]);
   const week = allWeeks.find((w) => w.id === weekId) ?? allWeeks[0] ?? null;
   const block = (week && tree?.blocks.find((b) => b.id === week.blockId)) ?? tree?.blocks[0] ?? null;
+  // A day added to the week on screen rises in; switching week is not adding.
+  const dayArrived = useArrivals(week?.days.map((d) => d.id) ?? [], week?.id ?? "");
   const names = useMemo(() => new Map(exercises.map((e) => [e.id, e.name])), [exercises]);
   /** Under each load cell: the kilos the athlete will get, or why there are none. */
   const previewFor = useCallback(
@@ -266,6 +281,13 @@ export function ProgramEditor({
     const cell = row >= 0 ? section.querySelector<HTMLButtonElement>(`[data-cell="${row}-0"]`) : null;
     if (cell && !cell.disabled) cell.focus({ preventScroll: true });
     else if (to.focusDay) section.focus({ preventScroll: true });
+    // And tinted for a moment, so the eye finds it after the jump: the line
+    // traced from a clip, or the whole day opened from the calendar. The
+    // scroll itself stays instant -- a long smooth scroll down a block is
+    // the motion that makes people feel sick, and the tint does the work.
+    const line = to.lineId ? section.querySelector(`tr[data-line="${to.lineId}"]`) : null;
+    if (line) line.querySelectorAll(":scope > td").forEach((td) => flash(td, "landed"));
+    else flash(section, "landed");
   }, [tree, showingWeek, landings]);
 
   const changeView = (next: EditorView) => {
@@ -343,6 +365,51 @@ export function ProgramEditor({
     }
   };
 
+  /**
+   * "Add exercise": the write, then the tree read back -- and before that
+   * tree is shown, `claim` hands the new row id to the placeholder row the
+   * day is already showing and returns whatever the coach typed into it
+   * meanwhile, as ops. Those are folded into the tree in the same render the
+   * real row first appears in, so it replaces the placeholder in place (same
+   * element, same focus, same text), then sent. Not `run`: nothing is
+   * disabled while it is in flight, because the coach is typing into the row.
+   */
+  const insertLine = async (
+    op: ProgramOpInput,
+    claim: (rowId: string, line: Prescription | null) => ProgramOpInput[],
+  ): Promise<string | null> => {
+    setError(null);
+    let rowId: string;
+    try {
+      ({ rowId } = await sendProgramOp(op));
+    } catch (failure) {
+      failed(failure);
+      return null;
+    }
+    const fresh = await fetchProgramTree(programId).catch(() => undefined);
+    const line = fresh ? findLine(fresh, rowId) : null;
+    const edits = claim(rowId, line);
+    if (!fresh) {
+      await reload();
+      return rowId;
+    }
+    setLoad({
+      status: "ready",
+      tree: line && edits.length ? mapLines(fresh, (l) => (l.id === rowId ? edits.reduce(applyLineOp, l) : l)) : fresh,
+    });
+    for (const edit of edits) {
+      try {
+        await sendProgramOp(edit);
+      } catch (failure) {
+        // Said, and the tree read back so the row shows what was kept.
+        failed(failure);
+        await reload();
+        break;
+      }
+    }
+    return rowId;
+  };
+
   const createExercise = async (name: string): Promise<Exercise | null> => {
     if (!tree) return null;
     try {
@@ -364,7 +431,7 @@ export function ProgramEditor({
     }
   };
 
-  if (load.status === "loading") return <div className="p-8" aria-busy />;
+  if (load.status === "loading") return <EditorSkeleton />;
   if (load.status === "missing" || load.status === "failed" || !tree) {
     return (
       <div className="flex h-full flex-col items-center justify-center p-8">
@@ -527,7 +594,7 @@ export function ProgramEditor({
                 if (value !== tree.startOn) void changeStart(value);
               }}
               className={cn(
-                "h-9 rounded-control border bg-surface-2 px-2 text-ui text-foreground",
+                "h-9 rounded-control border bg-surface-2 px-2 text-ui text-foreground transition-control",
                 !tree.startOn && tree.athleteId ? "border-accent-line" : "border-border",
               )}
             />
@@ -557,13 +624,17 @@ export function ProgramEditor({
       ) : null}
 
       {error ? (
-        <p role="alert" className="mx-6 mt-4 mb-0 rounded-card border border-danger-line p-3 text-ui">
+        <p
+          key={error}
+          role="alert"
+          className="mx-6 mt-4 mb-0 rounded-card border border-danger-line p-3 text-ui motion-safe:animate-rise-in"
+        >
           {error}
         </p>
       ) : null}
 
       {shown === "progression" ? (
-        <section aria-label="Progression" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5">
+        <section aria-label="Progression" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5 animate-fade-in">
           {progressionBlock ? (
             <ProgramProgression
               tree={tree}
@@ -595,7 +666,7 @@ export function ProgramEditor({
           )}
         </section>
       ) : shown === "calendar" ? (
-        <section aria-label="Calendar" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5">
+        <section aria-label="Calendar" className="flex min-w-0 flex-1 flex-col gap-5 px-6 py-5 animate-fade-in">
           {startPrompt}
           {anchor && tree.blocks.length > 0 ? (
             <ProgramCalendar
@@ -614,10 +685,11 @@ export function ProgramEditor({
           ) : null}
         </section>
       ) : (
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 animate-fade-in">
           <ProgramOutline
             tree={tree}
             selectedWeekId={week?.id ?? null}
+            leavingWeekId={leavingWeek}
             onSelect={(id) => {
               setWeekId(id);
               setRemovingWeek(null);
@@ -646,9 +718,11 @@ export function ProgramEditor({
                     <h2 className="m-0 text-heading font-semibold">
                       {block.name} · {weekName(week.id)}
                     </h2>
-                    <p className="m-0 text-ui text-muted">
-                      {anchor ? rangeLabel(weekRange(anchor, weekAt)) : "No dates yet"} · {state ? STATE_WORD[state] : ""}
-                    </p>
+                    <WeekMeta
+                      key={week.id}
+                      range={anchor ? rangeLabel(weekRange(anchor, weekAt)) : "No dates yet"}
+                      state={state}
+                    />
                   </div>
                   <span className="flex-1" />
                   {tree.athleteId ? (
@@ -724,17 +798,27 @@ export function ProgramEditor({
                     disabled={busy}
                     onCancel={() => setRemovingWeek(null)}
                     onConfirm={async () => {
+                      setLeavingWeek(week.id);
                       await run({ op: "removeWeek", weekId: week.id });
+                      setLeavingWeek(null);
                       setWeekId(null);
                     }}
                   />
                 ) : null}
 
-                <div className="flex flex-col gap-6" data-week-days>
+                <div
+                  key={week.id}
+                  className={cn(
+                    "flex flex-col gap-6",
+                    leavingWeek === week.id ? "pointer-events-none animate-dim" : "motion-safe:animate-rise-in",
+                  )}
+                  data-week-days
+                >
                   {week.days.length === 0 ? <p className="m-0 text-body text-muted">No days in this week yet.</p> : null}
                   {week.days.map((day, at) => (
                     <DayEditor
                       key={day.id}
+                      arrived={dayArrived(day.id)}
                       day={day}
                       index={at}
                       editable={editable}
@@ -751,6 +835,7 @@ export function ProgramEditor({
                       referenceFor={(exerciseId) => rememberedReference(tree, exerciseId)}
                       run={run}
                       editLine={editLine}
+                      insertLine={insertLine}
                       createExercise={createExercise}
                     />
                   ))}
@@ -773,7 +858,7 @@ export function ProgramEditor({
               <p className="m-0 text-body text-muted">No blocks yet. Add one to start writing.</p>
             )}
           </section>
-          {contextOpen && tree.athleteId && viewerId ? (
+          {drawer.shown && tree.athleteId && viewerId ? (
             <div className="flex">
               <ProgramContext
                 athleteId={tree.athleteId}
@@ -782,6 +867,9 @@ export function ProgramEditor({
                 exerciseIds={inView}
                 names={names}
                 onClose={() => setContextOpen(false)}
+                animateIn={contextToggled}
+                leaving={drawer.leaving}
+                onExited={drawer.exited}
               />
             </div>
           ) : null}
@@ -789,6 +877,12 @@ export function ProgramEditor({
       )}
     </div>
   );
+}
+
+function findLine(tree: ProgramTree, lineId: string): Prescription | null {
+  for (const b of tree.blocks)
+    for (const w of b.weeks) for (const d of w.days) for (const l of d.prescriptions) if (l.id === lineId) return l;
+  return null;
 }
 
 function mapLines(tree: ProgramTree, change: (line: Prescription) => Prescription): ProgramTree {
@@ -809,6 +903,8 @@ function mapLines(tree: ProgramTree, change: (line: Prescription) => Prescriptio
  * ---------------------------------------------------------------------- */
 
 interface DayEditorProps {
+  /** Added to the week since it was opened: rises in. */
+  arrived: boolean;
   day: DayTree;
   index: number;
   editable: boolean;
@@ -832,10 +928,24 @@ interface DayEditorProps {
   referenceFor: (exerciseId: string) => string | null;
   run: (op: ProgramOpInput) => Promise<string | null>;
   editLine: (line: Prescription, op: ProgramOpInput) => Promise<string | null>;
+  insertLine: (op: ProgramOpInput, claim: (rowId: string, line: Prescription | null) => ProgramOpInput[]) => Promise<string | null>;
   createExercise: (name: string) => Promise<Exercise | null>;
 }
 
+/**
+ * A line on screen before the server has given it an id: "Add exercise" puts
+ * it in the grid at once. `saving` until claimed; `cancelled` when its × was
+ * pressed first (it is removed as soon as it exists); `refused` when the add
+ * failed (it fades out, and the error says why).
+ */
+interface PendingLine {
+  key: string;
+  line: Prescription;
+  status: "saving" | "cancelled" | "refused";
+}
+
 function DayEditor({
+  arrived,
   day,
   index,
   editable,
@@ -852,6 +962,7 @@ function DayEditor({
   referenceFor,
   run,
   editLine,
+  insertLine,
   createExercise,
 }: DayEditorProps) {
   const title = day.label ?? `Day ${index + 1}`;
@@ -861,7 +972,35 @@ function DayEditor({
   const [focusAfter, setFocusAfter] = useState<{ lineId: string; col: Column } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [swapping, setSwapping] = useState<string | null>(null);
-  const lines = day.prescriptions;
+  /** Removing this day: dimmed until the tree comes back without it, or back if it failed. */
+  const [leaving, setLeaving] = useState(false);
+  /**
+   * Lines on their way out. A removed line fades at once and leaves the grid
+   * when its fade ends (`gone`), ahead of the server's answer -- the same
+   * optimism as a cell edit. A refusal puts it back, and says so above.
+   */
+  const [leavingLines, setLeavingLines] = useState<ReadonlySet<string>>(new Set());
+  const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
+  const [pending, setPending] = useState<readonly PendingLine[]>([]);
+  /** Real row id -> the placeholder's key, so the real row reuses the placeholder's element. */
+  const [aliases, setAliases] = useState<ReadonlyMap<string, string>>(new Map());
+  /** What was typed into a placeholder's cells, applied once it has an id. */
+  const queued = useRef(new Map<string, Map<Exclude<Column, "exercise">, string>>());
+  /** Placeholders whose × was pressed before they had an id. */
+  const cancelled = useRef(new Set<string>());
+  /** Adds go out one at a time, so two quick ones land in the order they were typed. */
+  const adding = useRef<Promise<unknown>>(Promise.resolve());
+  const placeholders = useRef(0);
+  // The grid: the day's lines, then the lines still on their way.
+  const lines = useMemo(
+    () => [...day.prescriptions.filter((l) => !gone.has(l.id)), ...pending.map((p) => p.line)],
+    [day.prescriptions, gone, pending],
+  );
+  const pendingOf = (lineId: string) => pending.find((p) => p.key === lineId) ?? null;
+  const lineArrived = useArrivals(
+    lines.map((l) => aliases.get(l.id) ?? l.id),
+    day.id,
+  );
 
   // A new line takes the focus once the tree that holds it has arrived.
   useEffect(() => {
@@ -907,6 +1046,8 @@ function DayEditor({
       event.preventDefault();
       const to = event.key === "ArrowUp" ? row - 1 : row + 1;
       if (to < 0 || to >= lines.length) return;
+      // A line still on its way has no id to put in an order.
+      if (pendingOf(lines[row].id) || pendingOf(lines[to].id)) return;
       const ids = lines.map((l) => l.id);
       [ids[row], ids[to]] = [ids[to], ids[row]];
       void run({ op: "reorder", level: "prescriptions", parentId: day.id, orderedIds: ids }).then(() =>
@@ -944,11 +1085,16 @@ function DayEditor({
     }
   };
 
-  const commit = async (line: Prescription, column: Exclude<Column, "exercise">, text: string) => {
+  /** `cell` is the grid cell, tinted saved or refused once the answer is in. */
+  const commit = async (line: Prescription, column: Exclude<Column, "exercise">, text: string, cell: Element | null) => {
     const result = commitCell(line, column, text, exercises);
     const key = `${line.id}:${column}`;
     if ("unchanged" in result) return;
-    if ("error" in result) return setErrors((prev) => ({ ...prev, [key]: result.error }));
+    if ("error" in result) {
+      setErrors((prev) => ({ ...prev, [key]: result.error }));
+      flash(cell, "failed");
+      return;
+    }
     setErrors((prev) => {
       const next = { ...prev };
       delete next[key];
@@ -956,23 +1102,127 @@ function DayEditor({
     });
     const failed = await editLine(line, result.op);
     if (failed) setErrors((prev) => ({ ...prev, [key]: failed }));
+    flash(cell, failed ? "failed" : "saved");
   };
 
-  const addLine = async (exercise: Exercise) => {
+  const exerciseCell = (lineId: string) => grid.current?.querySelector(`tr[data-line="${lineId}"] > td`) ?? null;
+  const swapExercise = async (line: Prescription, exerciseId: string) => {
+    if (exerciseId === line.exerciseId) return;
+    const failed = await editLine(line, { op: "updatePrescription", prescriptionId: line.id, exerciseId });
+    flash(exerciseCell(line.id), failed ? "failed" : "saved");
+  };
+
+  const removeLine = async (line: Prescription) => {
+    if (pendingOf(line.id)) {
+      // No id yet: fade it now, remove it the moment it has one.
+      cancelled.current.add(line.id);
+      setPending((prev) => prev.map((p) => (p.key === line.id ? { ...p, status: "cancelled" } : p)));
+      return;
+    }
+    setLeavingLines((prev) => new Set(prev).add(line.id));
+    const done = await run({ op: "removePrescription", prescriptionId: line.id });
+    if (done !== null) return;
+    // Refused: back it comes, where it was.
+    const without = (prev: ReadonlySet<string>) => {
+      const next = new Set(prev);
+      next.delete(line.id);
+      return next;
+    };
+    setLeavingLines(without);
+    setGone(without);
+  };
+
+  /**
+   * "Add exercise". The line is in the grid at once, as a placeholder, with
+   * the keyboard on its Sets cell: what is typed there is held (`queued`) and
+   * sent once the server has given the line an id, never against a row that
+   * does not exist. Claimed, the real row takes the placeholder's place --
+   * the same element, so the focus and anything typed stay put. Refused, the
+   * placeholder fades out and the error says why. docs/coach-motion.md.
+   */
+  const addLine = (exercise: Exercise) => {
     // The exercise's video default pre-ticks the box; the coach can untick it.
     const videoRequired = exercise.videoDefault ? true : undefined;
     // Typed once per variation per program: a new Tempo Bench line inherits
     // the last Tempo Bench line's reference lift. Sent only when there is one.
     const referenceExerciseId = referenceFor(exercise.id) ?? undefined;
-    const id = await run({
-      op: "addPrescription",
+    placeholders.current += 1;
+    const key = `pending-${day.id}-${placeholders.current}`;
+    const placeholder: Prescription = {
+      id: key,
+      programId: day.programId,
+      weekId: day.weekId,
       dayId: day.id,
       exerciseId: exercise.id,
+      position: Number.MAX_SAFE_INTEGER,
       setCount: 1,
-      videoRequired,
-      referenceExerciseId,
+      reps: null,
+      repMax: null,
+      load: null,
+      loadKind: null,
+      restSeconds: null,
+      notes: null,
+      backoff: null,
+      videoRequired: videoRequired ?? false,
+      referenceExerciseId: referenceExerciseId ?? null,
+      updatedAt: "",
+    };
+    setPending((prev) => [...prev, { key, line: placeholder, status: "saving" }]);
+    setFocusAfter({ lineId: key, col: "sets" });
+
+    const claim = (rowId: string, line: Prescription | null): ProgramOpInput[] => {
+      setPending((prev) => prev.filter((p) => p.key !== key));
+      const typed = queued.current.get(key);
+      queued.current.delete(key);
+      if (cancelled.current.has(key)) {
+        setGone((prev) => new Set(prev).add(rowId));
+        return [];
+      }
+      setAliases((prev) => new Map(prev).set(rowId, key));
+      if (!line || !typed) return [];
+      // Each held cell as the cell would have sent it, one on top of the other.
+      const edits: ProgramOpInput[] = [];
+      const refusals: Record<string, string> = {};
+      let current = line;
+      for (const [column, text] of typed) {
+        const result = commitCell(current, column, text, exercises);
+        if ("op" in result) {
+          edits.push(result.op);
+          current = applyLineOp(current, result.op);
+        } else if ("error" in result) {
+          refusals[`${rowId}:${column}`] = result.error;
+        }
+      }
+      if (Object.keys(refusals).length) setErrors((prev) => ({ ...prev, ...refusals }));
+      return edits;
+    };
+
+    adding.current = adding.current.then(async () => {
+      const rowId = await insertLine(
+        {
+          op: "addPrescription",
+          dayId: day.id,
+          exerciseId: exercise.id,
+          setCount: 1,
+          videoRequired,
+          referenceExerciseId,
+        },
+        claim,
+      );
+      if (rowId === null) {
+        queued.current.delete(key);
+        // Already faded if it was cancelled; otherwise it fades now.
+        if (cancelled.current.delete(key)) setPending((prev) => prev.filter((p) => p.key !== key));
+        else setPending((prev) => prev.map((p) => (p.key === key ? { ...p, status: "refused" } : p)));
+        return;
+      }
+      if (cancelled.current.delete(key)) {
+        await run({ op: "removePrescription", prescriptionId: rowId });
+        return;
+      }
+      // Saved: the row's exercise cell says so, once the real row has rendered.
+      requestAnimationFrame(() => flash(exerciseCell(rowId), "saved"));
     });
-    if (id) setFocusAfter({ lineId: id, col: "sets" });
   };
 
   return (
@@ -983,7 +1233,11 @@ function DayEditor({
       aria-label={title}
       // Focusable from script only: where the calendar lands a day with no line to focus.
       tabIndex={-1}
-      className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4 focus-visible:outline-2 focus-visible:outline-accent-line"
+      aria-busy={leaving || undefined}
+      className={cn(
+        "flash-host flex flex-col gap-3 rounded-card border border-border bg-surface p-4 focus-visible:outline-2 focus-visible:outline-accent-line",
+        leaving ? "pointer-events-none animate-dim" : arrived && "motion-safe:animate-rise-in",
+      )}
     >
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-1">
@@ -1021,7 +1275,7 @@ function DayEditor({
                     void run({ op: "updateDay", dayId: day.id, scheduledOn: scheduledOnFor(anchor, weekIndex, weekday) });
                   }}
                   className={cn(
-                    "h-7 min-w-10 rounded-chip px-2 text-caption",
+                    "h-7 min-w-10 rounded-chip px-2 text-caption transition-control press",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                     on ? "bg-accent-fill font-bold text-on-accent" : "border border-border text-muted disabled:text-muted-2",
                   )}
@@ -1050,7 +1304,10 @@ function DayEditor({
           label={`Remove ${title}`}
           disabled={busy}
           onCancel={() => setRemoving(false)}
-          onConfirm={() => run({ op: "removeDay", dayId: day.id })}
+          onConfirm={async () => {
+            setLeaving(true);
+            if ((await run({ op: "removeDay", dayId: day.id })) === null) setLeaving(false);
+          }}
         />
       ) : null}
 
@@ -1074,9 +1331,30 @@ function DayEditor({
               line.referenceExerciseId ? (names.get(line.referenceExerciseId) ?? "another lift") : null,
             );
             const preview = previewFor(line, day);
+            const waiting = pendingOf(line.id);
+            const out = leavingLines.has(line.id) || (waiting !== null && waiting.status !== "saving");
+            const rowKey = aliases.get(line.id) ?? line.id;
             return (
-              <tr key={line.id} aria-label={`${title} line ${row + 1}: ${name}`} className="align-top">
-                <td className="w-48 px-1 py-0.5">
+              <tr
+                // A claimed line keeps its placeholder's key, so it is the same row.
+                key={rowKey}
+                data-line={line.id}
+                aria-label={`${title} line ${row + 1}: ${name}`}
+                aria-busy={waiting?.status === "saving" || undefined}
+                aria-hidden={out || undefined}
+                onAnimationEnd={(e) => {
+                  if (!out || e.target !== e.currentTarget) return;
+                  if (waiting?.status === "refused") setPending((prev) => prev.filter((p) => p.key !== line.id));
+                  else if (!waiting) setGone((prev) => new Set(prev).add(line.id));
+                }}
+                className={cn(
+                  "align-top",
+                  // Rows fade rather than slide: a table row is the one
+                  // box a transform does not reliably move.
+                  out ? "pointer-events-none animate-row-out" : lineArrived(rowKey) && "animate-fade-in",
+                )}
+              >
+                <td className="flash-host w-48 px-1 py-0.5">
                   {swapping === line.id ? (
                     // Escape with the list already shut, or leaving the field,
                     // backs out of the swap with the line as it was; picking
@@ -1101,25 +1379,13 @@ function DayEditor({
                       onSelect={async (exercise) => {
                         setSwapping(null);
                         setFocusAfter({ lineId: line.id, col: "exercise" });
-                        if (exercise.id !== line.exerciseId) {
-                          await editLine(line, {
-                            op: "updatePrescription",
-                            prescriptionId: line.id,
-                            exerciseId: exercise.id,
-                          });
-                        }
+                        await swapExercise(line, exercise.id);
                       }}
                       onCreate={async (typed) => {
                         setSwapping(null);
                         setFocusAfter({ lineId: line.id, col: "exercise" });
                         const created = await createExercise(typed);
-                        if (created) {
-                          await editLine(line, {
-                            op: "updatePrescription",
-                            prescriptionId: line.id,
-                            exerciseId: created.id,
-                          });
-                        }
+                        if (created) await swapExercise(line, created.id);
                       }}
                     />
                     </div>
@@ -1127,7 +1393,8 @@ function DayEditor({
                     <button
                       type="button"
                       data-cell={`${row}-0`}
-                      disabled={!editable}
+                      // Swapping the exercise of a line with no id would have nothing to write to.
+                      disabled={!editable || waiting !== null}
                       onClick={() => setSwapping(line.id)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === "F2") {
@@ -1137,9 +1404,10 @@ function DayEditor({
                         }
                         onKey(e, row, 0);
                       }}
-                      className="h-9 w-full truncate rounded-control px-2 text-left font-semibold focus:outline-2 focus:outline-accent-line"
+                      className="h-9 w-full truncate rounded-control px-2 text-left font-semibold transition-control hover:bg-surface-2 focus:outline-2 focus:outline-accent-line"
                     >
                       {name}
+                      {waiting ? <span className="ml-2 text-caption font-normal text-muted-2">saving</span> : null}
                     </button>
                   )}
                 </td>
@@ -1151,7 +1419,7 @@ function DayEditor({
                     <td
                       key={column}
                       className={cn(
-                        "px-1 py-0.5",
+                        "flash-host px-1 py-0.5",
                         column === "sets" || column === "reps" || column === "rest" ? "w-16" : "",
                         // Wide enough for "→ 142.5 kg · Squat training max 190, set 12 Sep" on two lines.
                         column === "load" ? "w-64" : "",
@@ -1166,9 +1434,9 @@ function DayEditor({
                           type="checkbox"
                           data-cell={`${row}-${col}`}
                           aria-label={`Video required, line ${row + 1}`}
-                          disabled={!editable}
+                          disabled={!editable || waiting !== null}
                           checked={line.videoRequired}
-                          onChange={(e) => void commit(line, "video", e.target.checked ? "Yes" : "No")}
+                          onChange={(e) => void commit(line, "video", e.target.checked ? "Yes" : "No", e.currentTarget.closest("td"))}
                           onKeyDown={(e) => onKey(e, row, col)}
                           className="mx-3 mt-2.5 size-4 accent-accent-fill focus:outline-2 focus:outline-accent-line"
                         />
@@ -1183,9 +1451,19 @@ function DayEditor({
                         // `70% of bench` over a stored `70%` puts the cell back.
                         revision={column === "load" ? (line.referenceExerciseId ?? "") : undefined}
                         onKeyDown={(e) => onKey(e, row, col)}
-                        onBlur={(e) => void commit(line, column as Exclude<Column, "exercise">, e.target.value)}
+                        onBlur={(e) => {
+                          const field = column as Exclude<Column, "exercise">;
+                          // No id yet: held, and sent the moment there is one.
+                          if (waiting) {
+                            const held = queued.current.get(line.id) ?? new Map();
+                            held.set(field, e.target.value);
+                            queued.current.set(line.id, held);
+                            return;
+                          }
+                          void commit(line, field, e.target.value, e.currentTarget.closest("td"));
+                        }}
                         className={cn(
-                          "h-9 w-full rounded-control border bg-surface-2 px-2 text-foreground tabular-nums focus:outline-none",
+                          "h-9 w-full rounded-control border bg-surface-2 px-2 text-foreground tabular-nums transition-control focus:outline-none",
                           errors[key] ? "border-danger-line" : "border-border focus:border-accent-line",
                         )}
                       />
@@ -1210,20 +1488,25 @@ function DayEditor({
                         </span>
                       ) : null}
                       {errors[key] ? (
-                        <span role="alert" className="block px-1 pt-0.5 text-caption text-danger-line">
+                        <span
+                          key={errors[key]}
+                          role="alert"
+                          className="block px-1 pt-0.5 text-caption text-danger-line motion-safe:animate-rise-in"
+                        >
                           {errors[key]}
                         </span>
                       ) : null}
                     </td>
                   );
                 })}
-                <td className="w-10 px-1 py-0.5 text-right">
+                <td className="flash-host w-10 px-1 py-0.5 text-right">
                   {editable ? (
                     <button
                       type="button"
                       aria-label={`Remove line ${row + 1}`}
-                      onClick={() => void run({ op: "removePrescription", prescriptionId: line.id })}
-                      className="h-9 rounded-control px-2 text-muted hover:text-foreground"
+                      disabled={out}
+                      onClick={() => void removeLine(line)}
+                      className="h-9 rounded-control px-2 text-muted transition-control press hover:bg-surface-2 hover:text-foreground focus-visible:bg-surface-2 focus-visible:text-foreground"
                     >
                       ×
                     </button>
@@ -1262,5 +1545,51 @@ function DayEditor({
         onCommit={(notes) => run({ op: "updateDay", dayId: day.id, notes })}
       />
     </section>
+  );
+}
+
+/**
+ * The week's dates and where it stands. When Publish or Unpublish changes the
+ * state under the coach, the line rises in again with its new word; on a
+ * switch to another week (keyed by the caller) it is simply there.
+ */
+function WeekMeta({ range, state }: { range: string; state: keyof typeof STATE_WORD | null }) {
+  const changed = useChanged(state);
+  return (
+    <p key={state ?? ""} className={cn("m-0 text-ui text-muted", changed && "motion-safe:animate-rise-in")}>
+      {range} · {state ? STATE_WORD[state] : ""}
+    </p>
+  );
+}
+
+/** The editor's shape while the tree loads: header, outline, two day cards. */
+function EditorSkeleton() {
+  return (
+    <div className="flex min-h-full flex-col" aria-busy>
+      <div className="flex flex-col gap-2 border-b border-border px-6 pt-5 pb-4">
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-8 w-80" />
+        <Skeleton className="h-4 w-56" />
+      </div>
+      <div className="flex flex-1">
+        <div className="flex w-56 flex-none flex-col gap-2 border-r border-border py-5 pr-3 pl-4">
+          <Skeleton className="h-6 w-32" />
+          {[0, 1, 2, 3].map((n) => (
+            <Skeleton key={n} className="h-10 w-full" />
+          ))}
+        </div>
+        <div className="flex flex-1 flex-col gap-6 px-6 py-5">
+          <Skeleton className="h-7 w-72" />
+          {[0, 1].map((n) => (
+            <div key={n} className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
+              <Skeleton className="h-6 w-48" />
+              {[0, 1, 2, 3].map((r) => (
+                <Skeleton key={r} className="h-9 w-full" />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
