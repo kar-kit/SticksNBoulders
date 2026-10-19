@@ -43,9 +43,18 @@ import {
   rowsOf,
   type PlannedRow,
 } from "@/lib/logging/plan";
-import { extendRest, startRest, type RestTimer } from "@/lib/logging/rest-timer";
+import {
+  buzzRestOver,
+  extendRest,
+  isRestOver,
+  restJustEnded,
+  startRest,
+  type RestTimer,
+} from "@/lib/logging/rest-timer";
 import { forgetRest, recallRest, rememberRest } from "@/lib/logging/rest-store";
 import { canComplete, type RpeValue } from "@/lib/logging/set";
+import { blockRemovalLabel, planBlockRemoval } from "@/lib/logging/block-removal";
+import { WeekSummaryCard } from "@/components/logging/week-summary-card";
 import {
   elapsedMs,
   formatElapsed,
@@ -94,13 +103,23 @@ type Phase = "logging" | "confirming" | "finished";
  */
 export const UNDO_MS = 5_000;
 
-/** A set taken off the screen whose delete has not been written yet. */
+/**
+ * Sets taken off the screen whose delete has not been written yet: one from a
+ * swipe or the row's Delete, or every set of an exercise removed whole.
+ */
 interface PendingDelete {
-  set: UnnamedSet;
+  sets: UnnamedSet[];
   label: string;
   /** The rest it cleared, so Undo can put it back. */
   restBefore: RestTimer | null;
+  /**
+   * A whole exercise taken out: which one, and the rows it had not logged
+   * yet, so Undo can put the block back exactly as it was.
+   */
+  block: { exerciseId: string; plans: PlannedRow[] } | null;
 }
+
+const NO_IDS: ReadonlySet<string> = new Set();
 
 const COACH_COMMENTED =
   "Your coach has commented on this set, so it stays. Correct it from History if the numbers are wrong.";
@@ -109,7 +128,7 @@ export function LogScreen() {
   const router = useRouter();
   const { state: sessionState } = useSession();
   const { state: library, remember } = useExerciseLibrary();
-  const { active, start, finish } = useTrainingSessions();
+  const { state: trainingState, active, start, finish } = useTrainingSessions();
 
   const athleteId = sessionState.status === "signed-in" ? sessionState.user.id : null;
   /**
@@ -165,6 +184,20 @@ export function LogScreen() {
   const [deleted, setDeleted] = useState<ReadonlySet<string>>(() => new Set());
   /** Who has commented on which of this session's sets. */
   const [commentAuthors, setCommentAuthors] = useState<{ setId: string; authorId: string }[]>([]);
+  /**
+   * Exercises taken out of this session with Remove, keyed to the session so
+   * a new one starts with none hidden. Needed for a prescribed exercise, which
+   * is otherwise listed from the plan whether or not it has sets.
+   */
+  const [hiddenBlocks, setHiddenBlocks] = useState<{ sessionId: string | null; ids: ReadonlySet<string> }>({
+    sessionId: null,
+    ids: NO_IDS,
+  });
+  /**
+   * The Add exercise box opened from the end of the list, while something
+   * else -- usually the rest timer -- holds the bottom of the screen.
+   */
+  const [addingInline, setAddingInline] = useState(false);
 
   /**
    * Whether the server's copy of this session has been read since the page
@@ -324,7 +357,7 @@ export function LogScreen() {
         // A delete the server refused brings its set back: the set is still
         // there, and hiding it would be the screen disagreeing with the coach.
         .filter((s) => !deleted.has(s.clientSetId) || refused.has(s.clientSetId))
-        .filter((s) => s.clientSetId !== pendingDelete?.set.clientSetId)
+        .filter((s) => !pendingDelete?.sets.some((p) => p.clientSetId === s.clientSetId))
         .sort((a, b) => a.loggedAt.getTime() - b.loggedAt.getTime()),
     [everything, removed, deleted, refused, pendingDelete],
   );
@@ -375,6 +408,25 @@ export function LogScreen() {
     else forgetRest();
   }, []);
 
+  /**
+   * The rest takes itself down at zero, with a short buzz if it ended just now.
+   *
+   * Driven by the screen's one clock, so this is still a function of the
+   * timestamp: a tab that slept through the end resolves to no bar the first
+   * tick after it wakes, and does not buzz about something long past (see
+   * restJustEnded). A reload past the end never shows a bar at all, because
+   * recallRest drops it.
+   */
+  useEffect(() => {
+    if (!rest || !isRestOver(rest, now)) return;
+    const buzz = restJustEnded(rest, now);
+    void (async () => {
+      await Promise.resolve();
+      changeRest(null);
+      if (buzz) buzzRestOver();
+    })();
+  }, [rest, now, changeRest]);
+
   const closeSheets = () => {
     setPad(null);
     setRpeOpen(false);
@@ -401,6 +453,14 @@ export function LogScreen() {
   const addExercise = useCallback(
     (exercise: Exercise) => {
       setAdded((prev) => (prev.some((e) => e.id === exercise.id) ? prev : [...prev, exercise]));
+      // Adding back an exercise that was removed earlier brings its block back.
+      setHiddenBlocks((prev) => {
+        if (!prev.ids.has(exercise.id)) return prev;
+        const ids = new Set(prev.ids);
+        ids.delete(exercise.id);
+        return { ...prev, ids };
+      });
+      setAddingInline(false);
       activate(exercise.id);
     },
     [activate],
@@ -608,18 +668,36 @@ export function LogScreen() {
     pendingRef.current = null;
     if (undoTimer.current) clearTimeout(undoTimer.current);
     undoTimer.current = null;
-    const id = pending.set.clientSetId;
-    setDeleted((prev) => new Set(prev).add(id));
-    setPendingDelete(null);
-    void removeSet(id, { exerciseId: pending.set.exerciseId, loggedAt: pending.set.loggedAt }).catch(() => {
-      // The device could not write to its own storage, so the delete does not
-      // exist anywhere. The set comes back rather than looking deleted.
-      setDeleted((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+    setDeleted((prev) => {
+      const next = new Set(prev);
+      for (const set of pending.sets) next.add(set.clientSetId);
+      return next;
     });
+    setPendingDelete(null);
+    // One removeSet per set, the same path a swipe takes: the queue withdraws
+    // creates that never sent, and each landed set queues its delete and its
+    // rollup refresh, so the week's totals follow a removed exercise too.
+    for (const set of pending.sets) {
+      const id = set.clientSetId;
+      void removeSet(id, { exerciseId: set.exerciseId, loggedAt: set.loggedAt }).catch(() => {
+        // The device could not write to its own storage, so the delete does not
+        // exist anywhere. The set comes back rather than looking deleted --
+        // and so does its exercise, or the set would be back but invisible.
+        setDeleted((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        if (pending.block) {
+          const exerciseId = pending.block.exerciseId;
+          setHiddenBlocks((prev) => {
+            const ids = new Set(prev.ids);
+            ids.delete(exerciseId);
+            return { ...prev, ids };
+          });
+        }
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -657,12 +735,54 @@ export function LogScreen() {
     // The rest belongs to the most recent set. Deleting that one means the
     // rest was for a set that did not happen; deleting an older one leaves it.
     const latest = all.at(-1)?.clientSetId === clientSetId;
-    const pending: PendingDelete = { set, label, restBefore: latest ? rest : null };
+    const pending: PendingDelete = { sets: [set], label, restBefore: latest ? rest : null, block: null };
     if (latest && rest) changeRest(null);
 
     pendingRef.current = pending;
     setPendingDelete(pending);
     setSelectedId(null);
+    undoTimer.current = setTimeout(commitDelete, UNDO_MS);
+  };
+
+  /** Sets that cannot be deleted: a coach has commented, or the server said no. */
+  const undeletable = useMemo(() => new Set([...commented, ...refused.keys()]), [commented, refused]);
+
+  /**
+   * Takes a whole exercise out of the session (Remove on its header).
+   *
+   * Every logged set goes through the same pending delete as a swipe -- one
+   * toast, five seconds of Undo, then removeSet per set -- so offline it
+   * behaves exactly as deleting each set by hand would. Planned rows are
+   * dropped with it and come back on Undo.
+   */
+  const removeExercise = (exerciseId: string, name: string) => {
+    const decision = planBlockRemoval(exerciseId, all, undeletable, all.at(-1)?.clientSetId ?? null);
+    if (decision.kind === "blocked") return;
+    commitDelete();
+
+    const droppedPlans = rowsOf(plans, exerciseId);
+    setPlans((prev) => prev.filter((row) => row.exerciseId !== exerciseId));
+    if (focused?.exerciseId === exerciseId) {
+      setFocusId(null);
+      closeSheets();
+    }
+    setSelectedId(null);
+    setHiddenBlocks((prev) => {
+      const ids = new Set(prev.sessionId === sessionId ? prev.ids : NO_IDS);
+      ids.add(exerciseId);
+      return { sessionId, ids };
+    });
+
+    const pending: PendingDelete = {
+      sets: decision.sets,
+      label: blockRemovalLabel(name, decision.sets),
+      restBefore: decision.clearsRest ? rest : null,
+      block: { exerciseId, plans: droppedPlans },
+    };
+    if (decision.clearsRest && rest) changeRest(null);
+
+    pendingRef.current = pending;
+    setPendingDelete(pending);
     undoTimer.current = setTimeout(commitDelete, UNDO_MS);
   };
 
@@ -674,6 +794,15 @@ export function LogScreen() {
     undoTimer.current = null;
     setPendingDelete(null);
     if (pending.restBefore) changeRest(pending.restBefore);
+    if (pending.block) {
+      const { exerciseId, plans: dropped } = pending.block;
+      setHiddenBlocks((prev) => {
+        const ids = new Set(prev.ids);
+        ids.delete(exerciseId);
+        return { ...prev, ids };
+      });
+      setPlans((prev) => [...prev, ...dropped.filter((row) => !prev.some((p) => p.clientSetId === row.clientSetId))]);
+    }
   };
 
   // A prescribed session opens on its first exercise, ready to log, so the
@@ -725,6 +854,12 @@ export function LogScreen() {
     return (
       <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
         <h1 className="m-0 text-display font-semibold">Log</h1>
+        <WeekSummaryCard
+          athleteId={athleteId}
+          sessions={trainingState.sessions}
+          sessionsLoading={trainingState.status === "loading"}
+          unit={unit}
+        />
         <EmptyState
           title="No session running"
           body="Start one and it appears here. Everything you log is yours whether a coach is watching or not."
@@ -766,6 +901,9 @@ export function LogScreen() {
     }
   }
 
+  const hidden = hiddenBlocks.sessionId === sessionId ? hiddenBlocks.ids : NO_IDS;
+  const listed = blocks.filter((block) => !hidden.has(block.id));
+
   const focusedNumber = (() => {
     if (!focused) return 1;
     const mine = rowsOf(plans, focused.exerciseId);
@@ -786,6 +924,11 @@ export function LogScreen() {
 
   /**
    * What gets the bottom of the screen. Exactly one thing does.
+   *
+   * "Add" losing to the rest no longer strands the athlete: while anything
+   * else holds the bottom, an Add exercise button at the end of the list
+   * opens the same box there (see addingInline), so a rest never has to be
+   * skipped to move on to the next lift.
    *
    * The order is by how committed the athlete already is. Mid-entry beats
    * everything. Confirming a finish beats the rest timer, which beats adding an
@@ -817,11 +960,11 @@ export function LogScreen() {
         </Button>
       </header>
 
-      {blocks.length === 0 ? (
+      {listed.length === 0 ? (
         <EmptyState title="Nothing logged yet" body="Add the first exercise and start working." />
       ) : (
         <div className="flex flex-col gap-6">
-          {blocks.map((block) => (
+          {listed.map((block) => (
             <ExerciseBlock
               key={block.id}
               name={block.name}
@@ -847,6 +990,11 @@ export function LogScreen() {
               selectedId={selectedId}
               onSelect={selectSet}
               onDelete={deleteLogged}
+              onRemove={() => removeExercise(block.id, block.name)}
+              removeBlocked={(() => {
+                const decision = planBlockRemoval(block.id, all, undeletable, null);
+                return decision.kind === "blocked" ? decision.reason : null;
+              })()}
               camera={(() => {
                 // Attaches to the most recently logged set of this exercise,
                 // per the Set Row spec. Absent until there is one, so the
@@ -890,6 +1038,43 @@ export function LogScreen() {
       )}
 
       {/*
+        Add exercise, always in reach. The box itself lives at the bottom of
+        the screen when nothing else does; while the rest timer (or the pad, or
+        the RPE sheet) holds that spot, this opens the same box here at the end
+        of the list instead, so the athlete never has to Skip a rest to move to
+        the next lift. Opened, it stays until a pick or Cancel, even if the
+        rest ends underneath it -- text half-typed must not jump.
+      */}
+      {addingInline ? (
+        <div className="flex flex-col gap-2">
+          <ExerciseTypeahead
+            exercises={library.exercises}
+            label="Add exercise"
+            placeholder="Add an exercise"
+            clearOnSelect
+            autoFocus
+            onSelect={addExercise}
+            onCreate={createExercise}
+            hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
+          />
+          <Button variant="ghost" size="sm" onClick={() => setAddingInline(false)}>
+            Cancel
+          </Button>
+        </div>
+      ) : bottom !== "add" && bottom !== "confirm" ? (
+        <Button
+          variant="secondary"
+          block
+          onClick={() => {
+            closeSheets();
+            setAddingInline(true);
+          }}
+        >
+          + Add exercise
+        </Button>
+      ) : null}
+
+      {/*
         The finish control nobody has to discover. The clock still works, but
         a tappable timer is a convention an athlete has to be told about.
         Outlined rather than filled, and spaced off the last exercise, so a
@@ -907,6 +1092,7 @@ export function LogScreen() {
           className="mt-2"
           onClick={() => {
             closeSheets();
+            setAddingInline(false);
             setPhase("confirming");
           }}
           aria-label="End session"
@@ -1014,7 +1200,7 @@ export function LogScreen() {
           />
         ) : null}
 
-        {bottom === "add" ? (
+        {bottom === "add" && !addingInline ? (
           <ExerciseTypeahead
             exercises={library.exercises}
             label="Add exercise"
