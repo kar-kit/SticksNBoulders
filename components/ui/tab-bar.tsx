@@ -28,7 +28,9 @@ export function TabBar() {
   return (
     <nav
       aria-label="Main"
-      className="pb-safe-nav grid flex-none grid-cols-4 border-t border-border bg-surface"
+      // Its own view-transition group, so a screen transition never slides or
+      // fades the tab bar with the page (docs/athlete-motion.md).
+      className="pb-safe-nav grid flex-none grid-cols-4 border-t border-border bg-surface [view-transition-name:athlete-tabbar]"
     >
       {TABS.map(({ href, label, Icon }) => {
         // Sub-routes keep their parent tab lit: /log/squat is still Log.
