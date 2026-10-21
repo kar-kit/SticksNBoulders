@@ -196,6 +196,41 @@ describe("the Program Editor grid", () => {
     expect(store.send).not.toHaveBeenCalled();
   });
 
+  it("prescribes warm-ups and a pause (v15) in their own cells, one field each", async () => {
+    const user = userEvent.setup();
+    await ready();
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers.slice(0, 6)).toEqual(["Exercise", "Warm-up", "Sets", "Reps", "Pause", "Load"]);
+    const warmup = screen.getByRole("textbox", { name: "Warm-up, line 1" });
+    expect(warmup).toHaveValue("");
+    await user.click(warmup);
+    await user.keyboard("2");
+    // Tab walks warm-up -> sets -> reps -> pause, the order the line reads.
+    await user.tab();
+    expect(screen.getByRole("textbox", { name: "Sets, line 1" })).toHaveFocus();
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l1", warmupSets: 2 }),
+    );
+    await user.click(screen.getByRole("textbox", { name: "Pause, line 1" }));
+    await user.keyboard("2 sec");
+    await user.tab();
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "updatePrescription", prescriptionId: "l1", pauseSeconds: 2 }),
+    );
+    expect(screen.getByRole("textbox", { name: "Load, line 1" })).toHaveFocus();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Pause, line 1" })).toHaveValue("2s"));
+  });
+
+  it("refuses a tempo string in the pause cell, sending nothing", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("textbox", { name: "Pause, line 1" }));
+    await user.keyboard("3-0-0");
+    await user.tab();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Pause is whole seconds");
+    expect(store.send).not.toHaveBeenCalled();
+  });
+
   it("flags a line video-required from the keyboard, sending only that field", async () => {
     const user = userEvent.setup();
     await ready();
@@ -1329,6 +1364,7 @@ describe("motion", () => {
       await user.clear(sets);
       await user.type(sets, "4");
       await user.tab(); // reps
+      await user.tab(); // pause
       await user.tab(); // load
       await user.keyboard("75%");
       await user.tab(); // rest

@@ -26,9 +26,22 @@ import { rankExercises, type Exercise } from "@/lib/exercises/match";
 
 /**
  * The grid's editable columns, left to right. Backoff (Order 21) is a typed
- * rule; `video` (Order 30) is a toggle, not a typed cell.
+ * rule; `video` (Order 30) is a toggle, not a typed cell. `warmup` and
+ * `pause` (v15) sit where the line reads them: "2 warm-up, then 3 x 5 with a
+ * 2s pause at 75%".
  */
-export const COLUMNS = ["exercise", "sets", "reps", "load", "rest", "notes", "backoff", "video"] as const;
+export const COLUMNS = [
+  "exercise",
+  "warmup",
+  "sets",
+  "reps",
+  "pause",
+  "load",
+  "rest",
+  "notes",
+  "backoff",
+  "video",
+] as const;
 export type Column = (typeof COLUMNS)[number];
 
 /* -------------------------------------------------------------------------
@@ -341,6 +354,29 @@ export function formatRestCell(seconds: number | null): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+/** Warm-up sets: a whole number, 0 to 10, or empty for none prescribed. */
+export function parseWarmupCell(text: string): Parsed<number | null> {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: true, value: null };
+  const value = /^\d{1,2}$/.test(trimmed) ? Number(trimmed) : NaN;
+  if (!Number.isInteger(value) || value > 10) return { ok: false, reason: "Warm-up is a number of sets, 0 to 10" };
+  return { ok: true, value };
+}
+
+/** `2`, `2s`, `2 sec`, `2 seconds`, or empty for no pause. Whole seconds, up to 10. */
+export function parsePauseCell(text: string): Parsed<number | null> {
+  const trimmed = text.trim().toLowerCase();
+  if (!trimmed) return { ok: true, value: null };
+  const match = /^(\d{1,2})\s*(?:s|sec|secs|seconds?)?$/.exec(trimmed);
+  const value = match ? Number(match[1]) : NaN;
+  if (!Number.isInteger(value) || value > 10) return { ok: false, reason: "Pause is whole seconds, like 2 or 2s -- up to 10" };
+  return { ok: true, value };
+}
+
+export function formatPauseCell(seconds: number | null | undefined): string {
+  return seconds == null ? "" : `${seconds}s`;
+}
+
 /* -------------------------------------------------------------------------
  * Shorthand: `5x3 @8` fills sets, reps and load at once
  * ---------------------------------------------------------------------- */
@@ -450,10 +486,14 @@ export function commitProgression(
 /** A cell's text as the grid shows it. The exercise column is named by the caller. */
 export function cellText(line: Prescription, column: Exclude<Column, "exercise">): string {
   switch (column) {
+    case "warmup":
+      return line.warmupSets == null ? "" : String(line.warmupSets);
     case "sets":
       return String(line.setCount);
     case "reps":
       return formatRepsCell(line.reps, line.repMax);
+    case "pause":
+      return formatPauseCell(line.pauseSeconds);
     case "load":
       return line.load ?? "";
     case "rest":
@@ -501,6 +541,17 @@ export function commitCell(
     if (shorthand) return shorthandOp(line, shorthand.value, library);
   }
   switch (column) {
+    case "warmup": {
+      const parsed = parseWarmupCell(text);
+      if (!parsed.ok) return { error: parsed.reason };
+      return parsed.value === (line.warmupSets ?? null) ? { unchanged: true } : { op: { ...base, warmupSets: parsed.value } };
+    }
+    case "pause": {
+      // `2` over a stored 2 (shown `2s`) is not an edit.
+      const parsed = parsePauseCell(text);
+      if (!parsed.ok) return { error: parsed.reason };
+      return parsed.value === (line.pauseSeconds ?? null) ? { unchanged: true } : { op: { ...base, pauseSeconds: parsed.value } };
+    }
     case "sets": {
       const parsed = parseSetsCell(text);
       return parsed.ok ? { op: { ...base, setCount: parsed.value } } : { error: parsed.reason };
@@ -563,6 +614,8 @@ export function applyLineOp(line: Prescription, op: ProgramOpInput): Prescriptio
     videoRequired: op.videoRequired ?? line.videoRequired ?? false,
     referenceExerciseId:
       op.referenceExerciseId === undefined ? (line.referenceExerciseId ?? null) : op.referenceExerciseId,
+    warmupSets: op.warmupSets === undefined ? (line.warmupSets ?? null) : op.warmupSets,
+    pauseSeconds: op.pauseSeconds === undefined ? (line.pauseSeconds ?? null) : op.pauseSeconds,
   };
 }
 

@@ -217,6 +217,31 @@ built.
 - **Video required (30), built:** see below.
 - **My Program (23) is built**, see below.
 - **Reference lift, built:** see Variations above and `docs/reference-lift.md`.
+- **Warm-up sets and pause seconds (v15), built:** see below.
+
+## Warm-up sets and pause seconds (v15)
+
+From athletes following a coach's program (Oct 2026): the coach could not
+prescribe warm-ups, and the athlete could not see how long to pause on a paused
+rep. Two nullable integers on `prescriptions`, both 0 to 10, no default, no
+index:
+
+- `warmup_sets` -- warm-ups asked for before the working sets. A count only:
+  no loads, and not part of `set_count`, which stays working sets.
+- `pause_seconds` -- seconds to pause on each rep. Joey approved it as a
+  structured field, deliberately narrowing Order 18's "no tempo fields"
+  (`lib/exercises/seed.ts`): pause only, variations like Pause Squat stay
+  separate exercises, and there is still no tempo system.
+
+They are the grid's `Warm-up` (before Sets) and `Pause` (after Reps) columns,
+each a one-field `updatePrescription` like every other cell; the pause cell
+takes `2`, `2s` or `2 sec`. `copyWeekPlan` carries them, and `copyPrescription`
+copies them through `lineContent` untouched. The athlete reads them in
+`lineSummaries` -- "3 × 5 · 2s pause · 152.5 kg (75%) · +2 warm-up" -- on Log
+Session, Today, My Program and the coach's Athlete View. Display only: the
+logger's rows and the snapshot stored on a set (so the CSV's Prescription
+column) are unchanged. A line written with neither writes the row it did
+before v15, so only setting one needs the columns to exist.
 
 ## Video required (Order 30)
 

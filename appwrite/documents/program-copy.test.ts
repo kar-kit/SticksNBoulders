@@ -340,6 +340,22 @@ describe("a copied line carries every column, including ones added later", () =>
     expect(squats.map((r) => r.video_required)).toEqual([false, false]);
   });
 
+  it("carries v15's warm-up sets and pause seconds through both copies, set through the op", async () => {
+    const h = harness();
+    const p = await joeysProgram(h);
+    await h.ok(COACH, { op: "updatePrescription", prescriptionId: p.squat, warmupSets: 2, pauseSeconds: 3 });
+    const copyId = await h.ok(COACH, { op: "copyProgram", programId: p.programId, athleteId: ANDREA });
+    const weekId = await h.ok(COACH, { op: "duplicateWeek", weekId: p.week1 });
+    const copies = [...h.tableOf("prescriptions").values()].filter(
+      (r) => (r.program_id === copyId || r.week_id === weekId) && r.exercise_id === "ex-squat",
+    );
+    expect(copies).toHaveLength(2);
+    expect(copies.map((r) => [r.warmup_sets, r.pause_seconds])).toEqual([
+      [2, 3],
+      [2, 3],
+    ]);
+  });
+
   it("copies an unknown column (say, Order 21's backoff rule) without being told about it", async () => {
     const h = harness();
     const p = await joeysProgram(h);

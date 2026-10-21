@@ -384,9 +384,33 @@ describe("the program tables (Order 19)", () => {
   });
 });
 
+describe("prescribed warm-ups and pause seconds (v15)", () => {
+  it("are two nullable integers with no default, so applying them rewrites no line", () => {
+    expect(schema.version).toBe(15);
+    const columns = table("prescriptions").columns;
+    expect(columns.find((c) => c.key === "warmup_sets")).toEqual({
+      key: "warmup_sets",
+      type: "integer",
+      required: false,
+      min: 0,
+      max: 10,
+    });
+    expect(columns.find((c) => c.key === "pause_seconds")).toEqual({
+      key: "pause_seconds",
+      type: "integer",
+      required: false,
+      min: 0,
+      max: 10,
+    });
+    const indexed = table("prescriptions").indexes.flatMap((i) => i.columns);
+    expect(indexed).not.toContain("warmup_sets");
+    expect(indexed).not.toContain("pause_seconds");
+  });
+});
+
 describe("session names (v14)", () => {
   it("are one nullable string with no default, so applying it rewrites no session", () => {
-    expect(schema.version).toBe(14);
+    expect(schema.version).toBeGreaterThanOrEqual(14);
     expect(table("sessions").columns.find((c) => c.key === "name")).toEqual({
       key: "name",
       type: "string",
