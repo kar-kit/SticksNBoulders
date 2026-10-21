@@ -20,14 +20,17 @@ import { resolveOrCreateExercise } from "@/lib/exercises/library";
 import type { Exercise } from "@/lib/exercises/match";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSessionSets, type UnnamedSet } from "@/lib/logging/session-store";
-import { logSet, newClientSetId, removeSet } from "@/lib/logging/set-store";
+import { editSet, logSet, newClientSetId, removeSet } from "@/lib/logging/set-store";
 import {
   deletedIds,
   lostOps,
   mergeById,
+  queuedSetEdits,
   queuedSets,
   refusedDeletes,
   unsyncedIds,
+  withSetEdits,
+  type SetValues,
 } from "@/lib/logging/offline-view";
 import { dismissFailed, subscribeToQueue } from "@/lib/offline/client";
 import type { QueuedOp } from "@/lib/offline/queue";
@@ -181,6 +184,8 @@ export function LogScreen() {
   /** The logged set whose Delete is showing. */
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  /** Warm-up flips made on this page, over whatever the server or queue last said. */
+  const [edits, setEdits] = useState<ReadonlyMap<string, SetValues>>(() => new Map());
   /** Deleted on this page, whether or not the delete has reached Appwrite. */
   const [deleted, setDeleted] = useState<ReadonlySet<string>>(() => new Set());
   /** Who has commented on which of this session's sets. */
@@ -354,8 +359,17 @@ export function LogScreen() {
     })();
   }, [sessionId, queued]);
 
-  /** Every set this page knows of, deleted or not. What set_index counts from. */
-  const everything = useMemo(() => mergeById(stored, local, (s) => s.clientSetId), [stored, local]);
+  /** As read or logged, before any edit. Where a flipped-back set finds its RPE. */
+  const asLogged = useMemo(() => mergeById(stored, local, (s) => s.clientSetId), [stored, local]);
+  /**
+   * Every set this page knows of, deleted or not. What set_index counts from.
+   * Edits still in the queue go over it (a reload with no signal), then this
+   * page's own, so a flip shows before the queue has announced it.
+   */
+  const everything = useMemo(
+    () => withSetEdits(withSetEdits(asLogged, queuedSetEdits(ops)), edits),
+    [asLogged, ops, edits],
+  );
 
   /** Everything logged this session, whether Appwrite has heard of it or not. */
   const all = useMemo(
@@ -564,6 +578,48 @@ export function LogScreen() {
   const toggleWarmup = (isWarmup: boolean) => {
     updateFocused((row) => ({ ...row, isWarmup, rpe: rpeAfterWarmupChange(isWarmup, row.rpe) }));
     if (isWarmup) setRpeOpen(false);
+  };
+
+  /**
+   * The set number's tap: warm-up or working, on any row (Set Row, F2).
+   *
+   * A row not logged yet just changes in place, the same as the pad's switch.
+   * A logged set is corrected through `editSet`, History's path: queued, so it
+   * is instant with no signal and lands behind the set's own create, and the
+   * week's rollup refreshes behind it. Targets and numbering count working
+   * sets from these same lists, so both follow the flip.
+   */
+  const toggleWarmupOf = (rowId: string) => {
+    if (plans.some((row) => row.clientSetId === rowId)) {
+      setPlans((prev) =>
+        prev.map((row) =>
+          row.clientSetId === rowId
+            ? { ...row, isWarmup: !row.isWarmup, rpe: rpeAfterWarmupChange(!row.isWarmup, row.rpe) }
+            : row,
+        ),
+      );
+      if (focusId === rowId) setRpeOpen(false);
+      return;
+    }
+    const set = all.find((s) => s.clientSetId === rowId);
+    // Still on its way to the phone's storage: an edit queued now could
+    // outlive a create that fails.
+    if (!set || saving.has(rowId)) return;
+    const isWarmup = !set.isWarmup;
+    // A warm-up carries no RPE. Flipped back on this page, it gets its RPE back.
+    const rpe = isWarmup ? null : (asLogged.find((s) => s.clientSetId === rowId)?.rpe ?? null);
+    const edit: SetValues = { loadKg: set.loadKg, reps: set.reps, rpe, isWarmup };
+    const before = edits.get(rowId);
+    setEdits((prev) => new Map(prev).set(rowId, edit));
+    void editSet(rowId, { ...edit, rpe: rpe as RpeValue | null }, set).catch(() => {
+      // Not written to the phone, so not flipped: put the row back.
+      setEdits((prev) => {
+        const next = new Map(prev);
+        if (before) next.set(rowId, before);
+        else next.delete(rowId);
+        return next;
+      });
+    });
   };
 
   const confirmSet = async (rowId: string) => {
@@ -1037,6 +1093,7 @@ export function LogScreen() {
                 onFocus={focusField}
                 onConfirm={(id) => void confirmSet(id)}
                 onDiscard={discardPlanned}
+                onToggleWarmup={toggleWarmupOf}
                 onAddSet={() => addSet(block.id)}
                 onActivate={() => activate(block.id)}
                 selectedId={selectedId}

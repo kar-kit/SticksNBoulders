@@ -49,6 +49,15 @@ const logSet = vi.hoisted(() => vi.fn<(input: Record<string, unknown>) => Promis
 const removeSet = vi.hoisted(() =>
   vi.fn<(clientSetId: string, set?: { exerciseId: string; loggedAt: Date }) => Promise<{ queued: boolean }>>(),
 );
+const editSet = vi.hoisted(() =>
+  vi.fn<
+    (
+      clientSetId: string,
+      edit: { loadKg: number; reps: number; rpe: number | null; isWarmup: boolean },
+      set: { exerciseId: string; loggedAt: Date },
+    ) => Promise<void>
+  >(),
+);
 let clientIds = 0;
 // The real module is kept to hand so the tests at the bottom can follow a set
 // past the screen into the queue; everything else talks to the mocks.
@@ -57,6 +66,7 @@ vi.mock("@/lib/logging/set-store", async (importOriginal) => {
   realSetStore.value = await importOriginal<typeof import("@/lib/logging/set-store")>();
   return {
     logSet,
+    editSet,
     removeSet,
     newClientSetId: () => `cs-${++clientIds}`,
   };
@@ -179,6 +189,7 @@ beforeEach(() => {
   // promise -- the screen awaits both.
   logSet.mockResolvedValue(undefined);
   removeSet.mockResolvedValue({ queued: true });
+  editSet.mockResolvedValue(undefined);
   library.exercises = [squat];
   storedSets.value = [];
   storedSets.fail = 0;
@@ -1459,6 +1470,7 @@ function useRealQueue(store: QueueStore = createMemoryStore()): QueueStore {
   resetQueueForTests(store);
   logSet.mockImplementation((input) => realSetStore.value.logSet(input as never).then(() => undefined));
   removeSet.mockImplementation((id, set) => realSetStore.value.removeSet(id, set));
+  editSet.mockImplementation((id, edit, set) => realSetStore.value.editSet(id, edit as never, set));
   onTestFinished(() => resetQueueForTests());
   return store;
 }
@@ -2131,5 +2143,146 @@ describe("the keypad sheet", () => {
       await openPad(user);
       expect(scrollBy).toHaveBeenLastCalledWith({ top: 304, behavior: "auto" });
     });
+  });
+});
+
+describe("the set number flips warm-up (Set Row, F2)", () => {
+  const addSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+  };
+
+  it("flips a logged set through History's edit path, and renumbers the rest", async () => {
+    storedSets.value = [logged("a", 60, 30, { rpe: 6 }), logged("b", 140, 20, { rpe: 8 })];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+
+    await user.click(screen.getByRole("button", { name: "Set 1: mark as warm-up" }));
+
+    expect(editSet).toHaveBeenCalledTimes(1);
+    expect(editSet.mock.calls[0][0]).toBe("a");
+    // A warm-up carries no RPE, so the stored e1RM goes with it.
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 60, reps: 5, rpe: null, isWarmup: true });
+    expect(editSet.mock.calls[0][2]).toMatchObject({ exerciseId: "squat" });
+    expect(screen.getByRole("group", { name: "Warm-up set" })).toHaveTextContent("60");
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
+    expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
+  });
+
+  it("gives a set flipped back on this page its RPE back", async () => {
+    storedSets.value = [logged("a", 140, 20, { rpe: 8 })];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 1" });
+    await user.click(screen.getByRole("button", { name: "Set 1: mark as warm-up" }));
+    expect(screen.getByLabelText("Warm-up set RPE")).toHaveTextContent("—");
+
+    await user.click(screen.getByRole("button", { name: "Warm-up set: make it a working set" }));
+    expect(editSet.mock.calls[1][1]).toEqual({ loadKg: 140, reps: 5, rpe: 8, isWarmup: false });
+    expect(screen.getByLabelText("Set 1 RPE")).toHaveTextContent("8");
+  });
+
+  it("puts the row back when the phone could not store the flip", async () => {
+    storedSets.value = [logged("a", 140, 20)];
+    editSet.mockRejectedValueOnce(new Error("QuotaExceededError"));
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 1" });
+    await user.click(screen.getByRole("button", { name: "Set 1: mark as warm-up" }));
+    expect(await screen.findByRole("group", { name: "Set 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Warm-up set" })).not.toBeInTheDocument();
+  });
+
+  it("flips a row not logged yet in place, and it logs as a warm-up", async () => {
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Set 1: mark as warm-up" }));
+    expect(screen.getByRole("group", { name: "Warm-up set" })).toBeInTheDocument();
+    // Nothing logged, so nothing to edit.
+    expect(editSet).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Warm-up set weight in kilograms" }));
+    for (const key of "60") await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "5" }));
+    await user.click(screen.getByRole("button", { name: "Log Warm-up set" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ isWarmup: true, loadKg: 60, reps: 5 });
+  });
+
+  it("moves the coach's next target back when a logged working set becomes a warm-up", async () => {
+    library.exercises = [squat];
+    prescribed.value = {
+      status: "ready",
+      day: {
+        program: { id: "p1" },
+        week: { id: "w1" },
+        day: { id: "d1", label: "Day 1", notes: null },
+        prescriptions: [
+          {
+            id: "sq", exerciseId: "squat", position: 0, setCount: 2, reps: 5, load: "75%",
+            programId: "p1", weekId: "w1", dayId: "d1", repMax: null, restSeconds: null, notes: null,
+            loadKind: null, updatedAt: "2026-10-01T00:00:00Z",
+          },
+        ],
+      },
+      maxes: {
+        entries: [
+          { id: "m1", exerciseId: "squat", kind: "training", valueKg: 200, effectiveFrom: "2026-01-01T00:00:00Z", recordedBy: "coach" },
+        ],
+        estimated: new Map(),
+      },
+    };
+    storedSets.value = [logged("a", 150, 20, { setIndex: 1 })];
+    const { user } = setup({ active: session({ programDayId: "d1" }) });
+    const prescribedList = await screen.findByRole("list", { name: "Squat prescribed" });
+    expect(prescribedList).toHaveTextContent("Next: Set 2 of 2");
+
+    await user.click(screen.getByRole("button", { name: "Set 1: mark as warm-up" }));
+    expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent("Next: Set 1 of 2");
+  });
+
+  it("removes a planned row with a swipe, the × gone", async () => {
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    expect(screen.queryByText("×")).not.toBeInTheDocument();
+    const second = screen.getByRole("group", { name: "Set 2" });
+    fireEvent.pointerDown(second, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(second, { clientX: 150, clientY: 10 });
+    fireEvent.pointerUp(second);
+    expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Set 1" })).toBeInTheDocument();
+  });
+
+  it("queues the flip behind the set's own create, and a reload with no signal still shows it", async () => {
+    const store = useRealQueue();
+    const { user, unmount } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+    for (const key of "60") await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "5" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(async () => expect(await setCreates(store)).toHaveLength(1));
+    await screen.findByRole("button", { name: "Set 1: mark as warm-up" });
+    // Wait out the write reaching the phone (logSet queues the rollup refresh
+    // last): a flip is refused until then.
+    await waitFor(async () => expect((await store.all()).some((op) => op.kind === "rollup.refresh")).toBe(true));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await user.click(screen.getByRole("button", { name: "Set 1: mark as warm-up" }));
+
+    await waitFor(async () => {
+      const ops = (await store.all()).sort((a, b) => a.sequence - b.sequence);
+      const create = ops.find((op) => op.kind === "set.create");
+      const edit = ops.find((op) => op.kind === "set.update");
+      expect(edit?.payload).toMatchObject({ setId: create?.payload.setId, isWarmup: true, rpe: null });
+      expect(edit!.sequence).toBeGreaterThan(create!.sequence);
+    });
+
+    // The reload: the create still says working; the queued edit wins.
+    unmount();
+    setup({ active: session() });
+    expect(await screen.findByRole("group", { name: "Warm-up set" })).toHaveTextContent("60");
   });
 });

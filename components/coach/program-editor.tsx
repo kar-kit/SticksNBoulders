@@ -105,8 +105,9 @@ import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/progra
  *
  * On a phone (below md) the same tree restacks: the outline above the week,
  * the context drawer under it, and each grid row as a small card -- exercise,
- * then sets and reps, then load with its kilos, then rest and note. Ruairi
- * does edit from his phone (October 2026), so it stays fully editable there.
+ * then warm-up, sets, reps and pause, then load with its kilos, then rest
+ * and note. Ruairi does edit from his phone (October 2026), so it stays
+ * fully editable there.
  *
  * Motion (docs/coach-motion.md) says what just happened and nothing more: a
  * view or week arriving, a line, day or week added or going, a cell saved or
@@ -123,8 +124,10 @@ type Load =
 
 const COLUMN_LABEL: Record<Column, string> = {
   exercise: "Exercise",
+  warmup: "Warm-up",
   sets: "Sets",
   reps: "Reps",
+  pause: "Pause",
   load: "Load",
   rest: "Rest",
   notes: "Note",
@@ -135,7 +138,7 @@ const COLUMN_LABEL: Record<Column, string> = {
 const STATE_WORD = { draft: "Draft", live: "Live", logged: "Logged" } as const;
 
 /**
- * A grid cell below md: a block in its row's six-column card, with its column
+ * A grid cell below md: a block in its row's twelve-column card, with its column
  * name drawn above it from `data-label` (CSS content, so no second text node
  * for tests or screen readers -- the input already has its aria-label).
  */
@@ -143,18 +146,22 @@ const PHONE_CELL =
   "max-md:before:mb-1 max-md:before:block max-md:before:font-mono max-md:before:text-label max-md:before:text-muted-2 max-md:before:uppercase max-md:before:content-[attr(data-label)]";
 
 /**
- * Columns each cell spans in the phone card: sets | reps, load alone (its
- * kilos line needs the width), rest | note, backoff | video. The exercise
- * takes five of the first row and remove the sixth.
+ * Columns each cell spans in the twelve-column phone card: warm-up | sets |
+ * reps | pause (four small numbers), load alone (its kilos line needs the
+ * width), rest | note, backoff | video. The exercise takes ten of the first
+ * row and remove the last two. Twelve rather than six so the four numbers
+ * share one row: the card is no taller than before v15 added two of them.
  */
 const PHONE_SPAN: Record<Exclude<Column, "exercise">, string> = {
+  warmup: "col-span-3",
   sets: "col-span-3",
   reps: "col-span-3",
-  load: "col-span-6",
-  rest: "col-span-2",
-  notes: "col-span-4",
-  backoff: "col-span-4",
-  video: "col-span-2",
+  pause: "col-span-3",
+  load: "col-span-12",
+  rest: "col-span-4",
+  notes: "col-span-8",
+  backoff: "col-span-8",
+  video: "col-span-4",
 };
 
 const VIEWS = [
@@ -1202,6 +1209,8 @@ function DayEditor({
       backoff: null,
       videoRequired: videoRequired ?? false,
       referenceExerciseId: referenceExerciseId ?? null,
+      warmupSets: null,
+      pauseSeconds: null,
       updatedAt: "",
     };
     setPending((prev) => [...prev, { key, line: placeholder, status: "saving" }]);
@@ -1355,11 +1364,11 @@ function DayEditor({
       ) : null}
 
       {/* md and up, a sheet that scrolls sideways when it must. Below md each
-          row is a six-column grid card instead (PHONE_CELL), headers hidden
+          row is a twelve-column grid card instead (PHONE_CELL), headers hidden
           and each cell carrying its own label; the cells keep their order, so
           Tab, the arrows and data-cell all work as on desktop. */}
       <div className="md:overflow-x-auto">
-      <table className="block w-full border-collapse text-ui md:table md:min-w-[46rem]">
+      <table className="block w-full border-collapse text-ui md:table md:min-w-[54rem]">
         <thead className="max-md:hidden">
           <tr className="text-left font-mono text-label uppercase text-muted-2">
             {COLUMNS.map((column) => (
@@ -1396,13 +1405,13 @@ function DayEditor({
                 }}
                 className={cn(
                   "align-top",
-                  "max-md:grid max-md:grid-cols-6 max-md:gap-x-2 max-md:gap-y-2 max-md:border-t max-md:border-border max-md:py-3 max-md:first:border-t-0 max-md:first:pt-0",
+                  "max-md:grid max-md:grid-cols-12 max-md:gap-x-2 max-md:gap-y-2 max-md:border-t max-md:border-border max-md:py-3 max-md:first:border-t-0 max-md:first:pt-0",
                   // Rows fade rather than slide: a table row is the one
                   // box a transform does not reliably move.
                   out ? "pointer-events-none animate-row-out" : lineArrived(rowKey) && "animate-fade-in",
                 )}
               >
-                <td className="flash-host col-span-5 px-0 md:w-48 md:px-1 md:py-0.5">
+                <td className="flash-host col-span-10 px-0 md:w-48 md:px-1 md:py-0.5">
                   {swapping === line.id ? (
                     // Escape with the list already shut, or leaving the field,
                     // backs out of the swap with the line as it was; picking
@@ -1472,7 +1481,9 @@ function DayEditor({
                         "flash-host px-0 md:px-1 md:py-0.5",
                         PHONE_CELL,
                         PHONE_SPAN[column as Exclude<Column, "exercise">],
-                        column === "sets" || column === "reps" || column === "rest" ? "md:w-16" : "",
+                        column === "warmup" || column === "sets" || column === "reps" || column === "pause" || column === "rest"
+                          ? "md:w-16"
+                          : "",
                         // Wide enough for "→ 142.5 kg · Squat training max 190, set 12 Sep" on two lines.
                         column === "load" ? "md:w-64" : "",
                         column === "backoff" ? "md:w-36" : "",
@@ -1552,7 +1563,7 @@ function DayEditor({
                   );
                 })}
                 {/* Phone: top right of the card, beside the exercise. */}
-                <td className="flash-host col-start-6 row-start-1 px-0 text-right md:w-10 md:px-1 md:py-0.5">
+                <td className="flash-host col-span-2 col-start-11 row-start-1 px-0 text-right md:w-10 md:px-1 md:py-0.5">
                   {editable ? (
                     <button
                       type="button"

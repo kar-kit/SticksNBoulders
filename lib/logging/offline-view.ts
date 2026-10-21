@@ -121,6 +121,52 @@ export function queuedSets(ops: readonly QueuedOp[], sessionId: string): Unnamed
     .filter((set) => set !== null);
 }
 
+/** A logged set's values as an edit leaves them. The shape `editSet` queues. */
+export interface SetValues {
+  loadKg: number;
+  reps: number;
+  rpe: number | null;
+  isWarmup: boolean;
+}
+
+/**
+ * Sets with edits laid over them, keyed by client set id. With no edits the
+ * list itself comes back, and sets without one come back as they were, so a
+ * memo downstream stays put.
+ */
+export function withSetEdits<T extends { clientSetId: string } & SetValues>(
+  sets: readonly T[],
+  edits: ReadonlyMap<string, SetValues>,
+): readonly T[] {
+  if (edits.size === 0) return sets;
+  return sets.map((set) => {
+    const edit = edits.get(set.clientSetId);
+    return edit ? { ...set, ...edit } : set;
+  });
+}
+
+/**
+ * Corrections queued and not yet at Appwrite, latest per set: the warm-up
+ * flag flipped in the logger, a set corrected in History. A reload with no
+ * signal reads the set from its queued create (or the server's last copy),
+ * which predates the edit; this is what puts the edit back on screen.
+ */
+export function queuedSetEdits(ops: readonly QueuedOp[]): Map<string, SetValues> {
+  const edits = new Map<string, SetValues>();
+  for (const op of pendingOps(ops)) {
+    if (op.kind !== "set.update") continue;
+    const id = str(op.payload.setId);
+    if (!id) continue;
+    edits.set(id, {
+      loadKg: num(op.payload.loadKg),
+      reps: num(op.payload.reps),
+      rpe: typeof op.payload.rpe === "number" ? op.payload.rpe : null,
+      isWarmup: op.payload.isWarmup === true,
+    });
+  }
+  return edits;
+}
+
 /** Sets undone on the device whose delete has not reached Appwrite yet. */
 export function deletedIds(ops: readonly QueuedOp[]): Set<string> {
   return new Set(

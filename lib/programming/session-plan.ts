@@ -331,7 +331,8 @@ function topSet(logged: readonly SetForEstimate[]): SetTarget["anchor"] {
  * every prescribed set is done. Extra sets beyond the prescription are the
  * athlete's own and get no target -- they fall back to repeating the last set.
  *
- * Counted by working sets: warm-ups are never prescribed here, and "set 1" means
+ * Counted by working sets: warm-ups never get a target here (a line's
+ * `warmupSets` is a count shown in its summary, not rows), and "set 1" means
  * the first working set to the athlete and the coach alike.
  */
 export function nextTarget(
@@ -344,7 +345,14 @@ export function nextTarget(
 
 /**
  * One line per prescription, as the athlete reads it above the set rows and
- * on Today's card: "3 × 5 · 152.5 kg (75%)".
+ * on Today's card: "3 × 5 · 152.5 kg (75%)", and with v15's two fields
+ * "3 × 5 · 2s pause · 152.5 kg (75%) · +2 warm-up".
+ *
+ * The pause sits beside the reps it applies to; the warm-up count follows the
+ * line's own sets, before any backoff, because the warm-ups lead into the top
+ * set and are not part of the working sets the rest of the line describes.
+ * Zero of either reads as none. Display only: the rows the logger builds and
+ * the snapshot stored on a set are untouched.
  *
  * Priced from the line's first set, which for a percentage line is the price
  * every set of it shares -- they resolve against the same max.
@@ -354,10 +362,12 @@ export function lineSummaries(exercise: PlannedExercise, targets: readonly SetTa
     const first = targets.find((t) => t.prescriptionId === line.id && !t.backoff);
     const reps = repsLabel(line.reps, line.repMax);
     const head = `${line.setCount} × ${reps || "—"}`;
+    const pause = line.pauseSeconds ? ` · ${line.pauseSeconds}s pause` : "";
     const load = first?.display ? ` · ${first.display}` : "";
     const why = first?.synced && first.anchor ? " (from today's top set)" : "";
+    const warmup = line.warmupSets ? ` · +${line.warmupSets} warm-up` : "";
     const note = line.notes ? ` — ${line.notes}` : "";
-    return `${head}${load}${why}${backoffSummary(line, targets)}${note}`;
+    return `${head}${pause}${load}${why}${warmup}${backoffSummary(line, targets)}${note}`;
   });
 }
 

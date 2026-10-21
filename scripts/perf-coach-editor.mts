@@ -223,9 +223,11 @@ try {
     report[`typing ${rate}x`] = await measure(page, cdp, async () => {
       for (let row = 0; row < 3; row++) {
         await day1.getByLabel(`Sets, line ${row + 1}`, { exact: true }).click();
-        for (const value of [`${3 + pass}`, `${5 + pass}`, `${70 + pass * 2.5}%`, `${150 + pass * 30}`]) {
+        // Sets, reps, pause (v15, walked past untouched so the writes per row
+        // stay what they were), load, rest.
+        for (const value of [`${3 + pass}`, `${5 + pass}`, "", `${70 + pass * 2.5}%`, `${150 + pass * 30}`]) {
           await page.keyboard.press("ControlOrMeta+a");
-          await page.keyboard.type(value, { delay: 40 });
+          if (value) await page.keyboard.type(value, { delay: 40 });
           await page.keyboard.press("Tab");
         }
       }

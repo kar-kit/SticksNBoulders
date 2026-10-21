@@ -172,6 +172,41 @@ describe("what the athlete reads above the rows", () => {
     expect(lineSummaries(plan, synced)[1]).toMatch(/\(from today's top set\)/);
   });
 
+  it("shows a prescribed pause beside the reps and warm-ups after the line's sets (v15)", () => {
+    const plan = planDay([
+      line({ setCount: 3, load: "75%", pauseSeconds: 2, warmupSets: 2, notes: "belt on" }),
+      line({ setCount: 3, load: "75%", pauseSeconds: 3 }),
+      line({ setCount: 1, load: "@8", warmupSets: 1 }),
+      line({ setCount: 3, reps: null, load: null, pauseSeconds: 2 }),
+    ])[0];
+    expect(lineSummaries(plan, targetsFor(plan, { training: 200 }))).toEqual([
+      "3 × 5 · 2s pause · 150 kg (75%) · +2 warm-up — belt on",
+      "3 × 5 · 3s pause · 150 kg (75%)",
+      "1 × 5 · RPE 8 · +1 warm-up",
+      "3 × — · 2s pause",
+    ]);
+  });
+
+  it("reads zero warm-ups and a zero pause as none", () => {
+    const plan = planDay([line({ setCount: 3, load: "75%", pauseSeconds: 0, warmupSets: 0 })])[0];
+    expect(lineSummaries(plan, targetsFor(plan, { training: 200 }))).toEqual(["3 × 5 · 150 kg (75%)"]);
+  });
+
+  it("puts warm-ups with the top set, before a backoff", () => {
+    const plan = planDay([line({ setCount: 1, reps: 3, load: "@8", backoff: "3 x 90%", warmupSets: 3, pauseSeconds: 2 })])[0];
+    expect(lineSummaries(plan, targetsFor(plan, {}))).toEqual([
+      "1 × 3 · 2s pause · RPE 8 · +3 warm-up, then 3 × 3 · 90% of top set",
+    ]);
+  });
+
+  it("leaves the targets and their snapshots alone: warm-ups and pause are display only", () => {
+    const plain = planDay([line({ setCount: 3, load: "75%" })])[0];
+    const marked = planDay([line({ setCount: 3, load: "75%", warmupSets: 2, pauseSeconds: 2 })])[0];
+    const strip = (targets: ReturnType<typeof targetsFor>) => targets.map((t) => ({ ...t, prescriptionId: "" }));
+    expect(strip(targetsFor(marked, { training: 200 }))).toEqual(strip(targetsFor(plain, { training: 200 })));
+    expect(targetsFor(marked, { training: 200 })).toHaveLength(3);
+  });
+
   it("labels reps as a count, a range, or nothing", () => {
     expect(repsLabel(5, null)).toBe("5");
     expect(repsLabel(8, 10)).toBe("8–10");

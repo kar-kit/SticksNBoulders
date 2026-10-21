@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 14,
+  version: 15,
   tables: [
     {
       id: "profiles",
@@ -513,6 +513,17 @@ export const schema: DatabaseSpec = {
         // remapped into the target's library like exercise_id. No index --
         // nothing queries by it. docs/reference-lift.md.
         { key: "reference_exercise_id", type: "string", size: 36, required: false },
+        // v15, from athletes following a coach's program (Oct 2026). Warm-up
+        // sets the coach asks for before the working sets: a count only, no
+        // loads -- the athlete still picks their own ramp. Not part of
+        // set_count, which stays working sets. Null means none prescribed,
+        // which is every row written before v15, so no backfill.
+        { key: "warmup_sets", type: "integer", required: false, min: 0, max: 10 },
+        // v15. Seconds to pause on a paused rep. Pause seconds only -- a
+        // variation like "Pause Squat" is still its own exercise, and there is
+        // still no general tempo system (lib/exercises/seed.ts). Null means no
+        // pause prescribed. Copied with the line by the lineContent deny-list.
+        { key: "pause_seconds", type: "integer", required: false, min: 0, max: 10 },
         { key: "updated_at", type: "datetime", required: true },
       ],
       indexes: [

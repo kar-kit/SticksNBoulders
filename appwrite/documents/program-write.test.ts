@@ -117,6 +117,46 @@ describe("a line's reference lift (docs/reference-lift.md §5)", () => {
   });
 });
 
+describe("warm-up sets and pause seconds (v15)", () => {
+  const line = { weekId: "w1", dayId: "d1", exerciseId: "pause-squat", position: 0, setCount: 3, reps: 5 };
+
+  it("writes the columns on create only when set, so a line with neither is the row it was before v15", async () => {
+    const { calls, deps } = harness();
+    await createPrescription(deps, scope, { ...line, warmupSets: 2, pauseSeconds: 3 });
+    await createPrescription(deps, scope, line);
+    await createPrescription(deps, scope, { ...line, warmupSets: null, pauseSeconds: null });
+    await createPrescription(deps, scope, { ...line, warmupSets: 0, pauseSeconds: 0 });
+    expect(calls[0].data).toMatchObject({ warmup_sets: 2, pause_seconds: 3, set_count: 3 });
+    for (const call of [calls[1], calls[2]]) {
+      expect("warmup_sets" in call.data).toBe(false);
+      expect("pause_seconds" in call.data).toBe(false);
+    }
+    // Zero is what the coach typed: stored, and read as none on the phone.
+    expect(calls[3].data).toMatchObject({ warmup_sets: 0, pause_seconds: 0 });
+  });
+
+  it("writes them on update when sent, clears them with null, and leaves them alone otherwise", async () => {
+    const { calls, deps } = harness();
+    await updatePrescription(deps, scope, "row1", { warmupSets: 2, pauseSeconds: 2 });
+    await updatePrescription(deps, scope, "row1", { warmupSets: null, pauseSeconds: null });
+    await updatePrescription(deps, scope, "row1", { load: "72.5%" });
+    expect(calls.map((c) => [c.data.warmup_sets, c.data.pause_seconds])).toEqual([
+      [2, 2],
+      [null, null],
+      [undefined, undefined],
+    ]);
+    expect("warmup_sets" in calls[2].data || "pause_seconds" in calls[2].data).toBe(false);
+  });
+
+  it("are content on a copy: carried from the source line as stored", async () => {
+    const { calls, deps } = harness();
+    const source = { $id: "src", exercise_id: "pause-squat", set_count: 3, warmup_sets: 2, pause_seconds: 3 };
+    expect(lineContent(source)).toEqual({ set_count: 3, warmup_sets: 2, pause_seconds: 3 });
+    await copyPrescription(deps, scope, { weekId: "w2", dayId: "d2", exerciseId: "pause-squat", referenceExerciseId: null, position: 0 }, source);
+    expect(calls[0].data).toMatchObject({ warmup_sets: 2, pause_seconds: 3, week_id: "w2", day_id: "d2" });
+  });
+});
+
 describe("what an athlete's rows gain (Order 22)", () => {
   it("links a session to the prescribed day it was started from", async () => {
     const { calls, deps } = harness();
