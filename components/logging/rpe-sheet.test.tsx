@@ -47,3 +47,11 @@ describe("RpeSheet", () => {
     expect(screen.getByRole("button", { name: "Not sure" })).toHaveAttribute("aria-pressed", "true");
   });
 });
+
+describe("RpeSheet inside the Log screen's sheet", () => {
+  it("leaves the edge and fill to the sheet", () => {
+    render(<RpeSheet setIndex={1} value={null} onSelect={vi.fn()} inSheet />);
+    const sheet = screen.getByRole("region", { name: "RPE for set 1" });
+    expect(sheet.className).not.toContain("border-t");
+  });
+});

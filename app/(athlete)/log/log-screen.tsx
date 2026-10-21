@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 import { ExerciseBlock, type LoggedSet } from "@/components/logging/exercise-block";
+import { LogSheet } from "@/components/logging/log-sheet";
 import { NumberPad } from "@/components/logging/number-pad";
 import { RestBar } from "@/components/logging/rest-bar";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
@@ -198,6 +199,13 @@ export function LogScreen() {
    * else -- usually the rest timer -- holds the bottom of the screen.
    */
   const [addingInline, setAddingInline] = useState(false);
+  /**
+   * The set row last tapped in the list: the one the sheet keeps in view.
+   * Taken from the tap itself rather than looked up by id, because a field
+   * only ever opens from a tap on its row or from the pad's own Next, which
+   * stays on the same row.
+   */
+  const sheetAnchor = useRef<Element | null>(null);
 
   /**
    * Whether the server's copy of this session has been read since the page
@@ -943,275 +951,301 @@ export function LogScreen() {
   const bottom: "pad" | "rpe" | "confirm" | "rest" | "add" =
     pad !== null ? "pad" : rpeOpen ? "rpe" : phase === "confirming" ? "confirm" : rest ? "rest" : "add";
 
+  /**
+   * The pad or the RPE chips, in the sheet pinned above the tab bar. Not in
+   * the footer with the rest: on a prescribed day the footer is a long way
+   * below the row being typed into. They still take their turn in `bottom`,
+   * so the rest timer and the rest stay hidden while either is up.
+   */
+  const sheet =
+    bottom === "pad" && pad !== null && focused ? (
+      <NumberPad
+        inSheet
+        state={pad}
+        onChange={applyPad}
+        onNext={() => (pad.field === "load" ? focusField(focusId, "reps") : focusField(focusId, "rpe"))}
+        nextLabel={pad.field === "load" ? "Reps" : focused.isWarmup ? "Done" : "RPE"}
+        isWarmup={focused.isWarmup}
+        onToggleWarmup={toggleWarmup}
+        onDismiss={() => setPad(null)}
+      />
+    ) : bottom === "rpe" && focused ? (
+      <RpeSheet
+        inSheet
+        setIndex={focusedNumber}
+        value={focused.rpe}
+        onSelect={(value) => {
+          updateFocused((row) => ({ ...row, rpe: value }));
+          setRpeOpen(false);
+        }}
+      />
+    ) : null;
+  const sheetField = bottom === "pad" && pad !== null ? pad.field : bottom === "rpe" ? "rpe" : null;
+
   return (
-    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
-      <header className="flex items-baseline justify-between gap-3">
-        <h1 className="m-0 text-display font-semibold">Session</h1>
-        {/* The clock is the finish control, per the blueprint: tap it, confirm. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setPhase("confirming")}
-          aria-label="Finish session"
-        >
-          <span className="font-mono text-title tabular-nums text-foreground">
-            {formatElapsed(elapsedMs(active.startedAt, now))}
-          </span>
-        </Button>
-      </header>
-
-      {listed.length === 0 ? (
-        <EmptyState title="Nothing logged yet" body="Add the first exercise and start working." />
-      ) : (
-        <div className="flex flex-col gap-6">
-          {listed.map((block) => (
-            <ExerciseBlock
-              key={block.id}
-              name={block.name}
-              sets={setsOf(block.id).map<LoggedSet>((s) => ({
-                clientSetId: s.clientSetId,
-                pendingSync: unsynced.has(s.clientSetId) || saving.has(s.clientSetId),
-                loadKg: s.loadKg,
-                reps: s.reps,
-                rpe: (s.rpe as RpeValue | null) ?? null,
-                isWarmup: s.isWarmup,
-                deleteBlocked:
-                  commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,
-              }))}
-              planned={rowsOf(plans, block.id)}
-              focusedId={pad !== null || rpeOpen ? focusId : null}
-              target={targetFor(block.id)}
-              unit={unit}
-              onFocus={focusField}
-              onConfirm={(id) => void confirmSet(id)}
-              onDiscard={discardPlanned}
-              onAddSet={() => addSet(block.id)}
-              onActivate={() => activate(block.id)}
-              selectedId={selectedId}
-              onSelect={selectSet}
-              onDelete={deleteLogged}
-              onRemove={() => removeExercise(block.id, block.name)}
-              removeBlocked={(() => {
-                const decision = planBlockRemoval(block.id, all, undeletable, null);
-                return decision.kind === "blocked" ? decision.reason : null;
-              })()}
-              camera={(() => {
-                // Attaches to the most recently logged set of this exercise,
-                // per the Set Row spec. Absent until there is one, so the
-                // athlete is never offered a camera with nowhere to put a clip.
-                const target = setForNewClip(
-                  setsOf(block.id).map((set) => ({
-                    ...set,
-                    loggedAt: set.loggedAt instanceof Date ? set.loggedAt : new Date(set.loggedAt),
-                  })),
-                  block.id,
-                );
-                if (!target || !athleteId) return null;
-                const mine = setsOf(block.id);
-                // A coach's video request (Order 30): a nudge, never a gate.
-                // Backoff sets (Order 21) take positions too, so each line
-                // carries how many its rule adds right now.
-                const blockTargets = targetsOf(block.id, mine) ?? [];
-                const ask = videoAsk({
-                  lines: plan
-                    .find((p) => p.exerciseId === block.id)
-                    ?.lines.map((line) => ({
-                      ...line,
-                      backoffSets: blockTargets.filter((t) => t.prescriptionId === line.id && t.backoff).length,
-                    })),
-                  loggedWorking: mine.filter((s) => !s.isWarmup).length,
-                  hasClip: filmed.has(block.id) || mine.some((s) => s.hasVideo),
-                });
-                return (
-                  <AttachVideo
-                    key={target.clientSetId}
-                    setId={target.clientSetId}
-                    athleteId={athleteId}
-                    ask={ask}
-                    onAttached={() => setFilmed((prev) => new Set(prev).add(block.id))}
-                  />
-                );
-              })()}
-            />
-          ))}
-        </div>
-      )}
-
-      {/*
-        Add exercise, always in reach. The box itself lives at the bottom of
-        the screen when nothing else does; while the rest timer (or the pad, or
-        the RPE sheet) holds that spot, this opens the same box here at the end
-        of the list instead, so the athlete never has to Skip a rest to move to
-        the next lift. Opened, it stays until a pick or Cancel, even if the
-        rest ends underneath it -- text half-typed must not jump.
-      */}
-      {addingInline ? (
-        <div className="flex flex-col gap-2">
-          <ExerciseTypeahead
-            exercises={library.exercises}
-            label="Add exercise"
-            placeholder="Add an exercise"
-            clearOnSelect
-            autoFocus
-            onSelect={addExercise}
-            onCreate={createExercise}
-            hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
-          />
-          <Button variant="ghost" size="sm" onClick={() => setAddingInline(false)}>
-            Cancel
+    // The sheet's containing block: it sticks to the bottom of <main> for as
+    // long as this is on screen, which is the whole page. The content's own
+    // bottom padding lives on the inner column so the stuck sheet meets the
+    // tab bar with no gap under it.
+    <div className="pt-8 flex flex-1 flex-col">
+      <div
+        className="flex flex-1 flex-col gap-5 pb-6"
+        onClickCapture={(event) => {
+          // Only taps inside a set row move the anchor; a tap on the pad's Next
+          // lands outside this column and keeps the row it is typing into.
+          const row = (event.target as Element).closest('[role="group"]');
+          if (row) sheetAnchor.current = row;
+        }}
+      >
+        <header className="flex items-baseline justify-between gap-3">
+          <h1 className="m-0 text-display font-semibold">Session</h1>
+          {/* The clock is the finish control, per the blueprint: tap it, confirm. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setPhase("confirming")}
+            aria-label="Finish session"
+          >
+            <span className="font-mono text-title tabular-nums text-foreground">
+              {formatElapsed(elapsedMs(active.startedAt, now))}
+            </span>
           </Button>
-        </div>
-      ) : bottom !== "add" && bottom !== "confirm" ? (
-        <Button
-          variant="secondary"
-          block
-          onClick={() => {
-            closeSheets();
-            setAddingInline(true);
-          }}
-        >
-          + Add exercise
-        </Button>
-      ) : null}
+        </header>
 
-      {/*
-        The finish control nobody has to discover. The clock still works, but
-        a tappable timer is a convention an athlete has to be told about.
-        Outlined rather than filled, and spaced off the last exercise, so a
-        thumb reaching for Add set or a confirm square does not end the
-        session. Gone while the confirm panel asks: one finish control at a
-        time. It closes the pad and the RPE sheet first, because both outrank
-        the panel for the bottom of the screen and it would otherwise wait
-        unseen behind them.
-      */}
-      {bottom !== "confirm" ? (
-        <Button
-          variant="secondary"
-          size="lg"
-          block
-          className="mt-2"
-          onClick={() => {
-            closeSheets();
-            setAddingInline(false);
-            setPhase("confirming");
-          }}
-          aria-label="End session"
-        >
-          End session
-        </Button>
-      ) : null}
+        {listed.length === 0 ? (
+          <EmptyState title="Nothing logged yet" body="Add the first exercise and start working." />
+        ) : (
+          <div className="flex flex-col gap-6">
+            {listed.map((block) => (
+              <ExerciseBlock
+                key={block.id}
+                name={block.name}
+                sets={setsOf(block.id).map<LoggedSet>((s) => ({
+                  clientSetId: s.clientSetId,
+                  pendingSync: unsynced.has(s.clientSetId) || saving.has(s.clientSetId),
+                  loadKg: s.loadKg,
+                  reps: s.reps,
+                  rpe: (s.rpe as RpeValue | null) ?? null,
+                  isWarmup: s.isWarmup,
+                  deleteBlocked:
+                    commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,
+                }))}
+                planned={rowsOf(plans, block.id)}
+                focusedId={pad !== null || rpeOpen ? focusId : null}
+                target={targetFor(block.id)}
+                unit={unit}
+                onFocus={focusField}
+                onConfirm={(id) => void confirmSet(id)}
+                onDiscard={discardPlanned}
+                onAddSet={() => addSet(block.id)}
+                onActivate={() => activate(block.id)}
+                selectedId={selectedId}
+                onSelect={selectSet}
+                onDelete={deleteLogged}
+                onRemove={() => removeExercise(block.id, block.name)}
+                removeBlocked={(() => {
+                  const decision = planBlockRemoval(block.id, all, undeletable, null);
+                  return decision.kind === "blocked" ? decision.reason : null;
+                })()}
+                camera={(() => {
+                  // Attaches to the most recently logged set of this exercise,
+                  // per the Set Row spec. Absent until there is one, so the
+                  // athlete is never offered a camera with nowhere to put a clip.
+                  const target = setForNewClip(
+                    setsOf(block.id).map((set) => ({
+                      ...set,
+                      loggedAt: set.loggedAt instanceof Date ? set.loggedAt : new Date(set.loggedAt),
+                    })),
+                    block.id,
+                  );
+                  if (!target || !athleteId) return null;
+                  const mine = setsOf(block.id);
+                  // A coach's video request (Order 30): a nudge, never a gate.
+                  // Backoff sets (Order 21) take positions too, so each line
+                  // carries how many its rule adds right now.
+                  const blockTargets = targetsOf(block.id, mine) ?? [];
+                  const ask = videoAsk({
+                    lines: plan
+                      .find((p) => p.exerciseId === block.id)
+                      ?.lines.map((line) => ({
+                        ...line,
+                        backoffSets: blockTargets.filter((t) => t.prescriptionId === line.id && t.backoff).length,
+                      })),
+                    loggedWorking: mine.filter((s) => !s.isWarmup).length,
+                    hasClip: filmed.has(block.id) || mine.some((s) => s.hasVideo),
+                  });
+                  return (
+                    <AttachVideo
+                      key={target.clientSetId}
+                      setId={target.clientSetId}
+                      athleteId={athleteId}
+                      ask={ask}
+                      onAttached={() => setFilmed((prev) => new Set(prev).add(block.id))}
+                    />
+                  );
+                })()}
+              />
+            ))}
+          </div>
+        )}
 
-      <div className="mt-auto flex flex-col gap-3">
         {/*
-          A queued set that will never send. Offline is normal and gets a quiet
-          dot; this is the other thing, and it is the one case where staying
-          quiet would be dishonest -- the athlete believes that work is logged.
+          Add exercise, always in reach. The box itself lives at the bottom of
+          the screen when nothing else does; while the rest timer (or the pad, or
+          the RPE sheet) holds that spot, this opens the same box here at the end
+          of the list instead, so the athlete never has to Skip a rest to move to
+          the next lift. Opened, it stays until a pick or Cancel, even if the
+          rest ends underneath it -- text half-typed must not jump.
         */}
-        {failed.length > 0 ? (
-          <p
-            role="status"
-            className="m-0 rounded-card border border-border bg-surface p-3 text-caption text-muted"
-          >
-            {failed.length} {failed.length === 1 ? "entry" : "entries"} could not be saved and
-            {failed.length === 1 ? " is" : " are"} not on your coach&rsquo;s side. Everything else synced.
-          </p>
-        ) : null}
-
-        {unsaved ? (
-          <div
-            role="alert"
-            className="flex items-center justify-between gap-3 rounded-card border border-danger-line bg-surface p-3"
-          >
-            <p className="m-0 text-caption text-foreground">
-              That set wasn&rsquo;t saved &mdash; this phone couldn&rsquo;t store it. Your numbers are still in
-              the row. Free up some space, then tap it again.
-            </p>
-            <Button variant="ghost" size="sm" onClick={() => setUnsaved(false)}>
-              OK
+        {addingInline ? (
+          <div className="flex flex-col gap-2">
+            <ExerciseTypeahead
+              exercises={library.exercises}
+              label="Add exercise"
+              placeholder="Add an exercise"
+              clearOnSelect
+              autoFocus
+              onSelect={addExercise}
+              onCreate={createExercise}
+              hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
+            />
+            <Button variant="ghost" size="sm" onClick={() => setAddingInline(false)}>
+              Cancel
             </Button>
           </div>
+        ) : bottom !== "add" && bottom !== "confirm" ? (
+          <Button
+            variant="secondary"
+            block
+            onClick={() => {
+              closeSheets();
+              setAddingInline(true);
+            }}
+          >
+            + Add exercise
+          </Button>
         ) : null}
 
         {/*
-          A delete that reached Appwrite after the coach had commented. Nothing
-          was lost -- the set is back where it was -- so this can be dismissed,
-          unlike the notice above.
+          The finish control nobody has to discover. The clock still works, but
+          a tappable timer is a convention an athlete has to be told about.
+          Outlined rather than filled, and spaced off the last exercise, so a
+          thumb reaching for Add set or a confirm square does not end the
+          session. Gone while the confirm panel asks: one finish control at a
+          time. It closes the pad and the RPE sheet first, because both outrank
+          the panel for the bottom of the screen and it would otherwise wait
+          unseen behind them.
         */}
-        {refused.size > 0 ? (
-          <div className="flex items-center justify-between gap-3 rounded-card border border-border bg-surface p-3">
-            <p role="status" className="m-0 text-caption text-muted">
-              {refused.size === 1 ? "A set you deleted was" : `${refused.size} sets you deleted were`} kept:
-              your coach had already commented.
-            </p>
-            <Button variant="ghost" size="sm" onClick={() => void dismissFailed([...refused.values()])}>
-              OK
-            </Button>
-          </div>
+        {bottom !== "confirm" ? (
+          <Button
+            variant="secondary"
+            size="lg"
+            block
+            className="mt-2"
+            onClick={() => {
+              closeSheets();
+              setAddingInline(false);
+              setPhase("confirming");
+            }}
+            aria-label="End session"
+          >
+            End session
+          </Button>
         ) : null}
 
-        {pendingDelete ? <UndoToast message={pendingDelete.label} onUndo={undoDelete} /> : null}
-
-        {bottom === "confirm" ? (
-          <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
-            <p className="m-0 text-body">
-              Finish this session? {summary.setCount} set{summary.setCount === 1 ? "" : "s"} logged.
+        <div className="mt-auto flex flex-col gap-3">
+          {/*
+            A queued set that will never send. Offline is normal and gets a quiet
+            dot; this is the other thing, and it is the one case where staying
+            quiet would be dishonest -- the athlete believes that work is logged.
+          */}
+          {failed.length > 0 ? (
+            <p
+              role="status"
+              className="m-0 rounded-card border border-border bg-surface p-3 text-caption text-muted"
+            >
+              {failed.length} {failed.length === 1 ? "entry" : "entries"} could not be saved and
+              {failed.length === 1 ? " is" : " are"} not on your coach&rsquo;s side. Everything else synced.
             </p>
-            <div className="flex gap-3">
-              <Button block onClick={finishHere} disabled={busy}>
-                Finish
-              </Button>
-              <Button block variant="secondary" onClick={() => setPhase("logging")} disabled={busy}>
-                Keep going
+          ) : null}
+
+          {unsaved ? (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-3 rounded-card border border-danger-line bg-surface p-3"
+            >
+              <p className="m-0 text-caption text-foreground">
+                That set wasn&rsquo;t saved &mdash; this phone couldn&rsquo;t store it. Your numbers are still in
+                the row. Free up some space, then tap it again.
+              </p>
+              <Button variant="ghost" size="sm" onClick={() => setUnsaved(false)}>
+                OK
               </Button>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {/* One sheet at a time, and only where a thumb already is. */}
-        {bottom === "pad" && pad !== null && focused ? (
-          <NumberPad
-            state={pad}
-            onChange={applyPad}
-            onNext={() => (pad.field === "load" ? focusField(focusId, "reps") : focusField(focusId, "rpe"))}
-            nextLabel={pad.field === "load" ? "Reps" : focused.isWarmup ? "Done" : "RPE"}
-            isWarmup={focused.isWarmup}
-            onToggleWarmup={toggleWarmup}
-            onDismiss={() => setPad(null)}
-          />
-        ) : null}
+          {/*
+            A delete that reached Appwrite after the coach had commented. Nothing
+            was lost -- the set is back where it was -- so this can be dismissed,
+            unlike the notice above.
+          */}
+          {refused.size > 0 ? (
+            <div className="flex items-center justify-between gap-3 rounded-card border border-border bg-surface p-3">
+              <p role="status" className="m-0 text-caption text-muted">
+                {refused.size === 1 ? "A set you deleted was" : `${refused.size} sets you deleted were`} kept:
+                your coach had already commented.
+              </p>
+              <Button variant="ghost" size="sm" onClick={() => void dismissFailed([...refused.values()])}>
+                OK
+              </Button>
+            </div>
+          ) : null}
 
-        {bottom === "rpe" && focused ? (
-          <RpeSheet
-            setIndex={focusedNumber}
-            value={focused.rpe}
-            onSelect={(value) => {
-              updateFocused((row) => ({ ...row, rpe: value }));
-              setRpeOpen(false);
-            }}
-          />
-        ) : null}
+          {pendingDelete ? <UndoToast message={pendingDelete.label} onUndo={undoDelete} /> : null}
 
-        {bottom === "rest" && rest ? (
-          <RestBar
-            timer={rest}
-            now={now}
-            onExtend={() => changeRest(extendRest(rest))}
-            onSkip={() => changeRest(null)}
-          />
-        ) : null}
+          {bottom === "confirm" ? (
+            <div className="flex flex-col gap-3 rounded-card border border-border bg-surface p-4">
+              <p className="m-0 text-body">
+                Finish this session? {summary.setCount} set{summary.setCount === 1 ? "" : "s"} logged.
+              </p>
+              <div className="flex gap-3">
+                <Button block onClick={finishHere} disabled={busy}>
+                  Finish
+                </Button>
+                <Button block variant="secondary" onClick={() => setPhase("logging")} disabled={busy}>
+                  Keep going
+                </Button>
+              </div>
+            </div>
+          ) : null}
 
-        {bottom === "add" && !addingInline ? (
-          <ExerciseTypeahead
-            exercises={library.exercises}
-            label="Add exercise"
-            placeholder="Add an exercise"
-            clearOnSelect
-            onSelect={addExercise}
-            onCreate={createExercise}
-            hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
-          />
-        ) : null}
+          {bottom === "rest" && rest ? (
+            <RestBar
+              timer={rest}
+              now={now}
+              onExtend={() => changeRest(extendRest(rest))}
+              onSkip={() => changeRest(null)}
+            />
+          ) : null}
+
+          {bottom === "add" && !addingInline ? (
+            <ExerciseTypeahead
+              exercises={library.exercises}
+              label="Add exercise"
+              placeholder="Add an exercise"
+              clearOnSelect
+              onSelect={addExercise}
+              onCreate={createExercise}
+              hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
+            />
+          ) : null}
+        </div>
       </div>
+
+      {/* One sheet at a time, pinned where a thumb already is. */}
+      <LogSheet anchor={sheetAnchor} revealKey={sheetField && `${focusId}:${sheetField}`}>
+        {sheet}
+      </LogSheet>
     </div>
   );
 }
