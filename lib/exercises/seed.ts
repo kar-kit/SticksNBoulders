@@ -40,6 +40,20 @@
  *
  * This decides shape for Order 12 (rollups are per exercise), Order 17
  * (a max per variation) and Order 18 (no tempo fields on a prescription).
+ *
+ * Changed 21 Oct 2026, Joey's call (schema v15): a prescription now carries
+ * one structured `pause_seconds`. Athletes following a coach's program could
+ * not see how long to pause on paused reps, and a number buried in the note
+ * was being missed. The reversal is that narrow and no wider:
+ *
+ *   - Pause seconds only. Still no tempo fields, no 3-0-0 strings, no general
+ *     tempo or modifier system -- the third bullet above still stands.
+ *   - Variations stay separate exercises. "Pause Squat" is its own row with
+ *     its own max; `pause_seconds` says how long, not that it is a different
+ *     lift, so the first two bullets are untouched.
+ *
+ * The same version added `warmup_sets`, a count of prescribed warm-ups,
+ * which has nothing to do with variations.
  */
 export const SEED_EXERCISES: readonly string[] = [
   // The three, and the bar variations of each.

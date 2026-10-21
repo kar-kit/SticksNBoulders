@@ -148,6 +148,18 @@ export interface Prescription {
    * before the column. Optional so a fixture need not spell it out.
    */
   referenceExerciseId?: string | null;
+  /**
+   * Warm-up sets the coach asks for before the working sets (v15): a count,
+   * never loads, and not part of `setCount`. Null or absent for none;
+   * optional so a fixture need not spell it out.
+   */
+  warmupSets?: number | null;
+  /**
+   * Seconds to pause on each rep (v15). Pause only -- no general tempo, and
+   * a variation such as Pause Squat is still its own exercise. Null or
+   * absent for none.
+   */
+  pauseSeconds?: number | null;
   updatedAt: string;
 }
 
@@ -265,6 +277,8 @@ const prescriptionRow = z
     backoff: nullableString,
     video_required: z.boolean().nullish().transform((v) => v ?? false),
     reference_exercise_id: nullableString,
+    warmup_sets: nullableInt,
+    pause_seconds: nullableInt,
     updated_at: z.string(),
   })
   .transform(
@@ -285,6 +299,8 @@ const prescriptionRow = z
       backoff: r.backoff,
       videoRequired: r.video_required,
       referenceExerciseId: r.reference_exercise_id,
+      warmupSets: r.warmup_sets,
+      pauseSeconds: r.pause_seconds,
       updatedAt: r.updated_at,
     }),
   );
@@ -409,6 +425,10 @@ const lineFields = {
    * it; absent leaves it alone. The server checks the athlete can read it.
    */
   referenceExerciseId: rowId.nullable().optional(),
+  /** Warm-up sets before the working sets (v15). Null clears; absent leaves it. */
+  warmupSets: z.number().int().min(0).max(10).nullable().optional(),
+  /** Seconds paused on each rep (v15). Null clears; absent leaves it. */
+  pauseSeconds: z.number().int().min(0).max(10).nullable().optional(),
 };
 
 /** A range must run upwards. "8-6 reps" is a typo, not a prescription. */
@@ -433,6 +453,8 @@ const updatePrescription = z.object({
   backoff: lineFields.backoff,
   videoRequired: lineFields.videoRequired,
   referenceExerciseId: lineFields.referenceExerciseId,
+  warmupSets: lineFields.warmupSets,
+  pauseSeconds: lineFields.pauseSeconds,
 });
 
 const removePrescription = z.object({ op: z.literal("removePrescription"), prescriptionId: rowId });

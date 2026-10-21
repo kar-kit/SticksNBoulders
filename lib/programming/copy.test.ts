@@ -148,6 +148,8 @@ describe("copying a week into a new block (+ Block)", () => {
             backoff: "3 x 90%",
             videoRequired: true,
             referenceExerciseId: "squat",
+            warmupSets: 2,
+            pauseSeconds: 3,
             updatedAt: "",
           },
           {
@@ -172,6 +174,12 @@ describe("copying a week into a new block (+ Block)", () => {
     ],
   };
 
+  it("sends warm-ups and pause (v15) only for a line that has them, so a plain line is the op it was", () => {
+    const [{ lines }] = copyWeekPlan(source, 7);
+    expect(lines[0]).toMatchObject({ warmupSets: 2, pauseSeconds: 3 });
+    expect("warmupSets" in lines[1] || "pauseSeconds" in lines[1]).toBe(false);
+  });
+
   it("carries every day and every typed field of every line, in order, moved by the shift", () => {
     expect(copyWeekPlan(source, 7)).toEqual([
       {
@@ -188,6 +196,8 @@ describe("copying a week into a new block (+ Block)", () => {
             backoff: "3 x 90%",
             videoRequired: true,
             referenceExerciseId: "squat",
+            warmupSets: 2,
+            pauseSeconds: 3,
           },
           {
             exerciseId: "bench",

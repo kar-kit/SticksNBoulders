@@ -1,15 +1,18 @@
 import {
   applyLineOp,
   cellText,
+  COLUMNS,
   commitCell,
   commitProgression,
   describeLoad,
   draftWeeks,
   loadPreview,
   moveCell,
+  parsePauseCell,
   parseRepsCell,
   parseRestCell,
   parseSetsCell,
+  parseWarmupCell,
   parseShorthand,
   previewDate,
   progressionText,
@@ -91,6 +94,85 @@ describe("reading typed cells", () => {
   });
 });
 
+describe("warm-up and pause cells (v15)", () => {
+  it("sit where the line reads them: warm-up before sets, pause after reps", () => {
+    expect(COLUMNS.slice(0, 6)).toEqual(["exercise", "warmup", "sets", "reps", "pause", "load"]);
+  });
+
+  it("takes warm-ups as a whole number from 0 to 10, or nothing", () => {
+    expect(parseWarmupCell(" 2 ")).toEqual({ ok: true, value: 2 });
+    expect(parseWarmupCell("0")).toEqual({ ok: true, value: 0 });
+    expect(parseWarmupCell("")).toEqual({ ok: true, value: null });
+    for (const bad of ["11", "-1", "1.5", "two", "2 sets"]) {
+      expect(parseWarmupCell(bad)).toEqual({ ok: false, reason: "Warm-up is a number of sets, 0 to 10" });
+    }
+  });
+
+  it("takes a pause as whole seconds, with or without a unit, up to 10", () => {
+    for (const typed of ["2", "2s", "2 s", "2 sec", "2 seconds", " 2S "]) {
+      expect(parsePauseCell(typed)).toEqual({ ok: true, value: 2 });
+    }
+    expect(parsePauseCell("10s")).toEqual({ ok: true, value: 10 });
+    expect(parsePauseCell("")).toEqual({ ok: true, value: null });
+    for (const bad of ["11", "1.5", "-1", "2m", "3-0-0", "pause"]) expect(parsePauseCell(bad).ok).toBe(false);
+  });
+
+  it("shows them as stored, and an untouched line as empty cells", () => {
+    expect(cellText(line(), "warmup")).toBe("");
+    expect(cellText(line(), "pause")).toBe("");
+    expect(cellText(line({ warmupSets: 2, pauseSeconds: 3 }), "warmup")).toBe("2");
+    expect(cellText(line({ warmupSets: 2, pauseSeconds: 3 }), "pause")).toBe("3s");
+    expect(cellText(line({ warmupSets: 0, pauseSeconds: 0 }), "pause")).toBe("0s");
+  });
+
+  it("sends a one-field write, and null when emptied", () => {
+    expect(commitCell(line(), "warmup", "2")).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", warmupSets: 2 },
+    });
+    expect(commitCell(line(), "pause", "2s")).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", pauseSeconds: 2 },
+    });
+    expect(commitCell(line({ warmupSets: 2 }), "warmup", "")).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", warmupSets: null },
+    });
+    expect(commitCell(line({ pauseSeconds: 2 }), "pause", " ")).toEqual({
+      op: { op: "updatePrescription", prescriptionId: "l1", pauseSeconds: null },
+    });
+  });
+
+  it("writes nothing for the same number spelled differently, or for an empty cell left empty", () => {
+    expect(commitCell(line({ pauseSeconds: 2 }), "pause", "2")).toEqual({ unchanged: true });
+    expect(commitCell(line({ pauseSeconds: 2 }), "pause", "2 sec")).toEqual({ unchanged: true });
+    expect(commitCell(line({ warmupSets: 2 }), "warmup", "02")).toEqual({ unchanged: true });
+    expect(commitCell(line(), "warmup", "")).toEqual({ unchanged: true });
+    expect(commitCell(line(), "pause", "")).toEqual({ unchanged: true });
+  });
+
+  it("answers a bad cell with the reason, not a write", () => {
+    expect(commitCell(line(), "warmup", "12")).toEqual({ error: "Warm-up is a number of sets, 0 to 10" });
+    expect(commitCell(line(), "pause", "3-0-0")).toEqual({ error: "Pause is whole seconds, like 2 or 2s -- up to 10" });
+  });
+
+  it("does not read sets-and-reps shorthand in either cell", () => {
+    expect("error" in commitCell(line(), "warmup", "5x3")).toBe(true);
+    expect("error" in commitCell(line(), "pause", "5x3")).toBe(true);
+  });
+
+  it("shows the save before the server answers, and leaves both alone on any other edit", () => {
+    const set = applyLineOp(line(), { op: "updatePrescription", prescriptionId: "l1", warmupSets: 2, pauseSeconds: 3 });
+    expect(set).toMatchObject({ warmupSets: 2, pauseSeconds: 3, setCount: 3 });
+    expect(applyLineOp(set, { op: "updatePrescription", prescriptionId: "l1", setCount: 4 })).toMatchObject({
+      warmupSets: 2,
+      pauseSeconds: 3,
+      setCount: 4,
+    });
+    expect(applyLineOp(set, { op: "updatePrescription", prescriptionId: "l1", pauseSeconds: null })).toMatchObject({
+      warmupSets: 2,
+      pauseSeconds: null,
+    });
+  });
+});
+
 describe("committing a cell", () => {
   it("sends only the field that changed", () => {
     expect(commitCell(line(), "load", "75% @8")).toEqual({
@@ -105,7 +187,7 @@ describe("committing a cell", () => {
   });
 
   it("writes nothing when the text did not change, so tabbing through a row is free", () => {
-    for (const column of ["sets", "reps", "load", "rest", "notes"] as const) {
+    for (const column of ["warmup", "sets", "reps", "pause", "load", "rest", "notes"] as const) {
       expect(commitCell(line(), column, cellText(line(), column))).toEqual({ unchanged: true });
     }
   });

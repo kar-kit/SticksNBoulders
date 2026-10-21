@@ -139,6 +139,72 @@ describe("reading rows", () => {
     expect(parsePrescriptionRow({ ...base, set_count: undefined })).toBeNull();
     expect(parsePrescriptionRow({ ...base, load_kind: "vibes" })).toBeNull();
   });
+
+  it("reads warm-up sets and pause seconds (v15), and a row written before them as none", () => {
+    const base = {
+      $id: "l1",
+      program_id: "p1",
+      week_id: "w1",
+      day_id: "d1",
+      exercise_id: "ex1",
+      position: 0,
+      set_count: 3,
+      updated_at: "2026-09-20T00:00:00.000Z",
+    };
+    expect(parsePrescriptionRow(base)).toMatchObject({ warmupSets: null, pauseSeconds: null });
+    expect(parsePrescriptionRow({ ...base, warmup_sets: null, pause_seconds: null })).toMatchObject({
+      warmupSets: null,
+      pauseSeconds: null,
+    });
+    expect(parsePrescriptionRow({ ...base, warmup_sets: 2, pause_seconds: 3 })).toMatchObject({
+      warmupSets: 2,
+      pauseSeconds: 3,
+    });
+    expect(parsePrescriptionRow({ ...base, warmup_sets: 0, pause_seconds: 0 })).toMatchObject({
+      warmupSets: 0,
+      pauseSeconds: 0,
+    });
+    expect(parsePrescriptionRow({ ...base, pause_seconds: 1.5 })).toBeNull();
+  });
+});
+
+describe("warm-up sets and pause seconds in a program write (v15)", () => {
+  it("accepts both on a new line and on an edit, and null to clear them", () => {
+    expect(
+      readProgramOp({ op: "addPrescription", dayId: "d1", exerciseId: "ex1", setCount: 3, warmupSets: 2, pauseSeconds: 2 }),
+    ).toMatchObject({ ok: true, op: { warmupSets: 2, pauseSeconds: 2 } });
+    expect(readProgramOp({ op: "updatePrescription", prescriptionId: "l1", pauseSeconds: 3 })).toMatchObject({
+      ok: true,
+      op: { pauseSeconds: 3 },
+    });
+    expect(readProgramOp({ op: "updatePrescription", prescriptionId: "l1", warmupSets: null, pauseSeconds: null })).toMatchObject({
+      ok: true,
+      op: { warmupSets: null, pauseSeconds: null },
+    });
+  });
+
+  it("leaves both out of an edit that does not name them", () => {
+    const parsed = readProgramOp({ op: "updatePrescription", prescriptionId: "l1", setCount: 4 });
+    expect(parsed.ok && ("warmupSets" in parsed.op || "pauseSeconds" in parsed.op)).toBe(false);
+  });
+
+  it.each([
+    [{ warmupSets: -1 }, "warmupSets"],
+    [{ warmupSets: 11 }, "warmupSets"],
+    [{ warmupSets: 1.5 }, "warmupSets"],
+    [{ pauseSeconds: -1 }, "pauseSeconds"],
+    [{ pauseSeconds: 11 }, "pauseSeconds"],
+    [{ pauseSeconds: "2s" }, "pauseSeconds"],
+  ])("refuses %o, naming %s", (fields, field) => {
+    for (const op of [
+      { op: "addPrescription", dayId: "d1", exerciseId: "ex1", setCount: 3, ...fields },
+      { op: "updatePrescription", prescriptionId: "l1", ...fields },
+    ]) {
+      const parsed = readProgramOp(op);
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) expect(parsed.reason.startsWith(`${field}:`)).toBe(true);
+    }
+  });
 });
 
 describe("ordering", () => {

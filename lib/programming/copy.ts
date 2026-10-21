@@ -91,6 +91,10 @@ export function copyWeekPlan(
       backoff: line.backoff ?? null,
       videoRequired: line.videoRequired ?? false,
       referenceExerciseId: line.referenceExerciseId ?? null,
+      // v15. Sent only when set, so a line with neither is the same op it
+      // was before the columns existed.
+      ...(line.warmupSets != null ? { warmupSets: line.warmupSets } : {}),
+      ...(line.pauseSeconds != null ? { pauseSeconds: line.pauseSeconds } : {}),
     })),
   }));
 }

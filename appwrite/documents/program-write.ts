@@ -253,6 +253,10 @@ export interface PrescriptionFields {
   videoRequired?: boolean;
   /** The lift a percentage is OF, when not the line's own. Null clears it. */
   referenceExerciseId?: string | null;
+  /** Warm-up sets before the working sets (v15). Null clears it. */
+  warmupSets?: number | null;
+  /** Seconds paused on each rep (v15). Null clears it. */
+  pauseSeconds?: number | null;
 }
 
 /**
@@ -322,6 +326,10 @@ export async function createPrescription(
       // Same rule as backoff: a line on its own max writes exactly the row it
       // did before the column existed.
       ...(reference ? { reference_exercise_id: reference } : {}),
+      // v15, same rule again: a line with neither writes the row it did
+      // before the columns existed.
+      ...(input.warmupSets != null ? { warmup_sets: input.warmupSets } : {}),
+      ...(input.pauseSeconds != null ? { pause_seconds: input.pauseSeconds } : {}),
       updated_at: iso(deps.now()),
     },
     permissions,
@@ -358,6 +366,8 @@ export async function updatePrescription(
       backoff: backoffOf(input.backoff),
       video_required: input.videoRequired,
       reference_exercise_id: referenceOf(input.exerciseId, input.referenceExerciseId),
+      warmup_sets: input.warmupSets,
+      pause_seconds: input.pauseSeconds,
       updated_at: iso(deps.now()),
     }),
     permissions,
@@ -392,8 +402,9 @@ const LINE_PLACEMENT = new Set([
  * Appwrite's own (`$id`, `$permissions`, ...) and the placement above.
  *
  * Deliberately a deny-list. A column added to `prescriptions` later (backoff
- * rules, Order 21; video required, Order 30) is copied by duplicate-week and
- * copy-program without either being touched -- a copy that silently drops the
+ * rules, Order 21; video required, Order 30; warm-up sets and pause seconds,
+ * v15) is copied by duplicate-week and copy-program without either being
+ * touched -- a copy that silently drops the
  * coach's backoff rule is worse than one that has to be taught about a new id.
  */
 export function lineContent(source: Record<string, unknown>): Record<string, unknown> {
