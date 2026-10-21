@@ -1,9 +1,11 @@
 "use client";
 
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
-import { CameraIcon } from "@/components/ui/icons";
+import { CameraIcon, TrashIcon } from "@/components/ui/icons";
+import { afterExit, useChanged } from "@/components/ui/motion";
+import { haptic } from "@/lib/ui/haptics";
 import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
 import { LoadCell } from "./load-cell";
 import { canComplete, completionBlocker, type LoggableSet } from "@/lib/logging/set";
@@ -27,7 +29,7 @@ import { loadIn, loadLabel, unitName, type UnitPreference } from "@/lib/units";
 const GRID = "26px 1fr 58px 58px var(--set-row-last)";
 
 /**
- * How far a logged row has to travel left before letting go deletes it.
+ * How far a row has to travel left before letting go deletes it.
  *
  * A quarter of a 390pt screen. Far enough that a thumb scrolling the list at
  * an angle never trips it, near enough to do one-handed.
@@ -65,7 +67,12 @@ export interface SetRowProps {
   suggested?: boolean;
   /** The pad is editing this row. Only one row on the screen ever is. */
   focused?: boolean;
-  /** Planned rows only: drop it before it is done. */
+  /**
+   * Rows not logged yet (active and planned): drop it before it is done.
+   * Swiping it left does it, the same gesture as a logged set; a visually
+   * hidden Remove button is the screen-reader and keyboard path. Dropped at
+   * once, with no toast: nothing was logged, so nothing is lost.
+   */
   onDiscard?: () => void;
   /**
    * Logged rows only. Tapping the row opens its actions; swiping it left
@@ -77,6 +84,11 @@ export interface SetRowProps {
   onDelete?: () => void;
   /** Why this logged set cannot be deleted, shown in place of the button. */
   deleteBlocked?: string | null;
+  /**
+   * Flips the set between warm-up and working. Makes the set-number / "W"
+   * cell a button, on logged rows as well as ones not logged yet.
+   */
+  onToggleWarmup?: () => void;
   /**
    * The athlete's unit. `set.loadKg` is always kilos; the cell shows it in
    * this unit. Kilos when absent.
@@ -103,13 +115,20 @@ export function SetRow({
   selected = false,
   onDelete,
   deleteBlocked = null,
+  onToggleWarmup,
   unit = "kg",
 }: SetRowProps) {
   const planned = state === "planned";
   const active = state === "active";
   const editing = active || planned;
-  const swipe = useSwipeToDelete(state === "logged" && !deleteBlocked ? onDelete : undefined);
+  // One gesture for both kinds of row. A logged set goes to the screen's undo
+  // toast; a row not logged yet is simply dropped, as the old × did.
+  const remove = editing ? onDiscard : !deleteBlocked ? onDelete : undefined;
+  const outer = useRef<HTMLDivElement>(null);
+  const swipe = useSwipeToDelete(outer, remove);
   const warmup = set.isWarmup;
+  // Replays the label's pop on every flip, and never on first render.
+  const flipped = useChanged(warmup);
   const uploading = typeof uploadPercent === "number";
   const blocker = completionBlocker(set);
   const confirmable = canComplete(set);
@@ -119,25 +138,45 @@ export function SetRow({
   const size = warmup ? "warmup" : editing ? "active" : "logged";
   const setLabel = index === "W" ? "Warm-up set" : `Set ${index}`;
 
+  const label = (
+    <span
+      key={warmup ? "warmup" : "working"}
+      className={cn(
+        "font-semibold",
+        warmup ? "text-caption text-muted-2" : "text-sm",
+        active ? "text-foreground" : "text-muted-2",
+        flipped && "motion-safe:animate-spring-pop",
+      )}
+    >
+      {index}
+    </span>
+  );
+
   return (
-    <div className="flex flex-col">
+    <div
+      ref={outer}
+      inert={swipe.leaving || undefined}
+      className={cn("flex flex-col", swipe.leaving && "pointer-events-none motion-safe:animate-fade-out")}
+    >
       {/*
         The swipe's reveal: a red Delete behind the row, uncovered as the row
         slides left, iOS-style, so the gesture says what it will do before it
         does it. It turns solid once letting go would delete. Decorative to a
-        screen reader -- the tap-to-open Delete button is the accessible path.
+        screen reader -- the row's Delete (logged) or Remove (not logged yet)
+        button is the accessible path.
       */}
       <div className="relative">
-        {swipe.offset < 0 ? (
+        {swipe.offset < 0 || swipe.leaving ? (
           <div
             aria-hidden="true"
-            data-swipe-reveal={swipe.armed ? "armed" : "showing"}
+            data-swipe-reveal={swipe.armed || swipe.leaving ? "armed" : "showing"}
             className={cn(
-              "absolute inset-0 flex items-center justify-end rounded-control bg-danger-fill pr-4",
-              "text-ui font-semibold text-on-danger-fill",
-              swipe.armed ? "opacity-100" : "opacity-70",
+              "absolute inset-0 flex items-center justify-end gap-1.5 rounded-control bg-danger-fill pr-4",
+              "text-ui font-semibold text-on-danger-fill transition-opacity duration-press ease-out",
+              swipe.armed || swipe.leaving ? "opacity-100" : "opacity-70",
             )}
           >
+            <TrashIcon width={18} height={18} />
             Delete
           </div>
         ) : null}
@@ -145,7 +184,8 @@ export function SetRow({
           role="group"
           aria-label={setLabel}
           tabIndex={selectable ? 0 : undefined}
-          onClick={selectable ? swipe.guardClick(onSelect) : undefined}
+          onClick={selectable ? onSelect : undefined}
+          onClickCapture={swipe.swallowClick}
           onKeyDown={selectable ? (event) => activateOnKey(event, onSelect) : undefined}
           {...swipe.handlers}
           style={
@@ -157,6 +197,7 @@ export function SetRow({
           }
           className={cn(
             "relative grid items-center gap-2",
+            swipe.className,
             editing
               ? cn(
                   "h-16 rounded-row border bg-surface-2 pr-2 pl-2.5",
@@ -173,15 +214,25 @@ export function SetRow({
                 ),
           )}
         >
-          <span
-            className={cn(
-              "font-semibold",
-              warmup ? "text-caption text-muted-2" : "text-sm",
-              active ? "text-foreground" : "text-muted-2",
-            )}
-          >
-            {index}
-          </span>
+          {onToggleWarmup ? (
+            // The set number is the warm-up switch, on every row, logged or
+            // not. It reaches into the row's left padding and runs its full
+            // height, so a thumb gets ~36 x 48 rather than the 26px column.
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                haptic("light");
+                onToggleWarmup();
+              }}
+              aria-label={warmup ? `${setLabel}: make it a working set` : `${setLabel}: mark as warm-up`}
+              className="-ml-2.5 flex h-full items-center self-stretch pl-2.5 text-left focus-visible:outline-2 focus-visible:outline-accent-line"
+            >
+              {label}
+            </button>
+          ) : (
+            label
+          )}
 
           <LoadCell
             value={set.loadKg === null ? null : loadIn(set.loadKg, unit)}
@@ -242,17 +293,10 @@ export function SetRow({
               ✓
             </button>
           ) : planned ? (
-            // Not a confirm: a planned row is logged by becoming the active row.
-            // Only one square on the screen means "log this", so the thumb
-            // never has to check which one it is on.
-            <button
-              type="button"
-              onClick={onDiscard}
-              aria-label={`Remove planned ${setLabel}`}
-              className="flex h-14 items-center justify-center rounded-chip border border-border bg-surface text-title text-muted"
-            >
-              ×
-            </button>
+            // Not a confirm, and no longer a ×: a planned row is logged by
+            // becoming the active row, and removed by swiping it away. The
+            // column stays so the cells line up with the active row's.
+            <span />
           ) : (
             <span className="flex items-center justify-end gap-1.5">
               {pendingSync ? <PendingDot /> : null}
@@ -261,6 +305,29 @@ export function SetRow({
               </span>
             </span>
           )}
+
+          {editing && onDiscard ? (
+            // The non-gesture path for a row not logged yet. Out of sight and
+            // out of a thumb's way, the way the × it replaces was not; a
+            // screen reader finds it in the row, and a keyboard Tab shows it
+            // over the row's right end.
+            <button
+              type="button"
+              onClick={onDiscard}
+              aria-label={`Remove planned ${setLabel}`}
+              className={cn(
+                // sr-only keeps it absolute; focus undoes only the clipping.
+                "sr-only inset-y-1.5 right-1.5",
+                "focus-visible:m-0 focus-visible:h-auto focus-visible:w-auto focus-visible:overflow-visible focus-visible:[clip-path:none]",
+                "focus-visible:flex focus-visible:items-center focus-visible:gap-1.5 focus-visible:rounded-chip",
+                "focus-visible:bg-danger-fill focus-visible:px-3 focus-visible:text-ui focus-visible:font-semibold",
+                "focus-visible:text-on-danger-fill focus-visible:outline-2 focus-visible:outline-accent-line",
+              )}
+            >
+              <TrashIcon width={16} height={16} />
+              Remove
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -295,49 +362,89 @@ export function SetRow({
 }
 
 function activateOnKey(event: KeyboardEvent, action?: () => void) {
+  // Only the row's own keys: Enter on the warm-up button inside it is that
+  // button's, and must not also open the row's actions.
+  if (event.target !== event.currentTarget) return;
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   action?.();
 }
 
 /**
- * Swipe left to delete, per the Set Row spec.
+ * Swipe left to delete, per the Set Row spec, on every row: logged sets and
+ * rows not logged yet alike.
+ *
+ * iOS's list-row swipe. The row follows the finger, uncovering a red Delete
+ * behind it. Past `SWIPE_DELETE_PX` it arms -- the reveal goes solid and the
+ * phone gives one `medium` buzz where it can -- and letting go there sends
+ * the row off to the left while it fades (`afterExit` waits for that, then
+ * deletes). Let go short of it and the row springs back on `ease-spring`.
+ * Nothing animates height: once the row is gone, the list closes up in one
+ * step (docs/athlete-motion.md, "no layout animation").
  *
  * Pointer events rather than touch events, so it works the same with a thumb,
  * a mouse and a stylus. `touch-action: pan-y` hands vertical movement back to
  * the browser, so scrolling the session with a thumb that lands on a row still
  * scrolls. A drag that turns out to be mostly vertical never becomes a swipe.
+ * Once it is a swipe the row captures the pointer, so a thumb that drifts off
+ * the row's 48px mid-drag keeps driving it.
  *
- * The gesture is never the only way: tapping the row opens the same Delete,
- * which is what a screen reader, a keyboard, or someone who never guesses that
- * rows swipe will use.
+ * The gesture is never the only way: tapping a logged row opens the same
+ * Delete, and a row not logged yet carries a Remove button for a screen
+ * reader or a keyboard.
  */
-function useSwipeToDelete(onDelete?: () => void) {
+function useSwipeToDelete(ref: RefObject<HTMLElement | null>, onDelete?: () => void) {
   const [dx, setDx] = useState(0);
+  const [leaving, setLeaving] = useState(false);
   const origin = useRef<{ x: number; y: number } | null>(null);
   const dragging = useRef(false);
   const justSwiped = useRef(false);
+  const wasArmed = useRef(false);
+  const deleteRef = useRef(onDelete);
+
+  useEffect(() => {
+    deleteRef.current = onDelete;
+  });
+
+  // The row has started leaving: wait for its exit to play, then delete. The
+  // reset lands in the same render as the delete, so a row the screen keeps
+  // (a delete it refused) comes back rather than staying invisible.
+  useEffect(() => {
+    if (!leaving) return;
+    return afterExit(ref.current, () => {
+      deleteRef.current?.();
+      setLeaving(false);
+      setDx(0);
+    });
+  }, [leaving, ref]);
 
   const reset = () => {
     origin.current = null;
     dragging.current = false;
+    wasArmed.current = false;
     setDx(0);
   };
 
   if (!onDelete) {
-    return { handlers: {}, style: {}, offset: 0, armed: false, guardClick: (fn?: () => void) => fn };
+    return { handlers: {}, style: {}, className: "", offset: 0, armed: false, leaving: false, swallowClick: undefined };
   }
+
+  const armed = dx <= -SWIPE_DELETE_PX;
 
   return {
     /** How far the row has been dragged, negative to the left. */
     offset: dx,
     /** Letting go here deletes. */
-    armed: dx <= -SWIPE_DELETE_PX,
+    armed,
+    /** Let go armed: the row is on its way out. */
+    leaving,
     handlers: {
       onPointerDown: (event: PointerEvent) => {
+        if (leaving) return;
         origin.current = { x: event.clientX, y: event.clientY };
         dragging.current = false;
         justSwiped.current = false;
+        wasArmed.current = false;
       },
       onPointerMove: (event: PointerEvent) => {
         if (!origin.current) return;
@@ -346,31 +453,54 @@ function useSwipeToDelete(onDelete?: () => void) {
         if (!dragging.current) {
           if (Math.abs(moveX) < DRAG_SLOP_PX || Math.abs(moveX) < Math.abs(moveY)) return;
           dragging.current = true;
+          const el = event.currentTarget as Element;
+          if (typeof el.setPointerCapture === "function") {
+            try {
+              el.setPointerCapture(event.pointerId);
+            } catch {
+              // A pointer that already ended. The drag still works uncaptured.
+            }
+          }
         }
-        setDx(Math.min(0, moveX));
+        const next = Math.min(0, moveX);
+        const nowArmed = next <= -SWIPE_DELETE_PX;
+        // Once per crossing, not once per frame past the line.
+        if (nowArmed && !wasArmed.current) haptic("medium");
+        wasArmed.current = nowArmed;
+        setDx(next);
       },
       onPointerUp: () => {
         if (dragging.current) {
           justSwiped.current = true;
-          if (dx <= -SWIPE_DELETE_PX) onDelete();
+          if (armed) {
+            origin.current = null;
+            dragging.current = false;
+            setLeaving(true);
+            return;
+          }
         }
         reset();
       },
       onPointerCancel: reset,
     },
     style: {
-      transform: dx ? `translateX(${dx}px)` : undefined,
+      transform: leaving ? "translateX(-100%)" : dx ? `translateX(${dx}px)` : undefined,
       touchAction: "pan-y",
-      transition: dx ? "none" : "transform 150ms ease-out",
     },
-    // A drag ends in a click event too. Without this, every swipe that fell
-    // short would also open the row's actions.
-    guardClick: (fn?: () => void) => () => {
-      if (justSwiped.current) {
-        justSwiped.current = false;
-        return;
-      }
-      fn?.();
+    // Under the finger: no transition, it tracks 1:1. Let go short: back on
+    // the spring. Let go armed: out on ease-in, the way things leave.
+    className: leaving
+      ? "motion-safe:transition-transform motion-safe:duration-base motion-safe:ease-in"
+      : dx
+        ? ""
+        : "motion-safe:transition-transform motion-safe:duration-spring motion-safe:ease-spring",
+    // A drag ends in a click too, on whichever cell it started over. Without
+    // this, a swipe that fell short would open the row's actions or the pad.
+    swallowClick: (event: MouseEvent) => {
+      if (!justSwiped.current) return;
+      justSwiped.current = false;
+      event.stopPropagation();
+      event.preventDefault();
     },
   };
 }

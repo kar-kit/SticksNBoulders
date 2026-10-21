@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { TrashIcon } from "@/components/ui/icons";
 import { SetRow, SetRowHeader } from "./set-row";
 import type { LoggableSet, RpeValue } from "@/lib/logging/set";
 import { plannedIndex } from "@/lib/logging/plan";
@@ -80,6 +81,11 @@ export interface ExerciseBlockProps {
   onRemove?: () => void;
   /** Why the exercise cannot be removed, if it cannot. Shown in place of the button. */
   removeBlocked?: string | null;
+  /**
+   * Flips one set between warm-up and working: a logged set by its id, or a
+   * row not logged yet by its id. The set number on each row is the switch.
+   */
+  onToggleWarmup?: (clientSetId: string) => void;
 }
 
 /**
@@ -113,6 +119,7 @@ export function ExerciseBlock({
   unit = "kg",
   onRemove,
   removeBlocked = null,
+  onToggleWarmup,
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const open = planned.length > 0;
@@ -128,7 +135,7 @@ export function ExerciseBlock({
 
   return (
     <section aria-label={name} className="flex flex-col gap-2">
-      <header className="flex items-baseline justify-between gap-3">
+      <header className="flex items-center justify-between gap-3">
         {open ? (
           <h2 className="m-0 text-title font-semibold">{name}</h2>
         ) : (
@@ -142,16 +149,18 @@ export function ExerciseBlock({
           </button>
         )}
         {onRemove && !confirmingRemove ? (
-          // Text, not an icon, and quiet: it sits a long way from the confirm
-          // square and Add set, and a remove that looks like neither is one a
-          // thumb mid-set does not hit by accident.
+          // An icon, quiet, and a long way from the confirm square and Add
+          // set. It looks like neither, so a thumb mid-set does not hit it by
+          // accident, and it no longer repeats the word "Remove" down the
+          // screen once per exercise. The confirm below still asks first
+          // whenever there is logged work to lose.
           <button
             type="button"
             onClick={askRemove}
             aria-label={`Remove ${name} from this session`}
-            className="flex h-11 flex-none items-center px-2 text-ui text-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+            className="-mr-2 flex size-11 flex-none items-center justify-center rounded-chip text-muted tap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
           >
-            Remove
+            <TrashIcon />
           </button>
         ) : null}
       </header>
@@ -213,6 +222,7 @@ export function ExerciseBlock({
             onSelect={onSelect ? () => onSelect(set.clientSetId) : undefined}
             onDelete={onDelete ? () => onDelete(set.clientSetId) : undefined}
             deleteBlocked={set.deleteBlocked ?? null}
+            onToggleWarmup={onToggleWarmup ? () => onToggleWarmup(set.clientSetId) : undefined}
             unit={unit}
           />
         ))}
@@ -230,7 +240,8 @@ export function ExerciseBlock({
             onPressReps={() => onFocus?.(row.clientSetId, "reps")}
             onPressRpe={() => onFocus?.(row.clientSetId, "rpe")}
             onConfirm={() => onConfirm?.(row.clientSetId)}
-            onDiscard={() => onDiscard?.(row.clientSetId)}
+            onDiscard={onDiscard ? () => onDiscard(row.clientSetId) : undefined}
+            onToggleWarmup={onToggleWarmup ? () => onToggleWarmup(row.clientSetId) : undefined}
             unit={unit}
           />
         ))}

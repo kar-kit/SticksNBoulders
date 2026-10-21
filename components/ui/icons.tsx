@@ -59,3 +59,10 @@ export const CameraIcon = (props: IconProps) => (
     <path d="M6.5 5l1.2-2h4.6L13.5 5" />
   </Icon>
 );
+
+/** A delete or remove: the exercise header's Remove, a swiped row's reveal. */
+export const TrashIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M3 5.5h14M8 5.5V3.5h4v2M5 5.5l.8 11a1.5 1.5 0 0 0 1.5 1.5h5.4a1.5 1.5 0 0 0 1.5-1.5l.8-11M8.5 9v5.5M11.5 9v5.5" />
+  </Icon>
+);
