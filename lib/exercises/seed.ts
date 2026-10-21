@@ -85,6 +85,12 @@ export const SEED_EXERCISES: readonly string[] = [
   "Tricep Pushdown",
   "Skullcrusher",
   "Lateral Raise",
+  // Front raise has no generic parent row: like Barbell/Dumbbell Curl and
+  // Barbell/Dumbbell Row, each implement is its own exercise, so a coach pins
+  // the one the athlete should use by picking it in the program editor.
+  "Dumbbell Front Raise",
+  "Cable Front Raise",
+  "Plate Front Raise",
 
   // Upper body pulling.
   "Barbell Row",

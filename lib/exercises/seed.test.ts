@@ -49,6 +49,22 @@ describe("the shared library", () => {
     }
   });
 
+  it("finds each front raise variant under the queries people type", () => {
+    const top = (query: string) => rankExercises(query, library).map((m) => m.exercise.name);
+    const variants = ["Cable Front Raise", "Dumbbell Front Raise", "Plate Front Raise"];
+    expect(top("front raise").slice(0, 3).sort()).toEqual(variants);
+    expect(top("front raise")).not.toContain("Front Squat");
+    expect(top("db front raise")).toContain("Dumbbell Front Raise");
+    expect(top("cable raise")).toContain("Cable Front Raise");
+    expect(top("cable front")[0]).toBe("Cable Front Raise");
+    expect(top("plate")[0]).toBe("Plate Front Raise");
+  });
+
+  it("keeps front raise as one row per implement, with no generic parent", () => {
+    const names = SEED_EXERCISES.filter((n) => /front raise/i.test(n)).sort();
+    expect(names).toEqual(["Cable Front Raise", "Dumbbell Front Raise", "Plate Front Raise"]);
+  });
+
   it("stays a starting list, not a bodybuilding database", () => {
     // If this ever fails, the question is whether the library grew because a
     // coach asked or because someone was being thorough.
