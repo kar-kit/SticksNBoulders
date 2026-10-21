@@ -5,14 +5,15 @@ import { TextField } from "./input";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 
 /**
- * The athlete's phone screens must not move because the coach's do
- * (docs/coach-motion.md). These shared components carry the coach's motion
- * only behind the `coach:` variant, which matches inside the coach shell and
- * nowhere else -- so every motion class they render has to be one of those.
- * A bare `animate-*`, `transition-control`, `press` or `rule-*` here would
- * animate the logger.
+ * Shared components must not move because one side's do
+ * (docs/coach-motion.md, docs/athlete-motion.md). They carry motion only
+ * behind the `coach:` or `athlete:` variant, each of which matches inside its
+ * own shell and nowhere else -- so every motion class they render has to be
+ * one of those. A bare `animate-*`, `transition-control`, `press`, `tap` or
+ * `rule-*` here would animate the logger with the coach's motion, or the
+ * coach's grid and the sign-in screen with the athlete's.
  */
-const MOTION = /^(animate-|motion-safe:|motion-reduce:|transition-control$|press$|press-wide$|rule-|aria-[a-z[\]=]+:rule-on$|duration-|ease-)/;
+const MOTION = /^(animate-|motion-safe:|motion-reduce:|transition-control$|press$|press-wide$|tap$|rule-|aria-[a-z[\]=]+:rule-on$|duration-|ease-)/;
 
 function bareMotion(root: HTMLElement): string[] {
   const found = new Set<string>();
@@ -24,7 +25,7 @@ function bareMotion(root: HTMLElement): string[] {
   return [...found];
 }
 
-describe("shared components stay still outside the coach shell", () => {
+describe("shared components stay still outside their shell", () => {
   it("Button, every variant", () => {
     const variants: ButtonVariant[] = ["primary", "secondary", "ghost", "danger"];
     const { container } = render(
@@ -39,6 +40,10 @@ describe("shared components stay still outside the coach shell", () => {
     expect(bareMotion(container)).toEqual([]);
     // And the coach's motion is there, behind the gate.
     expect(screen.getByRole("button", { name: "primary" }).className).toContain("coach:transition-control");
+    // And the athlete's press, behind its own.
+    for (const variant of variants) {
+      expect(screen.getByRole("button", { name: variant }).className).toContain("athlete:tap");
+    }
   });
 
   it("TextField", () => {

@@ -30,7 +30,9 @@ export function AthleteShell({ children }: { children: React.ReactNode }) {
     // and then the body scrolls instead of <main>. On an iPhone that pushed
     // the tab bar below the fold and slid the header up under the translucent
     // status bar. Pinned to the viewport, only <main> scrolls.
-    <div className="flex h-dvh flex-col overflow-hidden bg-background">
+    // `athlete-motion` turns on the `athlete:` variant and the reduced-motion
+    // floor for everything inside (globals.css, docs/athlete-motion.md).
+    <div className="athlete-motion flex h-dvh flex-col overflow-hidden bg-background">
       {/* The one safe-area inset for every athlete screen. Screens pad with
           pt-8, not pt-safe-8, or the notch is counted twice. */}
       <div className="pt-safe flex-none" />

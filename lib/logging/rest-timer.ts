@@ -13,6 +13,8 @@
  * and there should never be one.
  */
 
+import { haptic, HAPTICS } from "@/lib/ui/haptics";
+
 export interface RestTimer {
   /** When the set that started this rest was logged. */
   startedAt: Date;
@@ -77,22 +79,17 @@ export function formatRest(ms: number): string {
 }
 
 /** Short double pulse. Felt through a pocket, not loud enough to be a phone call. */
-export const REST_BUZZ: readonly number[] = [200, 100, 200];
+export const REST_BUZZ: readonly number[] = HAPTICS.alert;
 
 /**
  * Buzzes the phone at the end of a rest, where the platform allows it.
  *
- * Guarded every way it can fail: iOS Safari has no `navigator.vibrate`, some
- * browsers throw without a recent user gesture, and a test runner has no
- * navigator worth the name. Losing the buzz costs nothing -- the bar going is
- * the signal -- so nothing here is allowed to throw.
+ * `haptic` is guarded every way it can fail: iOS Safari has no
+ * `navigator.vibrate`, some browsers throw without a recent user gesture, and
+ * a test runner has no navigator worth the name. Losing the buzz costs nothing
+ * -- the bar going is the signal -- so nothing here is allowed to throw.
  */
 export function buzzRestOver(nav: { vibrate?: (pattern: number[]) => boolean } | undefined =
   typeof navigator === "undefined" ? undefined : navigator): boolean {
-  try {
-    if (!nav || typeof nav.vibrate !== "function") return false;
-    return nav.vibrate([...REST_BUZZ]);
-  } catch {
-    return false;
-  }
+  return haptic("alert", nav);
 }

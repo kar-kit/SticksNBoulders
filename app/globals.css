@@ -176,18 +176,20 @@
 
 /*
  * Motion. Defined once, here; every component reaches for these names, never
- * for a millisecond of its own. docs/coach-motion.md lists every interaction
- * that uses them and what each one tells the coach.
+ * for a millisecond of its own. docs/coach-motion.md and docs/athlete-motion.md
+ * list every interaction that uses them and what each one tells the user.
  *
- * Coach side only. The athlete's screens keep their own two hand-set
- * transitions (set-row swipe, upload bar) and gain nothing from this block:
- * shared components opt in through the `coach:` variant below, which matches
- * only inside the coach shell.
+ * Two scopes, one set of tokens. Shared components opt in per side: `coach:`
+ * matches only inside the coach shell, `athlete:` only inside the athlete
+ * shell (`athlete-motion` on its root). The same Button hovers for the coach
+ * and springs under the thumb for the athlete, and moves on neither the
+ * sign-in screen nor anywhere else outside a shell.
  *
  * `static` so the variables are always on :root, whether or not a utility
  * happens to use them -- the keyframe shorthands below refer to them.
  */
 @custom-variant coach (&:where(.coach-scale, .coach-scale *));
+@custom-variant athlete (&:where(.athlete-motion, .athlete-motion *));
 
 @theme static {
   /*
@@ -206,6 +208,22 @@
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 
   /*
+   * The athlete's springs. Each is a damped spring sampled into `linear()`
+   * below, under @supports; these cubic-beziers are the fallback for a
+   * browser without it (iOS before 17.2). Every target has it, so the
+   * fallback is a floor, not the design. The spring's own settle time is its
+   * duration token, so a curve and its duration are always used together.
+   *
+   *   spring  general answer: the press letting go, a row arriving. ~0.6% over.
+   *   sheet   a bottom sheet coming up. No overshoot: a sheet that bounces
+   *           past its resting place shows a gap under it.
+   *   bounce  a moment worth marking: a set logged, a PR. ~9% over.
+   */
+  --ease-spring: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /*
    * Routine motion stays at or under 200ms; dialogs and the drawer get 240.
    * `linger` is the one long value and it never moves anything: it is how
    * long a saved / landed tint stays readable while it fades.
@@ -215,6 +233,15 @@
   --transition-duration-base: 180ms;
   --transition-duration-panel: 240ms;
   --transition-duration-linger: 400ms;
+  /*
+   * The athlete's spring durations: each curve's settle time, to 0.1%. They
+   * read shorter than they are -- a spring covers most of its distance in
+   * the first third and spends the rest settling -- and nothing waits on
+   * them: input is live from the first frame.
+   */
+  --transition-duration-spring: 488ms;
+  --transition-duration-sheet: 439ms;
+  --transition-duration-bounce: 614ms;
 
   /* Something new on screen: a row, a panel, a confirm strip, a view. */
   --animate-rise-in: rise-in var(--transition-duration-base) var(--ease-out) both;
@@ -233,6 +260,22 @@
   --animate-flash: flash var(--transition-duration-linger) var(--ease-out) both;
   /* Loading skeletons. The one loop on the coach side; motion-safe only. */
   --animate-shimmer: shimmer 1400ms linear infinite;
+
+  /*
+   * The athlete's. Enter on a spring, leave on `ease-in` at `panel`: what is
+   * leaving should not settle, it should go. Transform and opacity only.
+   */
+  /* A bottom sheet up from the bottom edge, and back down. */
+  --animate-sheet-in: sheet-in var(--transition-duration-sheet) var(--ease-sheet) both;
+  --animate-sheet-out: sheet-out var(--transition-duration-panel) var(--ease-in) both;
+  /* The sheet's backdrop leaving (it arrives with fade-in). */
+  --animate-fade-out: fade-out var(--transition-duration-base) var(--ease-in) both;
+  /* A row joining a list: a planned set, a set just logged. */
+  --animate-row-in: row-in var(--transition-duration-spring) var(--ease-spring) both;
+  /* Something small arriving with a little weight: a badge, a count. */
+  --animate-spring-pop: spring-pop var(--transition-duration-bounce) var(--ease-bounce) both;
+  /* The logged-set tick. A pop with a quarter turn of settle. */
+  --animate-tick-in: tick-in var(--transition-duration-bounce) var(--ease-bounce) both;
 
   @keyframes rise-in {
     from {
@@ -284,6 +327,40 @@
       opacity: 0;
     }
   }
+  @keyframes sheet-in {
+    from {
+      translate: 0 100%;
+    }
+  }
+  @keyframes sheet-out {
+    to {
+      translate: 0 100%;
+    }
+  }
+  @keyframes fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes row-in {
+    from {
+      opacity: 0;
+      translate: 0 8px;
+    }
+  }
+  @keyframes spring-pop {
+    from {
+      opacity: 0;
+      scale: 0.6;
+    }
+  }
+  @keyframes tick-in {
+    from {
+      opacity: 0;
+      scale: 0.4;
+      rotate: -20deg;
+    }
+  }
   @keyframes shimmer {
     from {
       translate: -100% 0;
@@ -295,11 +372,29 @@
 }
 
 /*
- * Reduced motion, as a floor under every coach-side component: nothing
+ * The springs themselves, sampled from a damped harmonic oscillator
+ * (response, damping fraction, as SwiftUI's `.spring` takes them) at 400
+ * points and simplified to within 0.2% of the curve. Regenerate rather than
+ * hand-edit: `npx tsx scripts/spring-easings.mts`. Safari 17.2 and Chrome 113
+ * are the first with `linear()`.
+ */
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    /* response 0.35s, damping 0.85 */
+    --ease-spring: linear(0, 0.0056 1.3%, 0.0253 2.8%, 0.056 4.3%, 0.0952 5.8%, 0.1404 7.2%, 0.1899 8.8%, 0.4105 15%, 0.511 18%, 0.6095 21.3%, 0.6952 24.5%, 0.7623 27.5%, 0.8226 30.8%, 0.8711 34%, 0.9118 37.5%, 0.9442 41.3%, 0.9698 45.5%, 0.9879 50.2%, 0.9995 55.8%, 1.0045 61%, 1.0063 67.5%, 1);
+    /* response 0.42s, damping 0.92 */
+    --ease-sheet: linear(0, 0.0061 1.8%, 0.0229 3.5%, 0.0522 5.5%, 0.0898 7.5%, 0.1744 11.3%, 0.3819 19.5%, 0.4721 23.3%, 0.5602 27.3%, 0.6338 31%, 0.6944 34.5%, 0.7472 38%, 0.7926 41.5%, 0.8337 45.3%, 0.876 50%, 0.9105 55%, 0.9387 60.5%, 0.9605 66.5%, 0.9764 73%, 0.9877 80.5%, 0.995 89.3%, 1);
+    /* response 0.38s, damping 0.6 */
+    --ease-bounce: linear(0, 0.0077 1.3%, 0.0291 2.5%, 0.0697 4%, 0.1233 5.5%, 0.1754 6.8%, 0.2443 8.3%, 0.5314 14%, 0.6497 16.5%, 0.7563 19%, 0.8484 21.5%, 0.9177 23.8%, 0.9797 26.3%, 1.0265 28.7%, 1.0622 31.5%, 1.0773 33.3%, 1.0883 35.3%, 1.0941 37.5%, 1.0942 39.8%, 1.0808 44.8%, 1.0191 58.8%, 1.0069 62.7%, 0.9981 67%, 0.9926 72%, 0.991 77.5%, 1);
+  }
+}
+
+/*
+ * Reduced motion, as a floor under every coach-side and athlete-side component: nothing
  * animates, nothing transitions, everything lands in its end state at once.
  * Components also gate their transforms behind `motion-safe:`, so this is the
- * net for anything that forgets, not the only line. Scoped to the coach shell
- * for the same reason as the tokens. The 0.01ms rather than 0 is deliberate:
+ * net for anything that forgets, not the only line. Scoped to the two shells
+ * for the same reason as the variants. The 0.01ms rather than 0 is deliberate:
  * an animation of zero length fires no `animationend`, and the dialogs and
  * the drawer wait on that event to unmount.
  */
@@ -308,7 +403,12 @@
   .coach-scale *,
   .coach-scale *::before,
   .coach-scale *::after,
-  .coach-scale *::backdrop {
+  .coach-scale *::backdrop,
+  .athlete-motion,
+  .athlete-motion *,
+  .athlete-motion *::before,
+  .athlete-motion *::after,
+  .athlete-motion *::backdrop {
     animation-duration: 0.01ms !important;
     animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
@@ -347,6 +447,31 @@
     &:active:not(:disabled, [aria-disabled="true"]) {
       scale: 0.99;
       transition-duration: var(--transition-duration-press);
+    }
+  }
+}
+
+/*
+ * The athlete's press, for a thumb rather than a pointer: in quickly on
+ * `:active`, out on the spring, so the release has the small give of a
+ * native control instead of a snap. Carries its own transition (colour as
+ * well as scale, so a variant's `active:` fill fades back with it) and drops
+ * the grey tap flash iOS paints over links and buttons, which would otherwise
+ * sit on top of the fill change. The scale is motion-safe; the colour still
+ * answers under reduced motion.
+ */
+@utility tap {
+  -webkit-tap-highlight-color: transparent;
+  transition-property: color, background-color, border-color, opacity, scale;
+  transition-duration: var(--transition-duration-spring);
+  transition-timing-function: var(--ease-spring);
+  &:active:not(:disabled, [aria-disabled="true"]) {
+    transition-duration: var(--transition-duration-press);
+    transition-timing-function: var(--ease-out);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    &:active:not(:disabled, [aria-disabled="true"]) {
+      scale: 0.97;
     }
   }
 }

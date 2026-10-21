@@ -62,8 +62,9 @@ export function Button({
         "inline-flex items-center justify-center whitespace-nowrap",
         "transition-colors disabled:cursor-not-allowed",
         // On the coach side the shared transition tokens and a press;
-        // docs/coach-motion.md. The athlete's button is unchanged.
-        "coach:transition-control coach:press",
+        // docs/coach-motion.md. On the athlete's, the thumb press with a
+        // spring release; docs/athlete-motion.md.
+        "coach:transition-control coach:press athlete:tap",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
         VARIANTS[variant],
         COACH_HOVER[variant],

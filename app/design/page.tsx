@@ -20,6 +20,7 @@ import { SEED_EXERCISES } from "@/lib/exercises/seed";
 import { normaliseExerciseName } from "@/appwrite/documents";
 import type { Exercise } from "@/lib/exercises/match";
 import type { RpeValue } from "@/lib/logging/set";
+import { AthleteMotionPanel } from "./motion-panel";
 import { Caption, Panel, Rule } from "./section";
 
 const SURFACES = [
@@ -172,6 +173,8 @@ export default function DesignSystemPage() {
             </div>
           </div>
         </Panel>
+
+        <AthleteMotionPanel />
 
         <Panel label="Buttons">
           <div className="flex flex-wrap items-center gap-2.5">

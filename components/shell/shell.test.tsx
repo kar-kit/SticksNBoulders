@@ -48,6 +48,12 @@ describe("AthleteShell", () => {
     expect(screen.getAllByRole("link")).toHaveLength(4);
   });
 
+  it("scopes the athlete's motion to the shell", () => {
+    // The `athlete:` variant and the reduced-motion floor key off this class.
+    const { container } = render(<AthleteShell><p>Session content</p></AthleteShell>);
+    expect(container.firstElementChild).toHaveClass("athlete-motion");
+  });
+
   it("paints the chrome before the session resolves, but not the content", () => {
     // Resolving the session costs an Appwrite round trip. Gating the whole
     // shell on it meant no first contentful paint at all on a cold load --
