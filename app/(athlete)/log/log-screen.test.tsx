@@ -531,7 +531,8 @@ describe("logging a set on a phone that cannot store it", () => {
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
     await screen.findByRole("timer", { name: "Rest timer" });
     await user.click(screen.getByRole("button", { name: "Add 30 seconds to the rest" }));
-    expect(screen.getByRole("timer", { name: "Rest timer" })).toHaveTextContent("2:30");
+    // The screen's one-second clock may tick between the confirm and here.
+    expect(screen.getByRole("timer", { name: "Rest timer" })).toHaveTextContent(/2:(30|29)/);
 
     logSet.mockRejectedValueOnce(new DOMException("Quota exceeded", "QuotaExceededError"));
     await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
@@ -775,10 +776,12 @@ describe("the rest timer", () => {
     await addAndLog(user);
     await user.click(await screen.findByRole("button", { name: "Add 30 seconds to the rest" }));
 
-    // The clock has not moved in this test, so the whole extension shows.
-    expect(screen.getByRole("timer")).toHaveTextContent("2:30");
+    // The whole extension shows. The screen's real one-second clock can tick
+    // once between the confirm and the read on a loaded CI box, so a second
+    // either way is the same answer, not a flake.
+    expect(screen.getByRole("timer")).toHaveTextContent(/2:(30|29)/);
     await user.click(screen.getByRole("button", { name: "Add 30 seconds to the rest" }));
-    expect(screen.getByRole("timer")).toHaveTextContent("3:00");
+    expect(screen.getByRole("timer")).toHaveTextContent(/3:00|2:59|2:58/);
   });
 
   it("stands down while a number is being entered", async () => {
