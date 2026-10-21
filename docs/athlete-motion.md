@@ -170,9 +170,12 @@ First, every transform is behind `motion-safe:` (or, in `tap`, a
 `no-preference` query). Second, the floor in `globals.css` covers
 `.athlete-motion`: every animation and transition inside the athlete shell
 runs 0.01 ms (not 0, so `animationend` still fires for `afterExit`). This
-also makes the two existing hand-set athlete transitions, the set-row swipe
-snap-back and the upload bar, instant under reduced motion. Neither waits on
-an event that the floor would suppress.
+also makes the hand-set upload bar instant under reduced motion. The set-row
+swipe (F2) is on the tokens now: snap-back on `ease-spring` / `duration-spring`,
+the exit on `ease-in` / `base` with `animate-fade-out`, both behind
+`motion-safe:`, so under reduced motion the row snaps and the delete is
+immediate. The row still follows the finger: that is direct manipulation,
+not animation.
 
 ## Demo
 

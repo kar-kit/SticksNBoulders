@@ -1,7 +1,31 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SetRow, SetRowHeader } from "./set-row";
+import { SetRow, SetRowHeader, SWIPE_DELETE_PX } from "./set-row";
 import type { LoggableSet } from "@/lib/logging/set";
+
+const haptic = vi.hoisted(() => vi.fn(() => false));
+vi.mock("@/lib/ui/haptics", () => ({ haptic }));
+
+// afterExit is real by default (jsdom has no stylesheet, so it finishes at
+// once). One test holds the exit open to see the row while it leaves.
+const exit = vi.hoisted(() => ({ hold: false, done: null as null | (() => void) }));
+vi.mock("@/components/ui/motion", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/components/ui/motion")>();
+  return {
+    ...real,
+    afterExit: (el: Element | null, done: () => void) => {
+      if (!exit.hold) return real.afterExit(el, done);
+      exit.done = done;
+      return () => {};
+    },
+  };
+});
+
+beforeEach(() => {
+  haptic.mockClear();
+  exit.hold = false;
+  exit.done = null;
+});
 
 function set(overrides: Partial<LoggableSet> = {}): LoggableSet {
   return { loadKg: 142.5, reps: 5, rpe: 8, isWarmup: false, ...overrides };
@@ -298,5 +322,217 @@ describe("SetRow — swipe to delete", () => {
     fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
     fireEvent.pointerMove(row, { clientX: 180, clientY: 10 });
     expect(reveal(container)).toBeNull();
+  });
+});
+
+describe("SetRow — swipe on a row not logged yet", () => {
+  const reveal = (container: HTMLElement) => container.querySelector("[data-swipe-reveal]");
+  const drag = (row: HTMLElement, to: number) => {
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: to, clientY: 10 });
+  };
+
+  it("has no visible remove button any more", () => {
+    render(<SetRow index={2} set={set()} state="planned" onDiscard={() => {}} />);
+    expect(screen.queryByText("×")).not.toBeInTheDocument();
+  });
+
+  it("removes a planned row with a swipe past the threshold", () => {
+    const onDiscard = vi.fn();
+    const { container } = render(<SetRow index={2} set={set()} state="planned" onDiscard={onDiscard} />);
+    const row = screen.getByRole("group", { name: "Set 2" });
+    drag(row, 260);
+    expect(reveal(container)).toHaveAttribute("data-swipe-reveal", "showing");
+    fireEvent.pointerMove(row, { clientX: 300 - SWIPE_DELETE_PX - 4, clientY: 10 });
+    expect(reveal(container)).toHaveAttribute("data-swipe-reveal", "armed");
+    fireEvent.pointerUp(row);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("swipes the active row away too, so a row added by mistake can always go", () => {
+    const onDiscard = vi.fn();
+    render(<SetRow index={1} set={set()} state="active" onDiscard={onDiscard} />);
+    const row = screen.getByRole("group", { name: "Set 1" });
+    drag(row, 150);
+    fireEvent.pointerUp(row);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("springs back from a short drag and does not open the pad on the cell it started over", () => {
+    const onDiscard = vi.fn();
+    const onPressLoad = vi.fn();
+    const { container } = render(
+      <SetRow index={2} set={set()} state="planned" onDiscard={onDiscard} onPressLoad={onPressLoad} />,
+    );
+    const cell = screen.getByRole("button", { name: "Set 2 weight in kilograms" });
+    fireEvent.pointerDown(cell, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(cell, { clientX: 250, clientY: 10 });
+    fireEvent.pointerUp(cell);
+    fireEvent.click(cell);
+    expect(onDiscard).not.toHaveBeenCalled();
+    expect(onPressLoad).not.toHaveBeenCalled();
+    expect(reveal(container)).toBeNull();
+    const row = screen.getByRole("group", { name: "Set 2" });
+    // Back at rest, on the spring.
+    expect(row.style.transform).toBe("");
+    expect(row.className).toContain("motion-safe:ease-spring");
+
+    // And the next real tap is a tap.
+    fireEvent.pointerDown(cell, { clientX: 300, clientY: 10 });
+    fireEvent.pointerUp(cell);
+    fireEvent.click(cell);
+    expect(onPressLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not swipe on a vertical drag, which is a scroll", () => {
+    const onDiscard = vi.fn();
+    const { container } = render(<SetRow index={2} set={set()} state="planned" onDiscard={onDiscard} />);
+    const row = screen.getByRole("group", { name: "Set 2" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 280, clientY: 120 });
+    fireEvent.pointerUp(row);
+    expect(reveal(container)).toBeNull();
+    expect(onDiscard).not.toHaveBeenCalled();
+  });
+
+  it("keeps a non-gesture remove for a screen reader and a keyboard", async () => {
+    const onDiscard = vi.fn();
+    render(<SetRow index={2} set={set()} state="planned" onDiscard={onDiscard} />);
+    const remove = screen.getByRole("button", { name: "Remove planned Set 2" });
+    // Out of sight until focused, never out of the accessibility tree.
+    expect(remove).toHaveClass("sr-only");
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(remove).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no swipe and no remove without a discard handler", () => {
+    const { container } = render(<SetRow index={2} set={set()} state="planned" />);
+    drag(screen.getByRole("group", { name: "Set 2" }), 150);
+    expect(reveal(container)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Remove planned/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("SetRow — the swipe's feel", () => {
+  it("follows the finger, with no transition while it is held", () => {
+    render(<SetRow index={1} set={set()} state="logged" onDelete={() => {}} />);
+    const row = screen.getByRole("group", { name: "Set 1" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 240, clientY: 10 });
+    expect(row.style.transform).toBe("translateX(-60px)");
+    expect(row.className).not.toContain("transition-transform");
+    // Never to the right: there is nothing behind that side.
+    fireEvent.pointerMove(row, { clientX: 340, clientY: 10 });
+    expect(row.style.transform).toBe("");
+  });
+
+  it("buzzes medium once on arming, not on every move past the line, and again on re-arming", () => {
+    render(<SetRow index={1} set={set()} state="logged" onDelete={() => {}} />);
+    const row = screen.getByRole("group", { name: "Set 1" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 250, clientY: 10 });
+    expect(haptic).not.toHaveBeenCalled();
+    fireEvent.pointerMove(row, { clientX: 190, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 170, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 150, clientY: 10 });
+    expect(haptic).toHaveBeenCalledTimes(1);
+    expect(haptic).toHaveBeenCalledWith("medium");
+    fireEvent.pointerMove(row, { clientX: 250, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 150, clientY: 10 });
+    expect(haptic).toHaveBeenCalledTimes(2);
+  });
+
+  it("plays the exit before deleting: the row slides off and fades, inert, then goes", () => {
+    exit.hold = true;
+    const onDelete = vi.fn();
+    const { container } = render(<SetRow index={1} set={set()} state="logged" onDelete={onDelete} />);
+    const row = screen.getByRole("group", { name: "Set 1" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 150, clientY: 10 });
+    fireEvent.pointerUp(row);
+
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(row.style.transform).toBe("translateX(-100%)");
+    expect(row.className).toContain("motion-safe:ease-in");
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer).toHaveClass("motion-safe:animate-fade-out");
+    expect(outer).toHaveAttribute("inert");
+    expect(container.querySelector("[data-swipe-reveal]")).toHaveAttribute("data-swipe-reveal", "armed");
+
+    act(() => exit.done?.());
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    // Kept by the screen (a delete it refused): back at rest, not invisible.
+    expect(outer).not.toHaveAttribute("inert");
+    expect(row.style.transform).toBe("");
+  });
+
+  it("does not open a logged row's actions after a swipe that fell short", () => {
+    const onSelect = vi.fn();
+    render(<SetRow index={1} set={set()} state="logged" onDelete={() => {}} onSelect={onSelect} />);
+    const row = screen.getByRole("group", { name: "Set 1" });
+    fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { clientX: 250, clientY: 10 });
+    fireEvent.pointerUp(row);
+    fireEvent.click(row);
+    expect(onSelect).not.toHaveBeenCalled();
+    fireEvent.click(row);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SetRow — warm-up from the set number", () => {
+  it("makes the number a button on a logged row, and leaves the row's actions alone", async () => {
+    const onToggleWarmup = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <SetRow index={2} set={set()} state="logged" onSelect={onSelect} onToggleWarmup={onToggleWarmup} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Set 2: mark as warm-up" }));
+    expect(onToggleWarmup).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(haptic).toHaveBeenCalledWith("light");
+  });
+
+  it("works from the keyboard without opening the row's actions", async () => {
+    const onToggleWarmup = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <SetRow index={2} set={set()} state="logged" onSelect={onSelect} onToggleWarmup={onToggleWarmup} />,
+    );
+    screen.getByRole("button", { name: "Set 2: mark as warm-up" }).focus();
+    await userEvent.keyboard("{Enter}");
+    expect(onToggleWarmup).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("names the way back on a warm-up, on a row not logged yet", async () => {
+    const onToggleWarmup = vi.fn();
+    render(
+      <SetRow index="W" set={set({ isWarmup: true, rpe: null })} state="active" onToggleWarmup={onToggleWarmup} />,
+    );
+    const toggle = screen.getByRole("button", { name: "Warm-up set: make it a working set" });
+    expect(toggle).toHaveTextContent("W");
+    await userEvent.click(toggle);
+    expect(onToggleWarmup).toHaveBeenCalledTimes(1);
+  });
+
+  it("pops the new label in on a flip, and not on first render", () => {
+    const { rerender } = render(<SetRow index={2} set={set()} state="logged" onToggleWarmup={() => {}} />);
+    const label = () => screen.getByRole("button", { name: /Set 2|Warm-up set/ }).firstElementChild;
+    expect(label()).not.toHaveClass("motion-safe:animate-spring-pop");
+    rerender(<SetRow index="W" set={set({ isWarmup: true, rpe: null })} state="logged" onToggleWarmup={() => {}} />);
+    expect(label()).toHaveTextContent("W");
+    expect(label()).toHaveClass("motion-safe:animate-spring-pop");
+  });
+
+  it("is a plain label without a handler", () => {
+    render(<SetRow index={2} set={set()} state="logged" />);
+    expect(screen.queryByRole("button", { name: /mark as warm-up/ })).not.toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
   });
 });

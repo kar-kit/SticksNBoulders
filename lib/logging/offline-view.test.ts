@@ -5,10 +5,12 @@ import {
   lostOps,
   mergeById,
   queuedSessions,
+  queuedSetEdits,
   queuedSets,
   refusedDeletes,
   refusedRowDeletes,
   unsyncedIds,
+  withSetEdits,
 } from "./offline-view";
 import { EXERCISE_IN_USE, SESSION_HAS_SETS } from "@/appwrite/documents/write";
 import type { SessionRecord } from "./session";
@@ -182,5 +184,42 @@ describe("refused row deletes", () => {
   it("still reports a rename that could not be saved", () => {
     const rename = { ...op("session.update", { sessionId: "s1", name: "x" }), permanentError: "Unknown attribute" };
     expect(lostOps([rename])).toEqual([rename]);
+  });
+});
+
+describe("queued set edits", () => {
+  const set = (clientSetId: string) => ({
+    clientSetId,
+    exerciseId: "ex-1",
+    loadKg: 100,
+    reps: 5,
+    rpe: 8 as number | null,
+    isWarmup: false,
+    loggedAt: new Date(STARTED),
+  });
+  const update = (setId: string, isWarmup: boolean, rpe: number | null = null) =>
+    op("set.update", { setId, loadKg: 100, reps: 5, rpe, isWarmup });
+
+  it("keeps the latest pending edit per set", () => {
+    const edits = queuedSetEdits([update("st-1", true), update("st-1", false, 8), update("st-2", true)]);
+    expect(edits.get("st-1")).toEqual({ loadKg: 100, reps: 5, rpe: 8, isWarmup: false });
+    expect(edits.get("st-2")).toMatchObject({ isWarmup: true, rpe: null });
+  });
+
+  it("ignores an edit that can never send, and other ops", () => {
+    const dead = { ...update("st-1", true), permanentError: "rejected" };
+    expect(queuedSetEdits([dead, op("set.delete", { setId: "st-2" })]).size).toBe(0);
+  });
+
+  it("lays a flip over the set it names and leaves the rest alone", () => {
+    const sets = [set("st-1"), set("st-2")];
+    const next = withSetEdits(sets, queuedSetEdits([update("st-1", true)]));
+    expect(next[0]).toMatchObject({ clientSetId: "st-1", isWarmup: true, rpe: null, exerciseId: "ex-1" });
+    expect(next[1]).toBe(sets[1]);
+  });
+
+  it("hands the same list back when there is nothing to lay over it", () => {
+    const sets = [set("st-1")];
+    expect(withSetEdits(sets, new Map())).toBe(sets);
   });
 });

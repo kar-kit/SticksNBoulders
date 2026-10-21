@@ -65,6 +65,15 @@ inside the window keeps the set, which is the right way round for a log whose
 worst failure is a lost set. Hiding the page, leaving the screen, starting a
 second delete or finishing the session all write it immediately.
 
+Flipping a logged set between warm-up and working (tap its set number) is an
+edit, not a delete: `editSet`, the path History's corrections take. It queues a
+`set.update` behind the set's create and a rollup refresh behind that, so it is
+instant with no signal. A reload before it sends reads the set from its create
+or the server's last copy, both older than the edit, so the logger lays pending
+`set.update` ops back over them (`queuedSetEdits`). A set whose create is still
+reaching the phone's storage cannot be flipped yet, so an edit never outlives a
+create that failed.
+
 `removeSet` then deals with the queue before the server:
 
 | The set's create is... | What happens |
