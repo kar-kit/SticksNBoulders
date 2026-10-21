@@ -2,7 +2,8 @@
 
 _Design note, 16 Oct 2026. Joey's ticket: animate the coach pages (Roster,
 Review Queue, Athlete View, Programs, Program Editor). The athlete's phone
-screens are out of scope and unchanged._
+screens are out of scope here; their motion base came later and is in
+`docs/athlete-motion.md`, on the same tokens._
 
 Joey's rules, in priority order, and how each is met:
 
@@ -56,7 +57,8 @@ cannot drift into use.
 coach shell (`.coach-scale`). `Button`, `TextField` and `ExerciseTypeahead`
 are also the athlete's, so their motion classes are all `coach:`-prefixed;
 `components/ui/coach-gate.test.tsx` fails if a bare motion class ever lands on
-them. `Dialog`, `Menu` and `Tabs` are used only on coach screens (and the
+them. The athlete's side has its own variant, `athlete:`, on the same terms
+(`docs/athlete-motion.md`). `Dialog`, `Menu` and `Tabs` are used only on coach screens (and the
 `/design` sheet).
 
 ## Every interaction animated
@@ -140,7 +142,8 @@ them. `Dialog`, `Menu` and `Tabs` are used only on coach screens (and the
 - **Loading states that already said "Loading…"** (roster, queue, athlete
   panels) keep their text; skeletons replace only screens that were blank
   (editor, Programs).
-- **The athlete side.** Untouched; see gating above.
+- **The athlete side.** None of the above; see gating above and
+  `docs/athlete-motion.md`.
 
 ## Adding a line (the placeholder row)
 
@@ -180,8 +183,9 @@ model. They still dim on removal and rise in on arrival.
 
 Two layers. Every transform (lift, slide, scale, press, shimmer) is behind
 `motion-safe:` or a `prefers-reduced-motion: no-preference` query, so nothing
-moves. Under that, a floor in `globals.css`, scoped to `.coach-scale`, sets
-every animation and transition inside the coach shell to 0.01 ms (not 0: an
+moves. Under that, a floor in `globals.css`, scoped to `.coach-scale` (and, since
+the athlete base, `.athlete-motion`), sets every animation and transition
+inside the coach shell to 0.01 ms (not 0: an
 animation of zero length fires no `animationend`, which the dialog and drawer
 wait on). The result is instant: dialogs and the drawer open and close at
 once, tints do not show, end states are reached immediately.
