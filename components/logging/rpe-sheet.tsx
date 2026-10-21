@@ -22,6 +22,8 @@ export interface RpeSheetProps {
   value: RpeValue | null;
   /** Null means the athlete chose "Not sure". */
   onSelect: (value: RpeValue | null) => void;
+  /** Drawn inside a sheet that owns the edge and the fill (LogSheet). */
+  inSheet?: boolean;
 }
 
 function chipClasses(selected: boolean, half: boolean) {
@@ -34,13 +36,16 @@ function chipClasses(selected: boolean, half: boolean) {
   );
 }
 
-export function RpeSheet({ setIndex, value, onSelect }: RpeSheetProps) {
+export function RpeSheet({ setIndex, value, onSelect, inSheet = false }: RpeSheetProps) {
   const isHalf = (v: RpeValue) => !Number.isInteger(v);
 
   return (
     <section
       aria-label={`RPE for set ${setIndex}`}
-      className="flex flex-none flex-col gap-3 border-t border-border bg-surface px-3 pt-3.5 pb-[22px]"
+      className={cn(
+        "flex flex-none flex-col gap-3 px-3 pt-3.5 pb-[22px]",
+        !inSheet && "border-t border-border bg-surface",
+      )}
     >
       <div className="flex items-center justify-between px-1 font-mono text-label text-muted-2">
         <span>RPE · SET {setIndex}</span>

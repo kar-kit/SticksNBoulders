@@ -105,6 +105,21 @@ Rules for the features that use these:
 - **No layout animation.** Nothing animates height, width, top or margin. A
   row that arrives takes its space in one step, then slides in.
 
+## The keypad sheet (F1)
+
+`components/logging/log-sheet.tsx`. The Log screen's number pad and RPE
+chips live in one bottom sheet, `sticky bottom-0` as the last child of the
+screen, inside `<main>`. Sticky rather than fixed: the sheet keeps its height
+in flow, so the last rows can always scroll above it without measured
+padding, and it sits above the tab bar (which owns the home-indicator inset)
+without knowing the tab bar's height. It opens on `animate-sheet-in`, closes
+on `animate-sheet-out` through `usePresence` + `afterExit`, and swapping pad
+for RPE swaps content without re-animating. No backdrop: the rows stay live.
+When it opens, or the field changes, `revealAboveSheet` scrolls `<main>` so
+the tapped row sits 12 px above the sheet (smooth, `auto` under reduced
+motion). Pad keys carry `tap` and `haptic("light")`. The `bottom` arbiter in
+log-screen.tsx is unchanged: the sheet only holds what wins "pad" or "rpe".
+
 ## The press (`tap`)
 
 `@utility tap`: on `:active` the element scales to 0.97 over `press` (90 ms,

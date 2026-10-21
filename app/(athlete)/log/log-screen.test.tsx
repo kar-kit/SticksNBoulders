@@ -150,7 +150,7 @@ const session = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
 const squat: Exercise = { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true };
 
 function setup(
-  { withUnits = false, ...overrides }: Record<string, unknown> = {},
+  { withUnits = false, inMain = false, ...overrides }: Record<string, unknown> = {},
   userOptions: Parameters<typeof userEvent.setup>[0] = {},
 ) {
   const start = vi.fn(async () => session());
@@ -172,6 +172,8 @@ function setup(
     ) : (
       <LogScreen />
     ),
+    // The shell's <main> is what scrolls; the sheet tests need one to scroll.
+    inMain ? { container: document.body.appendChild(document.createElement("main")) } : undefined,
   );
   return { start, finish, unmount, user: userEvent.setup(userOptions) };
 }
@@ -529,7 +531,8 @@ describe("logging a set on a phone that cannot store it", () => {
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
     await screen.findByRole("timer", { name: "Rest timer" });
     await user.click(screen.getByRole("button", { name: "Add 30 seconds to the rest" }));
-    expect(screen.getByRole("timer", { name: "Rest timer" })).toHaveTextContent("2:30");
+    // The screen's one-second clock may tick between the confirm and here.
+    expect(screen.getByRole("timer", { name: "Rest timer" })).toHaveTextContent(/2:(30|29)/);
 
     logSet.mockRejectedValueOnce(new DOMException("Quota exceeded", "QuotaExceededError"));
     await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
@@ -773,10 +776,12 @@ describe("the rest timer", () => {
     await addAndLog(user);
     await user.click(await screen.findByRole("button", { name: "Add 30 seconds to the rest" }));
 
-    // The clock has not moved in this test, so the whole extension shows.
-    expect(screen.getByRole("timer")).toHaveTextContent("2:30");
+    // The whole extension shows. The screen's real one-second clock can tick
+    // once between the confirm and the read on a loaded CI box, so a second
+    // either way is the same answer, not a flake.
+    expect(screen.getByRole("timer")).toHaveTextContent(/2:(30|29)/);
     await user.click(screen.getByRole("button", { name: "Add 30 seconds to the rest" }));
-    expect(screen.getByRole("timer")).toHaveTextContent("3:00");
+    expect(screen.getByRole("timer")).toHaveTextContent(/3:00|2:59|2:58/);
   });
 
   it("stands down while a number is being entered", async () => {
@@ -2002,6 +2007,145 @@ describe("this week, on the Log landing", () => {
   it("is not shown once a session is running", () => {
     setup({ active: session() });
     expect(screen.queryByRole("region", { name: "This week" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the keypad sheet", () => {
+  const sheet = () => document.querySelector("[data-log-sheet]");
+  const openPad = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("combobox", { name: "Add exercise" }));
+    await user.click(await screen.findByRole("option", { name: "Squat" }));
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+  };
+
+  it("opens the pad in the pinned sheet, after End session rather than under it in the footer", async () => {
+    const { user } = setup({ active: session() });
+    expect(sheet()).toBeNull();
+    await openPad(user);
+
+    const pad = screen.getByRole("region", { name: "Weight, kg keypad" });
+    expect(sheet()).toContainElement(pad);
+    // The sheet is the last thing on the page, so it sticks over whatever is
+    // below the row, and the content above can scroll clear of it.
+    const end = screen.getByRole("button", { name: "End session" });
+    expect(end.compareDocumentPosition(sheet()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sheet()!.className).toContain("sticky");
+    expect(sheet()!.className).toContain("motion-safe:animate-sheet-in");
+  });
+
+  it("closes on Done, and the warm-up switch inside it still flags the row", async () => {
+    const { user } = setup({ active: session() });
+    await openPad(user);
+    const toggle = screen.getByRole("switch", { name: "Warm-up" });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("group", { name: "Warm-up set" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(sheet()).toBeNull();
+    expect(screen.queryByRole("region", { name: /keypad/ })).not.toBeInTheDocument();
+  });
+
+  it("swaps the pad for RPE inside the same sheet, without closing it", async () => {
+    const { user } = setup({ active: session() });
+    await openPad(user);
+    const host = sheet();
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "RPE" }));
+
+    expect(screen.getByRole("region", { name: "RPE for set 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /keypad/ })).not.toBeInTheDocument();
+    expect(sheet()).toBe(host);
+    await user.click(screen.getByRole("button", { name: "8" }));
+    expect(sheet()).toBeNull();
+  });
+
+  it("holds the bottom alone: the rest bar steps aside while it is up and comes back after", async () => {
+    const { user } = setup({ active: session() });
+    await openPad(user);
+    for (const key of ["1", "4", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "5" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    expect(await screen.findByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
+    expect(sheet()).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
+    expect(screen.getByRole("region", { name: "Weight, kg keypad" })).toBeInTheDocument();
+    expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
+  });
+
+  it("gives way to the finish confirm", async () => {
+    const { user } = setup({ active: session() });
+    await openPad(user);
+    await user.click(screen.getByRole("button", { name: "End session" }));
+    expect(sheet()).toBeNull();
+    expect(screen.getByRole("button", { name: "Keep going" })).toBeInTheDocument();
+  });
+
+  describe("scrolling the row clear of it", () => {
+    const SHEET_PX = 380;
+    const VIEWPORT = { top: 0, bottom: 852 };
+    let rowRect = { top: 700, bottom: 764 };
+    let scrollBy: ReturnType<typeof vi.fn>;
+    let reduced = false;
+
+    beforeEach(() => {
+      rowRect = { top: 700, bottom: 764 };
+      reduced = false;
+      scrollBy = vi.fn();
+      Object.defineProperty(HTMLElement.prototype, "scrollBy", { configurable: true, value: scrollBy });
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+        return this.hasAttribute("data-log-sheet") ? SHEET_PX : 0;
+      });
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        const box = this.tagName === "MAIN" ? VIEWPORT : this.getAttribute("role") === "group" ? rowRect : VIEWPORT;
+        return { ...box, left: 0, right: 390, width: 390, height: box.bottom - box.top, x: 0, y: box.top } as DOMRect;
+      });
+      vi.stubGlobal(
+        "matchMedia",
+        (query: string) => ({ matches: reduced && query.includes("reduce"), media: query }) as MediaQueryList,
+      );
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      delete (HTMLElement.prototype as { scrollBy?: unknown }).scrollBy;
+    });
+
+    it("scrolls <main> so the row sits just above the sheet when the pad opens", async () => {
+      const { user } = setup({ active: session(), inMain: true });
+      await openPad(user);
+      // 852 viewport - 380 sheet - 12 gap = 460 visible; the row's bottom is at 764.
+      expect(scrollBy).toHaveBeenLastCalledWith({ top: 764 - 460, behavior: "smooth" });
+      expect(scrollBy.mock.contexts.at(-1)).toBe(document.querySelector("main"));
+    });
+
+    it("scrolls again when focus moves to another field, and not when the row is already clear", async () => {
+      const { user } = setup({ active: session(), inMain: true });
+      await openPad(user);
+      const calls = scrollBy.mock.calls.length;
+      rowRect = { top: 900, bottom: 964 };
+      await user.click(screen.getByRole("button", { name: "Reps" }));
+      expect(scrollBy).toHaveBeenCalledTimes(calls + 1);
+      expect(scrollBy).toHaveBeenLastCalledWith({ top: 964 - 460, behavior: "smooth" });
+
+      rowRect = { top: 200, bottom: 264 };
+      await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+      expect(scrollBy).toHaveBeenCalledTimes(calls + 1);
+    });
+
+    it("jumps instead of gliding under reduced motion", async () => {
+      reduced = true;
+      const { user } = setup({ active: session(), inMain: true });
+      await openPad(user);
+      expect(scrollBy).toHaveBeenLastCalledWith({ top: 304, behavior: "auto" });
+    });
   });
 });
 

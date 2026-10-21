@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/cn";
+import { haptic } from "@/lib/ui/haptics";
 import { canStepDown, padDisplay, press, step, stepSize, type PadKey, type PadState } from "@/lib/logging/number-pad";
 
 /**
@@ -23,6 +24,12 @@ export interface NumberPadProps {
   isWarmup: boolean;
   onToggleWarmup: (isWarmup: boolean) => void;
   onDismiss: () => void;
+  /**
+   * Drawn inside a sheet that owns the edge and the fill (the Log screen's
+   * LogSheet). Without it the pad draws its own top border, as History's
+   * in-flow pad does.
+   */
+  inSheet?: boolean;
 }
 
 const KEYS: PadKey[][] = [
@@ -41,7 +48,7 @@ const stepLabel = (state: PadState): string =>
   state.field === "load" ? `weight by ${stepSize(state)} ${state.unit ?? "kg"}` : "reps by 1";
 
 const STEPPER =
-  "flex h-12 w-14 flex-none items-center justify-center rounded-control border border-border bg-surface-2 " +
+  "tap flex h-12 w-14 flex-none items-center justify-center rounded-control border border-border bg-surface-2 " +
   "text-value-sm font-semibold text-foreground active:bg-accent-pressed active:text-on-accent-pressed " +
   "disabled:bg-surface disabled:text-muted-2 " +
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line";
@@ -54,13 +61,26 @@ export function NumberPad({
   isWarmup,
   onToggleWarmup,
   onDismiss,
+  inSheet = false,
 }: NumberPadProps) {
   const disabled = (key: PadKey) => key === "." && state.field === "reps";
+  /**
+   * Every key and stepper answers with the lightest tick, like a phone
+   * keyboard. Android only; iOS has no API and the key's own press carries it
+   * (lib/ui/haptics.ts). The value lands either way.
+   */
+  const change = (next: PadState) => {
+    haptic("light");
+    onChange(next);
+  };
 
   return (
     <section
       aria-label={`${fieldLabel(state)} keypad`}
-      className="flex flex-none flex-col gap-3 border-t border-border bg-surface px-3 pt-3.5 pb-[22px]"
+      className={cn(
+        "flex flex-none flex-col gap-3 px-3 pt-3.5 pb-[22px]",
+        !inSheet && "border-t border-border bg-surface",
+      )}
     >
       {/*
         − and + either side of the value: the next plate pair on, or one rep
@@ -71,7 +91,7 @@ export function NumberPad({
         <span className="flex-1 font-mono text-label uppercase text-muted-2">{fieldLabel(state)}</span>
         <button
           type="button"
-          onClick={() => onChange(step(state, -1))}
+          onClick={() => change(step(state, -1))}
           disabled={!canStepDown(state)}
           aria-label={`Decrease ${stepLabel(state)}`}
           className={STEPPER}
@@ -83,7 +103,7 @@ export function NumberPad({
         </output>
         <button
           type="button"
-          onClick={() => onChange(step(state, 1))}
+          onClick={() => change(step(state, 1))}
           aria-label={`Increase ${stepLabel(state)}`}
           className={STEPPER}
         >
@@ -97,13 +117,13 @@ export function NumberPad({
             key={key}
             type="button"
             disabled={disabled(key)}
-            onClick={() => onChange(press(state, key))}
+            onClick={() => change(press(state, key))}
             // "Backspace", not "Delete": History puts this pad on screen
             // beside a "Delete set" button, and a screen reader announcing two
             // adjacent controls as Delete is a genuinely destructive confusion.
             aria-label={key === "back" ? "Backspace" : key === "." ? "Decimal point" : key}
             className={cn(
-              "flex h-14 items-center justify-center rounded-control text-value-sm font-semibold",
+              "tap flex h-14 items-center justify-center rounded-control text-value-sm font-semibold",
               "bg-surface-2 text-foreground active:bg-accent-pressed active:text-on-accent-pressed",
               "disabled:bg-surface disabled:text-muted-2",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
