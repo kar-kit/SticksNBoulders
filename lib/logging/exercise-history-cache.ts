@@ -1,5 +1,5 @@
 import { readLocal, removeLocal, writeLocal } from "@/lib/local-store";
-import type { PriorBests } from "@/lib/strength/pr";
+import type { PriorBests, RepBest } from "@/lib/strength/pr";
 import type { ExerciseHistory } from "./exercise-history-store";
 import type { PreviousSet } from "./previous";
 
@@ -39,11 +39,24 @@ function parsePrevious(value: unknown): PreviousSet[] | null {
   return sets.length === value.length ? sets : null;
 }
 
+/** Undefined when it does not parse; null when it was never known. */
+function parseRepsAt(value: unknown): RepBest[] | null | undefined {
+  if (value === null || value === undefined) return null;
+  if (!Array.isArray(value)) return undefined;
+  const points = value.filter(
+    (p): p is RepBest => typeof p === "object" && p !== null && finite(p.loadKg) && Number.isInteger(p.reps),
+  );
+  return points.length === value.length ? points : undefined;
+}
+
 function parseBests(value: unknown): PriorBests | null | undefined {
   if (value === null) return null;
   if (typeof value !== "object") return undefined;
-  const { e1rmKg, heaviestKg } = value as Record<string, unknown>;
-  return nullableFinite(e1rmKg) && nullableFinite(heaviestKg) ? { e1rmKg, heaviestKg } : undefined;
+  const { e1rmKg, heaviestKg, repsAt } = value as Record<string, unknown>;
+  const reps = parseRepsAt(repsAt);
+  return nullableFinite(e1rmKg) && nullableFinite(heaviestKg) && reps !== undefined
+    ? { e1rmKg, heaviestKg, repsAt: reps }
+    : undefined;
 }
 
 /** This session's remembered history of one exercise, if it parses. */

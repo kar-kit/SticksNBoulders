@@ -164,7 +164,8 @@ page's own copy, which catches up an effect later.
 ### Last time and the bests to beat (F6)
 
 The Log reads, per exercise, the sets logged before the session started
-(`idx_athlete_exercise`, newest first, 100 a page) and the lift's rollups
+(`idx_athlete_exercise`, newest first, 500 a page, only the columns it uses,
+every page back to the lift's first set, capped at 20 pages) and the lift's rollups
 (`fetchLiftWeeks`), in the background, once per exercise per session
 (`lib/logging/use-exercise-history.ts`, a module-level cache, so a trip to
 Lift Detail and back does not read again). Nothing waits for it. With no
@@ -174,7 +175,10 @@ that lands is kept in localStorage for that session only
 (`lib/logging/exercise-history-cache.ts`, `snb.exercise-history`) and used
 instead of reading again, so a reload in a basement keeps its Previous lines
 and badges. That is not a stale read cache: both answers are frozen at the
-session's start, and a new session replaces the copy. A cold start with no
+session's start, and a new session replaces the copy. The rep record (F8)
+is why every page is read, and it is kept as its frontier, a few dozen
+(load, reps) points, never the raw sets; a history past the cap, or a copy
+kept before F8, has no frontier and that session badges no rep records. A cold start with no
 signal on a session never read online still shows neither until a read lands,
 and a set from an earlier session still sitting in the queue is not in it.
 

@@ -2,8 +2,7 @@ import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { authenticRows } from "@/appwrite/documents";
 import { fetchLiftWeeks } from "@/lib/strength/lift-store";
-import { priorBests, type PriorBests } from "@/lib/strength/pr";
-import { weekStart } from "@/lib/strength/rollup";
+import { priorBests, repBests, type PriorBests } from "@/lib/strength/pr";
 import { previousSessionSets, type HistorySet, type PreviousSet } from "./previous";
 
 /**
@@ -13,22 +12,47 @@ import { previousSessionSets, type HistorySet, type PreviousSet } from "./previo
  * Two reads, both on existing indexes, and nothing written:
  *
  * - `sets`: this athlete, this exercise, logged before the session started,
- *   newest first. `idx_athlete_exercise` is (athlete_id, exercise_id,
- *   logged_at desc), which is exactly this filter and order. Warm-ups are
- *   included, because Previous lines them up with warm-up rows.
+ *   newest first, every page of it. `idx_athlete_exercise` is (athlete_id,
+ *   exercise_id, logged_at desc), which is exactly this filter and order.
+ *   Warm-ups are included, because Previous lines them up with warm-up rows.
  * - `stats_rollups`, every week of the lift (`fetchLiftWeeks`, the read Lift
  *   Detail already makes, on `idx_athlete_exercise_week`).
  *
- * The raw page has to reach back past the start of the session's week, or a
- * set from earlier this week would be missing from the bests (that week's
- * rollup is left out on purpose; see lib/strength/pr.ts). One page of
- * PAGE sets nearly always does. If it does not -- more than PAGE sets of one
- * lift earlier this week -- it pages on, capped, rather than guess.
+ * Every page, not the newest one, because the rep record ("most reps at this
+ * load or heavier", lib/strength/pr.ts) has no rollup to lean on: a rep max
+ * from two years ago is still the one to beat. What keeps that affordable:
+ *
+ * - only the columns the Log uses (`Query.select`), no count (`total:
+ *   false`), PAGE rows a round trip, so a lift's first 500 sets are the one
+ *   request F6 already made;
+ * - once per exercise per session, in the background, and the answer is kept
+ *   on the device as a few dozen frontier points, not the raw sets
+ *   (exercise-history-cache.ts);
+ * - capped at MAX_PAGES. A history longer than that is read no further: the
+ *   newest sets still give Previous and this week's bests (the rollups give
+ *   the rest), and the rep frontier is left unknown rather than built from
+ *   half of it, which would call old rep maxes new.
  */
 
-const PAGE = 100;
-/** Ten pages is a thousand sets of one lift in one week. Past that, stop. */
-const MAX_PAGES = 10;
+const PAGE = 500;
+/** Twenty pages is ten thousand sets of one lift, a decade of squatting three times a week. Past that, stop. */
+const MAX_PAGES = 20;
+
+// athlete_id so each row can prove its athlete wrote it
+// (appwrite/documents/provenance.ts); the rest is what Previous and the
+// bests read. Not notes, prescribed or the video id.
+const COLUMNS = [
+  "athlete_id",
+  "session_id",
+  "client_set_id",
+  "set_index",
+  "load_kg",
+  "reps",
+  "rpe",
+  "is_warmup",
+  "e1rm_kg",
+  "logged_at",
+];
 
 export interface ExerciseHistory {
   /** Last session's sets of this exercise, in order. Empty when there is none. */
@@ -57,10 +81,16 @@ function toHistorySet(row: Record<string, unknown> & { $id: string }): HistorySe
   };
 }
 
-/** Sets of this exercise logged before `before`, newest first, reaching back past its week's start. */
-export async function fetchSetsBefore(athleteId: string, exerciseId: string, before: Date): Promise<HistorySet[]> {
+export interface SetsBefore {
+  /** Newest first. */
+  sets: HistorySet[];
+  /** Whether that is every set of the lift, back to the first. */
+  complete: boolean;
+}
+
+/** Every set of this exercise logged before `before`, newest first, up to MAX_PAGES pages. */
+export async function fetchSetsBefore(athleteId: string, exerciseId: string, before: Date): Promise<SetsBefore> {
   const { tables, databaseId } = browserAppwrite();
-  const thisWeek = weekStart(before).getTime();
   const sets: HistorySet[] = [];
   let cursor: string | null = null;
 
@@ -70,24 +100,21 @@ export async function fetchSetsBefore(athleteId: string, exerciseId: string, bef
       Query.equal("exercise_id", exerciseId),
       Query.lessThan("logged_at", before.toISOString()),
       Query.orderDesc("logged_at"),
+      Query.select(COLUMNS),
       Query.limit(PAGE),
     ];
     if (cursor) queries.push(Query.cursorAfter(cursor));
-    const result = await tables.listRows({ databaseId, tableId: "sets", queries });
+    const result = await tables.listRows({ databaseId, tableId: "sets", queries, total: false });
     const rows = result.rows as unknown as Array<Record<string, unknown> & { $id: string }>;
     // A row anyone could have written is not a set this athlete lifted.
     for (const row of authenticRows("sets", rows)) {
       const set = toHistorySet(row);
       if (set) sets.push(set);
     }
-    if (rows.length < PAGE) break;
-    // Newest first, so once the page's oldest set is from an earlier week,
-    // everything from this week before the session is in hand.
-    const oldest = new Date(String(rows[rows.length - 1].logged_at));
-    if (Number.isNaN(oldest.getTime()) || weekStart(oldest).getTime() < thisWeek) break;
+    if (rows.length < PAGE) return { sets, complete: true };
     cursor = rows[rows.length - 1].$id;
   }
-  return sets;
+  return { sets, complete: false };
 }
 
 /**
@@ -101,13 +128,14 @@ export async function fetchExerciseHistory(
   sessionId: string,
   sessionStart: Date,
 ): Promise<ExerciseHistory> {
-  const [sets, weeks] = await Promise.all([
+  const [{ sets, complete }, weeks] = await Promise.all([
     fetchSetsBefore(athleteId, exerciseId, sessionStart),
     fetchLiftWeeks(athleteId, exerciseId),
   ]);
   const earlier = sets.filter((set) => set.sessionId !== sessionId);
+  const bests = priorBests(weeks, earlier, sessionStart);
   return {
     previous: previousSessionSets(earlier, sessionId),
-    bests: priorBests(weeks, earlier, sessionStart),
+    bests: bests && { ...bests, repsAt: complete ? repBests(earlier, sessionStart) : null },
   };
 }

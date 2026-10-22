@@ -455,6 +455,15 @@ before, like the Strong app, and PRs."
   (bests frozen at the session's start, a running best through the session,
   warm-ups never, a tenth-of-a-kilo comparison) are in `lib/strength/pr.ts`.
   The finish screen lists the day's records, one per exercise per kind.
+- **Rep PR (F8, 22 Oct 2026).** Product ask: "a weight PR and then a rep
+  PR at different weights." A logged working set with more reps than the
+  athlete ever did at that load or heavier wears the same pill, reading
+  `Rep PR` when that is its only record and `PR` when it also broke the
+  e1RM or the weight; same spring-pop, same single `haptic("success")`. The
+  finish screen lists rep records one per load, folding one into a later
+  record today that covers it (140 × 6 then 140 × 7 is one line), heaviest
+  first, after the exercise's e1RM and weight lines. Lift Detail does not
+  show them: its records come from the rollups, which cannot answer it.
 - **History link.** A clock icon beside the block's name opens
   `/lift/[id]` for the exercise in hand (the swapped variant when swapped).
   `/log` is depth 0 and `/lift/x` depth 2, so F7 slides it in as a push with

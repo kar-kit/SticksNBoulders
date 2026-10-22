@@ -1748,11 +1748,18 @@ export function LogScreen() {
   );
 }
 
+const PR_KIND_LABEL: Record<PrKind, string> = {
+  e1rm: "Estimated 1RM",
+  weight: "Heaviest weight",
+  reps: "Rep PR",
+};
+
 /**
  * What the athlete sees on finishing.
  *
  * The records broken today, per the blueprint, one line per exercise per
- * kind (the best of the day, not every step up to it). Measured against the
+ * kind (the best of the day, not every step up to it), except rep records,
+ * one per load (sessionPrs in lib/strength/pr.ts). Measured against the
  * bests from before the session, so it agrees with the badges on the rows.
  * Queued videos still belong here too and are not built yet.
  */
@@ -1787,18 +1794,22 @@ function FinishedSummary({
           <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
             {prs.map((pr) => (
               <li
-                key={`${pr.exerciseId}:${pr.kind}`}
+                key={`${pr.exerciseId}:${pr.kind}:${pr.clientSetId}`}
                 className="flex items-baseline justify-between gap-3 rounded-card border border-border bg-surface px-4 py-3"
               >
                 <span className="flex min-w-0 flex-col">
                   <span className="text-body font-semibold">{nameFor(pr.exerciseId) ?? pr.exerciseId}</span>
                   <span className="text-caption text-muted">
-                    {pr.kind === "e1rm" ? "Estimated 1RM" : "Heaviest weight"} &middot; {kg(pr.loadKg)} &times; {pr.reps}
+                    {PR_KIND_LABEL[pr.kind]} &middot; {kg(pr.loadKg)} &times; {pr.reps}
                     {pr.rpe !== null ? ` @ ${formatNumber(pr.rpe)}` : ""}
                   </span>
                 </span>
                 <span className="flex-none text-title font-semibold tabular-nums">
-                  {pr.kind === "e1rm" && pr.e1rmKg !== null ? kg(pr.e1rmKg) : kg(pr.loadKg)}
+                  {pr.kind === "e1rm" && pr.e1rmKg !== null
+                    ? kg(pr.e1rmKg)
+                    : pr.kind === "reps"
+                      ? `${pr.reps} reps`
+                      : kg(pr.loadKg)}
                 </span>
               </li>
             ))}
