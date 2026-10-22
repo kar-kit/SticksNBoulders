@@ -33,9 +33,12 @@ vi.mock("@/lib/exercises/library-context", () => ({
 const resolveOrCreateExercise = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/exercises/library", () => ({ resolveOrCreateExercise }));
 
-const storedSets = vi.hoisted(() => ({ value: [] as unknown[], fail: 0 }));
+// `hold` keeps the read on the wire until the test lets it go, so the order
+// of "screen renders" and "sets arrive" is the test's, not the scheduler's.
+const storedSets = vi.hoisted(() => ({ value: [] as unknown[], fail: 0, hold: null as Promise<void> | null }));
 vi.mock("@/lib/logging/session-store", () => ({
   fetchSessionSets: async () => {
+    if (storedSets.hold) await storedSets.hold;
     if (storedSets.fail > 0) {
       storedSets.fail -= 1;
       throw new TypeError("Failed to fetch");
@@ -193,6 +196,7 @@ beforeEach(() => {
   library.exercises = [squat];
   storedSets.value = [];
   storedSets.fail = 0;
+  storedSets.hold = null;
   comments.value = [];
   clientIds = 0;
   prescribed.value = null;
@@ -2540,6 +2544,92 @@ describe("following a coach's program (F5)", () => {
       const creates = await setCreates(store);
       expect(creates[1]).toMatchObject({ setIndex: 2, loadKg: 150, prescriptionId: "sq" });
       expect(new Set(creates.map((c) => c.setId)).size).toBe(2);
+    });
+  });
+
+  describe("waiting for the session's sets before laying anything out", () => {
+    const holdRead = () => {
+      let release!: () => void;
+      storedSets.hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return async () => {
+        await act(async () => {
+          release();
+          await storedSets.hold;
+        });
+      };
+    };
+    const settle = () =>
+      act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+
+    it("lays out nothing on a resumed session while its sets are still loading, and nothing stale after", async () => {
+      storedSets.value = [
+        logged("w", 60, 12, { isWarmup: true, setIndex: 1 }),
+        logged("a", 150, 10, { setIndex: 2, prescriptionId: "sq" }),
+      ];
+      const release = holdRead();
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await settle();
+      // The read is still out: the block is listed, but no row is laid out.
+      expect(rowsIn(squatBlock())).toEqual([]);
+      expect(screen.queryByRole("button", { name: /^Log / })).not.toBeInTheDocument();
+
+      await release();
+      await screen.findByRole("group", { name: "Set 1" });
+      await settle();
+      // Only what was logged: no warm-up rows for a line under way, ever.
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Set 1"]);
+      expect(screen.queryByRole("button", { name: /^Log / })).not.toBeInTheDocument();
+      await user.click(within(squatBlock()).getByRole("button", { name: "Squat" }));
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Set 1", "Set 2"]);
+    });
+
+    it("opens a fresh prescribed session as soon as the slow read comes back empty", async () => {
+      const release = holdRead();
+      setup({ active: session({ programDayId: "d1" }) });
+      await settle();
+      expect(rowsIn(squatBlock())).toEqual([]);
+      await release();
+      expect(await screen.findByRole("button", { name: "Log Warm-up set" })).toBeInTheDocument();
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
+    });
+
+    it("opens at once when the session's own create is still queued, without waiting on a hung read", async () => {
+      useRealQueue();
+      await act(async () => {
+        await enqueue("session.create", { sessionId: "s1", startedAt: new Date().toISOString(), programDayId: "d1" });
+      });
+      holdRead(); // never released: gym wifi that routes nowhere
+      setup({ active: session({ programDayId: "d1" }) });
+      expect(await screen.findByRole("group", { name: "Set 1" })).toBeInTheDocument();
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
+    });
+
+    it("trusts the queue when the read fails: queued sets mean resumed, so nothing opens", async () => {
+      const store = useRealQueue();
+      await act(async () => {
+        await realSetStore.value.logSet({
+          sessionId: "s1", exerciseId: "squat", setIndex: 1, loadKg: 150, reps: 5, rpe: null,
+          isWarmup: false, clientSetId: "q1", prescriptionId: "sq", prescribed: "5 reps · 2s pause · 150 kg (75%)",
+        });
+      });
+      expect((await store.all()).length).toBeGreaterThan(0);
+      storedSets.fail = 1_000;
+      setup({ active: session({ programDayId: "d1" }) });
+      expect(await screen.findByRole("group", { name: "Set 1" })).toBeInTheDocument();
+      await settle();
+      expect(rowsIn(squatBlock())).toEqual(["Set 1"]);
+      expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent("Next: Set 2 of 2");
+    });
+
+    it("opens a fresh session whose read fails with nothing queued", async () => {
+      storedSets.fail = 1_000;
+      setup({ active: session({ programDayId: "d1" }) });
+      expect(await screen.findByRole("group", { name: "Set 1" })).toBeInTheDocument();
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
     });
   });
 

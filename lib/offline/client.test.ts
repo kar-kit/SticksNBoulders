@@ -551,3 +551,21 @@ describe("a shared phone", () => {
     expect((await store.all()).map((op) => op.kind)).toEqual(["set.create"]);
   });
 });
+
+describe("queueLoaded (F5)", () => {
+  it("is false on a fresh page until attach has read the disk, and announces when it turns", async () => {
+    vi.resetModules();
+    const fresh = await import("./client");
+    fresh.resetQueueForTests(createMemoryStore());
+    // resetQueueForTests marks a test queue known; a real page starts unknown.
+    vi.resetModules();
+    const page = await import("./client");
+    expect(page.queueLoaded()).toBe(false);
+    const seen: boolean[] = [];
+    page.subscribeToQueue(() => seen.push(page.queueLoaded()));
+    await page.attachQueue(ACTOR).catch(() => {});
+    expect(page.queueLoaded()).toBe(true);
+    expect(seen.at(-1)).toBe(true);
+    page.detachQueue();
+  });
+});

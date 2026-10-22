@@ -34,7 +34,8 @@ import {
   withSetEdits,
   type SetValues,
 } from "@/lib/logging/offline-view";
-import { dismissFailed, subscribeToQueue } from "@/lib/offline/client";
+import { dismissFailed, queueLoaded, subscribeToQueue } from "@/lib/offline/client";
+import { pendingOps } from "@/lib/offline/queue";
 import type { QueuedOp } from "@/lib/offline/queue";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import { beginEdit, padValue, rpeAfterWarmupChange, type PadState } from "@/lib/logging/number-pad";
@@ -244,6 +245,14 @@ export function LogScreen() {
    */
   const storedRead = useRef(false);
   const [readAttempt, setReadAttempt] = useState(0);
+  /**
+   * The session whose first read of Appwrite has come back, either way. With
+   * the queue loaded, this is when the screen knows what the session already
+   * holds -- the condition for laying out a prescribed day by itself.
+   */
+  const [readSettled, setReadSettled] = useState<string | null>(null);
+  /** Whether the queue has read in what the last visit left on disk. */
+  const [queueReady, setQueueReady] = useState(queueLoaded);
 
   // The queue is attached by the provider; this only watches it, so a set that
   // is still on its way keeps its mark and a reload gets its sets back.
@@ -251,6 +260,7 @@ export function LogScreen() {
     () =>
       subscribeToQueue((next) => {
         setOps(next);
+        setQueueReady(queueLoaded());
         if (!storedRead.current) setReadAttempt((n) => n + 1);
       }),
     [],
@@ -322,6 +332,8 @@ export function LogScreen() {
         try {
           loaded = await fetchSessionSets(sessionId);
         } catch {
+          // Unread, but answered: what the session holds is the queue's now.
+          if (readSession.current === sessionId) setReadSettled(sessionId);
           return;
         } finally {
           if (reading.current === sessionId) reading.current = null;
@@ -331,6 +343,7 @@ export function LogScreen() {
       if (readSession.current !== sessionId) return;
       storedRead.current = true;
       setStored(loaded);
+      setReadSettled(sessionId);
       // Which of those a coach has already spoken about, so Delete can say no
       // before it is tapped rather than after. Best effort: with no signal
       // the answer comes from the queue instead, when the delete is refused.
@@ -1051,42 +1064,32 @@ export function LogScreen() {
   // A prescribed session opens on its first exercise, ready to log, so the
   // athlete's first tap is a set rather than finding the squat in a list.
   //
-  // Only for a session with nothing logged. The read of what a resumed
-  // session already holds can land after this has opened -- the server's
-  // copy, or the queue's after a reload with no signal -- and then the rows
-  // laid out were for a session that had not started. If the athlete has
-  // not touched them, they are taken back, exactly as if the sets had been
-  // known in time: a resumed session opens nothing by itself, and the tap on
-  // the block in hand lays out what is left of it.
+  // Only a session with nothing logged, and only once the screen knows that:
+  // the queue has read in what the last visit left, and either the session's
+  // own create is still waiting in it (so Appwrite cannot hold a set of it)
+  // or the first read of Appwrite has come back. Laying out sooner would lay
+  // out a resumed session from scratch -- warm-ups for a line already under
+  // way -- and those rows would sit there wrong once its sets arrived. A
+  // resumed session opens nothing by itself; the tap on the block in hand
+  // lays out what is left of it.
   const firstPlanned = plan[0]?.exerciseId ?? null;
+  const unsent = useMemo(
+    () =>
+      sessionId !== null &&
+      pendingOps(ops).some((op) => op.kind === "session.create" && op.payload.sessionId === sessionId),
+    [ops, sessionId],
+  );
+  const setsKnown = queueReady && (unsent || readSettled === sessionId);
   const opened = useRef<string | null>(null);
-  const autoLaid = useRef<{ sessionId: string; rows: PlannedRow[] } | null>(null);
   useEffect(() => {
-    if (!firstPlanned || !sessionId || opened.current === sessionId) return;
+    if (!firstPlanned || !sessionId || !setsKnown || opened.current === sessionId) return;
     opened.current = sessionId;
-    if (plans.length > 0 || all.length > 0) return;
+    if (plans.length > 0 || all.length > 0 || queued.length > 0) return;
     void (async () => {
       await Promise.resolve();
-      autoLaid.current = { sessionId, rows: activate(firstPlanned) };
+      activate(firstPlanned);
     })();
-  }, [firstPlanned, sessionId, plans.length, all.length, activate]);
-  useEffect(() => {
-    const laid = autoLaid.current;
-    if (!laid) return;
-    // Touched, or another session: the rows are the athlete's now.
-    if (laid.sessionId !== sessionId || plans !== laid.rows) {
-      autoLaid.current = null;
-      return;
-    }
-    if (all.length === 0) return;
-    autoLaid.current = null;
-    const ids = new Set(laid.rows.map((row) => row.clientSetId));
-    void (async () => {
-      await Promise.resolve();
-      setPlans((prev) => prev.filter((row) => !ids.has(row.clientSetId)));
-      setFocusId((prev) => (prev && ids.has(prev) ? null : prev));
-    })();
-  }, [sessionId, plans, all.length]);
+  }, [firstPlanned, sessionId, setsKnown, plans.length, all.length, queued.length, activate]);
 
   const startHere = async () => {
     setBusy(true);
