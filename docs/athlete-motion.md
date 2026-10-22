@@ -4,7 +4,7 @@ _Design note, 21 Oct 2026. Feature F0: the motion base for the athlete's phone
 screens. It builds the tokens, the press, and haptics, plus a demo panel on
 `/design`. The features that will use it (keypad sheet, swipe-to-delete rows,
 the set-logged tick, planned rows sliding in, the PR badge, screen
-transitions) are not built here._
+transitions) are not built here. Screen transitions landed later as F7, below._
 
 Targets: the installed PWA on iPhone (iOS / Safari 17.2+) and current Android
 Chrome. The rules are the coach side's (`docs/coach-motion.md`): Tailwind
@@ -217,6 +217,186 @@ and one button per haptic kind.
 - `lib/logging/rest-timer.test.ts`, `app/(athlete)/log/log-screen.test.tsx`:
   unchanged, still passing through `haptic`.
 
+## Screen transitions (F7)
+
+_Added 21 Oct 2026._ Route changes inside the athlete shell animate the way a
+UIKit navigation stack does. A drill-in slides the new screen in from the
+right while the old one drifts a third of the way left and dims. Going back
+reverses it. A tab switch is a quick crossfade with no sliding between peers.
+The tab bar and the shell's chrome never move.
+
+### Approach: React `<ViewTransition>`, no config flag
+
+Next 16.3's bundled docs (`node_modules/next/dist/docs/01-app/02-guides/view-transitions.md`)
+say view transitions "work in the App Router with no configuration". The
+App Router runs the React canary bundled in `next/dist/compiled/react`, which
+exports `ViewTransition` and `addTransitionType`, and every navigation is a
+React transition [Fact: read from the compiled source]. There is no
+`experimental.viewTransition` key in this Next's config schema any more, so
+**`next.config.ts` is unchanged**.
+
+The alternative, `document.startViewTransition` wrapped around
+`router.push`, was rejected. Next commits the new route inside its own
+transition, so a hand-rolled wrapper would capture the "new" state before
+React had committed it. It would also miss `<Link>` and popstate navigations
+unless every call site were wrapped. React's integration starts the view
+transition at commit, captures the right DOM, and does the right thing when
+the API is missing.
+
+How it is wired:
+
+- `components/shell/screen-transition.tsx` wraps the shell's `<main>` (the one
+  scroll container) in `<ViewTransition name="athlete-screen" default="none"
+  update={class}>`. It is one wrapper in the shell, not one per page:
+  Next's own guide puts directional wrappers in each `page.tsx` and keys them
+  off `transitionTypes` on each `<Link>`. Wrapping the persistent `<main>`
+  and using `update` lets the snapshot be `<main>`'s box, so a long scrolled
+  screen is clipped to the scroll container and never spills over the
+  status-bar strip or the tab bar mid-slide.
+- For link and `router.push` navigations, the class is worked out during
+  render, from the pathname being committed and the one last committed (a
+  small external store read with `useSyncExternalStore`, updated in a
+  layout effect). React reads `update` from the props of the commit
+  that starts the view transition. After that commit the store catches up and
+  the class drops back to `none`, so a later transition inside a screen (a
+  Suspense reveal, a `useTransition`) does not replay the slide.
+- The tab bar carries `view-transition-name: athlete-tabbar`
+  (`components/ui/tab-bar.tsx`). Its group is not animated, its old snapshot
+  is hidden, and it sits above the sliding screen, so the lit tab switches at
+  once and the screen passes under it. The safe-area strip and "Coach mode"
+  stay in the root snapshot, whose crossfade is turned off.
+- The CSS is in `app/globals.css` ("Athlete screen transitions") and acts on the
+  `vt-push`, `vt-pop` and `vt-tab` view-transition classes.
+
+### The direction model: route depth
+
+`lib/ui/screen-transition.ts`, `classifyNavigation(from, to)`:
+
+| Move | Motion |
+| --- | --- |
+| Same path (query or hash only) | none |
+| Into another tab's stack (`/history/s1` → `/today`, `/today` → `/log`) | crossfade |
+| Deeper (`/history` → `/history/s1` → `/lift/squat`, `/me` → `/bodyweight`) | push |
+| Shallower | pop |
+| Sideways at one depth (`/lift/a` → `/lift/b`) | crossfade |
+
+A tab root is depth 0 and each segment below it adds one. Screens outside the
+four tabs (`/lift/[id]`, `/bodyweight`) count their own first segment as well,
+because they are always reached from inside a tab: `/bodyweight` is 1 and
+`/lift/x` is 2, so opening a lift from a session still pushes.
+
+Depth was chosen over `transitionTypes` on each `<Link>`. It needs no change at
+any call site (including `log-screen.tsx` and the logging components, which
+this feature does not touch). It covers `router.back()`, used by Lift Detail
+and Coach Feedback, and the browser's back/forward, neither of which carries a
+transition type. And nobody can forget it on the next screen. The cost:
+tapping a tab from Lift Detail or Bodyweight reads as a pop, because those
+screens belong to no tab's stack. [Inference] That reads as "going back up",
+and it was judged acceptable.
+
+### Back and forward: animated here, not by React
+
+**React does not animate back/forward.** A transition started inside a
+`popstate` event is rendered synchronously, so the browser can restore
+scroll (`shouldAttemptEagerTransition` in react-dom), and a synchronous commit
+never starts a view transition [Fact: read from the compiled react-dom; seen
+in headless Chromium, where `goBack()` produced no `startViewTransition`
+call]. Next's guide says only that browser back "does not carry a transition
+type"; in practice nothing animates at all. That covers `router.back()`
+(Lift Detail and Coach Feedback use it), the browser buttons, and Android's
+back gesture.
+
+So `animateTraversals` in `lib/ui/screen-transition.ts` handles them. It runs
+as a capture-phase `popstate` listener on `window`, which fires before the
+Next router's bubble-phase one. When a traversal should animate, it:
+
+1. stops the event from reaching the router,
+2. names `<main>` `athlete-screen` and gives it the depth model's class
+   (`view-transition-name` / `view-transition-class` inline),
+3. calls `document.startViewTransition`, and inside the update callback
+   dispatches a marked copy of the event (same `state`), which the router
+   handles as normal,
+4. resolves the callback once the shell's layout effect reports the new
+   pathname committed, capped at 500 ms. Measured in Chromium dev mode:
+   20-120 ms of held frame.
+5. removes the inline name and class once the transition finishes.
+
+The update callback runs even when the browser skips the animation, so the
+router always gets its popstate. If `startViewTransition` throws, the copy
+is dispatched at once.
+
+It lets the event straight through, unanimated, when:
+
+- the browser has no `startViewTransition`;
+- the traversal lands on the screen already showing (a dialog closing
+  through history, a hash change);
+- the browser drew its own transition. Where
+  `PopStateEvent.hasUAVisualTransition` exists it is trusted: Chrome on Android
+  reports `true` for its back-gesture animation, and so does Safari for an
+  edge swipe where it implements the property. Where it does not exist, an
+  **iOS Safari tab** is assumed to have swiped, since that is the usual way
+  back there. A tapped back button then switches instantly, which costs less
+  than a slide on top of a swipe. An **installed iOS PWA** has no system
+  swipe-back, so ours plays.
+
+[Inference] Re-dispatching the popstate depends on the Next router reading
+only `event.state` and `location` (16.3.4's `onPopState` does exactly that).
+A Next upgrade that changes the router's popstate handling should re-run the
+back check in the PR.
+
+### Motion and tokens
+
+| Class | Old screen | New screen | Curve, duration |
+| --- | --- | --- | --- |
+| `vt-push` | `translate` 0 → −30%, opacity → 0.6 | `translate` 100% → 0, on top, edge shadow | `ease-sheet`, `duration-sheet` (439 ms) |
+| `vt-pop` | `translate` 0 → 100%, on top, edge shadow | `translate` −30% → 0, opacity 0.6 → 1 | `ease-sheet`, `duration-sheet` |
+| `vt-tab` | UA fade out | UA fade in (plus-lighter) | `ease-out`, `duration-base` (180 ms) |
+
+The push uses the sheet spring for the sheet's reason: a screen that overshot
+its rest would show a sliver of the one under it. While the two screens
+overlap they are opaque (`background: var(--color-background)`,
+`mix-blend-mode: normal`), because `<main>` has no background of its own and
+one screen's text would otherwise show through the other. Only `translate`
+and `opacity` animate. `::view-transition { pointer-events: none }` lets a
+tap during the slide reach the live page.
+
+### Reduced motion, unsupported browsers
+
+- **Reduced motion**: push and pop become the tab crossfade (opacity only,
+  `duration-base`). That is what iOS does with Reduce Motion on. The
+  `.athlete-motion` floor does not reach the view-transition pseudo-elements,
+  which live outside the shell, so the media query in the F7 block handles
+  them.
+- **No `document.startViewTransition`** (iOS 17.x, Safari < 18, old
+  Chrome): React's call throws, React catches it and commits synchronously,
+  and the screen switches at once. Nothing is named outside a transition,
+  so there is no leftover state.
+- **Partial support**: React passes `types` in the options-object form of
+  `startViewTransition`. [Unverified] on Safari 18.0/18.1, which may predate
+  that form. If it throws there, React's same catch gives an instant switch,
+  not a broken one. A device check confirms which one happens.
+
+### Tests
+
+- `lib/ui/screen-transition.test.ts`: depth and tab ownership, every row of
+  the direction table, push/pop symmetry, `hasUAVisualTransition` trusted
+  and the iOS fallback heuristic, environment detection, feature detection.
+  `animateTraversals` covers: back pops, with the router getting exactly one
+  (replayed) popstate while `<main>` is named; forward pushes;
+  browser-animated traversals left alone; same-screen popstate and
+  pre-first-commit ignored; no API falls through; a throwing
+  `startViewTransition` still reaches the router; the 500 ms cap;
+  unsubscribe.
+- `components/shell/screen-transition.test.tsx`: renders on **Next's bundled
+  React canary** (the real `<ViewTransition>`) with a recording
+  `startViewTransition`. Covers an instant switch with no API, `vt-push` then
+  `vt-pop` with `<main>` named `athlete-screen`, `vt-tab` between tabs, and
+  no replay on a later in-screen transition.
+- Headless Chromium at 390x852 against the local mock harness: push, pop
+  by link, browser back (pop) and forward (push), tab crossfade, reduced
+  motion (opacity only, 180 ms), and with `startViewTransition` deleted
+  (instant, no errors). Recorded in the PR.
+
 ## Not verified
 
 - [Unverified] Real-device feel: spring timing, the tap press and `:active`
@@ -225,6 +405,10 @@ and one button per haptic kind.
   `/design` first.
 - [Unverified] Android vibration strength. The 8 ms `light` pulse may be
   imperceptible on some motors. Tune on a device.
+- [Unverified] Screen transitions on a real iPhone (installed PWA and Safari
+  tab, including edge-swipe back and whether Safari reports
+  `hasUAVisualTransition`) and on Android Chrome with predictive back.
+  Headless Chromium only, see the PR.
 
 ## Prescribed rows, swap and the rest in the sheet (F5)
 

@@ -5,6 +5,7 @@ import { TabBar } from "@/components/ui/tab-bar";
 import { COACH_HOME } from "@/lib/auth/destinations";
 import { canCoach } from "@/lib/auth/mode";
 import { useRequireSession } from "@/lib/auth/session-context";
+import { ScreenTransition } from "./screen-transition";
 
 /**
  * The athlete shell. A phone app that happens to open on a laptop.
@@ -58,12 +59,15 @@ export function AthleteShell({ children }: { children: React.ReactNode }) {
         comes from flex rather than being a definite value, so a percentage
         min-height resolves to nothing and the button rides up under the text.
       */}
-      <main
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4"
-        aria-busy={state.status === "loading"}
-      >
-        {state.status === "signed-in" ? children : null}
-      </main>
+      {/* Slides or crossfades <main> on a route change (docs/athlete-motion.md). */}
+      <ScreenTransition>
+        <main
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4"
+          aria-busy={state.status === "loading"}
+        >
+          {state.status === "signed-in" ? children : null}
+        </main>
+      </ScreenTransition>
       <TabBar />
     </div>
   );

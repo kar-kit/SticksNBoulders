@@ -610,3 +610,162 @@ body {
     --coach-zoom: 1.2;
   }
 }
+
+/*
+ * Athlete screen transitions (F7). components/shell/screen-transition.tsx
+ * wraps the athlete shell's <main> in React's <ViewTransition
+ * name="athlete-screen">, which hands it one of these classes for a single
+ * navigation: vt-push (drill in), vt-pop (back out), vt-tab (switch tab).
+ * Pure CSS on the view-transition pseudo-elements; a browser without
+ * same-document view transitions never builds them and the screen changes at
+ * once. docs/athlete-motion.md, "Screen transitions".
+ *
+ * A push or pop moves on the sheet spring with its own duration: like a
+ * sheet, a screen that overshot its rest would show a sliver of the screen
+ * under it. The screen underneath moves a third as far and dims, as UIKit's
+ * navigation controller does.
+ */
+
+/* Taps during the ~0.4s slide reach the live page instead of the overlay. */
+::view-transition {
+  pointer-events: none;
+}
+
+/* The chrome left in the root snapshot (the safe-area strip, "Coach mode")
+   does not crossfade with the page. It changes, if at all, at once. */
+::view-transition-old(root) {
+  display: none;
+}
+::view-transition-new(root) {
+  animation: none;
+}
+
+/* The tab bar is its own group (tab-bar.tsx): it stays put and its lit tab
+   switches at once, as iOS does. On top, so a sliding screen passes under it. */
+::view-transition-group(athlete-tabbar) {
+  animation: none;
+  z-index: 2;
+}
+::view-transition-old(athlete-tabbar) {
+  display: none;
+}
+::view-transition-new(athlete-tabbar) {
+  animation: none;
+}
+
+::view-transition-group(.vt-push),
+::view-transition-group(.vt-pop),
+::view-transition-group(.vt-tab) {
+  z-index: 1;
+}
+::view-transition-group(.vt-push),
+::view-transition-group(.vt-pop) {
+  animation-duration: var(--transition-duration-sheet);
+  animation-timing-function: var(--ease-sheet);
+}
+
+/* Both screens are opaque while they overlap, or the text of one shows
+   through the other. The snapshots themselves are transparent (<main> has no
+   background of its own), so they get the page's. */
+::view-transition-old(.vt-push),
+::view-transition-new(.vt-push),
+::view-transition-old(.vt-pop),
+::view-transition-new(.vt-pop) {
+  background: var(--color-background);
+  mix-blend-mode: normal;
+  animation-duration: var(--transition-duration-sheet);
+  animation-timing-function: var(--ease-sheet);
+  animation-fill-mode: both;
+}
+
+/* Push: the new screen comes in from the right edge, over the old one, which
+   drifts a third of the way left and dims. */
+::view-transition-old(.vt-push) {
+  animation-name: vt-under-out;
+}
+::view-transition-new(.vt-push) {
+  animation-name: vt-over-in;
+  box-shadow: -1px 0 16px rgb(0 0 0 / 0.35);
+}
+
+/* Pop: the reverse. The screen being left slides off to the right, on top;
+   the one underneath comes back from a third of the way left. */
+::view-transition-old(.vt-pop) {
+  animation-name: vt-over-out;
+  box-shadow: -1px 0 16px rgb(0 0 0 / 0.35);
+  z-index: 1;
+}
+::view-transition-new(.vt-pop) {
+  animation-name: vt-under-in;
+}
+
+/* Tab switch: a quick crossfade, no movement between peers. The UA's own
+   fade keyframes and plus-lighter blend, on the athlete's timing. */
+::view-transition-group(.vt-tab),
+::view-transition-old(.vt-tab),
+::view-transition-new(.vt-tab) {
+  animation-duration: var(--transition-duration-base);
+  animation-timing-function: var(--ease-out);
+}
+
+@keyframes vt-over-in {
+  from {
+    translate: 100% 0;
+  }
+}
+@keyframes vt-over-out {
+  to {
+    translate: 100% 0;
+  }
+}
+@keyframes vt-under-out {
+  to {
+    translate: -30% 0;
+    opacity: 0.6;
+  }
+}
+@keyframes vt-under-in {
+  from {
+    translate: -30% 0;
+    opacity: 0.6;
+  }
+}
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion: no slide. A push or pop becomes the tab crossfade, which is
+   what iOS does with Reduce Motion on. Opacity only, nothing travels. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(.vt-push),
+  ::view-transition-group(.vt-pop) {
+    animation-duration: var(--transition-duration-base);
+    animation-timing-function: var(--ease-out);
+  }
+  ::view-transition-old(.vt-push),
+  ::view-transition-old(.vt-pop),
+  ::view-transition-new(.vt-push),
+  ::view-transition-new(.vt-pop) {
+    background: none;
+    box-shadow: none;
+    mix-blend-mode: plus-lighter;
+    z-index: auto;
+    animation-duration: var(--transition-duration-base);
+    animation-timing-function: var(--ease-out);
+  }
+  ::view-transition-old(.vt-push),
+  ::view-transition-old(.vt-pop) {
+    animation-name: vt-fade-out;
+  }
+  ::view-transition-new(.vt-push),
+  ::view-transition-new(.vt-pop) {
+    animation-name: vt-fade-in;
+  }
+}
