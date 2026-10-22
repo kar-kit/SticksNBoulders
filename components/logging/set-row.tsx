@@ -393,7 +393,7 @@ export function SetRow({
                 prFresh && "motion-safe:animate-spring-pop",
               )}
             >
-              PR
+              {prText(records)}
             </span>
           ) : null}
 
@@ -475,10 +475,24 @@ export function SetRow({
   );
 }
 
+/**
+ * What the PR badge says. "PR" for a strength record, the e1RM or the weight;
+ * "Rep PR" when the set's only record is reps at its load, the smaller claim,
+ * so a back-off triple's badge does not read like a new top single.
+ */
+function prText(kinds: readonly PrKind[]): string {
+  return kinds.every((kind) => kind === "reps") ? "Rep PR" : "PR";
+}
+
+const PR_WORDS: Record<PrKind, string> = {
+  e1rm: "estimated one-rep max",
+  weight: "heaviest weight",
+  reps: "most reps at this weight",
+};
+
 /** What the PR badge says to a screen reader. */
 function prLabel(kinds: readonly PrKind[]): string {
-  const words = kinds.map((kind) => (kind === "e1rm" ? "estimated one-rep max" : "heaviest weight"));
-  return `personal record, ${words.join(" and ")}`;
+  return `personal record, ${kinds.map((kind) => PR_WORDS[kind]).join(" and ")}`;
 }
 
 /** What the camera badge on a flagged row says, and how loudly. */

@@ -1,4 +1,4 @@
-import { detectPrs, priorBests, sessionPrs, type PriorSet, type SessionSetForPr } from "./pr";
+import { detectPrs, priorBests, repBests, sessionPrs, type PriorSet, type SessionSetForPr } from "./pr";
 import type { WeekPoint } from "./lift";
 import { lbToKg, loadFromInput } from "@/lib/units";
 
@@ -87,6 +87,42 @@ describe("priorBests", () => {
   });
 });
 
+describe("repBests", () => {
+  it("keeps, per load, the most reps at that load or heavier, heaviest first", () => {
+    const before = [
+      raw("2026-10-01T18:00:00Z", { loadKg: 150, reps: 2 }),
+      raw("2026-10-05T18:00:00Z", { loadKg: 140, reps: 5 }),
+      raw("2026-10-08T18:00:00Z", { loadKg: 140, reps: 4 }),
+      // Under 140 x 5 on both counts: says nothing more.
+      raw("2026-10-12T18:00:00Z", { loadKg: 135, reps: 5 }),
+      raw("2026-10-15T18:00:00Z", { loadKg: 120, reps: 10 }),
+    ];
+    expect(repBests(before, sessionStart)).toEqual([
+      { loadKg: 150, reps: 2 },
+      { loadKg: 140, reps: 5 },
+      { loadKg: 120, reps: 10 },
+    ]);
+  });
+
+  it("never counts a warm-up, an empty set, or a set logged after the session started", () => {
+    const before = [
+      raw("2026-10-20T18:00:00Z", { loadKg: 100, reps: 20, isWarmup: true }),
+      raw("2026-10-20T18:00:00Z", { loadKg: 100, reps: 0 }),
+      raw("2026-10-22T17:30:00Z", { loadKg: 100, reps: 12 }),
+      raw("2026-10-20T18:00:00Z", { loadKg: 100, reps: 8 }),
+    ];
+    expect(repBests(before, sessionStart)).toEqual([{ loadKg: 100, reps: 8 }]);
+  });
+
+  it("files loads by the tenth of a kilo, so 315 lb typed twice is one load", () => {
+    const before = [
+      raw("2026-10-05T18:00:00Z", { loadKg: lbToKg(315), reps: 3 }),
+      raw("2026-10-08T18:00:00Z", { loadKg: loadFromInput(315, "lb"), reps: 4 }),
+    ];
+    expect(repBests(before, sessionStart)).toEqual([{ loadKg: 142.9, reps: 4 }]);
+  });
+});
+
 describe("detectPrs", () => {
   const bests = { e1rmKg: 170, heaviestKg: 150 };
 
@@ -122,6 +158,76 @@ describe("detectPrs", () => {
     expect(detectPrs([set("a", 300, 1, 10)], null).size).toBe(0);
     // Never logged with an RPE: no e1RM to beat, but the weight still counts.
     expect(detectPrs([set("a", 160, 1, 10)], { e1rmKg: null, heaviestKg: 150 })).toEqual(new Map([["a", ["weight"]]]));
+  });
+
+  describe("rep records: most reps at this load or heavier", () => {
+    const withReps = {
+      e1rmKg: null,
+      heaviestKg: 150,
+      repsAt: [
+        { loadKg: 150, reps: 2 },
+        { loadKg: 142.5, reps: 5 },
+        { loadKg: 120, reps: 10 },
+      ],
+    };
+
+    it("badges more reps than ever at that load", () => {
+      expect(detectPrs([set("a", 142.5, 6)], withReps)).toEqual(new Map([["a", ["reps"]]]));
+    });
+
+    it("counts a heavier set's reps as done at the lighter load", () => {
+      // 140 x 5 was never done, but 142.5 x 5 was: a five at 140 is no record, a six is.
+      expect(detectPrs([set("a", 140, 5)], withReps).size).toBe(0);
+      expect(detectPrs([set("b", 140, 6)], withReps)).toEqual(new Map([["b", ["reps"]]]));
+      // Ten at 120 covers everything down to the bar.
+      expect(detectPrs([set("c", 100, 10)], withReps).size).toBe(0);
+    });
+
+    it("does not badge a tie", () => {
+      expect(detectPrs([set("a", 142.5, 5)], withReps).size).toBe(0);
+    });
+
+    it("leaves a load heavier than ever to the weight record", () => {
+      expect(detectPrs([set("a", 152.5, 3)], withReps)).toEqual(new Map([["a", ["weight"]]]));
+    });
+
+    it("measures each set against the sets before it today", () => {
+      const found = detectPrs([set("a", 142.5, 6), set("b", 142.5, 7), set("c", 142.5, 7), set("d", 140, 7)], withReps);
+      expect([...found.keys()]).toEqual(["a", "b"]);
+    });
+
+    it("lets today's heavier record set the bar for the reps that follow", () => {
+      // 155 x 1 is a weight record; then 155 x 2 beats it on reps.
+      const found = detectPrs([set("a", 155, 1), set("b", 155, 2)], withReps);
+      expect(found).toEqual(
+        new Map([
+          ["a", ["weight"]],
+          ["b", ["reps"]],
+        ]),
+      );
+    });
+
+    it("sits beside the other kinds on one set", () => {
+      // 142.5 x 6 @ 9: 7 to failure, an estimate over 160.
+      expect(detectPrs([set("a", 142.5, 6, 9)], { ...withReps, e1rmKg: 160 })).toEqual(
+        new Map([["a", ["e1rm", "reps"]]]),
+      );
+    });
+
+    it("never counts a warm-up", () => {
+      expect(detectPrs([set("w", 142.5, 8, null, true)], withReps).size).toBe(0);
+    });
+
+    it("badges no rep record when the frontier is not known", () => {
+      expect(detectPrs([set("a", 142.5, 9)], { ...withReps, repsAt: null }).size).toBe(0);
+      expect(detectPrs([set("a", 142.5, 9)], { e1rmKg: null, heaviestKg: 150 }).size).toBe(0);
+    });
+
+    it("compares loads at a tenth of a kilo", () => {
+      const prior = { e1rmKg: null, heaviestKg: 200, repsAt: [{ loadKg: lbToKg(315), reps: 3 }] };
+      expect(detectPrs([set("a", loadFromInput(315, "lb"), 4)], prior)).toEqual(new Map([["a", ["reps"]]]));
+      expect(detectPrs([set("a", loadFromInput(315, "lb"), 3)], prior).size).toBe(0);
+    });
   });
 
   describe("units and rounding", () => {
@@ -167,6 +273,41 @@ describe("sessionPrs", () => {
       ["bench", "weight", "b"],
     ]);
     expect(sessionPrs(sets, found)[0].e1rmKg).toBe(174.5);
+  });
+
+  it("lists rep records per load, folding one into a later record that covers it", () => {
+    const sets = [
+      { ...set("a", 140, 6), exerciseId: "squat" },
+      { ...set("b", 140, 7), exerciseId: "squat" },
+      { ...set("c", 120, 11), exerciseId: "squat" },
+      { ...set("d", 100, 8), exerciseId: "bench" },
+      { ...set("e", 160, 1), exerciseId: "squat" },
+    ];
+    const found = new Map([
+      ["a", ["reps" as const]],
+      ["b", ["reps" as const]],
+      ["c", ["reps" as const]],
+      ["d", ["reps" as const]],
+      ["e", ["weight" as const]],
+    ]);
+    expect(sessionPrs(sets, found).map((pr) => [pr.exerciseId, pr.kind, pr.clientSetId])).toEqual([
+      ["squat", "weight", "e"],
+      ["squat", "reps", "b"],
+      ["squat", "reps", "c"],
+      ["bench", "reps", "d"],
+    ]);
+  });
+
+  it("folds a rep record into a heavier one with as many reps", () => {
+    const sets = [
+      { ...set("a", 140, 6), exerciseId: "squat" },
+      { ...set("b", 142.5, 6), exerciseId: "squat" },
+    ];
+    const found = new Map([
+      ["a", ["reps" as const]],
+      ["b", ["reps" as const]],
+    ]);
+    expect(sessionPrs(sets, found).map((pr) => pr.clientSetId)).toEqual(["b"]);
   });
 
   it("is empty with nothing broken", () => {

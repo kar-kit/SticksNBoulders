@@ -3222,6 +3222,72 @@ describe("last time and records (F6)", () => {
       expect(items[0]).toHaveTextContent("Heaviest weight · 155 kg × 1");
     });
 
+    describe("rep records", () => {
+      // Most at 140 or more: 5, from 142.5 x 5. Ten at 100.
+      const withReps = {
+        ...bests,
+        repsAt: [
+          { loadKg: 150, reps: 2 },
+          { loadKg: 142.5, reps: 5 },
+          { loadKg: 100, reps: 10 },
+        ],
+      };
+
+      it("badges more reps than ever at a load, pops it in and buzzes once", async () => {
+        const vibrate = withVibrate();
+        exerciseHistory.value.squat = { previous: [], bests: withReps };
+        storedSets.value = [logged("a", 140, 5)];
+        const { user } = setup({ active: session() });
+        await screen.findByRole("group", { name: "Set 1" });
+        await waitFor(() => expect(exerciseHistory.calls).toEqual(["squat"]));
+        await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+        await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
+        for (const key of ["1", "4", "0"]) await user.click(screen.getByRole("button", { name: key }));
+        await user.click(screen.getByRole("button", { name: "Reps" }));
+        await user.click(screen.getByRole("button", { name: "6" }));
+        await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+        const badge = await screen.findByRole("img", { name: "Set 2: personal record, most reps at this weight" });
+        expect(badge).toHaveTextContent("Rep PR");
+        expect(badge.className).toContain("motion-safe:animate-spring-pop");
+        const buzzes = vibrate.mock.calls.filter((call) => JSON.stringify(call[0]) === JSON.stringify(HAPTICS.success));
+        expect(buzzes).toHaveLength(1);
+        // 140 x 5 ties the 142.5 x 5 already done: no record.
+        expect(screen.queryByRole("img", { name: /Set 1: personal record/ })).not.toBeInTheDocument();
+      });
+
+      it("badges no rep record when the whole history could not be read", async () => {
+        exerciseHistory.value.squat = { previous: [], bests: { ...withReps, repsAt: null } };
+        storedSets.value = [logged("a", 140, 5, { reps: 9 })];
+        setup({ active: session() });
+        await screen.findByRole("group", { name: "Set 1" });
+        await waitFor(() => expect(exerciseHistory.calls).toEqual(["squat"]));
+        expect(screen.queryByRole("img", { name: /personal record/ })).not.toBeInTheDocument();
+      });
+
+      it("lists one rep record per load on the finish screen", async () => {
+        exerciseHistory.value.squat = { previous: [], bests: withReps };
+        storedSets.value = [
+          logged("a", 140, 10, { reps: 6 }),
+          logged("b", 140, 8, { reps: 7 }),
+          logged("c", 100, 5, { reps: 12 }),
+        ];
+        const finish = vi.fn(async () => {
+          training.value = { ...training.value, active: null };
+        });
+        const { user } = setup({ active: session(), finish });
+        await screen.findAllByRole("img", { name: /personal record/ });
+        await user.click(screen.getByRole("button", { name: "Finish session" }));
+        await user.click(screen.getByRole("button", { name: "Finish" }));
+        const records = await screen.findByRole("region", { name: "Personal records" });
+        const items = within(records).getAllByRole("listitem");
+        // 140 x 6 then 140 x 7: one line, the seven.
+        expect(items).toHaveLength(2);
+        expect(items[0]).toHaveTextContent("Rep PR · 140 kg × 7");
+        expect(items[0]).toHaveTextContent("7 reps");
+        expect(items[1]).toHaveTextContent("Rep PR · 100 kg × 12");
+      });
+    });
+
     it("shows no records section when nothing was broken", async () => {
       exerciseHistory.value.squat = { previous: [], bests };
       storedSets.value = [logged("a", 140, 5)];
