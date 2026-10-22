@@ -186,3 +186,36 @@ describe("ExerciseBlock — the coach's video ask (F5)", () => {
     expect(screen.getByRole("button", { name: "Log Set 3" })).toBeEnabled();
   });
 });
+
+describe("ExerciseBlock — last time, records and history (F6)", () => {
+  it("links to the exercise's history beside the name, leaving the name to reopen the block", () => {
+    const onActivate = vi.fn();
+    render(<ExerciseBlock name="Squat" sets={[logged("a")]} onActivate={onActivate} historyHref="/lift/squat" />);
+    expect(screen.getByRole("link", { name: "Squat history and records" })).toHaveAttribute("href", "/lift/squat");
+    fireEvent.click(screen.getByRole("button", { name: "Squat" }));
+    expect(onActivate).toHaveBeenCalled();
+  });
+
+  it("has no history link when none is given", () => {
+    render(<ExerciseBlock name="Squat" sets={[logged("a")]} />);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("hands each row its own last time, and copies only into rows not logged yet", async () => {
+    const onCopyPrevious = vi.fn();
+    render(
+      <ExerciseBlock
+        name="Squat"
+        sets={[logged("a", { previous: { loadKg: 135, reps: 5 }, pr: ["weight"] })]}
+        planned={[row("p1", { previous: { loadKg: 140, reps: 5 } }), row("p2")]}
+        onCopyPrevious={onCopyPrevious}
+      />,
+    );
+    expect(screen.getByLabelText("Set 1 last time: 135 kilograms for 5 reps")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Set 1: personal record, heaviest weight" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Set 2: use last time, 140 kilograms for 5 reps" }));
+    expect(onCopyPrevious).toHaveBeenCalledWith("p1");
+    // Set 3 has no last time: no line, no button.
+    expect(screen.queryAllByRole("button", { name: /use last time/ })).toHaveLength(1);
+  });
+});

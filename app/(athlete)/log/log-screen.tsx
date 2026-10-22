@@ -93,6 +93,10 @@ import { setTargetFor } from "@/lib/logging/set-targets";
 import { useSuggestionMode } from "@/lib/coach/use-suggestion-mode";
 import { useUnits } from "@/lib/profile/units-context";
 import { loadFromInput, loadIn, loadNumber, type UnitPreference } from "@/lib/units";
+import { haptic } from "@/lib/ui/haptics";
+import { alignPrevious, fillFromLastSession, type PreviousSet } from "@/lib/logging/previous";
+import { useExerciseHistory } from "@/lib/logging/use-exercise-history";
+import { detectPrs, sessionPrs, type PrKind, type SessionPr } from "@/lib/strength/pr";
 
 /**
  * Log Session. The screen this product lives or dies on.
@@ -161,6 +165,15 @@ export function LogScreen() {
    * zero the moment it is shown. The finished screen reads this instead.
    */
   const [finished, setFinished] = useState<SessionSummary | null>(null);
+  /** The records broken, as they stood at Finish. Same reason as `finished`. */
+  const [finishedPrs, setFinishedPrs] = useState<SessionPr[]>([]);
+  /**
+   * Sets confirmed on this page. Only these pop their PR badge and buzz: a
+   * set read back after a reload was celebrated the first time round.
+   */
+  const [confirmedHere, setConfirmedHere] = useState<ReadonlySet<string>>(() => new Set());
+  /** Confirmed sets already measured against the bests, PR or not. Each buzzes at most once. */
+  const judged = useRef(new Set<string>());
   /** What Appwrite returned for this session. Replaced whenever it is read. */
   const [stored, setStored] = useState<UnnamedSet[]>([]);
   /**
@@ -487,6 +500,57 @@ export function LogScreen() {
   const currentOf = useCallback((blockId: string) => swapView.inHand.get(blockId) ?? blockId, [swapView]);
   const blockOf = useCallback((exerciseId: string) => swapView.owners.get(exerciseId) ?? exerciseId, [swapView]);
 
+  /**
+   * Last time and the bests to beat, for every exercise on the screen: each
+   * block's own, the variant it is on now, and anything logged or planned.
+   * Read in the background, one read per exercise for the session; a block
+   * never waits for it, and with no signal it is simply absent.
+   */
+  const historyIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of plan) ids.add(p.exerciseId).add(currentOf(p.exerciseId));
+    for (const exercise of added) ids.add(exercise.id).add(currentOf(exercise.id));
+    for (const set of all) ids.add(set.exerciseId);
+    for (const row of plans) ids.add(row.exerciseId);
+    return [...ids];
+  }, [plan, added, all, plans, currentOf]);
+  const histories = useExerciseHistory(athleteId, sessionId, active?.startedAt ?? null, historyIds);
+
+  /**
+   * Which logged sets are records, per exact exercise (a variant has its own
+   * records), against the bests as they stood when the session started. See
+   * lib/strength/pr.ts for why that is not simply the rollups.
+   */
+  const prs = useMemo(() => {
+    const found = new Map<string, PrKind[]>();
+    const byExercise = new Map<string, UnnamedSet[]>();
+    for (const set of all) byExercise.set(set.exerciseId, [...(byExercise.get(set.exerciseId) ?? []), set]);
+    for (const [exerciseId, list] of byExercise) {
+      const history = histories.get(exerciseId);
+      if (!history) continue;
+      const mine = detectPrs(
+        list.map((s) => ({ clientSetId: s.clientSetId, loadKg: s.loadKg, reps: s.reps, rpe: s.rpe ?? null, isWarmup: s.isWarmup })),
+        history.bests,
+      );
+      for (const [id, kinds] of mine) found.set(id, kinds);
+    }
+    return found;
+  }, [all, histories]);
+
+  // A record set on this page buzzes once, when it is first measured: at the
+  // confirm when the bests are already in hand, or when they arrive. Never
+  // again for that set, whatever a later delete or flip does to the badges.
+  useEffect(() => {
+    const ready = [...confirmedHere].filter((id) => {
+      if (judged.current.has(id)) return false;
+      const set = all.find((s) => s.clientSetId === id);
+      return set !== undefined && histories.has(set.exerciseId);
+    });
+    if (ready.length === 0) return;
+    for (const id of ready) judged.current.add(id);
+    if (ready.some((id) => prs.has(id))) haptic("success");
+  }, [confirmedHere, all, histories, prs]);
+
   /** A block's logged sets, across every variant it has been on. */
   const setsOfBlock = useCallback(
     (blockId: string) => all.filter((s) => blockOf(s.exerciseId) === blockId),
@@ -551,6 +615,46 @@ export function LogScreen() {
     },
     [plan, setsOfBlock, targetsOf],
   );
+
+  /**
+   * Last time's set beside each row, logged or not, block by block. Warm-ups
+   * line up with warm-ups, working sets with working sets, each exercise of a
+   * swapped block with its own last time (lib/logging/previous.ts).
+   */
+  const previousByRow = useMemo(() => {
+    const found = new Map<string, PreviousSet>();
+    if (histories.size === 0) return found;
+    const blockIds = new Set([...all.map((s) => blockOf(s.exerciseId)), ...plans.map((r) => blockOf(r.exerciseId))]);
+    for (const blockId of blockIds) {
+      const rows = [...setsOfBlock(blockId), ...rowsOf(plans, currentOf(blockId))];
+      alignPrevious(rows, (id) => histories.get(id)?.previous).forEach((previous, at) => {
+        if (previous) found.set(rows[at].clientSetId, previous);
+      });
+    }
+    return found;
+  }, [histories, all, plans, blockOf, setsOfBlock, currentOf]);
+
+  /**
+   * Rule 4 of the prefill order, for exercises nobody prescribed: a row with
+   * nothing better to start from takes last session's numbers. Runs when a
+   * row appears and again when last time arrives, because the read is in the
+   * background and the first row of a free exercise usually beats it.
+   */
+  useEffect(() => {
+    let next = plans;
+    for (const exerciseId of new Set(plans.map((row) => row.exerciseId))) {
+      const history = histories.get(exerciseId);
+      if (!history || plan.some((p) => p.exerciseId === blockOf(exerciseId))) continue;
+      const loggedWorking = all.filter((s) => s.exerciseId === exerciseId && !s.isWarmup).length;
+      next = fillFromLastSession(next, exerciseId, history.previous, loggedWorking);
+    }
+    if (next === plans) return;
+    void (async () => {
+      await Promise.resolve();
+      // Only over the rows it was worked out from; a newer list runs this again.
+      setPlans((prev) => (prev === plans ? next : prev));
+    })();
+  }, [plans, histories, all, plan, blockOf]);
 
   const focused = plans.find((row) => row.clientSetId === focusId) ?? null;
 
@@ -753,6 +857,26 @@ export function LogScreen() {
     }));
   };
 
+  /**
+   * The Previous line's tap on a row not logged yet: last time's load and
+   * reps into the row, as if typed. The pad, if it is open on this row,
+   * starts again from the new number rather than writing the old one back.
+   */
+  const copyPrevious = (rowId: string) => {
+    const previous = previousByRow.get(rowId);
+    if (!previous || !plans.some((row) => row.clientSetId === rowId)) return;
+    setPlans((prev) =>
+      prev.map((row) =>
+        row.clientSetId === rowId
+          ? { ...row, loadKg: previous.loadKg, reps: previous.reps, note: null, suggested: false, touched: true }
+          : row,
+      ),
+    );
+    if (focusId === rowId && pad) {
+      setPad(pad.field === "load" ? beginEdit("load", loadIn(previous.loadKg, unit), unit) : beginEdit("reps", previous.reps));
+    }
+  };
+
   const toggleWarmup = (isWarmup: boolean) => {
     updateFocused((row) => ({ ...row, isWarmup, rpe: rpeAfterWarmupChange(isWarmup, row.rpe) }));
     if (isWarmup) setRpeOpen(false);
@@ -829,6 +953,7 @@ export function LogScreen() {
     };
     setSaving((prev) => new Set(prev).add(row.clientSetId));
     setLocal((prev) => [...prev, optimistic]);
+    setConfirmedHere((prev) => new Set(prev).add(row.clientSetId));
     // A row the athlete already planned becomes the head; with none, the
     // exercise simply shows what was logged and Add set. No row is invented.
     const { rows, next } = afterConfirm(plans, rowId);
@@ -1108,10 +1233,15 @@ export function LogScreen() {
     commitDelete();
     setBusy(true);
     const totals = summary;
+    const records = sessionPrs(
+      all.map((s) => ({ ...s, rpe: s.rpe ?? null })),
+      prs,
+    );
     try {
       await finish(active.id, { setCount: totals.setCount, tonnageKg: totals.tonnageKg });
       changeRest(null);
       setFinished(totals);
+      setFinishedPrs(records);
       setPhase("finished");
     } finally {
       setBusy(false);
@@ -1119,7 +1249,15 @@ export function LogScreen() {
   };
 
   if (phase === "finished") {
-    return <FinishedSummary summary={finished ?? summary} unit={unit} onDone={() => router.push("/today")} />;
+    return (
+      <FinishedSummary
+        summary={finished ?? summary}
+        prs={finishedPrs}
+        nameFor={nameFor}
+        unit={unit}
+        onDone={() => router.push("/today")}
+      />
+    );
   }
 
   if (!active) {
@@ -1350,8 +1488,16 @@ export function LogScreen() {
                     ...(asked(s.clientSetId) ? { videoRequired: true, hasVideo: hasClip(s) } : {}),
                     deleteBlocked:
                       commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,
+                    previous: previousByRow.get(s.clientSetId) ?? null,
+                    pr: prs.get(s.clientSetId) ?? null,
+                    prFresh: confirmedHere.has(s.clientSetId),
                   }))}
-                  planned={rowsOf(plans, exerciseId)}
+                  planned={rowsOf(plans, exerciseId).map((row) => ({
+                    ...row,
+                    previous: previousByRow.get(row.clientSetId) ?? null,
+                  }))}
+                  onCopyPrevious={copyPrevious}
+                  historyHref={`/lift/${encodeURIComponent(exerciseId)}`}
                   focusedId={pad !== null || rpeOpen ? focusId : null}
                   target={targetFor(block.id)}
                   unit={unit}
@@ -1580,30 +1726,60 @@ export function LogScreen() {
 /**
  * What the athlete sees on finishing.
  *
- * PRs and queued videos belong here too, per the blueprint. They arrive with
- * the rollups at Order 12 and video at Order 3.
+ * The records broken today, per the blueprint, one line per exercise per
+ * kind (the best of the day, not every step up to it). Measured against the
+ * bests from before the session, so it agrees with the badges on the rows.
+ * Queued videos still belong here too and are not built yet.
  */
 function FinishedSummary({
   summary,
+  prs,
+  nameFor,
   unit,
   onDone,
 }: {
   summary: SessionSummary;
+  prs: readonly SessionPr[];
+  nameFor: (id: string) => string | null;
   unit: UnitPreference;
   onDone: () => void;
 }) {
+  const kg = (value: number) => (unit === "kg" ? `${formatNumber(value)} kg` : `${loadNumber(value, unit)} ${unit}`);
   return (
     <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
       <h1 className="m-0 text-display font-semibold">Session done</h1>
       <dl className="m-0 grid grid-cols-2 gap-3">
         <Stat label="Sets" value={String(summary.setCount)} />
-        <Stat
-          label="Tonnage"
-          value={unit === "kg" ? `${formatNumber(summary.tonnageKg)} kg` : `${loadNumber(summary.tonnageKg, unit)} ${unit}`}
-        />
+        <Stat label="Tonnage" value={kg(summary.tonnageKg)} />
         <Stat label="Exercises" value={String(summary.exerciseCount)} />
         <Stat label="Warm-ups" value={String(summary.warmupCount)} />
       </dl>
+      {prs.length > 0 ? (
+        <section aria-label="Personal records" className="flex flex-col gap-2">
+          <h2 className="m-0 font-mono text-label uppercase text-muted-2">
+            {prs.length === 1 ? "Personal record" : `${prs.length} personal records`}
+          </h2>
+          <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+            {prs.map((pr) => (
+              <li
+                key={`${pr.exerciseId}:${pr.kind}`}
+                className="flex items-baseline justify-between gap-3 rounded-card border border-border bg-surface px-4 py-3"
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-body font-semibold">{nameFor(pr.exerciseId) ?? pr.exerciseId}</span>
+                  <span className="text-caption text-muted">
+                    {pr.kind === "e1rm" ? "Estimated 1RM" : "Heaviest weight"} &middot; {kg(pr.loadKg)} &times; {pr.reps}
+                    {pr.rpe !== null ? ` @ ${formatNumber(pr.rpe)}` : ""}
+                  </span>
+                </span>
+                <span className="flex-none text-title font-semibold tabular-nums">
+                  {pr.kind === "e1rm" && pr.e1rmKg !== null ? kg(pr.e1rmKg) : kg(pr.loadKg)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <div className="mt-auto">
         <Button size="xl" block onClick={onDone}>
           Back to Today

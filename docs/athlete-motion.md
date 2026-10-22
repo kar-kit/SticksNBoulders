@@ -427,3 +427,35 @@ tap during the slide reach the live page.
   wins `bottom`, so it is in view after logging on a long prescribed day.
   Swapping between pad, RPE, swap and rest swaps content without
   re-animating; the sheet only animates when it opens or closes.
+
+## Previous, PR badges and the way to a lift's history (F6)
+
+_Added 22 Oct 2026._ Athlete feedback: "No way to see what sets I have done
+before, like the Strong app, and PRs."
+
+- **Previous.** Every row, logged or not, carries a `PREV 140 × 5` line under
+  it: the set it lines up with from the last session that trained that exact
+  exercise. Warm-ups line up with warm-ups, working sets with working sets,
+  and a swapped block's rows each read their own variant's last time
+  (`lib/logging/previous.ts`). A line, not a sixth grid column: at 390pt the
+  `GRID` has ~110px for the load cell, and a Previous column would leave it
+  under 40px. On a row not logged yet the line is a button (`tap`,
+  `haptic("light")`) that copies load and reps into the row as if typed. No
+  motion of its own; it arrives with the row or, when the read lands later,
+  in one step.
+- **Prefill rule 4.** A free exercise's blank, untouched working rows take
+  last time's numbers (`fillFromLastSession`, through `resolvePrefill`), also
+  when the read lands after the row appeared. Prescribed rows and warm-ups
+  are never filled.
+- **PR badge.** A logged set that beats the athlete's best e1RM or heaviest
+  working weight before this session wears a `PR` pill on the row's top
+  border, beside the video badge's corner. A set confirmed on this page pops
+  it in on `motion-safe:animate-spring-pop` and buzzes `haptic("success")`
+  once; a badge read back after a reload sits still and is silent. The rules
+  (bests frozen at the session's start, a running best through the session,
+  warm-ups never, a tenth-of-a-kilo comparison) are in `lib/strength/pr.ts`.
+  The finish screen lists the day's records, one per exercise per kind.
+- **History link.** A clock icon beside the block's name opens
+  `/lift/[id]` for the exercise in hand (the swapped variant when swapped).
+  `/log` is depth 0 and `/lift/x` depth 2, so F7 slides it in as a push with
+  nothing set at the call site. The name itself still reopens the block.

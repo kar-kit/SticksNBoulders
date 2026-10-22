@@ -10,6 +10,8 @@ import { REST_BUZZ } from "@/lib/logging/rest-timer";
 import { attachQueue, enqueue, resetQueueForTests } from "@/lib/offline/client";
 import type { QueueStore } from "@/lib/offline/queue";
 import { UnitsProvider } from "@/lib/profile/units-context";
+import { forgetExerciseHistory } from "@/lib/logging/use-exercise-history";
+import { HAPTICS } from "@/lib/ui/haptics";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -127,6 +129,23 @@ vi.mock("@/appwrite/browser-client", () => ({
   }),
 }));
 
+// Last time and the bests to beat (F6). Read in the background per exercise;
+// `hold` keeps reads on the wire, `fail` makes them fail like a dead signal.
+const exerciseHistory = vi.hoisted(() => ({
+  value: {} as Record<string, { previous: unknown[]; bests: unknown }>,
+  fail: false,
+  hold: null as Promise<void> | null,
+  calls: [] as string[],
+}));
+vi.mock("@/lib/logging/exercise-history-store", () => ({
+  fetchExerciseHistory: async (_athleteId: string, exerciseId: string) => {
+    exerciseHistory.calls.push(exerciseId);
+    if (exerciseHistory.hold) await exerciseHistory.hold;
+    if (exerciseHistory.fail) throw new TypeError("Failed to fetch");
+    return exerciseHistory.value[exerciseId] ?? { previous: [], bests: null };
+  },
+}));
+
 // The athlete's profile, read by the real UnitsProvider in the pounds tests.
 // Nothing else on this screen reads it, and outside the provider it is kilos.
 const profile = vi.hoisted(() => ({ units: "kg" as "kg" | "lb" }));
@@ -206,6 +225,11 @@ beforeEach(() => {
   profile.units = "kg";
   weekRollups.value = [];
   weekRollups.fail = false;
+  exerciseHistory.value = {};
+  exerciseHistory.fail = false;
+  exerciseHistory.hold = null;
+  exerciseHistory.calls = [];
+  forgetExerciseHistory();
 });
 
 describe("with no session running", () => {
@@ -2877,6 +2901,382 @@ describe("following a coach's program (F5)", () => {
       setup({ active: session() });
       const timer = await screen.findByRole("timer", { name: "Rest timer" });
       expect(sheet()).toContainElement(timer);
+    });
+  });
+});
+
+describe("last time and records (F6)", () => {
+  const prev = (loadKg: number, reps: number, isWarmup = false) => ({ loadKg, reps, isWarmup });
+  const addSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+  };
+  const squatBlock = () => screen.getByRole("region", { name: "Squat" });
+  /** The Previous line under a row: the row group's wrapper holds it. */
+  const previousOf = (row: HTMLElement) => row.closest("[data-arrived], div.flex-col")?.querySelector("[data-previous]") ?? null;
+  const withVibrate = () => {
+    const vibrate = vi.fn<(pattern: VibratePattern) => boolean>(() => true);
+    Object.defineProperty(navigator, "vibrate", { value: vibrate, configurable: true, writable: true });
+    return vibrate;
+  };
+  // No queue attached: known empty from the start, whatever ran before.
+  beforeEach(() => resetQueueForTests());
+  afterEach(() => {
+    delete (navigator as unknown as Record<string, unknown>).vibrate;
+  });
+
+  describe("the Previous line", () => {
+    it("lines last time up with today, warm-ups with warm-ups and working sets with working sets", async () => {
+      exerciseHistory.value.squat = {
+        previous: [prev(50, 5, true), prev(80, 3, true), prev(140, 5), prev(145, 3)],
+        bests: null,
+      };
+      storedSets.value = [
+        logged("w", 60, 10, { isWarmup: true }),
+        logged("a", 142.5, 5),
+      ];
+      setup({ active: session() });
+      const warmup = await screen.findByRole("group", { name: "Warm-up set" });
+      await waitFor(() => expect(previousOf(warmup)).toHaveTextContent("PREV 50 × 5"));
+      expect(previousOf(screen.getByRole("group", { name: "Set 1" }))).toHaveTextContent("PREV 140 × 5");
+    });
+
+    it("shows nothing, and no error, when last time cannot be read", async () => {
+      exerciseHistory.fail = true;
+      storedSets.value = [logged("a", 142.5, 5)];
+      setup({ active: session() });
+      await screen.findByRole("group", { name: "Set 1" });
+      await waitFor(() => expect(exerciseHistory.calls).toEqual(["squat"]));
+      expect(document.querySelector("[data-previous]")).toBeNull();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(/couldn.t|failed/i)).not.toBeInTheDocument();
+    });
+
+    it("tries again when the signal comes back", async () => {
+      exerciseHistory.fail = true;
+      exerciseHistory.value.squat = { previous: [prev(140, 5)], bests: null };
+      storedSets.value = [logged("a", 142.5, 5)];
+      setup({ active: session() });
+      await waitFor(() => expect(exerciseHistory.calls).toHaveLength(1));
+      exerciseHistory.fail = false;
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      await waitFor(() => expect(previousOf(screen.getByRole("group", { name: "Set 1" }))).toHaveTextContent("140 × 5"));
+    });
+
+    it("shows nothing for an exercise never trained before", async () => {
+      storedSets.value = [logged("a", 142.5, 5)];
+      setup({ active: session() });
+      await screen.findByRole("group", { name: "Set 1" });
+      await waitFor(() => expect(exerciseHistory.calls).toEqual(["squat"]));
+      expect(document.querySelector("[data-previous]")).toBeNull();
+    });
+
+    it("reads each exercise once for the session, however often the screen renders or reopens", async () => {
+      exerciseHistory.value.squat = { previous: [prev(140, 5)], bests: null };
+      const { user, unmount } = setup({ active: session() });
+      await addSquat(user);
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      await waitFor(() => expect(document.querySelector("[data-previous]")).not.toBeNull());
+      // Off to Lift Detail and back: the read is the module's, not the screen's.
+      unmount();
+      setup({ active: session() });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(exerciseHistory.calls).toEqual(["squat"]);
+    });
+
+    it("does not hold the Log up while it reads", async () => {
+      let release!: () => void;
+      exerciseHistory.hold = new Promise<void>((resolve) => (release = resolve));
+      exerciseHistory.value.squat = { previous: [prev(140, 5)], bests: null };
+      const { user } = setup({ active: session() });
+      await addSquat(user);
+      expect(screen.getByRole("button", { name: "Log Set 1" })).toBeInTheDocument();
+      expect(document.querySelector("[data-previous]")).toBeNull();
+      await act(async () => release());
+      await waitFor(() => expect(document.querySelector("[data-previous]")).toHaveTextContent("140 × 5"));
+    });
+
+    it("reads in the athlete's unit", async () => {
+      profile.units = "lb";
+      exerciseHistory.value.squat = { previous: [prev(142.882, 5)], bests: null };
+      storedSets.value = [logged("a", 142.882, 5)];
+      setup({ active: session(), withUnits: true });
+      const row = await screen.findByRole("group", { name: "Set 1" });
+      await waitFor(() => expect(previousOf(row)).toHaveTextContent("PREV 315 × 5"));
+    });
+  });
+
+  describe("copying last time into a row", () => {
+    it("copies load and reps into a row not logged yet, as the athlete's own", async () => {
+      exerciseHistory.value.squat = { previous: [prev(140, 5), prev(150, 3)], bests: null };
+      storedSets.value = [logged("a", 140, 5)];
+      const { user } = setup({ active: session() });
+      await screen.findByRole("group", { name: "Set 1" });
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      const copy = await screen.findByRole("button", { name: "Set 2: use last time, 150 kilograms for 3 reps" });
+      await user.click(copy);
+      const row = screen.getByRole("group", { name: "Set 2" });
+      expect(within(row).getByRole("button", { name: "Set 2 weight in kilograms" })).toHaveTextContent("150");
+      expect(within(row).getByRole("button", { name: "Set 2 reps" })).toHaveTextContent("3");
+      await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledWith(expect.objectContaining({ loadKg: 150, reps: 3 })));
+    });
+
+    it("is not a button on a logged set", async () => {
+      exerciseHistory.value.squat = { previous: [prev(140, 5)], bests: null };
+      storedSets.value = [logged("a", 142.5, 5)];
+      setup({ active: session() });
+      const row = await screen.findByRole("group", { name: "Set 1" });
+      await waitFor(() => expect(previousOf(row)).not.toBeNull());
+      expect(screen.queryByRole("button", { name: /use last time/ })).not.toBeInTheDocument();
+    });
+
+    it("restarts an open pad from the copied number", async () => {
+      exerciseHistory.value.squat = { previous: [prev(140, 5), prev(150, 3)], bests: null };
+      storedSets.value = [logged("a", 140, 5)];
+      const { user } = setup({ active: session() });
+      await screen.findByRole("group", { name: "Set 1" });
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
+      await user.click(await screen.findByRole("button", { name: /Set 2: use last time/ }));
+      // The stepper now moves on from 150, not from the 140 the pad opened on.
+      await user.click(screen.getByRole("button", { name: /^Increase/ }));
+      expect(screen.getByRole("button", { name: "Set 2 weight in kilograms" })).toHaveTextContent("152.5");
+    });
+  });
+
+  describe("prefill rule 4: same exercise last session", () => {
+    it("starts a free exercise's first row at last time's first working set", async () => {
+      exerciseHistory.value.squat = { previous: [prev(60, 5, true), prev(140, 5), prev(145, 3)], bests: null };
+      const { user } = setup({ active: session() });
+      await addSquat(user);
+      const row = screen.getByRole("group", { name: "Set 1" });
+      await waitFor(() =>
+        expect(within(row).getByRole("button", { name: "Set 1 weight in kilograms" })).toHaveTextContent("140"),
+      );
+      expect(within(row).getByRole("button", { name: "Set 1 reps" })).toHaveTextContent("5");
+      expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+    });
+
+    it("fills a blank row when last time arrives after it, and never one the athlete typed in", async () => {
+      let release!: () => void;
+      exerciseHistory.hold = new Promise<void>((resolve) => (release = resolve));
+      exerciseHistory.value.squat = { previous: [prev(140, 5), prev(145, 3)], bests: null };
+      const { user } = setup({ active: session() });
+      await addSquat(user);
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      // Set 2 typed by hand before the read lands.
+      await user.click(screen.getByRole("button", { name: "Set 2 reps" }));
+      await user.click(screen.getByRole("button", { name: "8" }));
+      await act(async () => release());
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Set 1 weight in kilograms" })).toHaveTextContent("140"),
+      );
+      expect(screen.getByRole("button", { name: "Set 2 weight in kilograms" })).toHaveTextContent("KG");
+      expect(screen.getByRole("button", { name: "Set 2 reps" })).toHaveTextContent("8");
+    });
+
+    it("leaves a prescribed exercise to the coach: warm-ups stay blank, working sets stay priced", async () => {
+      library.exercises = [squat];
+      prescribed.value = {
+        status: "ready",
+        day: {
+          program: { id: "p1" },
+          week: { id: "w1" },
+          day: { id: "d1", label: "Day 1", notes: null },
+          prescriptions: [
+            {
+              id: "sq", exerciseId: "squat", position: 0, setCount: 1, reps: 5, load: "75%", warmupSets: 1,
+              programId: "p1", weekId: "w1", dayId: "d1", repMax: null, restSeconds: null, notes: null, loadKind: null,
+              updatedAt: "2026-10-01T00:00:00Z",
+            },
+          ],
+        },
+        maxes: {
+          entries: [
+            { id: "m1", exerciseId: "squat", kind: "training", valueKg: 200, effectiveFrom: "2026-01-01T00:00:00Z", recordedBy: "coach" },
+          ],
+          estimated: new Map(),
+        },
+      };
+      exerciseHistory.value.squat = { previous: [prev(60, 5, true), prev(140, 5)], bests: null };
+      setup({ active: session({ programDayId: "d1" }) });
+      const warmup = await screen.findByRole("group", { name: "Warm-up set" });
+      await waitFor(() => expect(previousOf(warmup)).toHaveTextContent("PREV 60 × 5"));
+      expect(within(warmup).getByRole("button", { name: "Warm-up set weight in kilograms" })).toHaveTextContent("KG");
+      expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("150");
+    });
+  });
+
+  describe("the exercise's history", () => {
+    it("links the block to Lift Detail for the exercise", async () => {
+      storedSets.value = [logged("a", 142.5, 5)];
+      setup({ active: session() });
+      await screen.findByRole("region", { name: "Squat" });
+      expect(within(squatBlock()).getByRole("link", { name: "Squat history and records" })).toHaveAttribute("href", "/lift/squat");
+    });
+  });
+
+  describe("PR badges", () => {
+    const bests = { e1rmKg: 170, heaviestKg: 150 };
+
+    it("badges a heavier set than ever, pops it in and buzzes once", async () => {
+      const vibrate = withVibrate();
+      exerciseHistory.value.squat = { previous: [], bests };
+      storedSets.value = [logged("a", 140, 5)];
+      const { user } = setup({ active: session() });
+      await screen.findByRole("group", { name: "Set 1" });
+      await waitFor(() => expect(exerciseHistory.calls).toEqual(["squat"]));
+      await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+      await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
+      for (const key of ["1", "5", "5"]) await user.click(screen.getByRole("button", { name: key }));
+      await user.click(screen.getByRole("button", { name: "Reps" }));
+      await user.click(screen.getByRole("button", { name: "1" }));
+      await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+      const badge = await screen.findByRole("img", { name: "Set 2: personal record, heaviest weight" });
+      expect(badge.className).toContain("motion-safe:animate-spring-pop");
+      expect(vibrate).toHaveBeenCalledWith([...HAPTICS.success]);
+      const buzzes = vibrate.mock.calls.filter((call) => JSON.stringify(call[0]) === JSON.stringify(HAPTICS.success));
+      expect(buzzes).toHaveLength(1);
+      // Set 1 broke nothing.
+      expect(screen.queryByRole("img", { name: /Set 1: personal record/ })).not.toBeInTheDocument();
+    });
+
+    it("reads the same badge back after a reload, without popping or buzzing again", async () => {
+      const vibrate = withVibrate();
+      exerciseHistory.value.squat = { previous: [], bests };
+      storedSets.value = [logged("a", 155, 5)];
+      setup({ active: session() });
+      const badge = await screen.findByRole("img", { name: "Set 1: personal record, heaviest weight" });
+      expect(badge.className).not.toContain("animate-spring-pop");
+      expect(vibrate).not.toHaveBeenCalled();
+      expect(screen.getAllByRole("img", { name: /personal record/ })).toHaveLength(1);
+    });
+
+    it("keeps last time and the badges through a reload with no signal", async () => {
+      exerciseHistory.value.squat = { previous: [prev(140, 5)], bests };
+      storedSets.value = [logged("a", 155, 5)];
+      const { unmount } = setup({ active: session() });
+      await screen.findByRole("img", { name: "Set 1: personal record, heaviest weight" });
+      // A reload: the module's memory goes, the device's copy stays.
+      const kept = localStorage.getItem("snb.exercise-history");
+      expect(kept).not.toBeNull();
+      unmount();
+      forgetExerciseHistory();
+      localStorage.setItem("snb.exercise-history", kept!);
+      exerciseHistory.fail = true;
+      setup({ active: session() });
+      expect(await screen.findByRole("img", { name: "Set 1: personal record, heaviest weight" })).toBeInTheDocument();
+      expect(previousOf(screen.getByRole("group", { name: "Set 1" }))).toHaveTextContent("PREV 140 × 5");
+      expect(exerciseHistory.calls).toEqual(["squat"]);
+    });
+
+    it("never badges a warm-up, however heavy", async () => {
+      exerciseHistory.value.squat = { previous: [], bests };
+      storedSets.value = [logged("w", 200, 5, { isWarmup: true })];
+      setup({ active: session() });
+      await screen.findByRole("group", { name: "Warm-up set" });
+      await waitFor(() => expect(exerciseHistory.calls).toEqual(["squat"]));
+      expect(screen.queryByRole("img", { name: /personal record/ })).not.toBeInTheDocument();
+    });
+
+    it("badges nothing on the first session of a lift, or with no signal", async () => {
+      exerciseHistory.fail = true;
+      storedSets.value = [logged("a", 155, 5)];
+      setup({ active: session() });
+      await screen.findByRole("group", { name: "Set 1" });
+      await waitFor(() => expect(exerciseHistory.calls).toEqual(["squat"]));
+      expect(screen.queryByRole("img", { name: /personal record/ })).not.toBeInTheDocument();
+    });
+
+    it("badges an e1RM record from the RPE, and both kinds on one set", async () => {
+      exerciseHistory.value.squat = { previous: [], bests };
+      // 160 x 3 @ 9: Brzycki on 4 to failure, 160 * 36 / 33 = 174.5 > 170.
+      storedSets.value = [logged("a", 160, 5, { reps: 3, rpe: 9 })];
+      setup({ active: session() });
+      expect(
+        await screen.findByRole("img", { name: "Set 1: personal record, estimated one-rep max and heaviest weight" }),
+      ).toBeInTheDocument();
+    });
+
+    it("lists the day's records on the finish screen", async () => {
+      exerciseHistory.value.squat = { previous: [], bests };
+      storedSets.value = [logged("a", 152.5, 10, { reps: 2 }), logged("b", 155, 5, { reps: 1 })];
+      const finish = vi.fn(async () => {
+        training.value = { ...training.value, active: null };
+      });
+      const { user } = setup({ active: session(), finish });
+      await screen.findAllByRole("img", { name: /personal record/ });
+      await user.click(screen.getByRole("button", { name: "Finish session" }));
+      await user.click(screen.getByRole("button", { name: "Finish" }));
+      const records = await screen.findByRole("region", { name: "Personal records" });
+      // Two heavier sets, one line: the one that stood at the end.
+      const items = within(records).getAllByRole("listitem");
+      expect(items).toHaveLength(1);
+      expect(items[0]).toHaveTextContent("Squat");
+      expect(items[0]).toHaveTextContent("Heaviest weight · 155 kg × 1");
+    });
+
+    it("shows no records section when nothing was broken", async () => {
+      exerciseHistory.value.squat = { previous: [], bests };
+      storedSets.value = [logged("a", 140, 5)];
+      const finish = vi.fn(async () => {
+        training.value = { ...training.value, active: null };
+      });
+      const { user } = setup({ active: session(), finish });
+      await screen.findByRole("group", { name: "Set 1" });
+      await user.click(screen.getByRole("button", { name: "Finish session" }));
+      await user.click(screen.getByRole("button", { name: "Finish" }));
+      await screen.findByText("Session done");
+      expect(screen.queryByRole("region", { name: "Personal records" })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("a swapped variant", () => {
+    const barbellRow: Exercise = { id: "bb-row", name: "Barbell Row", normalisedName: "barbell row", isGlobal: true };
+    const dumbbellRow: Exercise = { id: "db-row", name: "Dumbbell Row", normalisedName: "dumbbell row", isGlobal: true };
+
+    beforeEach(() => {
+      library.exercises = [squat, barbellRow, dumbbellRow];
+      prescribed.value = {
+        status: "ready",
+        day: {
+          program: { id: "p1" },
+          week: { id: "w1" },
+          day: { id: "d1", label: "Day 1", notes: null },
+          prescriptions: [
+            {
+              id: "row", exerciseId: "bb-row", position: 0, setCount: 2, reps: 8, load: "60",
+              programId: "p1", weekId: "w1", dayId: "d1", repMax: null, restSeconds: null, notes: null, loadKind: null,
+              updatedAt: "2026-10-01T00:00:00Z",
+            },
+          ],
+        },
+        maxes: { entries: [], estimated: new Map() },
+      };
+      exerciseHistory.value["bb-row"] = { previous: [prev(70, 8), prev(70, 8)], bests: { e1rmKg: null, heaviestKg: 80 } };
+      exerciseHistory.value["db-row"] = { previous: [prev(30, 10), prev(32.5, 8)], bests: { e1rmKg: null, heaviestKg: 30 } };
+    });
+
+    it("reads the variant's own last time, its own records and its own history", async () => {
+      // One Barbell Row set before the swap, one Dumbbell Row set after it.
+      storedSets.value = [
+        { ...logged("r1", 60, 10, { reps: 8, prescriptionId: "row" }), exerciseId: "bb-row" },
+        { ...logged("d1", 32.5, 5, { reps: 8, prescriptionId: "row" }), exerciseId: "db-row" },
+      ];
+      setup({ active: session({ programDayId: "d1" }) });
+      const block = await screen.findByRole("region", { name: "Dumbbell Row" });
+      await waitFor(() => expect(within(block).getByRole("group", { name: "Set 2" }).closest("div.flex-col")?.querySelector("[data-previous]")).toHaveTextContent("30 × 10"));
+      // Set 1 was a barbell set: its last time is the barbell's.
+      expect(previousOf(within(block).getByRole("group", { name: "Set 1" }))).toHaveTextContent("70 × 8");
+      // 32.5 beats the dumbbell's 30, though nowhere near the barbell's 80.
+      expect(within(block).getByRole("img", { name: "Set 2: personal record, heaviest weight" })).toBeInTheDocument();
+      expect(within(block).getByRole("link", { name: "Dumbbell Row history and records" })).toHaveAttribute("href", "/lift/db-row");
     });
   });
 });

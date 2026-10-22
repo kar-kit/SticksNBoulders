@@ -1,13 +1,21 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useArrivals } from "@/components/ui/motion";
 import { Button } from "@/components/ui/button";
-import { TrashIcon } from "@/components/ui/icons";
+import { HistoryIcon, TrashIcon } from "@/components/ui/icons";
 import { SetRow, SetRowHeader } from "./set-row";
 import type { LoggableSet, RpeValue } from "@/lib/logging/set";
 import { plannedIndex } from "@/lib/logging/plan";
 import type { UnitPreference } from "@/lib/units";
+import type { PrKind } from "@/lib/strength/pr";
+
+/** Last time's set lined up with a row, for its Previous line. */
+export interface PreviousValues {
+  loadKg: number;
+  reps: number;
+}
 
 /**
  * One exercise inside a running session: its logged sets, then the rows not
@@ -25,6 +33,11 @@ export interface LoggedSet extends LoggableSet {
   pendingSync?: boolean;
   /** Why this set cannot be deleted, if it cannot. */
   deleteBlocked?: string | null;
+  previous?: PreviousValues | null;
+  /** Records this set broke. See lib/strength/pr.ts. */
+  pr?: readonly PrKind[] | null;
+  /** Broken on this page just now: the badge pops in. */
+  prFresh?: boolean;
 }
 
 export interface PlannedSet extends LoggableSet {
@@ -33,6 +46,7 @@ export interface PlannedSet extends LoggableSet {
   note?: string | null;
   /** The load is the app's suggestion, untouched. Marked "Suggested" on the row. */
   suggested?: boolean;
+  previous?: PreviousValues | null;
 }
 
 // `videoRequired` (from LoggableSet) on a planned row is the coach's ask: a
@@ -102,6 +116,15 @@ export interface ExerciseBlockProps {
    * on the athlete's side too.
    */
   prescribedAs?: string | null;
+  /** Copies a row's Previous into it. Rows not logged yet only. */
+  onCopyPrevious?: (clientSetId: string) => void;
+  /**
+   * Lift Detail for the exercise in hand (`/lift/[id]`). A small icon beside
+   * the name rather than the name itself: tapping the name is how an athlete
+   * goes back to an exercise, and leaving the Log by accident costs any rows
+   * typed and not logged yet.
+   */
+  historyHref?: string | null;
 }
 
 /**
@@ -138,6 +161,8 @@ export function ExerciseBlock({
   onToggleWarmup,
   onSwap,
   prescribedAs = null,
+  onCopyPrevious,
+  historyHref = null,
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const open = planned.length > 0;
@@ -170,6 +195,17 @@ export function ExerciseBlock({
           </button>
         )}
         <span className="flex flex-none items-center">
+        {historyHref ? (
+          // A drill-in: /lift/[id] is deeper than /log, so the shell's screen
+          // transition slides it in (F7) with nothing set here.
+          <Link
+            href={historyHref}
+            aria-label={`${name} history and records`}
+            className="flex size-11 flex-none items-center justify-center rounded-chip text-muted tap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+          >
+            <HistoryIcon />
+          </Link>
+        ) : null}
         {onSwap ? (
           <button
             type="button"
@@ -259,6 +295,9 @@ export function ExerciseBlock({
             deleteBlocked={set.deleteBlocked ?? null}
             onToggleWarmup={onToggleWarmup ? () => onToggleWarmup(set.clientSetId) : undefined}
             unit={unit}
+            previous={set.previous ?? null}
+            pr={set.pr ?? null}
+            prFresh={set.prFresh}
           />
         ))}
 
@@ -279,6 +318,8 @@ export function ExerciseBlock({
             onToggleWarmup={onToggleWarmup ? () => onToggleWarmup(row.clientSetId) : undefined}
             unit={unit}
             arrived={arrived(row.clientSetId)}
+            previous={row.previous ?? null}
+            onCopyPrevious={onCopyPrevious && row.previous ? () => onCopyPrevious(row.clientSetId) : undefined}
           />
         ))}
       </div>
