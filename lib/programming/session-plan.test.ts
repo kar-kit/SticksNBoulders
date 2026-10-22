@@ -5,6 +5,7 @@ import type { Prescription } from "./program";
 import type { PlannedRow } from "@/lib/logging/plan";
 import { loadFromInput, loadIn } from "@/lib/units";
 import {
+  asVariant,
   basisMaxesFor,
   lineSummaries,
   nextTarget,
@@ -12,6 +13,7 @@ import {
   prefillFrom,
   prescribeNewRows,
   referenceLookup,
+  remainingShape,
   repsLabel,
   targetLine,
   targetsFor,
@@ -199,12 +201,45 @@ describe("what the athlete reads above the rows", () => {
     ]);
   });
 
-  it("leaves the targets and their snapshots alone: warm-ups and pause are display only", () => {
+  it("adds no target for a warm-up: they are rows the athlete loads, not prescribed sets", () => {
     const plain = planDay([line({ setCount: 3, load: "75%" })])[0];
-    const marked = planDay([line({ setCount: 3, load: "75%", warmupSets: 2, pauseSeconds: 2 })])[0];
+    const marked = planDay([line({ setCount: 3, load: "75%", warmupSets: 2 })])[0];
     const strip = (targets: ReturnType<typeof targetsFor>) => targets.map((t) => ({ ...t, prescriptionId: "" }));
     expect(strip(targetsFor(marked, { training: 200 }))).toEqual(strip(targetsFor(plain, { training: 200 })));
     expect(targetsFor(marked, { training: 200 })).toHaveLength(3);
+  });
+
+  it("carries the pause into the snapshot stored on the set, so the CSV has it", () => {
+    const paused = planDay([line({ setCount: 2, load: "75%", pauseSeconds: 2 })])[0];
+    const [first] = targetsFor(paused, { training: 200 });
+    expect(first.snapshot).toBe("5 reps · 2s pause · 150 kg (75%)");
+    expect(targetLine(first)).toBe("Set 1 of 2 · 5 reps · 2s pause · 150 kg (75%)");
+  });
+
+  it("carries the pause onto a backoff's snapshot and the pound line too", () => {
+    const paused = planDay([line({ setCount: 1, reps: 3, load: "@8", pauseSeconds: 3, backoff: "2 x 90%" })])[0];
+    const logged = [set(180, 3, 8)];
+    const [, backoff] = targetsFor(paused, {}, logged);
+    expect(backoff.snapshot).toBe("3 reps · 3s pause · 160 kg (90% of top set)");
+    const [lb] = targetsFor(paused, {}, [], undefined, "lb");
+    expect(lb.shown).toBe("3 reps · 3s pause · RPE 8");
+  });
+
+  it("says when the coach wants a line filmed, on the summary and the next-set line", () => {
+    const plan = planDay([
+      line({ id: "top", setCount: 1, reps: 3, load: "@8", videoRequired: true, backoff: "2 x 90%" }),
+      line({ id: "vol", setCount: 2, reps: 5, load: "75%" }),
+    ])[0];
+    const logged = [set(180, 3, 8)];
+    const targets = targetsFor(plan, { training: 200 }, logged);
+    expect(lineSummaries(plan, targets)[0]).toContain(" · video requested");
+    expect(lineSummaries(plan, targets)[1]).not.toContain("video");
+    // The flagged line's own set carries the ask; its backoffs and the next line do not.
+    expect(targets.map((t) => t.videoRequired ?? false)).toEqual([true, false, false, false, false]);
+    expect(targetLine(targets[0])).toBe("Set 1 of 5 · 3 reps · RPE 8 · film this set");
+    expect(targetLine(targets[1])).not.toContain("film");
+    // The ask is not part of the stored snapshot: the clip is the record of it.
+    expect(targets[0].snapshot).not.toContain("film");
   });
 
   it("labels reps as a count, a range, or nothing", () => {
@@ -563,5 +598,119 @@ describe("for an athlete who reads pounds", () => {
     );
     expect(stamped.note).toBe("suggested from RPE 8 @ 405");
     expect(Number.isInteger(loadIn(stamped.loadKg!, "lb") / 5)).toBe(true);
+  });
+});
+
+describe("laying out a prescribed exercise's rows (F5)", () => {
+  const exercise = (...lines: Partial<Prescription>[]) => planDay(lines.map((over) => line(over)))[0];
+  const shape = (ex: ReturnType<typeof exercise>, logged: ReturnType<typeof set>[] = [], maxes = { training: 200 }) =>
+    remainingShape(ex, targetsFor(ex, maxes, logged), logged).map((r) => (r.isWarmup ? "W" : "S")).join("");
+
+  it("lays out every working set of every line, backoffs included", () => {
+    const ex = exercise(
+      { id: "top", setCount: 1, reps: 3, load: "@8", backoff: "2 x 90%" },
+      { id: "vol", setCount: 3, reps: 5, load: "75%" },
+    );
+    expect(shape(ex)).toBe("SSSSSS");
+  });
+
+  it("puts a line's warm-ups ahead of its first working set, and only that line's", () => {
+    const ex = exercise(
+      { id: "top", setCount: 1, reps: 3, load: "@8", warmupSets: 3 },
+      { id: "vol", setCount: 2, reps: 5, load: "75%", warmupSets: 1 },
+    );
+    expect(shape(ex)).toBe("WWWSWSS");
+  });
+
+  it("treats null, zero and absent warm-ups alike", () => {
+    expect(shape(exercise({ setCount: 2, warmupSets: null }))).toBe("SS");
+    expect(shape(exercise({ setCount: 2, warmupSets: 0 }))).toBe("SS");
+    expect(shape(exercise({ setCount: 2 }))).toBe("SS");
+  });
+
+  it("lays out only what is left after a reload, never the done sets again", () => {
+    const ex = exercise({ id: "vol", setCount: 3, reps: 5, load: "75%", warmupSets: 2 });
+    // Two warm-ups and one working set logged: the line is under way.
+    expect(shape(ex, [set(60, 5, null, true), set(100, 3, null, true), set(150, 5, 8)])).toBe("SS");
+  });
+
+  it("owes only the warm-ups not yet logged for a line not started", () => {
+    const ex = exercise({ id: "vol", setCount: 2, reps: 5, load: "75%", warmupSets: 3 });
+    expect(shape(ex, [set(60, 5, null, true), set(100, 3, null, true)])).toBe("WSS");
+    expect(shape(ex, [set(60, 5, null, true), set(80, 5, null, true), set(100, 3, null, true), set(110, 1, null, true)])).toBe("SS");
+  });
+
+  it("credits warm-ups to the line they led into, not the one before", () => {
+    const ex = exercise(
+      { id: "top", setCount: 1, reps: 1, load: "@8", warmupSets: 2 },
+      { id: "vol", setCount: 2, reps: 5, load: "75%", warmupSets: 1 },
+    );
+    // Top single done after its ramp, then one warm-up for the volume work.
+    const logged = [set(100, 3, null, true), set(150, 1, null, true), set(190, 1, 8), set(140, 3, null, true)];
+    expect(shape(ex, logged)).toBe("SS");
+  });
+
+  it("is empty once the prescription is done, and extra sets do not make it negative", () => {
+    const ex = exercise({ setCount: 1, reps: 5, load: "75%", warmupSets: 1 });
+    expect(shape(ex, [set(150, 5, 8)])).toBe("");
+    expect(shape(ex, [set(150, 5, 8), set(150, 5, 9)])).toBe("");
+  });
+
+  it("follows a drop-until-RPE backoff one set at a time", () => {
+    const ex = exercise({ setCount: 1, reps: 3, load: "@8", backoff: "-5% until @9" });
+    expect(shape(ex)).toBe("SS");
+  });
+});
+
+describe("prescribing the rows laid out at once (F5)", () => {
+  const plan = () =>
+    planDay([
+      line({ id: "top", setCount: 1, reps: 3, load: "@8", videoRequired: true, warmupSets: 2 }),
+      line({ id: "vol", setCount: 2, reps: 5, load: "75%", pauseSeconds: 2 }),
+    ])[0];
+  const blank = (clientSetId: string, isWarmup = false): PlannedRow => ({
+    exerciseId: "squat",
+    clientSetId,
+    loadKg: null,
+    reps: null,
+    rpe: null,
+    isWarmup,
+    planned: true,
+  });
+  const context = () => () => ({ logged: [], targets: targetsFor(plan(), { training: 200 }) });
+
+  it("prices every working row to its own set, and leaves warm-ups blank", () => {
+    const rows = [blank("w1", true), blank("w2", true), blank("s1"), blank("s2"), blank("s3")];
+    const out = prescribeNewRows([], rows, context());
+    expect(out[0]).toEqual(rows[0]);
+    expect(out[1]).toEqual(rows[1]);
+    expect(out[2]).toMatchObject({ prescriptionId: "top", reps: 3, loadKg: null, videoRequired: true });
+    expect(out[3]).toMatchObject({
+      prescriptionId: "vol",
+      reps: 5,
+      loadKg: 150,
+      prescribed: "5 reps · 2s pause · 150 kg (75%)",
+    });
+    expect(out[3]).not.toHaveProperty("videoRequired");
+    expect(out[4]).toMatchObject({ prescriptionId: "vol", loadKg: 150 });
+  });
+
+  it("drops the coach's load for a swapped variant, keeps the reps, and names what was prescribed", () => {
+    const targets = asVariant(targetsFor(plan(), { training: 200 }), "Squat");
+    expect(targets.every((t) => t.loadKg === null && !t.synced)).toBe(true);
+    expect(targets[1].snapshot).toBe("5 reps · 2s pause · 150 kg (75%) · prescribed Squat");
+    const [, row] = prescribeNewRows([], [blank("s1"), blank("s2")], () => ({ logged: [], targets }));
+    expect(row).toMatchObject({ prescriptionId: "vol", reps: 5, loadKg: null });
+  });
+
+  it("keeps the variant's own repeated load rather than blanking it", () => {
+    const targets = asVariant(targetsFor(plan(), { training: 200 }), "Squat");
+    const [row] = prescribeNewRows([], [{ ...blank("s1"), loadKg: 30, reps: 10 }], () => ({ logged: [], targets }));
+    expect(row).toMatchObject({ loadKg: 30, reps: 3, prescriptionId: "top" });
+  });
+
+  it("adds the variant note to a pound athlete's line too", () => {
+    const [t] = asVariant(targetsFor(plan(), { training: 200 }, [], undefined, "lb"), "Squat");
+    expect(t.shown).toBe("3 reps · RPE 8 · prescribed Squat");
   });
 });

@@ -16,6 +16,12 @@ export type UnnamedSet = Omit<SessionSet, "exerciseName"> & {
   setIndex?: number | undefined;
   /** A clip is attached. Read at load; a clip attached on this page is tracked by the screen. */
   hasVideo?: boolean;
+  /**
+   * The prescription line this set answered, when it did. Read back so a
+   * set logged on a swapped variant (Dumbbell Row against a Barbell Row line)
+   * still finds its line's block after a reload.
+   */
+  prescriptionId?: string;
 };
 
 /**
@@ -98,6 +104,7 @@ interface SetRow {
   is_warmup?: unknown;
   logged_at?: unknown;
   video_file_id?: unknown;
+  prescription_id?: unknown;
 }
 
 /**
@@ -131,6 +138,9 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
         isWarmup: row.is_warmup === true,
         loggedAt,
         hasVideo: typeof row.video_file_id === "string" && row.video_file_id !== "",
+        ...(typeof row.prescription_id === "string" && row.prescription_id
+          ? { prescriptionId: row.prescription_id }
+          : {}),
       } satisfies UnnamedSet;
     })
     .filter((set) => set !== null);

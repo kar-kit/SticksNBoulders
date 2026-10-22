@@ -10,6 +10,8 @@ import { LogSheet } from "@/components/logging/log-sheet";
 import { NumberPad } from "@/components/logging/number-pad";
 import { RestBar } from "@/components/logging/rest-bar";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
+import { VariantSheet } from "@/components/logging/variant-sheet";
+import { swapOptions } from "@/lib/exercises/variants";
 import { UndoToast } from "@/components/ui/undo-toast";
 import { useSession } from "@/lib/auth/session-context";
 import { AttachVideo } from "@/components/logging/attach-video";
@@ -44,7 +46,9 @@ import {
   headOf,
   nextSetIndex,
   plannedIndex,
+  refreshBehind,
   rowsOf,
+  swapRows,
   type PlannedRow,
 } from "@/lib/logging/plan";
 import {
@@ -70,12 +74,14 @@ import {
 import { formatNumber } from "@/lib/logging/prefill";
 import { usePrescribedSession } from "@/lib/programming/use-prescribed";
 import {
+  asVariant,
   basisMaxesFor,
   lineSummaries,
   nextTarget,
   planDay,
   prescribeNewRows,
   referenceLookup,
+  remainingShape,
   targetLine,
   targetsFor,
   type LoggedForTarget,
@@ -205,6 +211,20 @@ export function LogScreen() {
    */
   const [addingInline, setAddingInline] = useState(false);
   /**
+   * Variants swapped to on this page (Swap on a block's header), keyed to the
+   * session. `current` is what each block logs into now; `used` is every
+   * exercise it has been on, so their sets stay in the block. A reload
+   * rebuilds the prescribed half of this from the sets' own
+   * `prescription_id` -- see `derivedSwaps`.
+   */
+  const [swaps, setSwaps] = useState<{
+    sessionId: string | null;
+    current: ReadonlyMap<string, string>;
+    used: ReadonlyMap<string, ReadonlySet<string>>;
+  }>({ sessionId: null, current: new Map(), used: new Map() });
+  /** The block whose variant picker is open in the sheet. */
+  const [swapFor, setSwapFor] = useState<string | null>(null);
+  /**
    * The set row last tapped in the list: the one the sheet keeps in view.
    * Taken from the tap itself rather than looked up by id, because a field
    * only ever opens from a tap on its row or from the pad's own Next, which
@@ -269,7 +289,7 @@ export function LogScreen() {
    */
   const prescribed = usePrescribedSession(active?.programDayId, athleteId);
   const plan = useMemo(() => (prescribed.status === "ready" ? planDay(prescribed.day.prescriptions) : []), [prescribed]);
-  /** Exercises a clip was attached to on this page; sets read from Appwrite carry their own flag. */
+  /** Sets a clip was attached to on this page; sets read from Appwrite carry their own flag. */
   const [filmed, setFilmed] = useState<ReadonlySet<string>>(new Set());
   const targetsOf = useCallback(
     (exerciseId: string, logged: readonly LoggedForTarget[]): SetTarget[] | null => {
@@ -406,19 +426,117 @@ export function LogScreen() {
   );
 
   /**
+   * Swaps a reload can still see: a set logged against a prescription line
+   * on another exercise than the line's own is the athlete having swapped
+   * that line's variant. The latest such set says which variant is in hand.
+   */
+  const derivedSwaps = useMemo(() => {
+    const ownerOfLine = new Map<string, string>();
+    for (const exercise of plan) for (const line of exercise.lines) ownerOfLine.set(line.id, exercise.exerciseId);
+    const latest = new Map<string, string>();
+    const used = new Map<string, Set<string>>();
+    for (const set of all) {
+      const owner = set.prescriptionId ? ownerOfLine.get(set.prescriptionId) : undefined;
+      if (!owner) continue;
+      latest.set(owner, set.exerciseId);
+      if (set.exerciseId !== owner) used.set(owner, (used.get(owner) ?? new Set()).add(set.exerciseId));
+    }
+    return { latest, used };
+  }, [plan, all]);
+
+  /**
+   * Where each block stands: the exercise it logs into now (the variant
+   * swapped to, or its own), and which exercises belong to which block.
+   *
+   * A variant swapped to belongs to the block it was swapped from, so
+   * Dumbbell Row sets logged against a Barbell Row line count toward that
+   * line, number on from it, and do not open a block of their own. Another
+   * prescribed exercise is never absorbed: it has its own line.
+   */
+  const swapView = useMemo(() => {
+    const page = swaps.sessionId === sessionId ? swaps : null;
+    const current = new Map(derivedSwaps.latest);
+    for (const [blockId, to] of page?.current ?? []) current.set(blockId, to);
+    const planned = new Set(plan.map((p) => p.exerciseId));
+    const owners = new Map<string, string>();
+    for (const blockId of new Set([...planned, ...current.keys()])) {
+      const members = [
+        current.get(blockId) ?? blockId,
+        ...(page?.used.get(blockId) ?? []),
+        ...(derivedSwaps.used.get(blockId) ?? []),
+      ];
+      for (const member of members) {
+        if (member !== blockId && !planned.has(member) && !owners.has(member)) owners.set(member, blockId);
+      }
+    }
+    return { inHand: current, owners };
+  }, [swaps, sessionId, plan, derivedSwaps]);
+  const currentOf = useCallback((blockId: string) => swapView.inHand.get(blockId) ?? blockId, [swapView]);
+  const blockOf = useCallback((exerciseId: string) => swapView.owners.get(exerciseId) ?? exerciseId, [swapView]);
+
+  /** A block's logged sets, across every variant it has been on. */
+  const setsOfBlock = useCallback(
+    (blockId: string) => all.filter((s) => blockOf(s.exerciseId) === blockId),
+    [all, blockOf],
+  );
+
+  /**
    * Rows that just appeared, given the coach's target for the set they will
    * be (rule 1 of the prefill order, and rule 2 for a weight priced off
    * today's top set). Rows already on screen keep whatever the athlete typed.
-   * Rows only appear from Add set or an exercise being opened, never in the
-   * same tick as a confirm, so the logged sets are always already in state.
+   * Rows only appear from Add set, an exercise being opened or a swap, never
+   * in the same tick as a confirm, so the logged sets are always already in
+   * state.
+   *
+   * A row on a swapped variant answers its block's line, at the line's reps
+   * and RPE but not its load (`asVariant`). `swapping` names a swap made in
+   * this same tick, before state has caught up with it.
    */
   const prescribe = useCallback(
-    (before: readonly PlannedRow[], after: PlannedRow[]) =>
-      prescribeNewRows(before, after, (exerciseId) => {
-        const logged: LoggedForTarget[] = setsOf(exerciseId);
-        return { logged, targets: targetsOf(exerciseId, logged) };
-      }, unit),
-    [setsOf, targetsOf, unit],
+    (
+      before: readonly PlannedRow[],
+      after: PlannedRow[],
+      options: {
+        swapping?: { exerciseId: string; blockId: string };
+        /** A set confirmed in this same tick, not in state yet. */
+        justLogged?: UnnamedSet;
+        reprice?: ReadonlySet<string>;
+      } = {},
+    ) =>
+      prescribeNewRows(
+        before,
+        after,
+        (exerciseId) => {
+          const { swapping, justLogged } = options;
+          const blockId = swapping?.exerciseId === exerciseId ? swapping.blockId : blockOf(exerciseId);
+          const logged: LoggedForTarget[] = [
+            ...setsOfBlock(blockId),
+            ...(justLogged && blockOf(justLogged.exerciseId) === blockId ? [justLogged] : []),
+          ];
+          const targets = targetsOf(blockId, logged);
+          if (!targets || exerciseId === blockId) return { logged, targets };
+          return { logged, targets: asVariant(targets, nameFor(blockId) ?? "the prescribed lift") };
+        },
+        unit,
+        options.reprice,
+      ),
+    [blockOf, setsOfBlock, targetsOf, nameFor, unit],
+  );
+
+  /**
+   * The rows a prescribed block lays out when it is opened: every set still
+   * to do, with the line's warm-ups ahead (Order 22, v15). Empty for a free
+   * block, or once the prescription is done -- one fresh row comes instead.
+   */
+  const shapeOf = useCallback(
+    (blockId: string) => {
+      const planned = plan.find((p) => p.exerciseId === blockId);
+      if (!planned) return [];
+      const logged = setsOfBlock(blockId);
+      const targets = targetsOf(blockId, logged);
+      return targets ? remainingShape(planned, targets, logged) : [];
+    },
+    [plan, setsOfBlock, targetsOf],
   );
 
   const focused = plans.find((row) => row.clientSetId === focusId) ?? null;
@@ -452,24 +570,37 @@ export function LogScreen() {
   const closeSheets = () => {
     setPad(null);
     setRpeOpen(false);
+    setSwapFor(null);
   };
 
   /**
-   * Moves to an exercise. Rule 3 of the blueprint's prefill order supplies the
-   * row if it has none: straight sets are the norm, so repeating the previous
-   * set has to cost one tap. Rules 1, 2 and 4 need a prescription, the RPE
-   * engine and a query into the last session -- Orders 22, 27 and 13.
+   * Moves to a block. A prescribed one lays out every set still to do at
+   * once -- warm-ups blank, working sets priced to the coach's lines -- so
+   * nobody rebuilds the program from the coach's notes one Add set at a
+   * time. Anything else gets one row from rule 3 of the blueprint's prefill
+   * order: straight sets are the norm, so repeating the previous set has to
+   * cost one tap.
    */
   const activate = useCallback(
-    (exerciseId: string) => {
-      const { rows: moved, head } = focusExercise(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId);
-      setPlans(prescribe(plans, moved));
+    (blockId: string) => {
+      const exerciseId = currentOf(blockId);
+      const { rows: moved, head } = focusExercise(
+        plans,
+        exerciseId,
+        lastLoggedOf(exerciseId),
+        newClientSetId,
+        shapeOf(blockId),
+      );
+      const next = prescribe(plans, moved);
+      setPlans(next);
       setFocusId(head.clientSetId);
       setSelectedId(null);
       setPad(null);
       setRpeOpen(false);
+      setSwapFor(null);
+      return next;
     },
-    [plans, lastLoggedOf, prescribe],
+    [plans, currentOf, lastLoggedOf, shapeOf, prescribe],
   );
 
   const addExercise = useCallback(
@@ -506,11 +637,14 @@ export function LogScreen() {
    * athlete asks for the row with Add set, not when the set before it was
    * confirmed -- confirming no longer builds a row to put it in.
    */
-  const suggestionFor = (exerciseId: string) => {
-    const logged = setsOf(exerciseId);
+  const suggestionFor = (blockId: string) => {
+    // A swapped variant gets none: the engine would be pricing a dumbbell set
+    // off a barbell one.
+    if (currentOf(blockId) !== blockId) return null;
+    const logged = setsOfBlock(blockId);
     const last = logged.at(-1);
     if (!last) return null;
-    const targets = targetsOf(exerciseId, logged);
+    const targets = targetsOf(blockId, logged);
     const prescribedNext = targets ? nextTarget(targets, logged) : null;
     return nextSetSuggestion(
       suggestionMode,
@@ -527,11 +661,12 @@ export function LogScreen() {
    * entered, so an athlete mid-set who plans the back-off loses nothing. The
    * new row's numbers are one tap away if they need changing.
    */
-  const addSet = (exerciseId: string) => {
+  const addSet = (blockId: string) => {
     setSelectedId(null);
+    const exerciseId = currentOf(blockId);
     const next = prescribe(
       plans,
-      addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId, suggestionFor(exerciseId), unit),
+      addRow(plans, exerciseId, lastLoggedOf(exerciseId), newClientSetId, suggestionFor(blockId), unit),
     );
     setPlans(next);
     // Nothing was being entered anywhere, so the new row's exercise is now
@@ -539,11 +674,40 @@ export function LogScreen() {
     if (!focused) setFocusId(headOf(next, exerciseId)?.clientSetId ?? null);
   };
 
+  /**
+   * Swaps a block to another variant (the same movement on another
+   * implement). Its rows not logged yet move to the new exercise and are
+   * priced again; a block with none lays out what is left of its
+   * prescription on the new one. Logged sets stay exactly what was lifted.
+   * The prescription link stays too: the rows answer the block's line, so
+   * the coach sees the Dumbbell Row was the Barbell Row they wrote.
+   */
+  const pickVariant = (blockId: string, to: string) => {
+    setSwapFor(null);
+    const from = currentOf(blockId);
+    if (to === from) return;
+    const lastTo = lastLoggedOf(to);
+    let moved = swapRows(plans, from, to, lastTo, newClientSetId);
+    if (!headOf(moved, to)) moved = focusExercise(moved, to, lastTo, newClientSetId, shapeOf(blockId)).rows;
+    const next = prescribe(plans, moved, { swapping: { exerciseId: to, blockId } });
+    setPlans(next);
+    if (!focused || focused.exerciseId === from) setFocusId(headOf(next, to)?.clientSetId ?? null);
+    setPad(null);
+    setRpeOpen(false);
+    setSwaps((prev) => {
+      const base = prev.sessionId === sessionId ? prev : { sessionId, current: new Map(), used: new Map() };
+      const current = new Map(base.current).set(blockId, to);
+      const used = new Map(base.used).set(blockId, new Set([...(base.used.get(blockId) ?? []), from, to]));
+      return { sessionId, current, used };
+    });
+  };
+
   const focusField = (rowId: string | null, field: "load" | "reps" | "rpe") => {
     const row = plans.find((each) => each.clientSetId === rowId);
     if (!row) return;
     setFocusId(row.clientSetId);
     setSelectedId(null);
+    setSwapFor(null);
     if (field === "rpe") {
       if (row.isWarmup) return; // Warm-ups never ask.
       setPad(null);
@@ -559,7 +723,8 @@ export function LogScreen() {
   };
 
   const updateFocused = (change: (row: PlannedRow) => PlannedRow) => {
-    setPlans((prev) => prev.map((row) => (row.clientSetId === focusId ? change(row) : row)));
+    // Every hand edit goes through here, so it is where a row becomes the athlete's.
+    setPlans((prev) => prev.map((row) => (row.clientSetId === focusId ? { ...change(row), touched: true } : row)));
   };
 
   const applyPad = (next: PadState) => {
@@ -594,7 +759,7 @@ export function LogScreen() {
       setPlans((prev) =>
         prev.map((row) =>
           row.clientSetId === rowId
-            ? { ...row, isWarmup: !row.isWarmup, rpe: rpeAfterWarmupChange(!row.isWarmup, row.rpe) }
+            ? { ...row, isWarmup: !row.isWarmup, rpe: rpeAfterWarmupChange(!row.isWarmup, row.rpe), touched: true }
             : row,
         ),
       );
@@ -624,7 +789,9 @@ export function LogScreen() {
 
   const confirmSet = async (rowId: string) => {
     const row = plans.find((each) => each.clientSetId === rowId);
-    if (!row || !active || !athleteId || !canComplete(row)) return;
+    // The coach's video ask is a nudge, never a gate (Order 30): the badge
+    // asks, the camera under the block takes the clip once the set exists.
+    if (!row || !active || !athleteId || !canComplete({ ...row, videoRequired: false })) return;
     // Only the head of an exercise's plan is ever offered a confirm square;
     // this makes the rule hold even if a stale handler fires.
     if (headOf(plans, row.exerciseId)?.clientSetId !== rowId) return;
@@ -643,13 +810,21 @@ export function LogScreen() {
       rpe: row.rpe,
       isWarmup: row.isWarmup,
       loggedAt: new Date(),
+      // What a reload reads back from the queue too: it keeps a swapped
+      // variant's set in its line's block.
+      ...(row.prescriptionId && !row.isWarmup ? { prescriptionId: row.prescriptionId } : {}),
     };
     setSaving((prev) => new Set(prev).add(row.clientSetId));
     setLocal((prev) => [...prev, optimistic]);
     // A row the athlete already planned becomes the head; with none, the
     // exercise simply shows what was logged and Add set. No row is invented.
     const { rows, next } = afterConfirm(plans, rowId);
-    setPlans(rows);
+    // Untouched rows behind it follow the set just logged: an RPE line's next
+    // set repeats it, a backoff is priced off it (lib/logging/plan.ts).
+    const behind = refreshBehind(rows, optimistic);
+    setPlans(
+      behind.reprice.size > 0 ? prescribe(rows, behind.rows, { justLogged: optimistic, reprice: behind.reprice }) : rows,
+    );
     setFocusId(next?.clientSetId ?? null);
     closeSheets();
     // The rest starts on the tap, as it always has: nothing else on screen
@@ -790,7 +965,7 @@ export function LogScreen() {
     // moment a second one starts, rather than stacking toasts over the pad.
     commitDelete();
 
-    const mine = setsOf(set.exerciseId);
+    const mine = setsOfBlock(blockOf(set.exerciseId));
     const at = mine.findIndex((s) => s.clientSetId === clientSetId);
     const number = set.isWarmup ? null : mine.slice(0, at + 1).filter((s) => !s.isWarmup).length;
     const name = nameFor(set.exerciseId) ?? "Set";
@@ -819,14 +994,18 @@ export function LogScreen() {
    * behaves exactly as deleting each set by hand would. Planned rows are
    * dropped with it and come back on Undo.
    */
+  const membersOf = (blockId: string) =>
+    new Set([blockId, ...all.filter((s) => blockOf(s.exerciseId) === blockId).map((s) => s.exerciseId), currentOf(blockId)]);
+
   const removeExercise = (exerciseId: string, name: string) => {
-    const decision = planBlockRemoval(exerciseId, all, undeletable, all.at(-1)?.clientSetId ?? null);
+    const members = membersOf(exerciseId);
+    const decision = planBlockRemoval(members, all, undeletable, all.at(-1)?.clientSetId ?? null);
     if (decision.kind === "blocked") return;
     commitDelete();
 
-    const droppedPlans = rowsOf(plans, exerciseId);
-    setPlans((prev) => prev.filter((row) => row.exerciseId !== exerciseId));
-    if (focused?.exerciseId === exerciseId) {
+    const droppedPlans = plans.filter((row) => members.has(row.exerciseId));
+    setPlans((prev) => prev.filter((row) => !members.has(row.exerciseId)));
+    if (focused && members.has(focused.exerciseId)) {
       setFocusId(null);
       closeSheets();
     }
@@ -871,17 +1050,43 @@ export function LogScreen() {
 
   // A prescribed session opens on its first exercise, ready to log, so the
   // athlete's first tap is a set rather than finding the squat in a list.
+  //
+  // Only for a session with nothing logged. The read of what a resumed
+  // session already holds can land after this has opened -- the server's
+  // copy, or the queue's after a reload with no signal -- and then the rows
+  // laid out were for a session that had not started. If the athlete has
+  // not touched them, they are taken back, exactly as if the sets had been
+  // known in time: a resumed session opens nothing by itself, and the tap on
+  // the block in hand lays out what is left of it.
   const firstPlanned = plan[0]?.exerciseId ?? null;
   const opened = useRef<string | null>(null);
+  const autoLaid = useRef<{ sessionId: string; rows: PlannedRow[] } | null>(null);
   useEffect(() => {
     if (!firstPlanned || !sessionId || opened.current === sessionId) return;
     opened.current = sessionId;
     if (plans.length > 0 || all.length > 0) return;
     void (async () => {
       await Promise.resolve();
-      activate(firstPlanned);
+      autoLaid.current = { sessionId, rows: activate(firstPlanned) };
     })();
   }, [firstPlanned, sessionId, plans.length, all.length, activate]);
+  useEffect(() => {
+    const laid = autoLaid.current;
+    if (!laid) return;
+    // Touched, or another session: the rows are the athlete's now.
+    if (laid.sessionId !== sessionId || plans !== laid.rows) {
+      autoLaid.current = null;
+      return;
+    }
+    if (all.length === 0) return;
+    autoLaid.current = null;
+    const ids = new Set(laid.rows.map((row) => row.clientSetId));
+    void (async () => {
+      await Promise.resolve();
+      setPlans((prev) => prev.filter((row) => !ids.has(row.clientSetId)));
+      setFocusId((prev) => (prev && ids.has(prev) ? null : prev));
+    })();
+  }, [sessionId, plans, all.length]);
 
   const startHere = async () => {
     setBusy(true);
@@ -941,44 +1146,44 @@ export function LogScreen() {
   // is logged yet. Then exercises with sets, then ones added or planned but
   // not logged into yet. Planned counts: deleting the only set of an exercise
   // must not take the rows the athlete was about to log with it.
+  //
+  // A block is named for the exercise in hand: a swapped one reads "Dumbbell
+  // Row" and says underneath what the coach wrote. Its variants' sets and rows
+  // are inside it, never a block of their own.
+  const blockName = (id: string, fallback: string) => {
+    const current = currentOf(id);
+    return (current !== id ? nameFor(current) : null) ?? nameFor(id) ?? fallback;
+  };
   const blocks: { id: string; name: string }[] = plan.map((p) => ({
     id: p.exerciseId,
-    name: nameFor(p.exerciseId) ?? "Prescribed exercise",
+    name: blockName(p.exerciseId, "Prescribed exercise"),
   }));
   const shown = new Set(blocks.map((b) => b.id));
-  for (const group of groups) {
-    if (!shown.has(group.exerciseId)) {
-      blocks.push({ id: group.exerciseId, name: group.exerciseName });
-      shown.add(group.exerciseId);
-    }
-  }
-  for (const exercise of added) {
-    if (!shown.has(exercise.id)) {
-      blocks.push({ id: exercise.id, name: exercise.name });
-      shown.add(exercise.id);
-    }
-  }
-  for (const row of plans) {
-    if (!shown.has(row.exerciseId)) {
-      blocks.push({ id: row.exerciseId, name: nameFor(row.exerciseId) ?? row.exerciseId });
-      shown.add(row.exerciseId);
-    }
-  }
+  const list = (exerciseId: string, fallback: string) => {
+    const id = blockOf(exerciseId);
+    if (shown.has(id)) return;
+    blocks.push({ id, name: blockName(id, id === exerciseId ? fallback : id) });
+    shown.add(id);
+  };
+  for (const group of groups) list(group.exerciseId, group.exerciseName);
+  for (const exercise of added) list(exercise.id, exercise.name);
+  for (const row of plans) list(row.exerciseId, nameFor(row.exerciseId) ?? row.exerciseId);
 
   const hidden = hiddenBlocks.sessionId === sessionId ? hiddenBlocks.ids : NO_IDS;
   const listed = blocks.filter((block) => !hidden.has(block.id));
+  const listedIds = listed.map((block) => block.id);
 
   const focusedNumber = (() => {
     if (!focused) return 1;
     const mine = rowsOf(plans, focused.exerciseId);
-    const working = setsOf(focused.exerciseId).filter((s) => !s.isWarmup).length;
+    const working = setsOfBlock(blockOf(focused.exerciseId)).filter((s) => !s.isWarmup).length;
     const index = plannedIndex(working, mine, mine.findIndex((r) => r.clientSetId === focused.clientSetId));
     return index === "W" ? working + 1 : index;
   })();
 
   /** The coach's lines, then the next set's target, for one exercise block. */
   const targetFor = (exerciseId: string): string[] | null => {
-    const logged = setsOf(exerciseId);
+    const logged = setsOfBlock(exerciseId);
     const targets = targetsOf(exerciseId, logged);
     const planned = plan.find((p) => p.exerciseId === exerciseId);
     if (!targets || !planned) return null;
@@ -995,7 +1200,8 @@ export function LogScreen() {
    * skipped to move on to the next lift.
    *
    * The order is by how committed the athlete already is. Mid-entry beats
-   * everything. Confirming a finish beats the rest timer, which beats adding an
+   * everything; the variant picker, opened by a tap a moment ago, comes next.
+   * Confirming a finish beats the rest timer, which beats adding an
    * exercise -- and the last two are the collision worth naming, because a set
    * being logged is the same instant the timer starts and the typeahead comes
    * back. Stacking them would push both out of the thumb zone.
@@ -1004,17 +1210,57 @@ export function LogScreen() {
    * lasts five seconds, and hiding the rest timer to show it would cost more
    * than it saves.
    */
-  const bottom: "pad" | "rpe" | "confirm" | "rest" | "add" =
-    pad !== null ? "pad" : rpeOpen ? "rpe" : phase === "confirming" ? "confirm" : rest ? "rest" : "add";
+  const bottom: "pad" | "rpe" | "swap" | "confirm" | "rest" | "add" =
+    pad !== null
+      ? "pad"
+      : rpeOpen
+        ? "rpe"
+        : swapFor !== null
+          ? "swap"
+          : phase === "confirming"
+            ? "confirm"
+            : rest
+              ? "rest"
+              : "add";
+
+  /** What Swap offers on a block: the coach's pick first, then its siblings. */
+  const variantsOf = (blockId: string) => {
+    const pick = library.exercises.find((e) => e.id === blockId);
+    if (!pick) return [];
+    // An exercise with a block of its own is not offered: it would end up in two.
+    const elsewhere = new Set(listedIds.filter((id) => id !== blockId));
+    return swapOptions(pick, library.exercises, elsewhere);
+  };
+  const swapping = swapFor !== null && listedIds.includes(swapFor) ? variantsOf(swapFor) : [];
 
   /**
-   * The pad or the RPE chips, in the sheet pinned above the tab bar. Not in
-   * the footer with the rest: on a prescribed day the footer is a long way
-   * below the row being typed into. They still take their turn in `bottom`,
-   * so the rest timer and the rest stay hidden while either is up.
+   * The pad, the RPE chips, the variant picker or the rest timer, in the
+   * sheet pinned above the tab bar. Not in the footer: on a prescribed day
+   * the footer is a long way below the row being typed into, or the set just
+   * logged. Each still takes its turn in `bottom`, so only the winner shows
+   * and the sheet swaps content rather than stacking.
    */
   const sheet =
-    bottom === "pad" && pad !== null && focused ? (
+    bottom === "swap" && swapFor !== null && swapping.length > 0 ? (
+      <VariantSheet
+        name={blockName(swapFor, swapFor)}
+        options={swapping}
+        currentId={currentOf(swapFor)}
+        coachId={plan.some((p) => p.exerciseId === swapFor) ? swapFor : null}
+        onPick={(to) => pickVariant(swapFor, to)}
+        onCancel={() => setSwapFor(null)}
+      />
+    ) : bottom === "rest" && rest ? (
+      // The rest rides in the sheet too, so it is in view after logging a
+      // set however far down a long prescribed day the row was.
+      <RestBar
+        inSheet
+        timer={rest}
+        now={now}
+        onExtend={() => changeRest(extendRest(rest))}
+        onSkip={() => changeRest(null)}
+      />
+    ) : bottom === "pad" && pad !== null && focused ? (
       <NumberPad
         inSheet
         state={pad}
@@ -1072,77 +1318,107 @@ export function LogScreen() {
           <EmptyState title="Nothing logged yet" body="Add the first exercise and start working." />
         ) : (
           <div className="flex flex-col gap-6">
-            {listed.map((block) => (
-              <ExerciseBlock
-                key={block.id}
-                name={block.name}
-                sets={setsOf(block.id).map<LoggedSet>((s) => ({
-                  clientSetId: s.clientSetId,
-                  pendingSync: unsynced.has(s.clientSetId) || saving.has(s.clientSetId),
-                  loadKg: s.loadKg,
-                  reps: s.reps,
-                  rpe: (s.rpe as RpeValue | null) ?? null,
-                  isWarmup: s.isWarmup,
-                  deleteBlocked:
-                    commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,
-                }))}
-                planned={rowsOf(plans, block.id)}
-                focusedId={pad !== null || rpeOpen ? focusId : null}
-                target={targetFor(block.id)}
-                unit={unit}
-                onFocus={focusField}
-                onConfirm={(id) => void confirmSet(id)}
-                onDiscard={discardPlanned}
-                onToggleWarmup={toggleWarmupOf}
-                onAddSet={() => addSet(block.id)}
-                onActivate={() => activate(block.id)}
-                selectedId={selectedId}
-                onSelect={selectSet}
-                onDelete={deleteLogged}
-                onRemove={() => removeExercise(block.id, block.name)}
-                removeBlocked={(() => {
-                  const decision = planBlockRemoval(block.id, all, undeletable, null);
-                  return decision.kind === "blocked" ? decision.reason : null;
-                })()}
-                camera={(() => {
-                  // Attaches to the most recently logged set of this exercise,
-                  // per the Set Row spec. Absent until there is one, so the
-                  // athlete is never offered a camera with nowhere to put a clip.
-                  const target = setForNewClip(
-                    setsOf(block.id).map((set) => ({
-                      ...set,
-                      loggedAt: set.loggedAt instanceof Date ? set.loggedAt : new Date(set.loggedAt),
-                    })),
-                    block.id,
-                  );
-                  if (!target || !athleteId) return null;
-                  const mine = setsOf(block.id);
-                  // A coach's video request (Order 30): a nudge, never a gate.
-                  // Backoff sets (Order 21) take positions too, so each line
-                  // carries how many its rule adds right now.
-                  const blockTargets = targetsOf(block.id, mine) ?? [];
-                  const ask = videoAsk({
-                    lines: plan
-                      .find((p) => p.exerciseId === block.id)
-                      ?.lines.map((line) => ({
-                        ...line,
-                        backoffSets: blockTargets.filter((t) => t.prescriptionId === line.id && t.backoff).length,
-                      })),
-                    loggedWorking: mine.filter((s) => !s.isWarmup).length,
-                    hasClip: filmed.has(block.id) || mine.some((s) => s.hasVideo),
-                  });
-                  return (
-                    <AttachVideo
-                      key={target.clientSetId}
-                      setId={target.clientSetId}
-                      athleteId={athleteId}
-                      ask={ask}
-                      onAttached={() => setFilmed((prev) => new Set(prev).add(block.id))}
-                    />
-                  );
-                })()}
-              />
-            ))}
+            {listed.map((block) => {
+              const exerciseId = currentOf(block.id);
+              const mine = setsOfBlock(block.id);
+              const blockTargets = targetsOf(block.id, mine) ?? [];
+              const workingIds = mine.filter((s) => !s.isWarmup).map((s) => s.clientSetId);
+              // The coach's ask, set by set: the nth working set answers the
+              // nth target, the same rule the targets themselves follow.
+              const asked = (clientSetId: string) => {
+                const at = workingIds.indexOf(clientSetId);
+                return at >= 0 && blockTargets[at]?.videoRequired === true;
+              };
+              const hasClip = (s: { clientSetId: string; hasVideo?: boolean }) =>
+                Boolean(s.hasVideo) || filmed.has(s.clientSetId);
+              const options = variantsOf(block.id);
+              const isPrescribed = plan.some((p) => p.exerciseId === block.id);
+              return (
+                <ExerciseBlock
+                  key={block.id}
+                  name={block.name}
+                  sets={mine.map<LoggedSet>((s) => ({
+                    clientSetId: s.clientSetId,
+                    pendingSync: unsynced.has(s.clientSetId) || saving.has(s.clientSetId),
+                    loadKg: s.loadKg,
+                    reps: s.reps,
+                    rpe: (s.rpe as RpeValue | null) ?? null,
+                    isWarmup: s.isWarmup,
+                    ...(asked(s.clientSetId) ? { videoRequired: true, hasVideo: hasClip(s) } : {}),
+                    deleteBlocked:
+                      commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,
+                  }))}
+                  planned={rowsOf(plans, exerciseId)}
+                  focusedId={pad !== null || rpeOpen ? focusId : null}
+                  target={targetFor(block.id)}
+                  unit={unit}
+                  onFocus={focusField}
+                  onConfirm={(id) => void confirmSet(id)}
+                  onDiscard={discardPlanned}
+                  onToggleWarmup={toggleWarmupOf}
+                  onAddSet={() => addSet(block.id)}
+                  onActivate={() => activate(block.id)}
+                  selectedId={selectedId}
+                  onSelect={selectSet}
+                  onDelete={deleteLogged}
+                  onRemove={() => removeExercise(block.id, block.name)}
+                  removeBlocked={(() => {
+                    const decision = planBlockRemoval(membersOf(block.id), all, undeletable, null);
+                    return decision.kind === "blocked" ? decision.reason : null;
+                  })()}
+                  onSwap={
+                    options.length > 0
+                      ? () => {
+                          closeSheets();
+                          setSwapFor(block.id);
+                        }
+                      : undefined
+                  }
+                  prescribedAs={isPrescribed && exerciseId !== block.id ? (nameFor(block.id) ?? null) : null}
+                  camera={(() => {
+                    // A clip lands on the set the coach asked to see when one
+                    // is still unfilmed; otherwise on the most recently logged
+                    // set of the block, per the Set Row spec. Absent until
+                    // there is one, so the athlete is never offered a camera
+                    // with nowhere to put a clip.
+                    const unfilmed = mine.filter((s) => asked(s.clientSetId) && !hasClip(s)).at(-1);
+                    const target =
+                      unfilmed ??
+                      setForNewClip(
+                        mine.map((set) => ({
+                          ...set,
+                          exerciseId: block.id,
+                          loggedAt: set.loggedAt instanceof Date ? set.loggedAt : new Date(set.loggedAt),
+                        })),
+                        block.id,
+                      );
+                    if (!target || !athleteId) return null;
+                    // A coach's video request (Order 30): a nudge, never a gate.
+                    // Backoff sets (Order 21) take positions too, so each line
+                    // carries how many its rule adds right now.
+                    const ask = videoAsk({
+                      lines: plan
+                        .find((p) => p.exerciseId === block.id)
+                        ?.lines.map((line) => ({
+                          ...line,
+                          backoffSets: blockTargets.filter((t) => t.prescriptionId === line.id && t.backoff).length,
+                        })),
+                      loggedWorking: workingIds.length,
+                      hasClip: mine.some(hasClip),
+                    });
+                    return (
+                      <AttachVideo
+                        key={target.clientSetId}
+                        setId={target.clientSetId}
+                        athleteId={athleteId}
+                        ask={ask}
+                        onAttached={() => setFilmed((prev) => new Set(prev).add(target.clientSetId))}
+                      />
+                    );
+                  })()}
+                />
+              );
+            })}
           </div>
         )}
 
@@ -1274,15 +1550,6 @@ export function LogScreen() {
                 </Button>
               </div>
             </div>
-          ) : null}
-
-          {bottom === "rest" && rest ? (
-            <RestBar
-              timer={rest}
-              now={now}
-              onExtend={() => changeRest(extendRest(rest))}
-              onSkip={() => changeRest(null)}
-            />
           ) : null}
 
           {bottom === "add" && !addingInline ? (

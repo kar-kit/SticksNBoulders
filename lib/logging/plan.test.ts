@@ -5,10 +5,13 @@ import {
   discardRow,
   focusExercise,
   headOf,
+  materialiseRows,
   nextSetIndex,
   plannedIndex,
   rowAfter,
+  refreshBehind,
   rowsOf,
+  swapRows,
   type PlannedRow,
 } from "./plan";
 
@@ -195,5 +198,109 @@ describe("a suggestion the coach's switch let through (Order 28)", () => {
   it("is never applied by a confirm, which builds no row to hold it", () => {
     const rows = [rowAfter("squat", null, id)];
     expect(afterConfirm(rows, rows[0].clientSetId).next).toBeNull();
+  });
+});
+
+describe("laying out a prescribed exercise at once (F5)", () => {
+  const W = { isWarmup: true };
+  const S = { isWarmup: false };
+
+  it("makes blank warm-ups and working rows that repeat the last set, in the shape given", () => {
+    const rows = materialiseRows("squat", [W, W, S, S], { loadKg: 140, reps: 5 }, ids());
+    expect(rows.map((r) => r.clientSetId)).toEqual(["st-1", "st-2", "st-3", "st-4"]);
+    expect(rows[0]).toMatchObject({ isWarmup: true, loadKg: null, reps: null, rpe: null, planned: true });
+    expect(rows[2]).toMatchObject({ isWarmup: false, loadKg: 140, reps: 5, rpe: null, planned: true });
+  });
+
+  it("starts working rows empty when nothing has been logged", () => {
+    const [row] = materialiseRows("squat", [S], null, ids());
+    expect(row).toMatchObject({ loadKg: null, reps: null, planned: true });
+  });
+
+  it("lays the whole shape out when the exercise is opened with no rows, the first being the head", () => {
+    const other = row({ exerciseId: "bench", clientSetId: "b1", planned: true });
+    const { rows, head } = focusExercise([other], "squat", null, ids(), [W, S, S]);
+    expect(rows).toHaveLength(4);
+    expect(rows[0]).toBe(other);
+    expect(head.clientSetId).toBe("st-1");
+    expect(rowsOf(rows, "squat").map((r) => r.isWarmup)).toEqual([true, false, false]);
+  });
+
+  it("keeps rows already there rather than laying out a second copy", () => {
+    const mine = row({ clientSetId: "keep", planned: true });
+    const { rows, head } = focusExercise([mine], "squat", null, ids(), [W, S, S]);
+    expect(rows).toEqual([mine]);
+    expect(head).toBe(mine);
+  });
+
+  it("falls back to one fresh row once the shape is empty (prescription done)", () => {
+    const { rows } = focusExercise([], "squat", { loadKg: 150, reps: 3 }, ids(), []);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ loadKg: 150, reps: 3, planned: false });
+  });
+
+  it("survives moving to another exercise, because every laid-out row is planned", () => {
+    const laid = focusExercise([], "squat", null, ids(), [W, S]).rows;
+    const moved = focusExercise(laid, "bench", null, ids()).rows;
+    expect(rowsOf(moved, "squat")).toHaveLength(2);
+  });
+
+  it("numbers the laid-out rows W, W, 1, 2 after nothing logged", () => {
+    const laid = focusExercise([], "squat", null, ids(), [W, W, S, S]).rows;
+    expect(laid.map((_, at) => plannedIndex(0, laid, at))).toEqual(["W", "W", 1, 2]);
+  });
+});
+
+describe("swapRows (F5 variant swap)", () => {
+  it("moves the block's rows to the new exercise as fresh rows of the same shape", () => {
+    const rows = [
+      row({ clientSetId: "w", isWarmup: true, loadKg: 60, planned: true }),
+      row({ clientSetId: "a", loadKg: 100, prescriptionId: "l1", prescribed: "5 reps", videoRequired: true, planned: true }),
+      row({ exerciseId: "bench", clientSetId: "b", planned: true }),
+    ];
+    const out = swapRows(rows, "squat", "front", { loadKg: 80, reps: 5 }, ids());
+    expect(out[0]).toMatchObject({ exerciseId: "front", clientSetId: "st-1", isWarmup: true, loadKg: null });
+    // The old implement's numbers and the old prescription stamp do not carry:
+    // the prescription prices the new row again.
+    expect(out[1]).toMatchObject({ exerciseId: "front", clientSetId: "st-2", loadKg: 80, reps: 5, planned: true });
+    expect(out[1]).not.toHaveProperty("prescriptionId");
+    expect(out[1]).not.toHaveProperty("videoRequired");
+    expect(out[2]).toBe(rows[2]);
+  });
+
+  it("is a no-op swapping to the exercise already in hand", () => {
+    const rows = [row({ clientSetId: "a" })];
+    expect(swapRows(rows, "squat", "squat", null, ids())).toEqual(rows);
+  });
+
+  it("keeps an automatic row automatic", () => {
+    const [out] = swapRows([row({ clientSetId: "a", planned: false })], "squat", "front", null, ids());
+    expect(out.planned).toBe(false);
+  });
+});
+
+describe("refreshBehind (F5)", () => {
+  const logged = { exerciseId: "squat", loadKg: 170, reps: 5, isWarmup: false };
+
+  it("resets untouched working rows of the exercise to the set just logged, and names them to price", () => {
+    const rows = [
+      row({ clientSetId: "a", loadKg: null, reps: 5, note: "x", suggested: true }),
+      row({ clientSetId: "w", isWarmup: true, loadKg: null, reps: null }),
+      row({ clientSetId: "t", loadKg: 160, touched: true }),
+      row({ exerciseId: "bench", clientSetId: "b", loadKg: null }),
+    ];
+    const out = refreshBehind(rows, logged);
+    expect([...out.reprice]).toEqual(["a"]);
+    expect(out.rows[0]).toMatchObject({ loadKg: 170, reps: 5, note: null, suggested: false, clientSetId: "a" });
+    expect(out.rows[1]).toBe(rows[1]);
+    expect(out.rows[2]).toBe(rows[2]);
+    expect(out.rows[3]).toBe(rows[3]);
+  });
+
+  it("changes nothing after a warm-up", () => {
+    const rows = [row({ clientSetId: "a", loadKg: null })];
+    const out = refreshBehind(rows, { ...logged, isWarmup: true });
+    expect(out.reprice.size).toBe(0);
+    expect(out.rows).toEqual(rows);
   });
 });

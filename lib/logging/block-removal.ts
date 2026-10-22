@@ -22,7 +22,9 @@ export const BLOCK_COACH_COMMENTED =
   "Your coach has commented on a set here, so this exercise stays. Delete the other sets one by one, or correct them from History.";
 
 /**
- * What removing `exerciseId` would take with it.
+ * What removing `exerciseId` would take with it: one exercise, or every
+ * exercise a swapped block holds (Barbell Row and the Dumbbell Row it was
+ * swapped to).
  *
  * Refused outright if any of its sets carries a coach's comment, for the same
  * reason a single commented set cannot be deleted: the coach's words would be
@@ -34,12 +36,14 @@ export const BLOCK_COACH_COMMENTED =
  * this block: the running rest belongs to that set, and it is going.
  */
 export function planBlockRemoval<T extends RemovableSet>(
-  exerciseId: string,
+  exerciseId: string | ReadonlySet<string>,
   sessionSets: readonly T[],
   undeletable: ReadonlySet<string>,
   latestSetId: string | null,
 ): BlockRemoval<T> {
-  const sets = sessionSets.filter((s) => s.exerciseId === exerciseId);
+  // A block swapped to another variant holds sets of more than one exercise.
+  const ids = typeof exerciseId === "string" ? new Set([exerciseId]) : exerciseId;
+  const sets = sessionSets.filter((s) => ids.has(s.exerciseId));
   if (sets.some((s) => undeletable.has(s.clientSetId))) {
     return { kind: "blocked", reason: BLOCK_COACH_COMMENTED };
   }
