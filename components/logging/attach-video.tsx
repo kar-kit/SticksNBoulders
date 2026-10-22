@@ -95,10 +95,10 @@ export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", 
       <input
         ref={input}
         type="file"
-        // capture asks the phone for the camera rather than the photo library,
-        // which is where the clip is about to come from.
+        // No capture attribute: it forces the camera. Without it the phone
+        // offers both, so a set filmed on the camera app can be picked from
+        // the library afterwards.
         accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm"
-        capture="environment"
         className="hidden"
         onChange={(event) => void pick(event.target.files?.[0])}
       />
