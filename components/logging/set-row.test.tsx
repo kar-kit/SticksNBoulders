@@ -650,6 +650,21 @@ describe("SetRow — PR badge (F6)", () => {
     expect(badge.className).not.toContain("animate-spring-pop");
   });
 
+  it("reads Rep PR when reps at the load are the only record", () => {
+    render(<SetRow index={1} set={set()} state="logged" pr={["reps"]} />);
+    const badge = screen.getByRole("img", { name: "Set 1: personal record, most reps at this weight" });
+    expect(badge).toHaveTextContent("Rep PR");
+    expect(badge).toHaveAttribute("data-pr", "reps");
+  });
+
+  it("reads PR when a rep record comes with a strength record", () => {
+    render(<SetRow index={1} set={set()} state="logged" pr={["e1rm", "reps"]} />);
+    const badge = screen.getByRole("img", {
+      name: "Set 1: personal record, estimated one-rep max and most reps at this weight",
+    });
+    expect(badge.textContent).toBe("PR");
+  });
+
   it("pops in on the spring-pop token when the record is fresh", () => {
     render(<SetRow index={1} set={set()} state="logged" pr={["weight"]} prFresh />);
     expect(screen.getByRole("img", { name: /personal record/ }).className).toContain("motion-safe:animate-spring-pop");

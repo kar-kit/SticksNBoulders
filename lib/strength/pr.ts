@@ -6,18 +6,32 @@ import { weekStart } from "./rollup";
  * Personal records, as the Log sees them: did the set just logged beat
  * everything this athlete had done on this exercise before today?
  *
- * Pure. Two kinds, both already records on Lift Detail:
+ * Pure. Three kinds. The first two are already records on Lift Detail:
  *
  * - **e1RM**: the set's estimated one-rep max beats the best estimate ever.
  *   Needs an RPE, like every estimate (lib/strength/e1rm.ts).
  * - **Weight**: the heaviest load ever put on the bar for a working set.
+ * - **Reps**: more reps than ever at this load or heavier. 140 x 6 over a
+ *   prior 140 x 5 is one, and so is 140 x 6 when the most at 140 or more was
+ *   142.5 x 5; a prior 142.5 x 6 blocks it, because doing six with more on
+ *   the bar already said six at 140 was in there. That is how a coach's
+ *   rep-max table reads, and unlike "exactly this load" it does not call a
+ *   back-off at a weight never used before a record just for being new. It needs something at this load or heavier
+ *   to beat: a set heavier than anything before is a weight record, not
+ *   also a rep record by beating zero.
  *
- * Not a third kind, rep PR at a load ("most reps ever at 140"). The rollups
- * keep the week's heaviest set and the week's most reps, each with the other
- * number, but not reps-at-every-load, so a load in between is invisible to
- * them: 140 x 5 in a week whose records were 150 x 1 and 100 x 10 left no
- * trace, and the next 140 x 5 would be called a record it is not. Answering
- * it honestly means a scan of every raw set of the lift, which is not cheap.
+ * ## Why the rep record reads raw sets
+ *
+ * The rollups keep the week's heaviest set and the week's most reps, each
+ * with the other number, but not reps-at-every-load, so a load in between is
+ * invisible to them: 140 x 5 in a week whose records were 150 x 1 and
+ * 100 x 10 left no trace, and the next 140 x 5 would be called a record it
+ * is not. So the rep record is measured against every raw working set of the
+ * lift (`repBests`), read once per session by the Log
+ * (lib/logging/exercise-history-store.ts) and boiled down to its frontier,
+ * the few (load, reps) pairs no other set beats on both. When that read
+ * cannot reach the lift's first set, there is no rep record to beat and none
+ * is badged: half a history would call old rep maxes new.
  *
  * ## "Before this session", and why it is not just the rollups
  *
@@ -37,11 +51,22 @@ import { weekStart } from "./rollup";
  * the same badges on the same sets.
  */
 
-export type PrKind = "e1rm" | "weight";
+export type PrKind = "e1rm" | "weight" | "reps";
+
+/** A point of the rep-max frontier: at `loadKg` or heavier, `reps` at most. */
+export interface RepBest {
+  loadKg: number;
+  reps: number;
+}
 
 export interface PriorBests {
   e1rmKg: number | null;
   heaviestKg: number | null;
+  /**
+   * The rep-max frontier before the session, heaviest first (`repBests`).
+   * Absent or null when the whole history was not read: no rep records then.
+   */
+  repsAt?: readonly RepBest[] | null;
 }
 
 export interface PriorSet {
@@ -112,13 +137,55 @@ export function priorBests(
 }
 
 /**
+ * The rep-max frontier of working sets logged before `sessionStart`: per
+ * load, at a tenth of a kilo, the most reps done at that load or heavier,
+ * kept only where it is more than at any heavier load. Heaviest first, so
+ * reps strictly rise down the list. A long history boils down to a few dozen
+ * points at most, which is what the device keeps for the session.
+ *
+ * Only meaningful over the lift's whole history; see the header.
+ */
+export function repBests(before: readonly PriorSet[], sessionStart: Date): RepBest[] {
+  const mostAt = new Map<number, number>();
+  for (const set of before) {
+    if (set.isWarmup || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
+    if (!usable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
+    const load = tenth(set.loadKg);
+    mostAt.set(load, Math.max(mostAt.get(load) ?? 0, set.reps));
+  }
+  return frontierOf([...mostAt].map(([loadKg, reps]) => ({ loadKg, reps })));
+}
+
+/** Pareto frontier, heaviest first: drops every point another beats or ties on both load and reps. */
+function frontierOf(points: readonly RepBest[]): RepBest[] {
+  const sorted = [...points].sort((a, b) => b.loadKg - a.loadKg || b.reps - a.reps);
+  const kept: RepBest[] = [];
+  for (const point of sorted) {
+    if (point.reps > (kept.at(-1)?.reps ?? 0)) kept.push(point);
+  }
+  return kept;
+}
+
+/** The most reps on the frontier at `load` or heavier; 0 when nothing that heavy was ever lifted. */
+function mostRepsAtOrAbove(frontier: readonly RepBest[], load: number): number {
+  let most = 0;
+  for (const point of frontier) {
+    if (point.loadKg < load) break;
+    most = Math.max(most, point.reps);
+  }
+  return most;
+}
+
+/**
  * Which of a session's sets of ONE exercise are records, and of what.
  *
  * `sets` in the order they were logged. Each working set is measured against
  * the prior best and every set before it today, so 150 then 152.5 over a
  * 147.5 best are both records -- each was, the moment it was lifted -- and a
- * later, lighter set is not. A kind with no prior best (a lift never logged
- * with an RPE has no e1RM to beat) badges nothing of that kind.
+ * later, lighter set is not. Likewise 140 x 6 then 140 x 7 over a prior
+ * 140 x 5 are both rep records, and a second 140 x 7 is not. A kind with no
+ * prior best (a lift never logged with an RPE has no e1RM to beat; a history
+ * not read in full has no rep frontier) badges nothing of that kind.
  *
  * Warm-ups never count, and neither does an incomplete set.
  */
@@ -130,6 +197,7 @@ export function detectPrs(
   if (!bests) return found;
   let e1rm = bests.e1rmKg === null ? null : tenth(bests.e1rmKg);
   let heaviest = bests.heaviestKg === null ? null : tenth(bests.heaviestKg);
+  let frontier = bests.repsAt ? frontierOf(bests.repsAt.map((p) => ({ loadKg: tenth(p.loadKg), reps: p.reps }))) : null;
 
   for (const set of sets) {
     if (set.isWarmup || !usable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
@@ -145,6 +213,14 @@ export function detectPrs(
     if (heaviest !== null && load > heaviest) {
       kinds.push("weight");
       heaviest = load;
+    }
+
+    if (frontier !== null) {
+      const most = mostRepsAtOrAbove(frontier, load);
+      if (most > 0 && set.reps > most) kinds.push("reps");
+      // Every working set joins the frontier, record or not: 140 x 6 today
+      // is what a later 140 x 6 has to beat.
+      if (set.reps > most) frontier = frontierOf([...frontier, { loadKg: load, reps: set.reps }]);
     }
 
     if (kinds.length > 0) found.set(set.clientSetId, kinds);
@@ -167,15 +243,23 @@ export interface SessionPr {
  * The records to list on the finish screen: per exercise, per kind, the one
  * that stood at the end. Two e1RM records on the squat today are one line,
  * the better one, not two.
+ *
+ * Rep records are per load rather than per exercise: 140 x 6 and 120 x 10
+ * are two different records, and keeping only one would hide the other. A
+ * rep record that a later one today covers -- as many reps or more at as
+ * heavy a load or heavier, so 140 x 6 then 140 x 7, or 140 x 6 then
+ * 142.5 x 6 -- folds into it, which also leaves one line per load. Heaviest
+ * first.
  */
 export function sessionPrs(
   sets: readonly (SessionSetForPr & { exerciseId: string })[],
   found: ReadonlyMap<string, readonly PrKind[]>,
 ): SessionPr[] {
   const latest = new Map<string, SessionPr>();
+  const reps: SessionPr[] = [];
   for (const set of sets) {
     for (const kind of found.get(set.clientSetId) ?? []) {
-      latest.set(`${set.exerciseId}\u0000${kind}`, {
+      const record: SessionPr = {
         exerciseId: set.exerciseId,
         kind,
         clientSetId: set.clientSetId,
@@ -186,14 +270,23 @@ export function sessionPrs(
           kind === "e1rm"
             ? estimateOneRepMax({ loadKg: set.loadKg, reps: set.reps, rpe: set.rpe, isWarmup: false })
             : null,
-      });
+      };
+      if (kind === "reps") reps.push(record);
+      else latest.set(`${set.exerciseId}\u0000${kind}`, record);
     }
   }
+  const covers = (a: SessionPr, b: SessionPr) =>
+    a !== b && a.exerciseId === b.exerciseId && tenth(a.loadKg) >= tenth(b.loadKg) && a.reps >= b.reps;
+  const standing = reps.filter((record) => !reps.some((other) => covers(other, record)));
+
   // Each exercise's records together, in the order the exercises were first
-  // trained today, the estimate before the weight.
+  // trained today, the estimate before the weight before the reps.
   const order = [...new Set(sets.map((set) => set.exerciseId))];
-  const rank: Record<PrKind, number> = { e1rm: 0, weight: 1 };
-  return [...latest.values()].sort(
-    (a, b) => order.indexOf(a.exerciseId) - order.indexOf(b.exerciseId) || rank[a.kind] - rank[b.kind],
+  const rank: Record<PrKind, number> = { e1rm: 0, weight: 1, reps: 2 };
+  return [...latest.values(), ...standing].sort(
+    (a, b) =>
+      order.indexOf(a.exerciseId) - order.indexOf(b.exerciseId) ||
+      rank[a.kind] - rank[b.kind] ||
+      b.loadKg - a.loadKg,
   );
 }

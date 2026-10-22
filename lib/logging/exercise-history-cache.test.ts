@@ -9,7 +9,14 @@ const squat = {
     { loadKg: 60, reps: 5, isWarmup: true },
     { loadKg: 140, reps: 5, isWarmup: false },
   ],
-  bests: { e1rmKg: 170, heaviestKg: 150 },
+  bests: {
+    e1rmKg: 170,
+    heaviestKg: 150,
+    repsAt: [
+      { loadKg: 150, reps: 2 },
+      { loadKg: 140, reps: 5 },
+    ],
+  },
 };
 
 beforeEach(() => localStorage.clear());
@@ -58,6 +65,34 @@ describe("exercise history, remembered for the session", () => {
     expect(recallExerciseHistory("ath", "ses", "row")).toBeNull();
     localStorage.setItem("snb.exercise-history", "{not json");
     expect(recallExerciseHistory("ath", "ses", "squat")).toBeNull();
+  });
+
+  it("reads a copy kept before rep records as having no rep frontier", () => {
+    localStorage.setItem(
+      "snb.exercise-history",
+      JSON.stringify({
+        athleteId: "ath",
+        sessionId: "ses",
+        exercises: { squat: { previous: [], bests: { e1rmKg: 170, heaviestKg: 150 } } },
+      }),
+    );
+    expect(recallExerciseHistory("ath", "ses", "squat")?.bests).toEqual({ e1rmKg: 170, heaviestKg: 150, repsAt: null });
+  });
+
+  it("ignores a rep frontier that does not parse", () => {
+    localStorage.setItem(
+      "snb.exercise-history",
+      JSON.stringify({
+        athleteId: "ath",
+        sessionId: "ses",
+        exercises: {
+          squat: { previous: [], bests: { e1rmKg: 170, heaviestKg: 150, repsAt: [{ loadKg: 140, reps: "5" }] } },
+          bench: { previous: [], bests: { e1rmKg: 170, heaviestKg: 150, repsAt: "lots" } },
+        },
+      }),
+    );
+    expect(recallExerciseHistory("ath", "ses", "squat")).toBeNull();
+    expect(recallExerciseHistory("ath", "ses", "bench")).toBeNull();
   });
 
   it("forgets", () => {
