@@ -10,7 +10,8 @@ import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
 import { LoadCell } from "./load-cell";
 import { canComplete, completionBlocker, type LoggableSet } from "@/lib/logging/set";
 import { formatNumber } from "@/lib/logging/prefill";
-import { loadIn, loadLabel, unitName, type UnitPreference } from "@/lib/units";
+import { loadIn, loadLabel, loadNumber, unitName, type UnitPreference } from "@/lib/units";
+import type { PrKind } from "@/lib/strength/pr";
 
 /**
  * The set row. An athlete touches this 20 to 40 times a session, one-handed.
@@ -109,6 +110,26 @@ export interface SetRowProps {
    * this unit. Kilos when absent.
    */
   unit?: UnitPreference;
+  /**
+   * What the set lined up with this row was last time this exercise was
+   * trained (Strong's Previous column). Shown on a line under the row,
+   * because at 390pt the grid has no room for a sixth column without
+   * squeezing the load. Absent when there is no last time or it could not
+   * be read: nothing is shown, never an error.
+   */
+  previous?: { loadKg: number; reps: number } | null;
+  /**
+   * Rows not logged yet: copies `previous` into the row. Makes the Previous
+   * line a button.
+   */
+  onCopyPrevious?: () => void;
+  /** Logged rows: the records this set broke, if any. Shows a PR badge. */
+  pr?: readonly PrKind[] | null;
+  /**
+   * The record was broken by a tap on this page, just now: the badge pops in
+   * (`animate-spring-pop`). A badge read back after a reload just sits there.
+   */
+  prFresh?: boolean;
 }
 
 export function SetRow({
@@ -133,6 +154,10 @@ export function SetRow({
   onToggleWarmup,
   unit = "kg",
   arrived = false,
+  previous = null,
+  onCopyPrevious,
+  pr = null,
+  prFresh = false,
 }: SetRowProps) {
   const planned = state === "planned";
   const active = state === "active";
@@ -157,6 +182,12 @@ export function SetRow({
   const size = warmup ? "warmup" : editing ? "active" : "logged";
   const setLabel = index === "W" ? "Warm-up set" : `Set ${index}`;
   const videoBadge = set.videoRequired && !showCameraInRpeCell ? videoBadgeOf(set, editing, setLabel) : null;
+  const records = state === "logged" && pr && pr.length > 0 ? pr : null;
+  const previousText = previous ? `${loadNumber(previous.loadKg, unit)} × ${previous.reps}` : null;
+  const copyable = Boolean(previousText && editing && onCopyPrevious);
+  const spokenPrevious = previous
+    ? `${loadNumber(previous.loadKg, unit)} ${unitName(unit)} for ${previous.reps} reps`
+    : "";
 
   const label = (
     <span
@@ -349,6 +380,23 @@ export function SetRow({
             </span>
           ) : null}
 
+          {records ? (
+            // Beside the video badge's corner, never under it, so a filmed PR
+            // shows both. Accent fill: the token cleared for small text.
+            <span
+              role="img"
+              aria-label={`${setLabel}: ${prLabel(records)}`}
+              data-pr={records.join(" ")}
+              className={cn(
+                "pointer-events-none absolute -top-2 flex h-4 items-center rounded-full bg-accent-fill px-1.5 font-mono text-label font-semibold text-on-accent",
+                videoBadge ? "right-9" : "right-2",
+                prFresh && "motion-safe:animate-spring-pop",
+              )}
+            >
+              PR
+            </span>
+          ) : null}
+
           {editing && onDiscard ? (
             // The non-gesture path for a row not logged yet. Out of sight and
             // out of a thumb's way, the way the × it replaces was not; a
@@ -376,11 +424,34 @@ export function SetRow({
 
       {uploading ? <UploadBar percent={uploadPercent} flush /> : null}
 
-      {uploading || pendingSync || note ? (
+      {uploading || pendingSync || note || previousText ? (
         <div className="flex justify-between gap-3 px-2.5 pt-[5px] font-mono text-label text-muted-2">
-          <span>
-            {note ??
-              (uploading ? `video uploading ${Math.round(uploadPercent)}%` : null)}
+          <span className="flex min-w-0 items-center gap-3">
+            {previousText ? (
+              copyable ? (
+                // Taller than it looks, so a thumb finds it: the padding
+                // reaches into the gap above and below without moving the
+                // line, and stays clear of the cells.
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic("light");
+                    onCopyPrevious?.();
+                  }}
+                  aria-label={`${setLabel}: use last time, ${spokenPrevious}`}
+                  data-previous=""
+                  className="-my-2 -ml-1 flex-none rounded-chip px-1 py-2 text-muted tap focus-visible:outline-2 focus-visible:outline-accent-line"
+                >
+                  PREV {previousText}
+                </button>
+              ) : (
+                <span data-previous="" aria-label={`${setLabel} last time: ${spokenPrevious}`} className="flex-none">
+                  PREV {previousText}
+                </span>
+              )
+            ) : null}
+            {note ? <span className="min-w-0">{note}</span> : null}
+            {!note && uploading ? <span>video uploading {Math.round(uploadPercent)}%</span> : null}
           </span>
           {pendingSync ? <span>queued · no signal</span> : null}
         </div>
@@ -402,6 +473,12 @@ export function SetRow({
       ) : null}
     </div>
   );
+}
+
+/** What the PR badge says to a screen reader. */
+function prLabel(kinds: readonly PrKind[]): string {
+  const words = kinds.map((kind) => (kind === "e1rm" ? "estimated one-rep max" : "heaviest weight"));
+  return `personal record, ${words.join(" and ")}`;
 }
 
 /** What the camera badge on a flagged row says, and how loudly. */

@@ -592,3 +592,79 @@ describe("SetRow — warm-up from the set number", () => {
     expect(screen.getByText("2")).toBeInTheDocument();
   });
 });
+
+describe("SetRow — Previous (F6)", () => {
+  it("shows last time on a line under a logged row, as text, not a button", () => {
+    render(<SetRow index={1} set={set()} state="logged" previous={{ loadKg: 140, reps: 5 }} />);
+    expect(screen.getByLabelText("Set 1 last time: 140 kilograms for 5 reps")).toHaveTextContent("PREV 140 × 5");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("copies on a row not logged yet, with a light tap answer", async () => {
+    const onCopyPrevious = vi.fn();
+    render(
+      <SetRow
+        index={2}
+        set={set({ loadKg: null, reps: null, rpe: null })}
+        state="active"
+        previous={{ loadKg: 145, reps: 3 }}
+        onCopyPrevious={onCopyPrevious}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Set 2: use last time, 145 kilograms for 3 reps" }));
+    expect(onCopyPrevious).toHaveBeenCalledTimes(1);
+    expect(haptic).toHaveBeenCalledWith("light");
+  });
+
+  it("reads in pounds for an athlete who reads pounds", () => {
+    render(<SetRow index={1} set={set()} state="logged" unit="lb" previous={{ loadKg: 142.882, reps: 5 }} />);
+    expect(screen.getByLabelText("Set 1 last time: 315 pounds for 5 reps")).toHaveTextContent("PREV 315 × 5");
+  });
+
+  it("keeps the suggestion note beside it", () => {
+    render(
+      <SetRow
+        index={2}
+        set={set()}
+        state="active"
+        note="suggested from RPE 7 @ 140"
+        previous={{ loadKg: 140, reps: 5 }}
+        onCopyPrevious={() => {}}
+      />,
+    );
+    expect(screen.getByText("suggested from RPE 7 @ 140")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /use last time/ })).toBeInTheDocument();
+  });
+
+  it("adds no line when there is no last time", () => {
+    const { container } = render(<SetRow index={1} set={set()} state="active" onCopyPrevious={() => {}} />);
+    expect(container.querySelector("[data-previous]")).toBeNull();
+  });
+});
+
+describe("SetRow — PR badge (F6)", () => {
+  it("badges a logged record, and says which", () => {
+    render(<SetRow index={1} set={set()} state="logged" pr={["e1rm", "weight"]} />);
+    const badge = screen.getByRole("img", { name: "Set 1: personal record, estimated one-rep max and heaviest weight" });
+    expect(badge).toHaveTextContent("PR");
+    expect(badge.className).not.toContain("animate-spring-pop");
+  });
+
+  it("pops in on the spring-pop token when the record is fresh", () => {
+    render(<SetRow index={1} set={set()} state="logged" pr={["weight"]} prFresh />);
+    expect(screen.getByRole("img", { name: /personal record/ }).className).toContain("motion-safe:animate-spring-pop");
+  });
+
+  it("sits beside the video badge, not under it", () => {
+    render(
+      <SetRow index={1} set={set({ videoRequired: true, hasVideo: true })} state="logged" pr={["weight"]} />,
+    );
+    expect(screen.getByRole("img", { name: /personal record/ }).className).toContain("right-9");
+    expect(screen.getByRole("img", { name: "Set 1: video attached" })).toBeInTheDocument();
+  });
+
+  it("never shows on a row not logged yet", () => {
+    render(<SetRow index={1} set={set()} state="active" pr={["weight"]} />);
+    expect(screen.queryByRole("img", { name: /personal record/ })).not.toBeInTheDocument();
+  });
+});
