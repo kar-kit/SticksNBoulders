@@ -34,7 +34,7 @@ import {
   withSetEdits,
   type SetValues,
 } from "@/lib/logging/offline-view";
-import { dismissFailed, queueLoaded, subscribeToQueue } from "@/lib/offline/client";
+import { dismissFailed, queueLoaded, queuedOps, subscribeToQueue } from "@/lib/offline/client";
 import { pendingOps } from "@/lib/offline/queue";
 import type { QueuedOp } from "@/lib/offline/queue";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
@@ -199,7 +199,8 @@ export function LogScreen() {
   const [unsaved, setUnsaved] = useState(false);
   /** Confirmed, and on their way to the phone's storage. Shown queued until they are in it. */
   const [saving, setSaving] = useState<ReadonlySet<string>>(() => new Set());
-  const [ops, setOps] = useState<QueuedOp[]>([]);
+  /** The queue as it stands, from the first render: opened from Today, it is already read in. */
+  const [ops, setOps] = useState<QueuedOp[]>(queuedOps);
   const [rest, setRest] = useState<RestTimer | null>(null);
   /** The logged set whose Delete is showing. */
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -405,8 +406,17 @@ export function LogScreen() {
     })();
   }, [sessionId, queued]);
 
-  /** As read or logged, before any edit. Where a flipped-back set finds its RPE. */
-  const asLogged = useMemo(() => mergeById(stored, local, (s) => s.clientSetId), [stored, local]);
+  /**
+   * As read or logged, before any edit. Where a flipped-back set finds its RPE.
+   *
+   * The queue's sets go in directly as well as through `local`, which only
+   * catches up an effect and a microtask later: a page reopened with no signal
+   * shows its sets in the same frame as the session, not a beat after it.
+   */
+  const asLogged = useMemo(
+    () => mergeById(stored, mergeById(local, queued, (s) => s.clientSetId), (s) => s.clientSetId),
+    [stored, local, queued],
+  );
   /**
    * Every set this page knows of, deleted or not. What set_index counts from.
    * Edits still in the queue go over it (a reload with no signal), then this
@@ -1279,6 +1289,21 @@ export function LogScreen() {
             </Button>
           }
         />
+      </div>
+    );
+  }
+
+  // Reopened mid-session: the session is remembered on the device and known at
+  // once, but what the last visit queued is still being read off the phone
+  // (tens of milliseconds). Shown before then, the session is shown empty --
+  // "Nothing logged yet", and a Finish that would total nothing -- and the sets
+  // pop in a beat later. The session appears whole or not yet.
+  if (!queueReady) {
+    return (
+      <div className="pt-8 flex flex-1 flex-col" aria-busy="true">
+        <header className="flex items-baseline justify-between gap-3">
+          <h1 className="m-0 text-display font-semibold">Session</h1>
+        </header>
       </div>
     );
   }

@@ -153,6 +153,14 @@ no signal used to give up after the first failure, so the sets that had
 synced before the reload stayed off the screen, and out of the totals the
 finish wrote, long after the signal came back.
 
+The session itself is remembered on the device and known at once; what the
+queue holds takes a moment longer to read off IndexedDB. Until `queueLoaded`,
+the screen shows only its title -- no clock, no Finish, no "Nothing logged
+yet" -- so a session reopened with no signal appears with its queued sets or
+not at all, never empty for a beat (e2e:pwa reads Set 1 the instant Finish
+shows). The queued sets also feed the list directly, not only through the
+page's own copy, which catches up an effect later.
+
 ### Last time and the bests to beat (F6)
 
 The Log reads, per exercise, the sets logged before the session started

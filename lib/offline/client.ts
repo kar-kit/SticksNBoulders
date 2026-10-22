@@ -330,13 +330,18 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** Test seam. Nothing in the app calls this. */
-export function resetQueueForTests(next: QueueStore | null = null) {
+/**
+ * Test seam. Nothing in the app calls this.
+ *
+ * `loaded: false` is a page just reopened: the store holds what the last visit
+ * left, and nothing is known of it until `attachQueue` reads it in.
+ */
+export function resetQueueForTests(next: QueueStore | null = null, { loaded: known = true } = {}) {
   store = next;
   opening = next ? Promise.resolve(next) : null;
   cache = [];
-  // A test's queue is the store it hands over (or none): known from the start.
-  loaded = true;
+  // By default a test's queue is the store it hands over (or none): known from the start.
+  loaded = known;
   sequence = 0;
   actor = null;
   owner = null;
