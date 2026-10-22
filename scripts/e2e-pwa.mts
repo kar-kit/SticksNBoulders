@@ -259,8 +259,20 @@ try {
   check("the new worker takes over without a reload", (await cold.evaluate(() => navigator.serviceWorker.controller?.scriptURL ?? "")).endsWith(`v=${next}`));
   check("and the old build's caches are gone", !names.some((n) => n.endsWith(version)) && names.includes(`snb-shell-${next}`), names);
   check("the page it took over is still running, not reloaded", await cold.getByRole("group", { name: "Set 1" }).first().isVisible().catch(() => false));
-  // Put the real build's worker back for anything that runs after.
+  // Put the real build's worker back for anything that runs after -- and wait
+  // until it is back. Left installing, it took over in the middle of section
+  // 6's offline navigation: the outgoing worker was retired with that fetch
+  // still in hand, the navigation never committed and goto timed out at 30s.
+  // A swap mid-navigation is this section's doing, not a repeat visit's cost.
   await cold.evaluate((v) => navigator.serviceWorker.register(`/sw.js?v=${v}`, { scope: "/", updateViaCache: "none" }), version);
+  await cold.waitForFunction(
+    (v) => {
+      const c = navigator.serviceWorker.controller;
+      return c?.scriptURL.endsWith(`v=${v}`) && c.state === "activated";
+    },
+    version,
+    { timeout: 30000 },
+  );
 
   // --- 6. What a repeat visit costs ------------------------------------
   console.log("\nLoad times with the worker in place (Slow 4G)");
@@ -277,6 +289,10 @@ try {
   const warm = await timed.evaluate(() => (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming).domInteractive);
   console.log(`  repeat visit /today  interactive ${Math.round(warm)}ms`);
   await ctx.setOffline(true);
+  // The Slow 4G conditions above belong to this CDP session, and they outrank
+  // setOffline for this page: without this the "offline" open still reached
+  // Appwrite and the server. Offline here too, so it is the cache being timed.
+  await cdp.send("Network.emulateNetworkConditions", { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
   await timed.goto(`${BASE}/log`, { waitUntil: "load" });
   const offline = await timed.evaluate(() => (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming).domInteractive);
   console.log(`  offline cold open /log  interactive ${Math.round(offline)}ms`);

@@ -206,6 +206,9 @@ beforeEach(() => {
   // between tests in a file. Without this, one test's rest hides the next
   // test's typeahead -- they share the bottom of the screen.
   localStorage.clear();
+  // The provider that reads the queue in is mocked away, so each test starts
+  // with it read and empty; one that needs a queue hands over its own store.
+  resetQueueForTests();
   // Both resolve by default: clearAllMocks wipes the implementation, and a
   // mock that returns undefined is not a stand-in for one that returns a
   // promise -- the screen awaits both.
@@ -757,6 +760,93 @@ describe("a reload with no signal", () => {
     await user.click(screen.getByRole("button", { name: "Finish" }));
     expect(finish).toHaveBeenCalledWith("s1", { setCount: 1, tonnageKg: 700 });
     resetQueueForTests();
+  });
+});
+
+describe("reopened with no signal, before the queue is read back in", () => {
+  // The e2e:pwa case. The session is remembered on the device and known at
+  // once; the set is only in the queue, which takes a moment to read off disk.
+  // Shown in that moment, the session was empty -- Finish in place, Set 1
+  // nowhere -- and the set popped in a beat later.
+  it("shows the session whole or not at all: never Finish without the queued set", async () => {
+    const store = createMemoryStore();
+    await store.put({
+      id: "op-on-disk",
+      kind: "set.create",
+      payload: {
+        setId: "st-queued",
+        sessionId: "s1",
+        exerciseId: "squat",
+        setIndex: 1,
+        loadKg: 100,
+        reps: 5,
+        rpe: null,
+        isWarmup: false,
+        loggedAt: new Date().toISOString(),
+      },
+      sequence: 0,
+      attempts: 0,
+      nextAttemptAt: 0,
+      ownerId: "joey",
+    });
+    resetQueueForTests(store, { loaded: false });
+    onTestFinished(() => resetQueueForTests());
+    storedSets.fail = 1_000;
+
+    // Every DOM change is checked, not just where the test happens to look:
+    // the bug lived between two renders.
+    const halfShown: string[] = [];
+    const watch = new MutationObserver(() => {
+      const finish = document.querySelector('[aria-label="Finish session"]');
+      const set = document.querySelector('[role="group"][aria-label="Set 1"]');
+      if (finish && !set) halfShown.push(document.body.textContent ?? "");
+    });
+    watch.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+    onTestFinished(() => watch.disconnect());
+
+    setup({ active: session() });
+    await act(async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", { name: "Session" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish session" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing logged yet")).not.toBeInTheDocument();
+
+    // The provider reads the queue in, exactly as on a real reopen.
+    await act(async () => {
+      await attachQueue({ userId: "joey" });
+    });
+
+    expect(screen.getByRole("button", { name: "Finish session" })).toBeInTheDocument();
+    const row = screen.getByRole("group", { name: "Set 1" });
+    expect(row).toHaveTextContent("100");
+    expect(screen.getByLabelText("Queued, will sync")).toBeInTheDocument();
+    await act(async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(halfShown).toEqual([]);
+  });
+
+  it("opens straight onto the queued sets when the queue was already read (from Today)", async () => {
+    const store = createMemoryStore();
+    resetQueueForTests(store);
+    onTestFinished(() => resetQueueForTests());
+    await enqueue("set.create", {
+      setId: "st-queued",
+      sessionId: "s1",
+      exerciseId: "squat",
+      setIndex: 1,
+      loadKg: 100,
+      reps: 5,
+      rpe: null,
+      isWarmup: false,
+      loggedAt: new Date().toISOString(),
+    });
+    storedSets.fail = 1_000;
+
+    setup({ active: session() });
+    // Right after the render, with nothing awaited.
+    expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("100");
   });
 });
 
