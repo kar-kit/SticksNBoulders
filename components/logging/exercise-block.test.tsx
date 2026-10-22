@@ -111,3 +111,78 @@ describe("ExerciseBlock — rows", () => {
     expect(screen.queryByRole("group", { name: "Set 3" })).not.toBeInTheDocument();
   });
 });
+
+describe("ExerciseBlock — swap variant (F5)", () => {
+  it("offers Swap only when the screen has variants to give", async () => {
+    const onSwap = vi.fn();
+    const { rerender } = render(<ExerciseBlock name="Barbell Row" sets={[]} planned={[row("p1")]} />);
+    expect(screen.queryByRole("button", { name: "Swap variant of Barbell Row" })).not.toBeInTheDocument();
+    rerender(<ExerciseBlock name="Barbell Row" sets={[]} planned={[row("p1")]} onSwap={onSwap} />);
+    await userEvent.click(screen.getByRole("button", { name: "Swap variant of Barbell Row" }));
+    expect(onSwap).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers it on a block with nothing logged or planned yet, so the swap can come first", () => {
+    render(<ExerciseBlock name="Cable Front Raise" sets={[]} onSwap={() => {}} />);
+    expect(screen.getByRole("button", { name: "Swap variant of Cable Front Raise" })).toBeInTheDocument();
+  });
+
+  it("says what the coach wrote once the block is on another variant", () => {
+    render(<ExerciseBlock name="Dumbbell Row" sets={[]} planned={[row("p1")]} prescribedAs="Barbell Row" />);
+    expect(screen.getByRole("region", { name: "Dumbbell Row" })).toHaveTextContent("Coach’s pick: Barbell Row");
+  });
+});
+
+describe("ExerciseBlock — rows arriving (F5)", () => {
+  const arrivedIds = () =>
+    [...document.querySelectorAll("[data-arrived]")].map(
+      (el) => el.querySelector('[role="group"]')?.getAttribute("aria-label"),
+    );
+
+  it("does not slide in the rows that were there on first render", () => {
+    render(<ExerciseBlock name="Squat" sets={[]} planned={[row("p1"), row("p2")]} />);
+    expect(arrivedIds()).toEqual([]);
+  });
+
+  it("slides in every row laid out at once when the block opens", () => {
+    const { rerender } = render(<ExerciseBlock name="Squat" sets={[]} planned={[]} />);
+    rerender(
+      <ExerciseBlock
+        name="Squat"
+        sets={[]}
+        planned={[row("w", { isWarmup: true, loadKg: null, reps: null }), row("p1"), row("p2")]}
+      />,
+    );
+    expect(arrivedIds()).toEqual(["Warm-up set", "Set 1", "Set 2"]);
+  });
+
+  it("slides in only the row Add set brought", () => {
+    const { rerender } = render(<ExerciseBlock name="Squat" sets={[]} planned={[row("p1")]} />);
+    rerender(<ExerciseBlock name="Squat" sets={[]} planned={[row("p1"), row("p2")]} />);
+    expect(arrivedIds()).toEqual(["Set 2"]);
+  });
+
+  it("never slides in logged sets read back after a reload", () => {
+    const { rerender } = render(<ExerciseBlock name="Squat" sets={[]} />);
+    rerender(<ExerciseBlock name="Squat" sets={[logged("a"), logged("b")]} />);
+    expect(arrivedIds()).toEqual([]);
+  });
+});
+
+describe("ExerciseBlock — the coach's video ask (F5)", () => {
+  it("badges the planned rows the coach wants filmed, and the logged one still waiting for its clip", () => {
+    render(
+      <ExerciseBlock
+        name="Squat"
+        sets={[logged("a", { videoRequired: true }), logged("b", { videoRequired: true, hasVideo: true })]}
+        planned={[row("p1", { videoRequired: true }), row("p2")]}
+      />,
+    );
+    expect(screen.getByRole("img", { name: "Set 1: your coach asked for a video, not filmed yet" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Set 2: video attached" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Set 3: your coach asked for a video" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Set 4/ })).not.toBeInTheDocument();
+    // A badge, not a gate: the head row can still be logged.
+    expect(screen.getByRole("button", { name: "Log Set 3" })).toBeEnabled();
+  });
+});

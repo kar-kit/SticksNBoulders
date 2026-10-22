@@ -139,12 +139,13 @@ describe("SetRow — active row", () => {
   });
 });
 
-describe("SetRow — video required", () => {
+describe("SetRow — video required, on a row that can film (the blueprint's gate)", () => {
   const required = set({ videoRequired: true, rpe: null });
+  const film = () => {};
 
   it("blocks completion until a clip exists", async () => {
     const onConfirm = vi.fn();
-    render(<SetRow index={5} set={required} state="active" onConfirm={onConfirm} />);
+    render(<SetRow index={5} set={required} state="active" onConfirm={onConfirm} onFilm={film} />);
     const confirm = screen.getByRole("button", { name: "Log Set 5" });
     expect(confirm).toBeDisabled();
     await userEvent.click(confirm);
@@ -152,7 +153,7 @@ describe("SetRow — video required", () => {
   });
 
   it("puts the camera in the RPE cell and says why", () => {
-    render(<SetRow index={5} set={required} state="active" />);
+    render(<SetRow index={5} set={required} state="active" onFilm={film} />);
     expect(
       screen.getByRole("button", { name: /Film Set 5 — video required/ }),
     ).toBeInTheDocument();
@@ -178,6 +179,61 @@ describe("SetRow — video required", () => {
     render(<SetRow index={5} set={required} state="active" onFilm={onFilm} />);
     await userEvent.click(screen.getByRole("button", { name: /Film Set 5/ }));
     expect(onFilm).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SetRow — the coach's video ask as a badge (F5, Order 30)", () => {
+  const badge = () => document.querySelector("[data-video-badge]");
+
+  it("badges a planned row before it is logged, and never blocks the confirm", async () => {
+    const onConfirm = vi.fn();
+    render(<SetRow index={1} set={set({ videoRequired: true })} state="active" onConfirm={onConfirm} />);
+    expect(screen.getByRole("img", { name: "Set 1: your coach asked for a video" })).toBeInTheDocument();
+    expect(badge()).toHaveAttribute("data-video-badge", "requested");
+    // RPE stays an RPE cell; the camera does not take it without a way to film.
+    expect(screen.getByRole("button", { name: "Set 1 RPE" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Log Set 1" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("badges a row waiting behind the active one too", () => {
+    render(<SetRow index={2} set={set({ videoRequired: true })} state="planned" />);
+    expect(screen.getByRole("img", { name: "Set 2: your coach asked for a video" })).toBeInTheDocument();
+  });
+
+  it("keeps asking on a logged set until a clip is attached", () => {
+    render(<SetRow index={1} set={set({ videoRequired: true })} state="logged" />);
+    expect(screen.getByRole("img", { name: "Set 1: your coach asked for a video, not filmed yet" })).toBeInTheDocument();
+    expect(badge()).toHaveAttribute("data-video-badge", "missing");
+  });
+
+  it("goes quiet once the logged set has its clip", () => {
+    render(<SetRow index={1} set={set({ videoRequired: true, hasVideo: true })} state="logged" />);
+    expect(screen.getByRole("img", { name: "Set 1: video attached" })).toBeInTheDocument();
+    expect(badge()).toHaveAttribute("data-video-badge", "filmed");
+  });
+
+  it("shows no badge on a set nobody asked to see", () => {
+    render(<SetRow index={1} set={set()} state="active" />);
+    expect(badge()).toBeNull();
+  });
+
+  it("hands the badge over to the camera cell where the row can film", () => {
+    render(<SetRow index={1} set={set({ videoRequired: true, rpe: null })} state="active" onFilm={() => {}} />);
+    expect(badge()).toBeNull();
+    expect(screen.getByRole("button", { name: /Film Set 1/ })).toBeInTheDocument();
+  });
+});
+
+describe("SetRow — arriving", () => {
+  it("slides in on the row-in token when it has just been added", () => {
+    const { container } = render(<SetRow index={2} set={set()} state="planned" arrived />);
+    expect(container.firstElementChild!.className).toContain("motion-safe:animate-row-in");
+  });
+
+  it("does not when it was already there", () => {
+    const { container } = render(<SetRow index={2} set={set()} state="planned" />);
+    expect(container.firstElementChild!.className).not.toContain("animate-row-in");
   });
 });
 

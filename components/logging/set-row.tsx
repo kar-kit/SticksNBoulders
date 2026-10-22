@@ -17,10 +17,14 @@ import { loadIn, loadLabel, unitName, type UnitPreference } from "@/lib/units";
  * Everything else in the product can be mediocre and it survives; this cannot.
  *
  * The fifth column is the confirm target, never the camera. Video attaches from
- * one camera button per exercise and lands on the most recently logged set of
- * that exercise -- decided 13 Sep 2026, see the Set Row blueprint. The only
- * time a camera appears inside the row is the video-required state, where it
- * takes the RPE cell until a clip exists or Skip is tapped.
+ * one camera button per exercise -- decided 13 Sep 2026, see the Set Row
+ * blueprint. A set the coach wants filmed (`set.videoRequired`) wears a small
+ * camera badge: before it is logged, so the athlete knows to set the phone
+ * up, and after, until a clip is attached. The badge never blocks the
+ * confirm (Order 30: a nudge, never a gate). The blueprint's original gate --
+ * the camera taking the RPE cell until a clip exists or Skip is tapped --
+ * only applies to a row that can film before it is logged (`onFilm`), which
+ * the logger does not offer: a clip needs a logged set to land on.
  *
  * Confirm is 56px, larger than its 48px neighbours, because it is the one
  * target that must be hit first time without looking.
@@ -56,7 +60,18 @@ export interface SetRowProps {
   onPressReps?: () => void;
   onPressRpe?: () => void;
   onConfirm?: () => void;
+  /**
+   * Films the set before it is logged. Supplying it turns the coach's video
+   * ask into the blueprint's gate (camera in the RPE cell, confirm blocked
+   * until a clip or a skip). Without it the ask is only a badge.
+   */
   onFilm?: () => void;
+  /**
+   * The row has just been added to the list (planned rows laid out, Add
+   * set): it slides in on `animate-row-in`. Rows present when the screen
+   * opened do not.
+   */
+  arrived?: boolean;
   /** Explains a non-athlete-entered load: "suggested from RPE 7 @ 142.5". */
   note?: string | null;
   /**
@@ -117,6 +132,7 @@ export function SetRow({
   deleteBlocked = null,
   onToggleWarmup,
   unit = "kg",
+  arrived = false,
 }: SetRowProps) {
   const planned = state === "planned";
   const active = state === "active";
@@ -130,13 +146,17 @@ export function SetRow({
   // Replays the label's pop on every flip, and never on first render.
   const flipped = useChanged(warmup);
   const uploading = typeof uploadPercent === "number";
-  const blocker = completionBlocker(set);
-  const confirmable = canComplete(set);
+  // The coach's ask gates the confirm only where the row itself can film.
+  const gated = !editing || Boolean(onFilm);
+  const checked = gated ? set : { ...set, videoRequired: false };
+  const blocker = completionBlocker(checked);
+  const confirmable = canComplete(checked);
   const showCameraInRpeCell = active && blocker === "video-required";
   const selectable = state === "logged" && Boolean(onSelect);
 
   const size = warmup ? "warmup" : editing ? "active" : "logged";
   const setLabel = index === "W" ? "Warm-up set" : `Set ${index}`;
+  const videoBadge = set.videoRequired && !showCameraInRpeCell ? videoBadgeOf(set, editing, setLabel) : null;
 
   const label = (
     <span
@@ -156,7 +176,12 @@ export function SetRow({
     <div
       ref={outer}
       inert={swipe.leaving || undefined}
-      className={cn("flex flex-col", swipe.leaving && "pointer-events-none motion-safe:animate-fade-out")}
+      data-arrived={arrived || undefined}
+      className={cn(
+        "flex flex-col",
+        arrived && !swipe.leaving && "motion-safe:animate-row-in",
+        swipe.leaving && "pointer-events-none motion-safe:animate-fade-out",
+      )}
     >
       {/*
         The swipe's reveal: a red Delete behind the row, uncovered as the row
@@ -306,6 +331,24 @@ export function SetRow({
             </span>
           )}
 
+          {videoBadge ? (
+            // Pinned to the row's top-right corner, over the border, so it
+            // takes no column from the cells and moves with a swipe.
+            <span
+              role="img"
+              aria-label={videoBadge.label}
+              data-video-badge={videoBadge.kind}
+              className={cn(
+                "pointer-events-none absolute -top-2 right-2 flex h-4 items-center rounded-full border px-1",
+                videoBadge.kind === "filmed"
+                  ? "border-border bg-surface text-muted-2"
+                  : "border-accent-line bg-surface text-accent-line",
+              )}
+            >
+              <CameraIcon width={11} height={11} />
+            </span>
+          ) : null}
+
           {editing && onDiscard ? (
             // The non-gesture path for a row not logged yet. Out of sight and
             // out of a thumb's way, the way the × it replaces was not; a
@@ -359,6 +402,17 @@ export function SetRow({
       ) : null}
     </div>
   );
+}
+
+/** What the camera badge on a flagged row says, and how loudly. */
+function videoBadgeOf(
+  set: LoggableSet,
+  editing: boolean,
+  setLabel: string,
+): { kind: "requested" | "missing" | "filmed"; label: string } {
+  if (editing) return { kind: "requested", label: `${setLabel}: your coach asked for a video` };
+  if (set.hasVideo) return { kind: "filmed", label: `${setLabel}: video attached` };
+  return { kind: "missing", label: `${setLabel}: your coach asked for a video, not filmed yet` };
 }
 
 function activateOnKey(event: KeyboardEvent, action?: () => void) {

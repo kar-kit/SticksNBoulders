@@ -409,3 +409,21 @@ tap during the slide reach the live page.
   tab, including edge-swipe back and whether Safari reports
   `hasUAVisualTransition`) and on Android Chrome with predictive back.
   Headless Chromium only, see the PR.
+
+## Prescribed rows, swap and the rest in the sheet (F5)
+
+- **Rows laid out at once.** Opening a prescribed exercise lays out every set
+  still to do (blank warm-ups ahead of each line's first working set, then
+  the working sets priced to the coach's lines). `ExerciseBlock` runs
+  `useArrivals` over its planned row ids and `SetRow` takes `arrived`, so
+  those rows (and any Add set row) come in on `motion-safe:animate-row-in`.
+  Logged sets read back after a reload never animate.
+- **Video ask.** A flagged row wears a small camera badge (top-right, over
+  the border, moves with a swipe). No motion, no gate.
+- **Swap variant** opens `VariantSheet` in the LogSheet. It takes its turn in
+  the `bottom` arbiter after pad and RPE, before the finish confirm. The pick
+  buzzes `light`.
+- **The rest bar** now rides in the LogSheet too (`RestBar inSheet`) when it
+  wins `bottom`, so it is in view after logging on a long prescribed day.
+  Swapping between pad, RPE, swap and rest swaps content without
+  re-animating; the sheet only animates when it opens or closes.

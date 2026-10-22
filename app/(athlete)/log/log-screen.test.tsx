@@ -33,9 +33,12 @@ vi.mock("@/lib/exercises/library-context", () => ({
 const resolveOrCreateExercise = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/exercises/library", () => ({ resolveOrCreateExercise }));
 
-const storedSets = vi.hoisted(() => ({ value: [] as unknown[], fail: 0 }));
+// `hold` keeps the read on the wire until the test lets it go, so the order
+// of "screen renders" and "sets arrive" is the test's, not the scheduler's.
+const storedSets = vi.hoisted(() => ({ value: [] as unknown[], fail: 0, hold: null as Promise<void> | null }));
 vi.mock("@/lib/logging/session-store", () => ({
   fetchSessionSets: async () => {
+    if (storedSets.hold) await storedSets.hold;
     if (storedSets.fail > 0) {
       storedSets.fail -= 1;
       throw new TypeError("Failed to fetch");
@@ -193,6 +196,7 @@ beforeEach(() => {
   library.exercises = [squat];
   storedSets.value = [];
   storedSets.fail = 0;
+  storedSets.hold = null;
   comments.value = [];
   clientIds = 0;
   prescribed.value = null;
@@ -1208,21 +1212,25 @@ describe("a session started from a prescribed day (Order 22)", () => {
     });
   });
 
-  it("adds no row after a prescribed set, and Add set brings the next one with its target", async () => {
-    // Prescribed rows are not laid out up front either: the athlete asks for
-    // each one, and it arrives priced to the coach's line.
+  it("lays out every prescribed set at once, so Set 2 is waiting with its target (F5)", async () => {
     const { user } = setup({ active: session({ programDayId: "d1" }) });
     await screen.findByRole("group", { name: "Set 1" });
+    const squatBlock = screen.getByRole("region", { name: "Squat" });
+    expect(within(squatBlock).getByRole("group", { name: "Set 2" })).toHaveTextContent("150");
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
     await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
-    const squatBlock = screen.getByRole("region", { name: "Squat" });
-    expect(within(squatBlock).queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
-    expect(within(squatBlock).getByRole("group", { name: "Set 2" })).toHaveTextContent("150");
+    // Nothing new is invented on the confirm: Set 2 was already there.
+    expect(within(squatBlock).getAllByRole("group").map((g) => g.getAttribute("aria-label"))).toEqual(["Set 1", "Set 2"]);
     await user.click(screen.getByRole("button", { name: "Log Set 2" }));
     await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
     expect(logSet.mock.calls[1][0]).toMatchObject({ loadKg: 150, reps: 5, prescriptionId: "sq", setIndex: 2 });
+
+    // An extra set beyond the prescription is still one Add set away, and answers no line.
+    await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
+    expect(within(squatBlock).getByRole("group", { name: "Set 3" })).toHaveTextContent("150");
+    await user.click(screen.getByRole("button", { name: "Log Set 3" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(3));
+    expect(logSet.mock.calls[2][0]).not.toHaveProperty("prescriptionId");
   });
 
   it("queues a warm-up without the coach's line, and the working set after it with it", async () => {
@@ -2068,7 +2076,9 @@ describe("the keypad sheet", () => {
     await user.click(screen.getByRole("button", { name: "5" }));
     await user.click(screen.getByRole("button", { name: "Log Set 1" }));
     expect(await screen.findByRole("timer", { name: "Rest timer" })).toBeInTheDocument();
-    expect(sheet()).toBeNull();
+    // The rest now rides in the same sheet (F5), in place of the pad.
+    expect(sheet()).toContainElement(screen.getByRole("timer", { name: "Rest timer" }));
+    expect(screen.queryByRole("region", { name: /keypad/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Add a set to Squat" }));
     await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
@@ -2287,5 +2297,586 @@ describe("the set number flips warm-up (Set Row, F2)", () => {
     unmount();
     setup({ active: session() });
     expect(await screen.findByRole("group", { name: "Warm-up set" })).toHaveTextContent("60");
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+describe("following a coach's program (F5)", () => {
+  const barbellRow: Exercise = { id: "bb-row", name: "Barbell Row", normalisedName: "barbell row", isGlobal: true };
+  const dumbbellRow: Exercise = { id: "db-row", name: "Dumbbell Row", normalisedName: "dumbbell row", isGlobal: true };
+  const cableRaise: Exercise = { id: "c-raise", name: "Cable Front Raise", normalisedName: "cable front raise", isGlobal: true };
+  const plateRaise: Exercise = { id: "p-raise", name: "Plate Front Raise", normalisedName: "plate front raise", isGlobal: true };
+
+  const line = (over: Record<string, unknown>) => ({
+    programId: "p1",
+    weekId: "w1",
+    dayId: "d1",
+    repMax: null,
+    restSeconds: null,
+    notes: null,
+    loadKind: null,
+    updatedAt: "2026-10-01T00:00:00Z",
+    ...over,
+  });
+
+  beforeEach(() => {
+    library.exercises = [squat, barbellRow, dumbbellRow, cableRaise, plateRaise];
+    prescribed.value = {
+      status: "ready",
+      day: {
+        program: { id: "p1" },
+        week: { id: "w1" },
+        day: { id: "d1", label: "Day 1", notes: null },
+        prescriptions: [
+          line({
+            id: "sq", exerciseId: "squat", position: 0, setCount: 2, reps: 5, load: "75%",
+            warmupSets: 2, pauseSeconds: 2, videoRequired: true,
+          }),
+          line({ id: "row", exerciseId: "bb-row", position: 1, setCount: 3, reps: 8, load: "60" }),
+        ],
+      },
+      maxes: {
+        entries: [
+          { id: "m1", exerciseId: "squat", kind: "training", valueKg: 200, effectiveFrom: "2026-01-01T00:00:00Z", recordedBy: "coach" },
+        ],
+        estimated: new Map(),
+      },
+    };
+  });
+
+  const rowsIn = (block: HTMLElement) => within(block).queryAllByRole("group").map((g) => g.getAttribute("aria-label"));
+  const squatBlock = () => screen.getByRole("region", { name: "Squat" });
+  const dropWarmups = async (user: ReturnType<typeof userEvent.setup>) => {
+    for (const remove of screen.getAllByRole("button", { name: "Remove planned Warm-up set" })) await user.click(remove);
+  };
+  const reload = (unmount: () => void) => {
+    unmount();
+    return setup({ active: session({ programDayId: "d1" }) });
+  };
+
+  describe("laying out the prescribed sets", () => {
+    it("lays out the warm-ups blank, then every working set priced to the coach's line", async () => {
+      setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
+      const [w1, w2] = within(squatBlock()).getAllByRole("group", { name: "Warm-up set" });
+      for (const warmup of [w1, w2]) {
+        expect(within(warmup).getByRole("button", { name: "Warm-up set weight in kilograms" })).toHaveTextContent("KG");
+        expect(within(warmup).getByRole("button", { name: "Warm-up set reps" })).toHaveTextContent("REPS");
+      }
+      expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("150");
+      expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("150");
+    });
+
+    it("slides the laid-out rows in on the row-in token", async () => {
+      setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      const arrived = squatBlock().querySelectorAll("[data-arrived]");
+      expect(arrived).toHaveLength(4);
+      for (const el of arrived) expect(el.className).toContain("motion-safe:animate-row-in");
+    });
+
+    it("lays out the next exercise's sets only when it is opened, and keeps the first's", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      const rowBlock = screen.getByRole("region", { name: "Barbell Row" });
+      expect(rowsIn(rowBlock)).toEqual([]);
+      await user.click(within(rowBlock).getByRole("button", { name: "Barbell Row" }));
+      expect(rowsIn(rowBlock)).toEqual(["Set 1", "Set 2", "Set 3"]);
+      expect(within(rowBlock).getByRole("group", { name: "Set 3" })).toHaveTextContent("60");
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
+    });
+
+    it("logs warm-ups with no line and working sets with the line and its pause, in order", async () => {
+      const store = useRealQueue();
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      // First warm-up: the athlete's own ramp.
+      await user.click(within(squatBlock()).getAllByRole("button", { name: "Warm-up set weight in kilograms" })[0]);
+      for (const key of ["6", "0"]) await user.click(screen.getByRole("button", { name: key }));
+      await user.click(screen.getByRole("button", { name: "Reps" }));
+      await user.click(screen.getByRole("button", { name: "5" }));
+      await user.click(within(squatBlock()).getAllByRole("button", { name: "Log Warm-up set" })[0]);
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(1));
+      // The second warm-up is skipped; the working sets are already priced.
+      await dropWarmups(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
+
+      const [warmup, working] = await setCreates(store);
+      expect(warmup).toMatchObject({ exerciseId: "squat", isWarmup: true, loadKg: 60, reps: 5, setIndex: 1 });
+      expect(warmup).not.toHaveProperty("prescriptionId");
+      expect(working).toMatchObject({
+        exerciseId: "squat",
+        isWarmup: false,
+        loadKg: 150,
+        reps: 5,
+        setIndex: 2,
+        prescriptionId: "sq",
+        prescribed: "5 reps · 2s pause · 150 kg (75%)",
+      });
+    });
+
+    it("keeps numbering and the next target right as the laid-out rows are logged", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await dropWarmups(user);
+      expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent("Next: Set 1 of 2");
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent("Next: Set 2 of 2");
+      expect(rowsIn(squatBlock())).toEqual(["Set 1", "Set 2"]);
+      expect(screen.getByRole("button", { name: "Log Set 2" })).toBeEnabled();
+    });
+
+    it("still removes a laid-out row with a swipe", async () => {
+      setup({ active: session({ programDayId: "d1" }) });
+      const second = await screen.findByRole("group", { name: "Set 2" });
+      fireEvent.pointerDown(second, { clientX: 300, clientY: 10 });
+      fireEvent.pointerMove(second, { clientX: 150, clientY: 10 });
+      fireEvent.pointerUp(second);
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1"]);
+    });
+
+    it("shows the pause and the warm-ups in the coach's line above the rows", async () => {
+      setup({ active: session({ programDayId: "d1" }) });
+      const list = await screen.findByRole("list", { name: "Squat prescribed" });
+      expect(list).toHaveTextContent("2 × 5 · 2s pause · 150 kg (75%) · +2 warm-up · video requested");
+    });
+  });
+
+  describe("rows laid out ahead of the sets they follow", () => {
+    const rpeDay = (extra: Record<string, unknown> = {}) => {
+      prescribed.value = {
+        ...(prescribed.value as Record<string, unknown>),
+        day: {
+          program: { id: "p1" },
+          week: { id: "w1" },
+          day: { id: "d1", label: "Day 1", notes: null },
+          prescriptions: [line({ id: "top", exerciseId: "squat", position: 0, setCount: 2, reps: 3, load: "@8", ...extra })],
+        },
+      };
+    };
+    const logTop = async (user: ReturnType<typeof userEvent.setup>, kg: string) => {
+      await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+      for (const key of [...kg]) await user.click(screen.getByRole("button", { name: key }));
+      await user.click(screen.getByRole("button", { name: "Reps" }));
+      await user.click(screen.getByRole("button", { name: "RPE" }));
+      await user.click(screen.getByRole("button", { name: "8" }));
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    };
+
+    it("repeats an RPE line's first set into the untouched second, so a straight set is one tap", async () => {
+      rpeDay();
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      expect(await screen.findByRole("group", { name: "Set 2" })).toHaveTextContent("KG");
+      await logTop(user, "180");
+      expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("180");
+      expect(screen.getByRole("button", { name: "Log Set 2" })).toBeEnabled();
+    });
+
+    it("prices a backoff laid out before its top set once the top set is logged", async () => {
+      rpeDay({ setCount: 1, backoff: "2 x 90%" });
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 3" });
+      await logTop(user, "180");
+      // 90% of 180, floored to the plates: 160.
+      expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("160");
+      expect(screen.getByRole("group", { name: "Set 3" })).toHaveTextContent("160");
+      expect(screen.getAllByText("backoff from top set 180 × 3")).toHaveLength(2);
+    });
+
+    it("leaves a row the athlete has typed into alone", async () => {
+      rpeDay();
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 2" });
+      await user.click(screen.getByRole("button", { name: "Set 2 weight in kilograms" }));
+      for (const key of ["1", "7", "5"]) await user.click(screen.getByRole("button", { name: key }));
+      await logTop(user, "180");
+      expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("175");
+    });
+  });
+
+  describe("after a reload", () => {
+    it("lays out only what is left: no warm-ups for a line under way, and the right next set", async () => {
+      storedSets.value = [
+        logged("w", 60, 12, { isWarmup: true, setIndex: 1 }),
+        logged("a", 150, 10, { setIndex: 2, prescriptionId: "sq" }),
+      ];
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      // A reload opens nothing by itself: the first tap on the name lays it out.
+      expect(within(squatBlock()).queryByRole("button", { name: /^Log/ })).not.toBeInTheDocument();
+      await user.click(within(squatBlock()).getByRole("button", { name: "Squat" }));
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Set 1", "Set 2"]);
+      expect(screen.getByRole("button", { name: "Log Set 2" })).toBeInTheDocument();
+      expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent("Next: Set 2 of 2");
+    });
+
+    it("owes only the warm-ups not logged yet when no working set has been", async () => {
+      storedSets.value = [logged("w", 60, 12, { isWarmup: true, setIndex: 1 })];
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Warm-up set" });
+      await user.click(within(squatBlock()).getByRole("button", { name: "Squat" }));
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
+      expect(within(squatBlock()).getAllByRole("button", { name: /^Log/ })).toHaveLength(1);
+    });
+
+    it("picks up from the queue with no signal, and the next set lands once with the right index", async () => {
+      const store = useRealQueue();
+      const first = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await dropWarmups(first.user);
+      await first.user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(1));
+
+      // Reloaded in the basement: Appwrite cannot be read, the queue is all there is.
+      storedSets.fail = 1_000;
+      const { user } = reload(first.unmount);
+      await waitFor(() => expect(within(squatBlock()).getAllByRole("group")).toHaveLength(1));
+      expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent("Next: Set 2 of 2");
+      await user.click(within(squatBlock()).getByRole("button", { name: "Squat" }));
+      expect(rowsIn(squatBlock())).toEqual(["Set 1", "Set 2"]);
+      await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+      await waitFor(async () => expect(await setCreates(store)).toHaveLength(2));
+      const creates = await setCreates(store);
+      expect(creates[1]).toMatchObject({ setIndex: 2, loadKg: 150, prescriptionId: "sq" });
+      expect(new Set(creates.map((c) => c.setId)).size).toBe(2);
+    });
+  });
+
+  describe("waiting for the session's sets before laying anything out", () => {
+    const holdRead = () => {
+      let release!: () => void;
+      storedSets.hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return async () => {
+        await act(async () => {
+          release();
+          await storedSets.hold;
+        });
+      };
+    };
+    const settle = () =>
+      act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+
+    it("lays out nothing on a resumed session while its sets are still loading, and nothing stale after", async () => {
+      storedSets.value = [
+        logged("w", 60, 12, { isWarmup: true, setIndex: 1 }),
+        logged("a", 150, 10, { setIndex: 2, prescriptionId: "sq" }),
+      ];
+      const release = holdRead();
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await settle();
+      // The read is still out: the block is listed, but no row is laid out.
+      expect(rowsIn(squatBlock())).toEqual([]);
+      expect(screen.queryByRole("button", { name: /^Log / })).not.toBeInTheDocument();
+
+      await release();
+      await screen.findByRole("group", { name: "Set 1" });
+      await settle();
+      // Only what was logged: no warm-up rows for a line under way, ever.
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Set 1"]);
+      expect(screen.queryByRole("button", { name: /^Log / })).not.toBeInTheDocument();
+      await user.click(within(squatBlock()).getByRole("button", { name: "Squat" }));
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Set 1", "Set 2"]);
+    });
+
+    it("opens a fresh prescribed session as soon as the slow read comes back empty", async () => {
+      const release = holdRead();
+      setup({ active: session({ programDayId: "d1" }) });
+      await settle();
+      expect(rowsIn(squatBlock())).toEqual([]);
+      await release();
+      expect(await screen.findByRole("button", { name: "Log Warm-up set" })).toBeInTheDocument();
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
+    });
+
+    it("opens at once when the session's own create is still queued, without waiting on a hung read", async () => {
+      useRealQueue();
+      await act(async () => {
+        await enqueue("session.create", { sessionId: "s1", startedAt: new Date().toISOString(), programDayId: "d1" });
+      });
+      holdRead(); // never released: gym wifi that routes nowhere
+      setup({ active: session({ programDayId: "d1" }) });
+      expect(await screen.findByRole("group", { name: "Set 1" })).toBeInTheDocument();
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
+    });
+
+    it("trusts the queue when the read fails: queued sets mean resumed, so nothing opens", async () => {
+      const store = useRealQueue();
+      await act(async () => {
+        await realSetStore.value.logSet({
+          sessionId: "s1", exerciseId: "squat", setIndex: 1, loadKg: 150, reps: 5, rpe: null,
+          isWarmup: false, clientSetId: "q1", prescriptionId: "sq", prescribed: "5 reps · 2s pause · 150 kg (75%)",
+        });
+      });
+      expect((await store.all()).length).toBeGreaterThan(0);
+      storedSets.fail = 1_000;
+      setup({ active: session({ programDayId: "d1" }) });
+      expect(await screen.findByRole("group", { name: "Set 1" })).toBeInTheDocument();
+      await settle();
+      expect(rowsIn(squatBlock())).toEqual(["Set 1"]);
+      expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent("Next: Set 2 of 2");
+    });
+
+    it("opens a fresh session whose read fails with nothing queued", async () => {
+      storedSets.fail = 1_000;
+      setup({ active: session({ programDayId: "d1" }) });
+      expect(await screen.findByRole("group", { name: "Set 1" })).toBeInTheDocument();
+      expect(rowsIn(squatBlock())).toEqual(["Warm-up set", "Warm-up set", "Set 1", "Set 2"]);
+    });
+  });
+
+  describe("the coach's video ask", () => {
+    it("badges the planned working sets of the flagged line before they are logged, not the warm-ups", async () => {
+      setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      expect(screen.getByRole("img", { name: "Set 1: your coach asked for a video" })).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "Set 2: your coach asked for a video" })).toBeInTheDocument();
+      expect(within(squatBlock()).getAllByRole("img", { name: /asked for a video/ })).toHaveLength(2);
+      expect(screen.getByRole("list", { name: "Squat prescribed" })).toHaveTextContent(
+        "Next: Set 1 of 2 · 5 reps · 2s pause · 150 kg (75%) · film this set",
+      );
+    });
+
+    it("never blocks the confirm: a flagged set logs with one tap", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await dropWarmups(user);
+      expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    });
+
+    it("keeps asking on the logged set, and the camera prompts once the line is done", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await dropWarmups(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+      expect(screen.getByRole("img", { name: "Set 1: your coach asked for a video, not filmed yet" })).toBeInTheDocument();
+      // Still sets to do: the camera stands out but does not interrupt.
+      expect(within(squatBlock()).getByRole("button", { name: "Add video" })).toHaveAttribute("data-video-ask", "emphasise");
+
+      await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+      expect(within(squatBlock()).getByText("Your coach asked for a clip of this one.")).toBeInTheDocument();
+      expect(within(squatBlock()).getAllByRole("img", { name: /not filmed yet/ })).toHaveLength(2);
+    });
+
+    it("reads a clip already on a logged set as answered after a reload", async () => {
+      storedSets.value = [
+        logged("a", 150, 10, { setIndex: 1, prescriptionId: "sq", hasVideo: true }),
+        logged("b", 150, 5, { setIndex: 2, prescriptionId: "sq" }),
+      ];
+      setup({ active: session({ programDayId: "d1" }) });
+      expect(await screen.findByRole("img", { name: "Set 1: video attached" })).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "Set 2: your coach asked for a video, not filmed yet" })).toBeInTheDocument();
+      expect(screen.queryByText("Your coach asked for a clip of this one.")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("swapping the variant", () => {
+    const rowBlock = (name = "Barbell Row") => screen.getByRole("region", { name });
+    const openRows = async (user: ReturnType<typeof userEvent.setup>) => {
+      await screen.findByRole("group", { name: "Set 1" });
+      await user.click(within(rowBlock()).getByRole("button", { name: "Barbell Row" }));
+    };
+    const swapTo = async (user: ReturnType<typeof userEvent.setup>, from: string, to: string) => {
+      await user.click(screen.getByRole("button", { name: `Swap variant of ${from}` }));
+      const sheet = screen.getByRole("region", { name: `Swap variant of ${from}` });
+      await user.click(within(sheet).getByRole("button", { name: new RegExp(`^${to}`) }));
+    };
+
+    it("is offered only where the library holds a sibling", async () => {
+      setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      expect(screen.getByRole("button", { name: "Swap variant of Barbell Row" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Swap variant of Squat" })).not.toBeInTheDocument();
+    });
+
+    it("opens in the bottom sheet with the coach's pick first and labelled", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await user.click(screen.getByRole("button", { name: "Swap variant of Barbell Row" }));
+      const sheet = document.querySelector("[data-log-sheet]")!;
+      const picker = within(sheet as HTMLElement).getByRole("region", { name: "Swap variant of Barbell Row" });
+      const [coach, other] = within(picker).getAllByRole("button");
+      expect(coach).toHaveTextContent("Barbell RowCoach’s pick");
+      expect(coach).toHaveAttribute("aria-pressed", "true");
+      expect(other).toHaveTextContent("Dumbbell Row");
+      await user.click(within(picker).getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("region", { name: "Swap variant of Barbell Row" })).not.toBeInTheDocument();
+    });
+
+    it("moves the unlogged rows to the variant, drops the barbell load and keeps the line", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await openRows(user);
+      await swapTo(user, "Barbell Row", "Dumbbell Row");
+
+      const block = rowBlock("Dumbbell Row");
+      expect(block).toHaveTextContent("Coach’s pick: Barbell Row");
+      expect(screen.queryByRole("region", { name: "Barbell Row" })).not.toBeInTheDocument();
+      expect(rowsIn(block)).toEqual(["Set 1", "Set 2", "Set 3"]);
+      const first = within(block).getByRole("group", { name: "Set 1" });
+      expect(within(first).getByRole("button", { name: "Set 1 weight in kilograms" })).toHaveTextContent("KG");
+      expect(within(first).getByRole("button", { name: "Set 1 reps" })).toHaveTextContent("8");
+      // The coach's line is unchanged above the rows.
+      expect(within(block).getByRole("list", { name: "Dumbbell Row prescribed" })).toHaveTextContent("3 × 8 · 60 kg");
+
+      await user.click(within(first).getByRole("button", { name: "Set 1 weight in kilograms" }));
+      for (const key of ["2", "5"]) await user.click(screen.getByRole("button", { name: key }));
+      await user.click(screen.getByRole("button", { name: "Done" }));
+      await user.click(within(block).getByRole("button", { name: "Log Set 1" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+      expect(logSet.mock.calls[0][0]).toMatchObject({
+        exerciseId: "db-row",
+        loadKg: 25,
+        reps: 8,
+        setIndex: 1,
+        prescriptionId: "row",
+        prescribed: "8 reps · 60 kg · prescribed Barbell Row",
+      });
+      // Counted against the line: the next row repeats the dumbbell set, and is set 2 of 3.
+      expect(within(block).getByRole("list", { name: "Dumbbell Row prescribed" })).toHaveTextContent("Next: Set 2 of 3");
+      expect(within(block).getByRole("group", { name: "Set 2" })).toHaveTextContent("25");
+    });
+
+    it("never rewrites a set already logged, and swapping back restores the coach's load", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await openRows(user);
+      await user.click(within(rowBlock()).getByRole("button", { name: "Log Set 1" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+      expect(logSet.mock.calls[0][0]).toMatchObject({ exerciseId: "bb-row", loadKg: 60 });
+
+      await swapTo(user, "Barbell Row", "Dumbbell Row");
+      const block = rowBlock("Dumbbell Row");
+      // The logged barbell set stays in the block, as logged; two dumbbell rows follow it.
+      expect(rowsIn(block)).toEqual(["Set 1", "Set 2", "Set 3"]);
+      expect(within(block).getByRole("group", { name: "Set 1" })).toHaveTextContent("60");
+      expect(within(block).getByLabelText("Logged")).toBeInTheDocument();
+      expect(within(block).getByRole("button", { name: "Set 2 weight in kilograms" })).toHaveTextContent("KG");
+
+      await swapTo(user, "Dumbbell Row", "Barbell Row");
+      expect(within(rowBlock()).getByRole("button", { name: "Set 2 weight in kilograms" })).toHaveTextContent("60");
+      expect(rowBlock()).not.toHaveTextContent("Coach’s pick");
+    });
+
+    it("swaps a block before anything is laid out, and lays the rest out on the variant", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await swapTo(user, "Barbell Row", "Dumbbell Row");
+      expect(rowsIn(rowBlock("Dumbbell Row"))).toEqual(["Set 1", "Set 2", "Set 3"]);
+    });
+
+    it("keeps the swap after a reload, from the set's own prescription link", async () => {
+      storedSets.value = [
+        { ...logged("d1", 25, 5, { setIndex: 1, prescriptionId: "row" }), exerciseId: "db-row", reps: 8 },
+      ];
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      const block = await screen.findByRole("region", { name: "Dumbbell Row" });
+      expect(block).toHaveTextContent("Coach’s pick: Barbell Row");
+      expect(screen.getAllByRole("region").map((r) => r.getAttribute("aria-label"))).toEqual(["Squat", "Dumbbell Row"]);
+      expect(within(block).getByRole("list", { name: "Dumbbell Row prescribed" })).toHaveTextContent("Next: Set 2 of 3");
+      await user.click(within(block).getByRole("button", { name: "Dumbbell Row" }));
+      expect(rowsIn(block)).toEqual(["Set 1", "Set 2", "Set 3"]);
+      expect(within(block).getByRole("group", { name: "Set 2" })).toHaveTextContent("25");
+    });
+
+    it("works on a free block too", async () => {
+      prescribed.value = null;
+      const { user } = setup({ active: session() });
+      await user.type(screen.getByRole("combobox"), "cable front");
+      await user.click(screen.getByRole("option", { name: "Cable Front Raise" }));
+      await swapTo(user, "Cable Front Raise", "Plate Front Raise");
+      const block = screen.getByRole("region", { name: "Plate Front Raise" });
+      expect(block).not.toHaveTextContent("Coach’s pick");
+      await user.click(within(block).getByRole("button", { name: "Set 1 weight in kilograms" }));
+      for (const key of ["1", "0"]) await user.click(screen.getByRole("button", { name: key }));
+      await user.click(screen.getByRole("button", { name: "Reps" }));
+      for (const key of ["1", "2"]) await user.click(screen.getByRole("button", { name: key }));
+      await user.click(within(block).getByRole("button", { name: "Log Set 1" }));
+      await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+      expect(logSet.mock.calls[0][0]).toMatchObject({ exerciseId: "p-raise", loadKg: 10, reps: 12 });
+      expect(logSet.mock.calls[0][0]).not.toHaveProperty("prescriptionId");
+    });
+
+    it("does not offer a variant that already has its own block", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await user.type(screen.getByRole("combobox"), "dumbbell row");
+      await user.click(screen.getByRole("option", { name: "Dumbbell Row" }));
+      expect(screen.getByRole("region", { name: "Dumbbell Row" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Swap variant of Barbell Row" })).not.toBeInTheDocument();
+    });
+
+    it("removes the whole block, every variant's sets with it", async () => {
+      storedSets.value = [
+        { ...logged("b1", 60, 10, { setIndex: 1, prescriptionId: "row" }), exerciseId: "bb-row", reps: 8 },
+        { ...logged("d1", 25, 5, { setIndex: 1, prescriptionId: "row" }), exerciseId: "db-row", reps: 8 },
+      ];
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      const block = await screen.findByRole("region", { name: "Dumbbell Row" });
+      await waitFor(() => expect(rowsIn(block)).toEqual(["Set 1", "Set 2"]));
+      await user.click(within(block).getByRole("button", { name: "Remove Dumbbell Row from this session" }));
+      expect(within(block).getByRole("group", { name: "Remove Dumbbell Row?" })).toHaveTextContent("Its 2 logged sets");
+      await user.click(within(block).getByRole("button", { name: "Remove exercise" }));
+      expect(screen.queryByRole("region", { name: "Dumbbell Row" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Barbell Row" })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("the rest bar in the sheet", () => {
+    const sheet = () => document.querySelector("[data-log-sheet]");
+
+    it("comes up in the pinned sheet after a set is logged, wherever the row was", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await dropWarmups(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      const timer = await screen.findByRole("timer", { name: "Rest timer" });
+      expect(sheet()).toContainElement(timer);
+      expect(sheet()!.className).toContain("sticky");
+      // One timer, never a second copy in the footer.
+      expect(screen.getAllByRole("timer")).toHaveLength(1);
+    });
+
+    it("steps aside for the variant picker and comes back after", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await dropWarmups(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await screen.findByRole("timer");
+      await user.click(screen.getByRole("button", { name: "Swap variant of Barbell Row" }));
+      expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+      expect(sheet()).toContainElement(screen.getByRole("region", { name: "Swap variant of Barbell Row" }));
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(sheet()).toContainElement(screen.getByRole("timer"));
+    });
+
+    it("gives way to the finish confirm, which stays in the footer", async () => {
+      const { user } = setup({ active: session({ programDayId: "d1" }) });
+      await screen.findByRole("group", { name: "Set 1" });
+      await dropWarmups(user);
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await screen.findByRole("timer");
+      await user.click(screen.getByRole("button", { name: "End session" }));
+      expect(screen.queryByRole("timer")).not.toBeInTheDocument();
+      expect(sheet()).toBeNull();
+      expect(screen.getByRole("button", { name: "Keep going" })).toBeInTheDocument();
+    });
+
+    it("comes back in the sheet after a reload while the rest is running", async () => {
+      rememberRest({ startedAt: new Date(Date.now() - 30_000), restMs: 120_000 });
+      setup({ active: session() });
+      const timer = await screen.findByRole("timer", { name: "Rest timer" });
+      expect(sheet()).toContainElement(timer);
+    });
   });
 });

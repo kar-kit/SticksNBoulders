@@ -116,6 +116,7 @@ export function queuedSets(ops: readonly QueuedOp[], sessionId: string): Unnamed
         rpe: typeof op.payload.rpe === "number" ? op.payload.rpe : null,
         isWarmup: op.payload.isWarmup === true,
         loggedAt,
+        ...(str(op.payload.prescriptionId) ? { prescriptionId: str(op.payload.prescriptionId) } : {}),
       } satisfies UnnamedSet;
     })
     .filter((set) => set !== null);

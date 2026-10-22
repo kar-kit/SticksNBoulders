@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { useArrivals } from "@/components/ui/motion";
 import { Button } from "@/components/ui/button";
 import { TrashIcon } from "@/components/ui/icons";
 import { SetRow, SetRowHeader } from "./set-row";
@@ -33,6 +34,10 @@ export interface PlannedSet extends LoggableSet {
   /** The load is the app's suggestion, untouched. Marked "Suggested" on the row. */
   suggested?: boolean;
 }
+
+// `videoRequired` (from LoggableSet) on a planned row is the coach's ask: a
+// camera badge before it is logged, never a block on the confirm. On a
+// logged set it is the same ask, badged until `hasVideo`.
 
 export interface ExerciseBlockProps {
   name: string;
@@ -86,6 +91,17 @@ export interface ExerciseBlockProps {
    * row not logged yet by its id. The set number on each row is the switch.
    */
   onToggleWarmup?: (clientSetId: string) => void;
+  /**
+   * Opens the variant picker: the same movement on another implement. Absent
+   * when the library holds no sibling, so the button is never a dead end.
+   */
+  onSwap?: () => void;
+  /**
+   * The exercise the coach prescribed, when the athlete has swapped this
+   * block to another variant. Shown under the name so the swap is visible
+   * on the athlete's side too.
+   */
+  prescribedAs?: string | null;
 }
 
 /**
@@ -120,10 +136,15 @@ export function ExerciseBlock({
   onRemove,
   removeBlocked = null,
   onToggleWarmup,
+  onSwap,
+  prescribedAs = null,
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const open = planned.length > 0;
   const [confirmingRemove, setConfirmingRemove] = useState(false);
+  // Planned rows only: a logged set read back after a reload was there all
+  // along, and must not rise in on every load (docs/athlete-motion.md).
+  const arrived = useArrivals(planned.map((row) => row.clientSetId));
 
   // Nothing logged means nothing to lose: it goes straight to the undo toast.
   // Logged work asks once, inline, because the toast alone is five seconds
@@ -148,6 +169,17 @@ export function ExerciseBlock({
             {name}
           </button>
         )}
+        <span className="flex flex-none items-center">
+        {onSwap ? (
+          <button
+            type="button"
+            onClick={onSwap}
+            aria-label={`Swap variant of ${name}`}
+            className="flex h-11 flex-none items-center rounded-chip px-2 text-action text-muted tap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
+          >
+            Swap
+          </button>
+        ) : null}
         {onRemove && !confirmingRemove ? (
           // An icon, quiet, and a long way from the confirm square and Add
           // set. It looks like neither, so a thumb mid-set does not hit it by
@@ -163,7 +195,10 @@ export function ExerciseBlock({
             <TrashIcon />
           </button>
         ) : null}
+        </span>
       </header>
+
+      {prescribedAs ? <p className="m-0 -mt-2 text-caption text-muted-2">Coach&rsquo;s pick: {prescribedAs}</p> : null}
 
       {confirmingRemove ? (
         <div
@@ -243,6 +278,7 @@ export function ExerciseBlock({
             onDiscard={onDiscard ? () => onDiscard(row.clientSetId) : undefined}
             onToggleWarmup={onToggleWarmup ? () => onToggleWarmup(row.clientSetId) : undefined}
             unit={unit}
+            arrived={arrived(row.clientSetId)}
           />
         ))}
       </div>

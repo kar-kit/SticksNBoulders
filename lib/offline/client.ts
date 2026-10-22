@@ -38,6 +38,12 @@ type Listener = (ops: QueuedOp[]) => void;
 let store: QueueStore | null = null;
 let opening: Promise<QueueStore> | null = null;
 let cache: QueuedOp[] = [];
+/**
+ * Whether the cache holds what the last visit left on disk: true once
+ * `attachQueue` has read it (or failed to). Until then an empty cache means
+ * "not read yet", not "nothing queued".
+ */
+let loaded = false;
 let sequence = 0;
 /** Who the queue sends as. Null once they sign out: nothing drains with nobody signed in. */
 let actor: Actor | null = null;
@@ -126,8 +132,14 @@ export async function attachQueue(who: Actor): Promise<QueuedOp[]> {
   // here is someone's training. Asking costs nothing and is ignored where it is
   // not supported.
   void navigator.storage?.persist?.().catch(() => false);
-  const open = await ready();
-  await refresh(open);
+  try {
+    const open = await ready();
+    await refresh(open);
+  } finally {
+    // Read or unreadable, the answer is in: nothing more is coming from disk.
+    loaded = true;
+    announce();
+  }
   heartbeat();
   void flush(true);
   return cache;
@@ -161,6 +173,9 @@ export function subscribeToQueue(listener: Listener): () => void {
 }
 
 export const queuedOps = (): QueuedOp[] => cache;
+
+/** Whether what was left on disk has been read in (see `loaded`). */
+export const queueLoaded = (): boolean => loaded;
 
 /** Writes the op down, then tries it. In that order, always. */
 export async function enqueue(kind: OpKind, payload: Record<string, unknown>): Promise<void> {
@@ -320,6 +335,8 @@ export function resetQueueForTests(next: QueueStore | null = null) {
   store = next;
   opening = next ? Promise.resolve(next) : null;
   cache = [];
+  // A test's queue is the store it hands over (or none): known from the start.
+  loaded = true;
   sequence = 0;
   actor = null;
   owner = null;

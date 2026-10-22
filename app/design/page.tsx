@@ -281,11 +281,20 @@ export default function DesignSystemPage() {
               </Button>
             ) : null}
 
-            <Caption>video required, not filmed — confirm inactive, camera takes the RPE cell</Caption>
+            <Caption>video requested by the coach — a badge, confirm still live (Order 30)</Caption>
             <SetRow
               index={5}
               set={{ loadKg: 180, reps: 3, rpe: null, isWarmup: false, videoRequired: true }}
               state="active"
+            />
+            <Caption>logged, video requested, not filmed yet</Caption>
+            <SetRow index={4} set={{ loadKg: 180, reps: 3, rpe: 8, isWarmup: false, videoRequired: true }} state="logged" />
+            <Caption>a row that can film first (onFilm) — the blueprint&rsquo;s gate: camera takes the RPE cell</Caption>
+            <SetRow
+              index={6}
+              set={{ loadKg: 180, reps: 3, rpe: null, isWarmup: false, videoRequired: true }}
+              state="active"
+              onFilm={() => {}}
             />
           </div>
 

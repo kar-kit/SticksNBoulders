@@ -3,7 +3,14 @@
 import { formatRest, restRemainingMs, type RestTimer } from "@/lib/logging/rest-timer";
 
 /**
- * The rest timer, pinned under the session.
+ * The rest timer, in the Log screen's bottom sheet.
+ *
+ * It used to sit at the end of the page, under End session. On a prescribed
+ * day with every set laid out, that is a long scroll below the row just
+ * logged, so the timer the athlete wants to glance at was off screen. It now
+ * takes its turn in the same sticky sheet as the pad and the RPE chips
+ * (`inSheet`), pinned above the tab bar, and still only when it wins the
+ * screen's `bottom` arbiter: entering a number outranks it.
  *
  * It appears when a set is logged and stays until it is skipped, another set
  * replaces it, or it reaches zero -- the screen takes it down then, with a
@@ -22,9 +29,11 @@ export interface RestBarProps {
   now: Date;
   onExtend: () => void;
   onSkip: () => void;
+  /** Inside the LogSheet, which already draws the surface and the top edge. */
+  inSheet?: boolean;
 }
 
-export function RestBar({ timer, now, onExtend, onSkip }: RestBarProps) {
+export function RestBar({ timer, now, onExtend, onSkip, inSheet = false }: RestBarProps) {
   const remaining = restRemainingMs(timer, now);
 
   return (
@@ -33,7 +42,11 @@ export function RestBar({ timer, now, onExtend, onSkip }: RestBarProps) {
       // everything else. A screen reader reads it when asked, like a clock.
       role="timer"
       aria-label="Rest timer"
-      className="flex flex-none items-center gap-3 border-t border-border bg-surface px-3 pt-3 pb-[22px]"
+      className={
+        inSheet
+          ? "flex flex-none items-center gap-3 px-4 py-3"
+          : "flex flex-none items-center gap-3 border-t border-border bg-surface px-3 pt-3 pb-[22px]"
+      }
     >
       <span className="font-mono text-label uppercase text-muted-2">Rest</span>
       <span className="font-mono text-title font-semibold tabular-nums text-foreground">

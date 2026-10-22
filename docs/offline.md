@@ -274,3 +274,27 @@ Appwrite is blocked rather than the whole browser context, because that is the
 real failure: the app shell is already on the phone and it is the gym's wifi that
 is not working. Killing every request would only prove that a page which cannot
 load does not log sets.
+
+## Laid-out rows and swapped variants after a reload (F5)
+
+Planned rows are not stored; they are rebuilt from the prescription. After a
+reload the logged sets come back from Appwrite or the queue, and opening the
+block lays out only what is left (`remainingShape`: logged working sets answer
+targets in order, a line under way gets no warm-ups, a line not started owes
+its warm-ups less any already logged).
+
+A prescribed session only opens its first block by itself once the screen
+knows what the session holds: the queue has read in what the last visit left
+on disk (`queueLoaded`, set by `attachQueue` whether or not IndexedDB could be
+read), and either the session's own `session.create` is still waiting in the
+queue (Appwrite cannot hold a set of it, so a hung read is not waited on) or
+the first read of Appwrite has come back, succeeded or failed. If any set is
+known by then, nothing opens. Laying out earlier would lay a resumed session
+out from scratch, warm-ups and all, under a read still on the wire.
+
+A swapped variant needs no new column: the set keeps the line's
+`prescription_id` while its `exercise_id` is the variant. `fetchSessionSets`
+and `queuedSets` now read `prescriptionId` back, and the logger treats a set
+whose line belongs to another exercise as that line's block on that variant.
+Warm-ups carry no `prescription_id`, so a swap with only warm-ups logged is
+not remembered across a reload.

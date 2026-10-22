@@ -109,6 +109,12 @@ export interface SetTarget {
    * set when that unit is not kilos; everywhere else the snapshot is it.
    */
   shown?: string;
+  /**
+   * The coach asked for a clip of this set (Order 30). Set on a flagged
+   * line's own sets, never on the backoffs its rule adds: the clip the coach
+   * wants is of the top set, the same rule `videoAsk` counts by.
+   */
+  videoRequired?: boolean;
 }
 
 /**
@@ -180,10 +186,16 @@ export function repsLabel(reps: number | null, repMax: number | null): string {
   return repMax !== null && repMax !== reps ? `${reps}–${repMax}` : String(reps);
 }
 
-function snapshotOf(reps: number | null, repMax: number | null, display: string): string {
+/**
+ * "5 reps · 2s pause · 152.5 kg (75%)". The pause sits beside the reps it
+ * applies to, as in `lineSummaries`, so the snapshot stored on the set -- and
+ * the CSV export that reads it -- carries it.
+ */
+function snapshotOf(reps: number | null, repMax: number | null, display: string, pauseSeconds?: number | null): string {
   const r = repsLabel(reps, repMax);
   const repsPart = r ? `${r} rep${r === "1" ? "" : "s"}` : "";
-  return [repsPart, display].filter(Boolean).join(" · ") || "as prescribed";
+  const pause = pauseSeconds ? `${pauseSeconds}s pause` : "";
+  return [repsPart, pause, display].filter(Boolean).join(" · ") || "as prescribed";
 }
 
 /**
@@ -213,11 +225,13 @@ export function targetsFor(
   unit: UnitPreference = "kg",
 ): SetTarget[] {
   // The athlete-unit snapshot, on the targets of an athlete who reads pounds.
-  const shownOf = (reps: number | null, repMax: number | null, words: string) =>
-    unit === "kg" ? {} : { shown: snapshotOf(reps, repMax, words) };
+  const shownOf = (line: Prescription, words: string) =>
+    unit === "kg" ? {} : { shown: snapshotOf(line.reps, line.repMax, words, line.pauseSeconds) };
   type Slot =
     | { line: Prescription; spec: PrescriptionSpec | null; backoff?: undefined; reference?: string | null }
     | { line: Prescription; spec: null; backoff: { rule: BackoffRule; topSet: TopSet | null }; reference?: undefined };
+  // A flagged line's own sets carry the coach's video ask; backoffs never do.
+  const flagged = (line: Prescription) => (line.videoRequired ? { videoRequired: true } : {});
   // Working sets in the order they were logged: slot n is answered by the nth.
   // Warm-ups never fill a slot, and never count as a top set.
   const working = logged.filter((set) => !set.isWarmup);
@@ -274,8 +288,8 @@ export function targetsFor(
         unresolved: loadKg === null,
         anchor: null,
         backoff: { rule, topSet },
-        snapshot: snapshotOf(line.reps, line.repMax, backoffDisplay(rule, loadKg)),
-        ...shownOf(line.reps, line.repMax, display),
+        snapshot: snapshotOf(line.reps, line.repMax, backoffDisplay(rule, loadKg), line.pauseSeconds),
+        ...shownOf(line, display),
       };
     }
     if (slot.reference && spec) {
@@ -291,8 +305,9 @@ export function targetsFor(
         synced: false,
         unresolved: r.unresolved,
         anchor: null,
-        snapshot: snapshotOf(line.reps, line.repMax, r.record ?? r.display),
-        ...shownOf(line.reps, line.repMax, r.shown ?? r.display),
+        snapshot: snapshotOf(line.reps, line.repMax, r.record ?? r.display, line.pauseSeconds),
+        ...shownOf(line, r.shown ?? r.display),
+        ...flagged(line),
       };
     }
     const r = spec === null ? null : resolved[next++];
@@ -306,8 +321,9 @@ export function targetsFor(
       synced: r?.synced ?? false,
       unresolved: r?.unresolved ?? false,
       anchor: r?.synced ? anchor : null,
-      snapshot: snapshotOf(line.reps, line.repMax, r?.record ?? display),
-      ...shownOf(line.reps, line.repMax, display),
+      snapshot: snapshotOf(line.reps, line.repMax, r?.record ?? display, line.pauseSeconds),
+      ...shownOf(line, display),
+      ...flagged(line),
     };
   });
 }
@@ -332,8 +348,9 @@ function topSet(logged: readonly SetForEstimate[]): SetTarget["anchor"] {
  * athlete's own and get no target -- they fall back to repeating the last set.
  *
  * Counted by working sets: warm-ups never get a target here (a line's
- * `warmupSets` is a count shown in its summary, not rows), and "set 1" means
- * the first working set to the athlete and the coach alike.
+ * `warmupSets` become blank rows the athlete loads themselves, see
+ * `remainingShape`), and "set 1" means the first working set to the athlete
+ * and the coach alike.
  */
 export function nextTarget(
   targets: readonly SetTarget[],
@@ -351,8 +368,10 @@ export function nextTarget(
  * The pause sits beside the reps it applies to; the warm-up count follows the
  * line's own sets, before any backoff, because the warm-ups lead into the top
  * set and are not part of the working sets the rest of the line describes.
- * Zero of either reads as none. Display only: the rows the logger builds and
- * the snapshot stored on a set are untouched.
+ * Zero of either reads as none. A line the coach wants filmed says
+ * "video requested". The logger lays the warm-ups out as rows of their own
+ * (`remainingShape`), and the pause also rides in the snapshot stored on each
+ * set; the video ask does not, because the clip itself is the record of it.
  *
  * Priced from the line's first set, which for a percentage line is the price
  * every set of it shares -- they resolve against the same max.
@@ -366,8 +385,9 @@ export function lineSummaries(exercise: PlannedExercise, targets: readonly SetTa
     const load = first?.display ? ` · ${first.display}` : "";
     const why = first?.synced && first.anchor ? " (from today's top set)" : "";
     const warmup = line.warmupSets ? ` · +${line.warmupSets} warm-up` : "";
+    const video = line.videoRequired ? " · video requested" : "";
     const note = line.notes ? ` — ${line.notes}` : "";
-    return `${head}${pause}${load}${why}${warmup}${backoffSummary(line, targets)}${note}`;
+    return `${head}${pause}${load}${why}${warmup}${backoffSummary(line, targets)}${video}${note}`;
   });
 }
 
@@ -381,11 +401,15 @@ function backoffSummary(line: Prescription, targets: readonly SetTarget[]): stri
   return `, then ${count} · ${first.display}`;
 }
 
-/** "Set 2 of 4 · 5 reps · 152.5 kg (75%)" -- the next set, in one line. */
+/**
+ * "Set 2 of 4 · 5 reps · 152.5 kg (75%)" -- the next set, in one line, with
+ * " · film this set" when the coach asked for a clip of it.
+ */
 export function targetLine(target: SetTarget): string {
   // A drop-until-RPE run has no fixed length, so it has no "of".
   const of = target.backoff?.rule.kind === "drop" ? "" : ` of ${target.totalSets}`;
-  return `Set ${target.setNumber}${of} · ${target.shown ?? target.snapshot}`;
+  const film = target.videoRequired ? " · film this set" : "";
+  return `Set ${target.setNumber}${of} · ${target.shown ?? target.snapshot}${film}`;
 }
 
 /**
@@ -427,14 +451,20 @@ export type LoggedForTarget = { loadKg: number; reps: number; rpe?: number | nul
  * Load and reps fall back independently through the prefill order: an RPE
  * line with no weight keeps the repeated load, and an extra set beyond the
  * prescription is left exactly as `lib/logging/plan` built it.
+ *
+ * `reprice` names rows already on screen that should be priced again as if
+ * new: rows laid out up front that the athlete has not touched, after a set
+ * is logged ahead of them. A backoff laid out before its top set existed has
+ * no weight until then; this is when it gets one.
  */
 export function prescribeNewRows(
   before: readonly PlannedRow[],
   after: readonly PlannedRow[],
   context: (exerciseId: string) => { logged: readonly LoggedForTarget[]; targets: readonly SetTarget[] | null },
   unit: UnitPreference = "kg",
+  reprice: ReadonlySet<string> = new Set(),
 ): PlannedRow[] {
-  const seen = new Set(before.map((row) => row.clientSetId));
+  const seen = new Set(before.map((row) => row.clientSetId).filter((id) => !reprice.has(id)));
   if (after.every((row) => seen.has(row.clientSetId))) return [...after];
   const cache = new Map<string, ReturnType<typeof context>>();
   const of = (exerciseId: string) => {
@@ -472,8 +502,79 @@ export function prescribeNewRows(
       suggested: prefill.source === "suggested" || (prefill.source !== "prescribed" && row.suggested === true),
       prescriptionId: target.prescriptionId,
       prescribed: target.snapshot,
+      ...(target.videoRequired ? { videoRequired: true } : {}),
     };
   });
+}
+
+/** One row the logger should lay out for a prescribed exercise: a warm-up or a working set. */
+export interface RowShape {
+  isWarmup: boolean;
+}
+
+/**
+ * The rows still to do of a prescribed exercise, in order: each line's
+ * warm-ups (v15 `warmup_sets`) ahead of its first working set, then one
+ * working row per prescribed set not yet logged, backoffs included.
+ *
+ * Built from the same positional rule as `nextTarget`: logged working sets
+ * answer targets in order. A line already under way gets no warm-ups -- the
+ * athlete is past them. A line not started gets its count less any warm-ups
+ * already logged since the working set before it, so a reload after two of
+ * three warm-ups lays out one more, not three.
+ *
+ * Warm-ups carry no load or target. The athlete picks their own ramp, and a
+ * warm-up never answers a prescription line (see the logger's confirm).
+ */
+export function remainingShape(
+  exercise: PlannedExercise,
+  targets: readonly SetTarget[],
+  logged: readonly { isWarmup?: boolean }[],
+): RowShape[] {
+  const warmupsOf = new Map(exercise.lines.map((line) => [line.id, Math.max(0, line.warmupSets ?? 0)]));
+  // Warm-ups already logged, credited to the line whose working set they led into.
+  const credited = new Map<string, number>();
+  let working = 0;
+  for (const set of logged) {
+    if (!set.isWarmup) {
+      working += 1;
+      continue;
+    }
+    const line = targets[working]?.prescriptionId;
+    if (line) credited.set(line, (credited.get(line) ?? 0) + 1);
+  }
+  const shape: RowShape[] = [];
+  for (let at = working; at < targets.length; at++) {
+    const target = targets[at];
+    const first = !target.backoff && targets.findIndex((t) => t.prescriptionId === target.prescriptionId) === at;
+    if (first) {
+      const owed = (warmupsOf.get(target.prescriptionId) ?? 0) - (credited.get(target.prescriptionId) ?? 0);
+      for (let i = 0; i < owed; i++) shape.push({ isWarmup: true });
+    }
+    shape.push({ isWarmup: false });
+  }
+  return shape;
+}
+
+/**
+ * Targets as they apply to a variant the athlete swapped to: the coach's
+ * reps, RPE and words, but no load. A weight priced for Barbell Row is not a
+ * weight for Dumbbell Row, so the row falls back to the variant's own last set
+ * (or empty) rather than prefilling a number for the wrong implement.
+ *
+ * The snapshot names the exercise the coach wrote, so the set's stored text
+ * -- what Review and the CSV show next to the swapped lift -- says what it
+ * was an answer to: "5 reps · RPE 8 · prescribed Barbell Row".
+ */
+export function asVariant(targets: readonly SetTarget[], prescribedName: string): SetTarget[] {
+  return targets.map((target) => ({
+    ...target,
+    loadKg: null,
+    synced: false,
+    anchor: null,
+    snapshot: `${target.snapshot} · prescribed ${prescribedName}`,
+    ...(target.shown ? { shown: `${target.shown} · prescribed ${prescribedName}` } : {}),
+  }));
 }
 
 /** "backoff from top set 180 × 3": why a backoff row holds the load it does. */
