@@ -5,6 +5,7 @@ import {
   groupByAthlete,
   nextAfter,
   setPosition,
+  stillReviewed,
   type ClipSet,
 } from "./queue";
 
@@ -195,5 +196,31 @@ describe("e1rmDelta", () => {
   it("is null when the set itself has no estimate", () => {
     expect(e1rmDelta(clip({ id: "a", e1rmKg: null }), 210)).toBeNull();
     expect(e1rmDelta(clip({ id: "a", e1rmKg: 0 }), 210)).toBeNull();
+  });
+});
+
+describe("stillReviewed (v18)", () => {
+  it("counts a review only for the clip it was written for", () => {
+    const clips = [clip({ id: "kept", videoFileId: "a" }), clip({ id: "replaced", videoFileId: "new" })];
+    const reviews = new Map<string, string | null>([
+      ["kept", "a"],
+      ["replaced", "old"],
+    ]);
+    expect([...stillReviewed(clips, reviews)]).toEqual(["kept"]);
+  });
+
+  it("puts a replaced clip back in the queue", () => {
+    const clips = [clip({ id: "s1", videoFileId: "take-2" })];
+    const queue = buildQueue(clips, stillReviewed(clips, new Map([["s1", "take-1"]])), names);
+    expect(queue.map((item) => item.id)).toEqual(["s1"]);
+  });
+
+  it("keeps a review from before v18, which names no clip, valid for whatever the set carries", () => {
+    const clips = [clip({ id: "legacy", videoFileId: "anything" })];
+    expect([...stillReviewed(clips, new Map([["legacy", null]]))]).toEqual(["legacy"]);
+  });
+
+  it("ignores reviews of sets that are not among the clips", () => {
+    expect(stillReviewed([clip({ id: "a" })], new Map([["gone", "x"]])).size).toBe(0);
   });
 });

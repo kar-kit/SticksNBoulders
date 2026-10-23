@@ -21,7 +21,8 @@ import { subscribeToQueue } from "@/lib/offline/client";
 import type { QueuedOp } from "@/lib/offline/queue";
 import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
 import type { Comment } from "@/lib/review/comments";
-import type { FeedbackSet } from "@/lib/review/feedback";
+import { nextSeenAt, type FeedbackSet } from "@/lib/review/feedback";
+import { useFeedbackBadge } from "@/lib/review/feedback-context";
 import type { ClipSet } from "@/lib/review/queue";
 import { fetchClipUrls } from "@/lib/review/queue-store";
 import { haptic } from "@/lib/ui/haptics";
@@ -43,6 +44,11 @@ import type { UploadResult } from "@/lib/video/upload";
  * Delete and Replace both take the old file away, through the queue, only
  * once the set no longer names it (lib/video/my-clips-store.ts). The set, its
  * numbers, the note and the coach's comments stay either way.
+ *
+ * Reading the thread here counts as reading it (F15): the coach's comments on
+ * THIS clip stop lighting the Coach Feedback dot, through the same
+ * device-local read marks the Feedback screen keeps. Other clips' unread
+ * comments are untouched.
  */
 
 type Load =
@@ -61,6 +67,7 @@ export function ClipDetail({ setId }: { setId: string }) {
   const { state: session } = useSession();
   const { state: library } = useExerciseLibrary();
   const viewerId = session.status === "signed-in" ? session.user.id : "";
+  const { markSetSeen } = useFeedbackBadge();
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
   /** Undefined until known, or when the lookup failed; null with no coach. */
@@ -105,6 +112,16 @@ export function ClipDetail({ setId }: { setId: string }) {
       cancelled = true;
     };
   }, [viewerId, read]);
+
+  // The thread is on screen once the clip has loaded, so that is the read.
+  // Up to the newest comment from the coach, never a clock: a comment written
+  // while this screen was open but not shown on it stays unread.
+  const readThrough =
+    load.status === "ready" && viewerId ? nextSeenAt(load.comments, viewerId, null) : null;
+  const readSetId = load.status === "ready" ? load.clip.id : "";
+  useEffect(() => {
+    if (readSetId && readThrough) markSetSeen(readSetId, readThrough);
+  }, [readSetId, readThrough, markSetSeen]);
 
   const retry = () => {
     setLoad({ status: "loading" });

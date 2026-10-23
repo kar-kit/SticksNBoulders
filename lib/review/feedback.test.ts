@@ -5,6 +5,7 @@ import {
   isUnread,
   nextSeenAt,
   replyParentId,
+  seenAtFor,
   setIdsToFetch,
   unreadLabel,
   type FeedbackSet,
@@ -197,5 +198,31 @@ describe("unreadLabel", () => {
     expect(unreadLabel(0)).toBe("");
     expect(unreadLabel(3)).toBe("3 new");
     expect(unreadLabel(10)).toBe("9+ new");
+  });
+});
+
+describe("a clip read in the Clips gallery (F15)", () => {
+  it("uses the later of the watermark and the clip's own mark", () => {
+    const marks = { read: "2026-09-22T10:00:00.000Z" };
+    expect(seenAtFor("read", "2026-09-20T10:00:00.000Z", marks)).toBe("2026-09-22T10:00:00.000Z");
+    expect(seenAtFor("read", "2026-09-23T10:00:00.000Z", marks)).toBe("2026-09-23T10:00:00.000Z");
+    expect(seenAtFor("read", null, marks)).toBe("2026-09-22T10:00:00.000Z");
+    expect(seenAtFor("other", "2026-09-20T10:00:00.000Z", marks)).toBe("2026-09-20T10:00:00.000Z");
+    expect(seenAtFor("other", null, undefined)).toBeNull();
+  });
+
+  it("stops counting that clip's comments as new, and only that clip's", () => {
+    const cards = buildFeedback(
+      [
+        comment({ id: "a", setId: "read", createdAt: "2026-09-21T10:00:00.000Z" }),
+        comment({ id: "b", setId: "other", createdAt: "2026-09-21T09:00:00.000Z" }),
+      ],
+      new Map(),
+      ATHLETE,
+      "2026-09-20T10:00:00.000Z",
+      { read: "2026-09-21T10:00:00.000Z" },
+    );
+    const unread = Object.fromEntries(cards.map((card) => [card.setId, card.unread]));
+    expect(unread).toEqual({ read: 0, other: 1 });
   });
 });

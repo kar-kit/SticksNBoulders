@@ -9,7 +9,8 @@ import { Dialog } from "@/components/ui/dialog";
 import { useArrivals, usePresence } from "@/components/ui/motion";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchExerciseLibrary } from "@/lib/exercises/library";
-import { fetchClips, fetchClipUrls, fetchReviewedSetIds } from "@/lib/review/queue-store";
+import { fetchClips, fetchClipUrls, fetchReviews } from "@/lib/review/queue-store";
+import { stillReviewed } from "@/lib/review/queue";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import type { Comment } from "@/lib/review/comments";
 import { shortDate, videoRows, type VideoRow } from "@/lib/coach/athlete-view";
@@ -67,9 +68,9 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
     let cancelled = false;
     void (async () => {
       try {
-        const [clips, reviewed, library] = await Promise.all([
+        const [clips, reviews, library] = await Promise.all([
           fetchClips([athleteId]),
-          fetchReviewedSetIds(coachId),
+          fetchReviews(coachId),
           fetchExerciseLibrary(athleteId),
         ]);
         const comments = await fetchCommentsForSets(clips.map((clip) => clip.id));
@@ -78,7 +79,7 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
           setState({
             status: "ready",
             athleteId,
-            data: { rows: videoRows(clips, reviewed, comments, (id) => names.get(id)), comments },
+            data: { rows: videoRows(clips, stillReviewed(clips, reviews), comments, (id) => names.get(id)), comments },
           });
         }
       } catch {

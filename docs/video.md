@@ -296,7 +296,8 @@ encryption cutoff) and capped at 1MB.
 
 **Where it shows** (`components/video/clip-thumb.tsx`, a camera placeholder
 whenever there is no poster or it cannot be read): logged set rows on the Log
-and in History (in the badge corner, never a column), the coach's athlete
+and in History (in the badge corner, never a column; 24 × 34 since F15, was
+20 × 28, absolute and centred on the row's top border so the row cannot grow), the coach's athlete
 Videos list, and the Review Queue rail from md up. Bytes are fetched through
 the SDK like profile pictures (`lib/video/poster-cache.ts`), at most four at a
 time and only once a thumbnail is near the screen.
@@ -369,10 +370,10 @@ lets the athlete delete their own clip and poster.
 
 Known edges, for Joey:
 
-- Replacing a clip the coach has already cleared does not put it back in their
-  Review Queue. `set_reviews` is keyed on coach + set, and the Log's Replace
-  has always behaved this way. Re-queueing would need a column on
-  `set_reviews` or on `sets` (a v18).
+- ~~Replacing a clip the coach has already cleared does not put it back in
+  their Review Queue.~~ Fixed in F15 (schema v18): a review records the clip
+  it cleared, and a replaced clip comes back. See "A replaced clip comes back"
+  in docs/review-queue.md.
 - After a delete or replace, the coach's comments stay on the set and now
   describe a clip that is gone or a different take. The delete confirm says
   so.

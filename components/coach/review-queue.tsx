@@ -15,7 +15,7 @@ import { fetchCoachStatus } from "@/lib/auth/role";
 import { subscribeToLinks } from "@/lib/coach/coach-links-store";
 import { droppedClipsNotice, reconcileDropped, sameAthletes } from "@/lib/coach/link-status";
 import { loadClipUrlBatches } from "@/lib/review/clip-url-batches";
-import { buildQueue, firstItem, groupByAthlete, nextAfter, type QueueItem } from "@/lib/review/queue";
+import { buildQueue, firstItem, groupByAthlete, nextAfter, stillReviewed, type QueueItem } from "@/lib/review/queue";
 import { countBySet, type Comment } from "@/lib/review/comments";
 import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
 import {
@@ -24,7 +24,7 @@ import {
   fetchClips,
   fetchExerciseNames,
   fetchRecentSets,
-  fetchReviewedSetIds,
+  fetchReviews,
   fetchSessionSets,
   restoreClip,
   subscribeToClips,
@@ -131,10 +131,9 @@ export function ReviewQueue() {
     if (sessionIdsRef.current && !sameAthletes(athleteIds, sessionIdsRef.current)) {
       void refreshSessionRef.current().catch(() => {});
     }
-    const [clips, reviewed] = await Promise.all([
-      fetchClips(athleteIds),
-      fetchReviewedSetIds(coachId),
-    ]);
+    const [clips, reviews] = await Promise.all([fetchClips(athleteIds), fetchReviews(coachId)]);
+    // Only reviews of the clip each set carries now: a replaced clip is back.
+    const reviewed = stillReviewed(clips, reviews);
     const waiting = clips.filter((clip) => !reviewed.has(clip.id));
     // Names only for what is actually on screen. The exercise library of eight
     // athletes is a lot of rows to fetch for a queue of four clips.
@@ -299,7 +298,7 @@ export function ReviewQueue() {
       // A refused write is also how a revoked link shows up between realtime
       // events -- the review row is stamped with a circle the coach has left --
       // so it re-reads, which drops that athlete's clips with a reason.
-      void clearClip(coachId, item.athleteId, item.id).catch(() => {
+      void clearClip(coachId, item).catch(() => {
         void refresh().catch(() => {});
       });
     },

@@ -7,11 +7,11 @@ import { afterExit } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
 import { fetchRecentSessions } from "@/lib/logging/session-store";
 import { fetchSetsForSessions } from "@/lib/logging/history-store";
-import { fetchClips, fetchReviewedSetIds } from "@/lib/review/queue-store";
+import { fetchClips, fetchReviews } from "@/lib/review/queue-store";
 import { shortDate } from "@/lib/coach/athlete-view";
 import { dayDateLabel } from "@/lib/programming/editor";
 import { lastLoggedWeeks, waitingClips, type ContextSet } from "@/lib/programming/editor-context";
-import type { ClipSet } from "@/lib/review/queue";
+import { stillReviewed, type ClipSet } from "@/lib/review/queue";
 
 /**
  * The context drawer beside the week being written: the athlete's last
@@ -21,7 +21,7 @@ import type { ClipSet } from "@/lib/review/queue";
  *
  * Read-only, from the reads Athlete View and the Review Queue already make
  * (`fetchRecentSessions` + `fetchSetsForSessions`; `fetchClips` minus
- * `fetchReviewedSetIds`). Read once per athlete when the drawer first opens,
+ * `fetchReviews`, through `stillReviewed`). Read once per athlete when the drawer first opens,
  * not on every week switch: the week changes which exercises are shown, not
  * what was logged. Each half fails on its own, and says so.
  *
@@ -107,8 +107,8 @@ export function ProgramContext({
     })();
     void (async () => {
       try {
-        const [found, reviewed] = await Promise.all([fetchClips([athleteId]), fetchReviewedSetIds(coachId)]);
-        if (!cancelled) setClips({ status: "ready", value: { clips: found, reviewed } });
+        const [found, reviews] = await Promise.all([fetchClips([athleteId]), fetchReviews(coachId)]);
+        if (!cancelled) setClips({ status: "ready", value: { clips: found, reviewed: stillReviewed(found, reviews) } });
       } catch {
         if (!cancelled) setClips({ status: "failed" });
       }

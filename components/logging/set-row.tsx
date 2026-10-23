@@ -396,11 +396,14 @@ export function SetRow({
 
           {thumb ? (
             // The clip's frame, in the badge's corner and over the border, so
-            // it takes no column and moves with a swipe.
+            // it takes no column and moves with a swipe. 24 x 34 (F15, was
+            // 20 x 28): the same shape, still centred on the border (half
+            // above, half below), and absolute, so the row's height cannot
+            // move.
             <ClipThumb
               posterId={thumb.posterId}
               label={`${setLabel}: video attached`}
-              className="pointer-events-none absolute -top-2.5 right-2 h-5 w-7"
+              className="pointer-events-none absolute -top-3 right-2 h-6 w-[34px]"
             />
           ) : null}
 
@@ -431,7 +434,8 @@ export function SetRow({
               data-pr={records.join(" ")}
               className={cn(
                 "pointer-events-none absolute -top-2 flex h-4 items-center rounded-full bg-accent-fill px-1.5 font-mono text-label font-semibold text-on-accent",
-                thumb ? "right-11" : videoBadge ? "right-9" : "right-2",
+                // Beside the 34px thumbnail with the same 8px gap as before.
+                thumb ? "right-[50px]" : videoBadge ? "right-9" : "right-2",
                 prFresh && "motion-safe:animate-spring-pop",
               )}
             >

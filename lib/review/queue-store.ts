@@ -4,7 +4,7 @@ import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
 import { authenticRows, markSetReviewed, posterOf, unmarkSetReviewed, type Actor } from "@/appwrite/documents";
-import type { ClipSet } from "./queue";
+import type { ClipSet, ReviewedClips } from "./queue";
 
 /**
  * Reading the Review Queue, and clearing it.
@@ -126,16 +126,21 @@ export async function fetchClips(athleteIds: readonly string[]): Promise<ClipSet
 }
 
 /**
- * The set ids this coach has already cleared.
+ * This coach's reviews: which set, and which clip on it (v18).
+ *
+ * Not a set of ids on purpose. A review only clears the clip it was written
+ * for, and that is decided against the clips by `stillReviewed`
+ * (lib/review/queue.ts); a bare set of set ids would let a replaced clip stay
+ * cleared, which is the bug v18 exists to fix.
  *
  * Their own rows only. Louis clearing a clip must not clear it for Ruairi --
  * they coach at the same gym and may share an athlete, and a queue that
  * empties itself because somebody else watched the video is a queue that has
  * quietly stopped being a record of your own work.
  */
-export async function fetchReviewedSetIds(coachId: string): Promise<Set<string>> {
+export async function fetchReviews(coachId: string): Promise<ReviewedClips> {
   const { tables, databaseId } = browserAppwrite();
-  const reviewed = new Set<string>();
+  const reviewed = new Map<string, string | null>();
   let cursor: string | null = null;
 
   while (reviewed.size < MAX_REVIEWS) {
@@ -145,7 +150,7 @@ export async function fetchReviewedSetIds(coachId: string): Promise<Set<string>>
       Query.limit(PAGE),
       // coach_id is selected so the row can prove the coach wrote it. A review
       // anyone could write would clear a clip from this coach's queue.
-      Query.select(["set_id", "coach_id"]),
+      Query.select(["set_id", "coach_id", "video_file_id"]),
     ];
     if (cursor) queries.push(Query.cursorAfter(cursor));
 
@@ -153,8 +158,9 @@ export async function fetchReviewedSetIds(coachId: string): Promise<Set<string>>
     if (page.rows.length === 0) break;
 
     for (const row of authenticRows("set_reviews", page.rows)) {
-      const setId = str((row as unknown as { set_id?: unknown }).set_id);
-      if (setId) reviewed.add(setId);
+      const raw = row as unknown as { set_id?: unknown; video_file_id?: unknown };
+      const setId = str(raw.set_id);
+      if (setId) reviewed.set(setId, str(raw.video_file_id) || null);
     }
 
     if (page.rows.length < PAGE) break;
@@ -256,10 +262,20 @@ export async function fetchExerciseNames(
   return names;
 }
 
-/** Marks a clip cleared. The coach is the actor, not the athlete. */
-export async function clearClip(coachId: string, athleteId: string, setId: string): Promise<void> {
+/**
+ * Marks a clip cleared. The coach is the actor, not the athlete. The clip's
+ * file id is recorded with it (v18), so a replacement comes back.
+ */
+export async function clearClip(
+  coachId: string,
+  clip: { athleteId: string; id: string; videoFileId: string },
+): Promise<void> {
   const actor: Actor = { userId: coachId };
-  await markSetReviewed(browserWriteDeps(() => ""), actor, { athleteId, setId });
+  await markSetReviewed(browserWriteDeps(() => ""), actor, {
+    athleteId: clip.athleteId,
+    setId: clip.id,
+    videoFileId: clip.videoFileId,
+  });
 }
 
 /** Puts one back, for a mis-tapped skip. */

@@ -5,7 +5,7 @@ import { AthleteVideos } from "./athlete-videos";
 const queue = vi.hoisted(() => ({
   fetchClips: vi.fn(),
   fetchClipUrls: vi.fn(),
-  fetchReviewedSetIds: vi.fn(),
+  fetchReviews: vi.fn(),
 }));
 vi.mock("@/lib/review/queue-store", () => queue);
 
@@ -53,7 +53,7 @@ beforeEach(() => {
     clip("squat-clip", "squat", "2026-10-12T10:00:00Z", { notes: "Knee felt fine" }),
     clip("bench-clip", "bench", "2026-10-14T10:00:00Z"),
   ]);
-  queue.fetchReviewedSetIds.mockResolvedValue(new Set(["bench-clip"]));
+  queue.fetchReviews.mockResolvedValue(new Map([["bench-clip", "file-bench-clip"]]));
   queue.fetchClipUrls.mockReset();
   queue.fetchClipUrls.mockResolvedValue(new Map([["file-bench-clip", "/api/clip/file-bench-clip?t=x"]]));
   comments.fetchCommentsForSets.mockResolvedValue([

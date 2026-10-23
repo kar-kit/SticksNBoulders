@@ -464,7 +464,7 @@ describe("clip posters (v17, F12)", () => {
   const clips = schema.buckets.find((b) => b.id === "set_videos")!;
 
   it("point at a poster with one nullable id, so every existing set is untouched", () => {
-    expect(schema.version).toBe(17);
+    expect(schema.version).toBeGreaterThanOrEqual(17);
     expect(table("sets").columns.find((c) => c.key === "video_poster_id")).toEqual({
       key: "video_poster_id",
       type: "string",
@@ -490,5 +490,20 @@ describe("clip posters (v17, F12)", () => {
   it("encrypt only because the size cap keeps every file under Appwrite's 20MB encryption cutoff", () => {
     expect(bucket.encryption).toBe(true);
     expect(bucket.maximumFileSizeBytes).toBeLessThanOrEqual(20_000_000);
+  });
+});
+
+describe("re-queueing a replaced clip (v18)", () => {
+  it("records which clip a review cleared, as one nullable id, so every existing review is untouched", () => {
+    expect(schema.version).toBe(18);
+    expect(table("set_reviews").columns.find((c) => c.key === "video_file_id")).toEqual({
+      key: "video_file_id",
+      type: "string",
+      // An Appwrite file id, like sets.video_file_id.
+      size: 36,
+      required: false,
+    });
+    // Compared in memory against the set's clip, never queried by.
+    expect(table("set_reviews").indexes.some((i) => i.columns.includes("video_file_id"))).toBe(false);
   });
 });

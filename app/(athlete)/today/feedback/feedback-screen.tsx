@@ -16,11 +16,12 @@ import {
   buildFeedback,
   nextSeenAt,
   replyParentId,
+  seenAtFor,
   type FeedbackCard as Card,
   type FeedbackSet,
 } from "@/lib/review/feedback";
 import { useFeedbackBadge } from "@/lib/review/feedback-context";
-import { readSeenAt } from "@/lib/review/feedback-seen";
+import { readSeenAt, readSetSeen, type SetSeenMarks } from "@/lib/review/feedback-seen";
 import { fetchFeedback } from "@/lib/review/feedback-store";
 import { fetchClipUrls } from "@/lib/review/queue-store";
 import { pendingUploads } from "@/lib/video/pending-store";
@@ -47,6 +48,8 @@ type Loaded = {
   coach: MyCoach | null | undefined;
   uploading: FeedbackSet[];
   seenAt: string | null;
+  /** Clips whose thread was read in the Clips gallery since (F15): not "New". */
+  setSeen: SetSeenMarks;
   /** Card order at load, so a reply does not throw its card to the top. */
   order: string[];
 };
@@ -59,6 +62,7 @@ type State = { status: "loading" } | { status: "failed" } | Loaded;
 async function loadFeedback(viewerId: string): Promise<Loaded | { status: "failed" }> {
   // Read before anything marks it, so this visit can say what is new.
   const seenAt = readSeenAt(viewerId);
+  const setSeen = readSetSeen(viewerId);
   try {
     const pending = (await pendingUploads().catch(() => []))
       .filter((upload) => upload.athleteId === viewerId)
@@ -75,8 +79,8 @@ async function loadFeedback(viewerId: string): Promise<Loaded | { status: "faile
       .map((setId) => sets.get(setId))
       .filter((set): set is FeedbackSet => set !== undefined);
 
-    const order = buildFeedback(comments, sets, viewerId, seenAt).map((card) => card.setId);
-    return { status: "ready", comments, sets, coach, uploading, seenAt, order };
+    const order = buildFeedback(comments, sets, viewerId, seenAt, setSeen).map((card) => card.setId);
+    return { status: "ready", comments, sets, coach, uploading, seenAt, setSeen, order };
   } catch {
     return { status: "failed" };
   }
@@ -146,7 +150,7 @@ export function FeedbackScreen() {
 
   const cards = useMemo(() => {
     if (state.status !== "ready") return [];
-    const built = buildFeedback(state.comments, state.sets, viewerId, state.seenAt);
+    const built = buildFeedback(state.comments, state.sets, viewerId, state.seenAt, state.setSeen);
     const position = new Map(state.order.map((id, index) => [id, index]));
     return built.sort(
       (a, b) => (position.get(a.setId) ?? -1) - (position.get(b.setId) ?? -1),
@@ -245,7 +249,7 @@ export function FeedbackScreen() {
                     clipUrl={card.set?.videoFileId ? (clipUrls.get(card.set.videoFileId) ?? null) : null}
                     names={names}
                     viewerId={viewerId}
-                    seenAt={state.seenAt}
+                    seenAt={seenAtFor(card.setId, state.seenAt, state.setSeen)}
                     canReply={state.coach !== null}
                     onReply={reply}
                     onClipError={onClipError}

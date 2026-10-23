@@ -679,6 +679,13 @@ export async function attachVideo(deps: WriteDeps, actor: Actor, input: AttachVi
 export interface MarkReviewedInput {
   athleteId: string;
   setId: string;
+  /**
+   * The clip being cleared: the set's `video_file_id` as the coach watched it
+   * (v18). A review counts only while the set still carries this file, so a
+   * replaced clip comes back to the queue (lib/review/queue.ts
+   * `stillReviewed`).
+   */
+  videoFileId: string;
 }
 
 /**
@@ -689,25 +696,45 @@ export interface MarkReviewedInput {
  * browser retried, writes the same row twice and the unique index makes the
  * second one a no-op rather than a duplicate the queue then has to dedupe.
  *
+ * Because the id names the set and not the clip, clearing a REPLACED clip
+ * meets the row left by the old one (v18). That 409 is answered by moving the
+ * row onto the new clip -- `video_file_id` and `reviewed_at` only, no
+ * permissions, so the stamp the coach wrote the first time stays exactly as
+ * it was and `validate-row` has nothing to object to. Any other refusal is
+ * thrown as before.
+ *
  * The actor is the COACH here, not the athlete -- the one place in this file
  * where that is true. A review is the coach's record of their own work, and
  * the athlete it concerns neither writes it nor can.
  */
 export async function markSetReviewed(deps: WriteDeps, actor: Actor, input: MarkReviewedInput) {
+  if (!input.videoFileId) throw new Error("markSetReviewed: videoFileId is required");
   const reviewId = `${actor.userId}_${input.setId}`;
-  return deps.writer.createRow({
-    databaseId: deps.databaseId,
-    tableId: "set_reviews",
-    rowId: reviewId,
-    data: {
-      coach_id: actor.userId,
-      athlete_id: input.athleteId,
-      set_id: input.setId,
-      reviewed_at: iso(deps.now()),
-      client_review_id: reviewId,
-    },
-    permissions: reviewPermissions({ athleteId: input.athleteId, coachId: actor.userId }),
-  });
+  const reviewedAt = iso(deps.now());
+  try {
+    return await deps.writer.createRow({
+      databaseId: deps.databaseId,
+      tableId: "set_reviews",
+      rowId: reviewId,
+      data: {
+        coach_id: actor.userId,
+        athlete_id: input.athleteId,
+        set_id: input.setId,
+        reviewed_at: reviewedAt,
+        client_review_id: reviewId,
+        video_file_id: input.videoFileId,
+      },
+      permissions: reviewPermissions({ athleteId: input.athleteId, coachId: actor.userId }),
+    });
+  } catch (error) {
+    if ((error as { code?: number } | null)?.code !== 409) throw error;
+    return deps.writer.updateRow({
+      databaseId: deps.databaseId,
+      tableId: "set_reviews",
+      rowId: reviewId,
+      data: { video_file_id: input.videoFileId, reviewed_at: reviewedAt },
+    });
+  }
 }
 
 /**

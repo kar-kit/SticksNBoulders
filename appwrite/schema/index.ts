@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 17,
+  version: 18,
   tables: [
     {
       id: "profiles",
@@ -203,6 +203,15 @@ export const schema: DatabaseSpec = {
         // Derived from coach and set rather than random, so clearing the same
         // clip twice -- a double tap, a replayed request -- is one row.
         { key: "client_review_id", type: "string", size: 80, required: true },
+        // Which clip was cleared (v18): the set's `video_file_id` at the time.
+        // A review counts only while the set still carries that file, so an
+        // athlete replacing a clip the coach already cleared puts it back in
+        // the queue. Null on every row written before v18, and null reads as
+        // "whatever clip the set has" -- existing reviews stay valid with no
+        // backfill (`npm run reviews:clips` stamps them so a later replace
+        // re-queues those too). No index: it is compared in memory, never
+        // queried by.
+        { key: "video_file_id", type: "string", size: 36, required: false },
       ],
       indexes: [
         { key: "idx_coach_reviewed", type: "key", columns: ["coach_id", "reviewed_at"], orders: ["asc", "desc"] },

@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchHasCoach, fetchUnreadCount, subscribeToComments } from "./feedback-store";
-import { readSeenAt, writeSeenAt } from "./feedback-seen";
+import { readSeenAt, readSetSeen, writeSeenAt, writeSetSeen } from "./feedback-seen";
 
 /**
  * Whether there is coach feedback the athlete has not seen, for the tab bar
@@ -28,6 +28,11 @@ export interface FeedbackBadge {
   seenAt: string | null;
   /** Records what the athlete has now seen, and clears the dot. */
   markSeen: (seenAt: string | null) => void;
+  /**
+   * Records one clip's thread as read up to `seenAt` -- the Clips gallery
+   * (F15) -- and recounts, so only that clip's comments leave the dot.
+   */
+  markSetSeen: (setId: string, seenAt: string | null) => void;
   refresh: () => void;
 }
 
@@ -36,6 +41,7 @@ const NONE: FeedbackBadge = {
   unread: 0,
   seenAt: null,
   markSeen: () => {},
+  markSetSeen: () => {},
   refresh: () => {},
 };
 
@@ -62,7 +68,7 @@ export function FeedbackProvider({ children }: { children: React.ReactNode }) {
     if (!userId) return;
     const mine = ++generation.current;
     const watermark = readSeenAt(userId);
-    void fetchUnreadCount(userId, watermark)
+    void fetchUnreadCount(userId, watermark, readSetSeen(userId))
       .then((count) => {
         if (generation.current !== mine) return;
         setSeenAt(watermark);
@@ -105,9 +111,21 @@ export function FeedbackProvider({ children }: { children: React.ReactNode }) {
     [userId],
   );
 
+  const markSetSeen = useCallback(
+    (setId: string, next: string | null) => {
+      if (!userId || !setId || next === null) return;
+      writeSetSeen(userId, setId, next);
+      // Recount rather than zero: other clips may still have something new.
+      // refresh() bumps the generation, so a count already in flight from
+      // before the mark cannot land after it.
+      refresh();
+    },
+    [userId, refresh],
+  );
+
   const value = useMemo<FeedbackBadge>(
-    () => ({ hasCoach, unread, seenAt, markSeen, refresh }),
-    [hasCoach, unread, seenAt, markSeen, refresh],
+    () => ({ hasCoach, unread, seenAt, markSeen, markSetSeen, refresh }),
+    [hasCoach, unread, seenAt, markSeen, markSetSeen, refresh],
   );
 
   return <FeedbackContext.Provider value={value}>{children}</FeedbackContext.Provider>;

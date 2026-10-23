@@ -4,7 +4,8 @@ import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { dayKey, type BodyweightEntry } from "@/lib/bodyweight/bodyweight";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
-import { fetchClips, fetchReviewedSetIds } from "@/lib/review/queue-store";
+import { fetchClips, fetchReviews } from "@/lib/review/queue-store";
+import { stillReviewed } from "@/lib/review/queue";
 import { weekStart } from "@/lib/strength/rollup";
 import { canSeeCircle } from "./coach-links-store";
 import type { RosterInputs, WeekRollup, WeekSession } from "./roster";
@@ -190,13 +191,13 @@ export async function fetchRoster(
   now: Date,
 ): Promise<Omit<RosterInputs, "links">> {
   const ids = [...athleteIds];
-  const [names, visibility, sessions, rollups, clips, reviewedSetIds, bodyweight, program] = await Promise.all([
+  const [names, visibility, sessions, rollups, clips, reviews, bodyweight, program] = await Promise.all([
     fetchAthleteNames(ids),
     Promise.all(ids.map(async (id) => [id, await canSeeCircle(id)] as const)),
     fetchWeekSessions(ids, now),
     fetchWeekRollups(ids, now),
     fetchClips(ids),
-    fetchReviewedSetIds(coachId),
+    fetchReviews(coachId),
     fetchRosterBodyweight(ids, now),
     fetchProgramSignals(ids, now),
   ]);
@@ -206,7 +207,7 @@ export async function fetchRoster(
     sessions,
     rollups,
     clips,
-    reviewedSetIds,
+    reviewedSetIds: stillReviewed(clips, reviews),
     bodyweight,
     program,
   };
