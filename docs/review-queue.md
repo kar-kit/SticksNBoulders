@@ -65,8 +65,10 @@ review row carries `video_file_id`: the set's clip as the coach watched it.
   (`lib/review/queue.ts`) is the one place that decides, and every reader goes
   through it: the queue, the Review badge, the Roster's "videos waiting",
   Athlete View's reviewed/waiting, and the Program Editor's context. The
-  fetcher (`fetchReviews`) returns set id → file id, not a set of ids, so a
-  caller that skips `stillReviewed` does not typecheck.
+  fetcher (`fetchReviews`) returns set id → file id, not a set of ids, so
+  handing it to anything that expects the old `ReadonlySet<string>` does not
+  compile. A direct `reviews.has(clip.id)` still would, and would ignore the
+  clip: always go through `stillReviewed`.
 - **Replace mints a new file id** (`ID.unique()` in `lib/video/upload.ts`), so
   the set's `video_file_id` changes and the old review stops matching. Realtime
   already fires on set updates, so the clip reappears live.
