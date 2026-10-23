@@ -27,6 +27,11 @@ export interface ClipSet {
   /** ISO 8601, as Appwrite stores it. */
   loggedAt: string;
   videoFileId: string;
+  /**
+   * The clip's poster for its thumbnail (F12), or null for the placeholder.
+   * Optional so a fixture need not spell it out.
+   */
+  videoPosterId?: string | null;
   notes: string | null;
   /**
    * The line the set was logged against, and the target as it read on the

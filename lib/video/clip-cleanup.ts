@@ -1,4 +1,5 @@
 import { browserAppwrite } from "@/appwrite/browser-client";
+import { POSTER_BUCKET, posterIdFor } from "@/appwrite/documents/poster";
 import { VIDEO_BUCKET } from "./bucket";
 
 /**
@@ -31,9 +32,19 @@ export async function deleteClipIfSetGone(setId: string, fileId: string): Promis
     // session -- and the queue retries it rather than guessing.
     if (!isNotFound(error)) throw error;
   }
-  try {
-    await storage.deleteFile({ bucketId: VIDEO_BUCKET, fileId });
-  } catch (error) {
-    if (!isNotFound(error)) throw error;
+  // The poster goes with its clip (F12). Its id is derived from the clip's,
+  // so nothing extra had to be queued to know it; most clips filmed before
+  // v17 have none, which the 404 covers.
+  const posterId = posterIdFor(fileId);
+  const doomed = [
+    { bucketId: VIDEO_BUCKET, fileId },
+    ...(posterId ? [{ bucketId: POSTER_BUCKET, fileId: posterId }] : []),
+  ];
+  for (const file of doomed) {
+    try {
+      await storage.deleteFile(file);
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
   }
 }

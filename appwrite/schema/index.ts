@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 16,
+  version: 17,
   tables: [
     {
       id: "profiles",
@@ -153,6 +153,14 @@ export const schema: DatabaseSpec = {
         // Idempotency key from the offline queue. Unique-indexed below.
         { key: "client_set_id", type: "string", size: 64, required: true },
         { key: "video_file_id", type: "string", size: 64, required: false },
+        // v17 (F12): the clip's poster, a small still in `set_video_posters`,
+        // so a set row can show a thumbnail -- Appwrite previews are image-only
+        // and a video file has none. Its id is derived from the clip's
+        // (appwrite/documents/poster.ts), and readers accept it only when it is
+        // the poster OF this row's clip, so a stale one reads as no poster.
+        // Nullable, no index: every set before v17 has none and needs no
+        // backfill to stay correct (`npm run clips:posters` adds them).
+        { key: "video_poster_id", type: "string", size: 36, required: false },
         { key: "notes", type: "string", size: 500, required: false },
         // The prescription line this set was logged against, or null for a set
         // nobody prescribed. A pointer for "which line was this", not a
@@ -660,6 +668,38 @@ export const schema: DatabaseSpec = {
        * Appwrite skips encryption above 20MB and this bucket refuses anything
        * over 2MB, so every file is covered. It is a face, which is the most
        * identifying thing the product stores.
+       */
+      encryption: true,
+      // No ClamAV beside the instance. Same reason as the clips.
+      antivirus: false,
+    },
+    {
+      id: "set_video_posters",
+      name: "Set video posters",
+      purpose:
+        "One small still per clip, so a logged set, a History row and the coach's clip lists can show a thumbnail instead of a bare camera icon (F12, athlete feedback: \"No preview in sets like thumbnail\"). Grabbed on the phone at upload; backfilled for older clips by npm run clips:posters.",
+      // Per file, and stamped exactly like the clip it was taken from
+      // (`posterPermissions` is `videoPermissions`): a frame of a clip is the
+      // clip's to show, to the athlete and their circle, nobody else.
+      fileSecurity: true,
+      permissions: [perm.createUsers],
+      /**
+       * 1MB, and real files are a small fraction of it: a 320px-wide WebP or
+       * JPEG frame lands around 10-40KB. The cap is what stops a client that
+       * skips the resize from parking a full-resolution frame grab here.
+       */
+      maximumFileSizeBytes: 1_000_000,
+      // What the phone's canvas encodes to (WebP, JPEG where it cannot) and
+      // what the backfill's ffmpeg writes (JPEG). No PNG: a lossless 320px
+      // frame is ten times the bytes for nothing a thumbnail can show.
+      allowedFileExtensions: ["webp", "jpg", "jpeg"],
+      // Already compressed.
+      compression: "none",
+      /**
+       * Encrypted, like avatars and unlike clips, because here the guarantee
+       * holds for every file: Appwrite skips encryption above 20MB and this
+       * bucket refuses anything over 1MB. It is a frame of the athlete, as
+       * revealing as the clip's first second.
        */
       encryption: true,
       // No ClamAV beside the instance. Same reason as the clips.

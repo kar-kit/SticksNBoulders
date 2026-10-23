@@ -474,6 +474,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                         unit={unit}
                         athleteNote={set.notes ?? null}
                         athleteNoteFull
+                        clip={set.videoFileId ? { posterId: set.videoPosterId ?? null } : null}
                       />
                     </button>
                   );

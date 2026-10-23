@@ -1,7 +1,8 @@
 import { circleTeamId } from "./circle";
-import { exercisePermissions, sessionPermissions } from "./policy";
+import { exercisePermissions, posterPermissions, sessionPermissions, setPermissions, videoPermissions } from "./policy";
 import type { RowWriter } from "./row-writer";
 import {
+  attachVideo,
   createCoachLink,
   createExercise,
   createGlobalExercise,
@@ -580,5 +581,56 @@ describe("the athlete's own exercises", () => {
     expect(error).toMatchObject({ message: EXERCISE_IN_USE, code: 412 });
     expect(classify(error)).toBe("permanent");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("attachVideo and the clip's poster (F12)", () => {
+  it("records the clip and its poster together, stamped like any set write", async () => {
+    const h = harness();
+    await attachVideo(h.deps, h.actor, { rowId: "st-1", videoFileId: "clip1", videoPosterId: "clip1_poster" });
+    expect(h.last()).toEqual({
+      op: "update",
+      tableId: "sets",
+      rowId: "st-1",
+      data: { video_file_id: "clip1", video_poster_id: "clip1_poster" },
+      permissions: setPermissions({ athleteId: ATHLETE }),
+    });
+  });
+
+  it("clears the poster when a clip arrives without one, so a replaced clip never keeps the old still", async () => {
+    const h = harness();
+    // An op queued before v17 carries no poster field at all.
+    await attachVideo(h.deps, h.actor, { rowId: "st-1", videoFileId: "clip2" });
+    expect(h.last().data).toEqual({ video_file_id: "clip2", video_poster_id: null });
+  });
+
+  it("clears both on a detach", async () => {
+    const h = harness();
+    await attachVideo(h.deps, h.actor, { rowId: "st-1", videoFileId: null, videoPosterId: null });
+    expect(h.last().data).toEqual({ video_file_id: null, video_poster_id: null });
+  });
+
+  it("refuses a poster that is not this clip's own, before anything is written", async () => {
+    const h = harness();
+    await expect(
+      attachVideo(h.deps, h.actor, { rowId: "st-1", videoFileId: "clip1", videoPosterId: "other_poster" }),
+    ).rejects.toThrow(/not the poster/);
+    await expect(
+      attachVideo(h.deps, h.actor, { rowId: "st-1", videoFileId: null, videoPosterId: "clip1_poster" }),
+    ).rejects.toThrow(/not the poster/);
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe("poster permissions mirror the clip's exactly", () => {
+  it.each(["athlete_joey", "someone_else"])("for %s", (athleteId) => {
+    expect(posterPermissions({ athleteId })).toEqual(videoPermissions({ athleteId }));
+  });
+
+  it("grant no update and no read to every signed-in user", () => {
+    const stamp = posterPermissions({ athleteId: ATHLETE }).join(" ");
+    expect(stamp).not.toContain("update(");
+    expect(stamp).not.toContain('read("users")');
+    expect(stamp).toContain(`delete("user:${ATHLETE}")`);
   });
 });

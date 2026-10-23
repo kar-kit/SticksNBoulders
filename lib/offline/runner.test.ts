@@ -241,7 +241,27 @@ describe("the other writes", () => {
 
   it("detaches a clip by writing null, not by leaving the old id", async () => {
     await runOp(ACTOR, op("set.attachVideo", { setId: "st-abc", videoFileId: null }));
-    expect(rows).toEqual([expect.objectContaining({ op: "update", rowId: "st-abc", data: { video_file_id: null } })]);
+    expect(rows).toEqual([
+      expect.objectContaining({ op: "update", rowId: "st-abc", data: { video_file_id: null, video_poster_id: null } }),
+    ]);
+  });
+
+  it("attaches a clip with its own poster (F12)", async () => {
+    await runOp(ACTOR, op("set.attachVideo", { setId: "st-abc", videoFileId: "f-1", videoPosterId: "f-1_poster" }));
+    expect(rows).toEqual([
+      expect.objectContaining({ rowId: "st-abc", data: { video_file_id: "f-1", video_poster_id: "f-1_poster" } }),
+    ]);
+  });
+
+  it("still attaches the clip when the queued poster is not its own, rather than wedging the queue", async () => {
+    await runOp(ACTOR, op("set.attachVideo", { setId: "st-abc", videoFileId: "f-1", videoPosterId: "other_poster" }));
+    await runOp(ACTOR, op("set.attachVideo", { setId: "st-abc", videoFileId: null, videoPosterId: "f-1_poster" }));
+    await runOp(ACTOR, op("set.attachVideo", { setId: "st-abc", videoFileId: "f-2", videoPosterId: 42 }));
+    expect(rows.map((r) => (r as { data: unknown }).data)).toEqual([
+      { video_file_id: "f-1", video_poster_id: null },
+      { video_file_id: null, video_poster_id: null },
+      { video_file_id: "f-2", video_poster_id: null },
+    ]);
   });
 
   it("treats a clip for a set that has since gone as done", async () => {

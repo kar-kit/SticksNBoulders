@@ -1,5 +1,6 @@
 import { VIDEO_BUCKET } from "@/lib/video/bucket";
 import { AVATAR_BUCKET } from "@/appwrite/documents/avatar";
+import { POSTER_BUCKET } from "@/appwrite/documents/poster";
 import { schema } from "../schema";
 import type { SourceFile } from "./bucket";
 import {
@@ -59,13 +60,13 @@ describe("what counts as a reference", () => {
     // The failure this prevents: a second table starts pointing at clips, the
     // sweep never reads it, and deletes clips out from under it.
     const fileColumns = schema.tables.flatMap((t) =>
-      t.columns.filter((c) => /file_?id$/i.test(c.key)).map((c) => `${t.id}.${c.key}`),
+      t.columns.filter((c) => /(file|poster)_?id$/i.test(c.key)).map((c) => `${t.id}.${c.key}`),
     );
     expect(fileColumns.sort()).toEqual(CLIP_REFERENCES.map((r) => `${r.tableId}.${r.column}`).sort());
   });
 
   it("points into the buckets the app uploads to, which the schema declares", () => {
-    expect(CLIP_REFERENCES.map((r) => r.bucketId)).toEqual([VIDEO_BUCKET, AVATAR_BUCKET]);
+    expect(CLIP_REFERENCES.map((r) => r.bucketId)).toEqual([VIDEO_BUCKET, AVATAR_BUCKET, POSTER_BUCKET]);
     for (const ref of CLIP_REFERENCES) expect(schema.buckets.map((b) => b.id)).toContain(ref.bucketId);
   });
 
@@ -83,6 +84,38 @@ describe("what counts as a reference", () => {
 describe("finding orphans", () => {
   const sweep = (files: SourceFile[], references: ClipReference[], minAge = MIN_AGE) =>
     classify(files, references, NOW, minAge);
+
+  describe("clip posters (v17)", () => {
+    const poster = (id: string) => clip(id, 30 * DAY_MS, { bucketId: POSTER_BUCKET, name: `${id}.webp`, sizeOriginal: 20_000 });
+    const filmed = (id: string, clipId: string, posterId: unknown) => ({
+      $id: id,
+      data: { athlete_id: "joey", video_file_id: clipId, video_poster_id: posterId },
+    });
+
+    it("reads both files off a filmed set, each into its own bucket", () => {
+      expect(referencesIn("sets", [filmed("s1", "a", "a_poster")])).toEqual([
+        { bucketId: VIDEO_BUCKET, tableId: "sets", rowId: "s1", fileId: "a" },
+        { bucketId: POSTER_BUCKET, tableId: "sets", rowId: "s1", fileId: "a_poster" },
+      ]);
+    });
+
+    it("keeps the poster a set points at and sweeps the one a replaced clip left behind", () => {
+      // s1 was refilmed: clip b replaced a, and a's poster delete never ran.
+      const plan = sweep([poster("a_poster"), poster("b_poster")], referencesIn("sets", [filmed("s1", "b", "b_poster")]));
+      expect(ids(plan.orphans)).toEqual(["a_poster"]);
+    });
+
+    it("sweeps the poster of a deleted set", () => {
+      const plan = sweep([poster("a_poster")], referencesIn("sets", [filmed("other", "z", "z_poster")]));
+      expect(ids(plan.orphans)).toEqual(["a_poster"]);
+    });
+
+    it("never matches a poster against a clip id in the other bucket", () => {
+      // Same id, different bucket: a clip named like a poster is not a reference to the poster.
+      const plan = sweep([poster("a_poster")], refs(set("s1", "a_poster")));
+      expect(ids(plan.orphans)).toEqual(["a_poster"]);
+    });
+  });
 
   it("keeps a clip a set points at, however old", () => {
     const plan = sweep([clip("a", 400 * DAY_MS)], refs(set("s1", "a")));

@@ -10,6 +10,7 @@ import {
   rememberUpload,
 } from "./pending-store";
 import { uploadResumable } from "./resumable-upload";
+import { startPoster } from "./poster-upload";
 import { checkClip, type ClipRejection } from "./clip";
 
 /**
@@ -98,6 +99,12 @@ export async function attachClipToSet(
     attempts: 1,
   });
 
+  // The poster (F12) is grabbed and uploaded while the clip uploads, never
+  // before it: the clip is what matters, and a decoder that hangs must not
+  // hold it up. Started now so the athlete claims the poster id early. Never
+  // throws; null when there is no poster (lib/video/poster-upload.ts).
+  const poster = startPoster(file, fileId, athleteId);
+
   const result = await uploadResumable(
     file,
     { fileId, athleteId, name: file.name },
@@ -121,10 +128,15 @@ export async function attachClipToSet(
     return { ok: false, reason: "failed", message: result.message };
   }
 
-  await forgetUpload(fileId);
+  // Null when the frame grab or its upload failed; the clip attaches either
+  // way, and the set row shows the placeholder.
+  const videoPosterId = await poster;
   // Through the queue, like every other row write: the upload is done and must
-  // not be repeated just because this one small write did not land.
-  await enqueue("set.attachVideo", { setId, videoFileId: fileId });
+  // not be repeated just because this one small write did not land. Forgotten
+  // only once the attach is queued, so a phone locked while the poster
+  // settles still has the clip to resume (and finds it already complete).
+  await enqueue("set.attachVideo", { setId, videoFileId: fileId, videoPosterId });
+  await forgetUpload(fileId);
   return { ok: true, fileId };
 }
 
@@ -163,8 +175,11 @@ export async function resumeInterruptedUploads(athleteId: string): Promise<{ res
     });
 
     if (result.ok) {
+      // The blob is still in hand, so a resumed clip gets its poster too.
+      // Forgotten after the attach is queued, as for a fresh clip.
+      const videoPosterId = await startPoster(entry.blob, entry.fileId, entry.athleteId);
+      await enqueue("set.attachVideo", { setId: entry.setId, videoFileId: entry.fileId, videoPosterId });
       await forgetUpload(entry.fileId);
-      await enqueue("set.attachVideo", { setId: entry.setId, videoFileId: entry.fileId });
       resumed += 1;
     } else {
       if (!result.retryable) await forgetUpload(entry.fileId);
@@ -194,5 +209,5 @@ export async function resumeInterruptedUploads(athleteId: string): Promise<{ res
  * trust in the review queue, and between the two this picks the bill.
  */
 export async function detachClipFromSet(setId: string): Promise<void> {
-  await enqueue("set.attachVideo", { setId, videoFileId: null });
+  await enqueue("set.attachVideo", { setId, videoFileId: null, videoPosterId: null });
 }

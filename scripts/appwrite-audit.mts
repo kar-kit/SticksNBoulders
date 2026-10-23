@@ -43,9 +43,11 @@ import {
   avatarPermissions,
   commentPermissions,
   LIBRARY_TEAM_ID,
+  posterPermissions,
   readableByAnySession,
   videoPermissions,
 } from "../appwrite/documents/policy";
+import { POSTER_BUCKET, posterIdFor } from "../appwrite/documents/poster";
 import { AVATAR_BUCKET, newAvatarFileId } from "../appwrite/documents/avatar";
 import { authenticRows, isAuthentic, ownerProof } from "../appwrite/documents/provenance";
 import { FUNCTIONS } from "../appwrite/functions";
@@ -434,6 +436,27 @@ try {
     (await attempt(() => attachVideo(A.deps, { userId: A.id }, { rowId: targets.sets, videoFileId: targets.set_videos }))).kind === "allowed",
   );
 
+  // The clip's poster (F12): uploaded from A's session at the id derived from
+  // the clip's, stamped by the policy, then recorded with the clip.
+  const posterId = targets.set_videos ? posterIdFor(targets.set_videos) : null;
+  if (posterId) {
+    targets.set_video_posters = await ownerCreate("set_video_posters", () =>
+      A.storage.createFile({
+        bucketId: POSTER_BUCKET,
+        fileId: posterId,
+        file: new File([Buffer.alloc(512, 5)], "poster.webp", { type: "image/webp" }),
+        permissions: posterPermissions({ athleteId: A.id }),
+      }),
+    );
+    if (targets.set_video_posters) createdFiles.push({ bucketId: POSTER_BUCKET, fileId: targets.set_video_posters });
+    check(
+      "A records the clip and its poster on the set through the helper (attachVideo)",
+      (await attempt(() =>
+        attachVideo(A.deps, { userId: A.id }, { rowId: targets.sets, videoFileId: targets.set_videos, videoPosterId: posterId }),
+      )).kind === "allowed",
+    );
+  }
+
   // A's profile picture: uploaded from A's session into A's own namespace,
   // stamped by the policy, then pointed at through the helper.
   targets.avatars = await ownerCreate("avatars", () =>
@@ -759,6 +782,16 @@ try {
         createdFiles.push({ bucketId: BUCKET, fileId: file.$id });
       });
       record(ruleFor("set_videos"), "create", actor, outcome, "upload a clip stamped with A's video permissions");
+      const poster = await attempt(async () => {
+        const file = await party[actor].storage.createFile({
+          bucketId: POSTER_BUCKET,
+          fileId: ID.unique(),
+          file: new File([Buffer.alloc(256, 6)], "forged.webp", { type: "image/webp" }),
+          permissions: posterPermissions({ athleteId: A.id }),
+        });
+        createdFiles.push({ bucketId: POSTER_BUCKET, fileId: file.$id });
+      });
+      record(ruleFor("set_video_posters"), "create", actor, poster, "upload a poster stamped with A's poster permissions");
       const picture = await attempt(async () => {
         const file = await party[actor].storage.createFile({
           bucketId: AVATAR_BUCKET,

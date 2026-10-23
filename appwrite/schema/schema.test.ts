@@ -240,7 +240,7 @@ describe("logging rules encoded in the schema", () => {
   });
 
   it("takes the sheet's Under 6 answers, down to 3 and no lower (v16, F10)", () => {
-    expect(schema.version).toBe(16);
+    expect(schema.version).toBeGreaterThanOrEqual(16);
     const rpe = table("sets").columns.find((c) => c.key === "rpe");
     expect(rpe).toEqual({ key: "rpe", type: "float", required: false, min: 3, max: 10 });
     expect(Math.min(...LOGGED_RPE_VALUES)).toBe(rpe && "min" in rpe ? rpe.min : undefined);
@@ -273,7 +273,7 @@ describe("the video bucket", () => {
 
   it("exists, because infrastructure is not clicked into a console", () => {
     expect(bucket).toBeDefined();
-    expect(schema.buckets.map((b) => b.id).sort()).toEqual(["avatars", "set_videos"]);
+    expect(schema.buckets.map((b) => b.id).sort()).toEqual(["avatars", "set_video_posters", "set_videos"]);
   });
 
   /**
@@ -451,6 +451,40 @@ describe("profile pictures (v13)", () => {
   it("accept only what the browser re-encodes to, under 2MB", () => {
     expect([...bucket.allowedFileExtensions].sort()).toEqual(["jpeg", "jpg", "webp"]);
     expect(bucket.maximumFileSizeBytes).toBe(2_000_000);
+  });
+
+  it("encrypt only because the size cap keeps every file under Appwrite's 20MB encryption cutoff", () => {
+    expect(bucket.encryption).toBe(true);
+    expect(bucket.maximumFileSizeBytes).toBeLessThanOrEqual(20_000_000);
+  });
+});
+
+describe("clip posters (v17, F12)", () => {
+  const bucket = schema.buckets.find((b) => b.id === "set_video_posters")!;
+  const clips = schema.buckets.find((b) => b.id === "set_videos")!;
+
+  it("point at a poster with one nullable id, so every existing set is untouched", () => {
+    expect(schema.version).toBe(17);
+    expect(table("sets").columns.find((c) => c.key === "video_poster_id")).toEqual({
+      key: "video_poster_id",
+      type: "string",
+      // A poster id is the clip id plus "_poster", and Appwrite ids stop at 36.
+      size: 36,
+      required: false,
+    });
+    expect(table("sets").indexes.some((i) => i.columns.includes("video_poster_id"))).toBe(false);
+  });
+
+  it("secure each poster per file, exactly as the clip bucket does", () => {
+    expect(bucket.fileSecurity).toBe(true);
+    expect(bucket.permissions).toEqual(clips.permissions);
+    expect(bucket.permissions.join(" ")).not.toContain("read(");
+  });
+
+  it("accept only small images: what a canvas or ffmpeg writes, under 1MB", () => {
+    expect([...bucket.allowedFileExtensions].sort()).toEqual(["jpeg", "jpg", "webp"]);
+    expect(bucket.maximumFileSizeBytes).toBe(1_000_000);
+    expect(bucket.compression).toBe("none");
   });
 
   it("encrypt only because the size cap keeps every file under Appwrite's 20MB encryption cutoff", () => {

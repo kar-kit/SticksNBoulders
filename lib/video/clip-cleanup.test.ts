@@ -28,6 +28,19 @@ describe("deleteClipIfSetGone", () => {
     expect(appwrite.deleteFile).toHaveBeenCalledWith({ bucketId: "set_videos", fileId: "vid-1" });
   });
 
+  it("takes the clip's poster with it, and a clip with no poster is not an error (F12)", async () => {
+    appwrite.getRow.mockRejectedValue(notFound);
+    appwrite.deleteFile.mockImplementation(async (p) => {
+      if (p.bucketId === "set_video_posters") throw notFound;
+      return {};
+    });
+    await expect(deleteClipIfSetGone("st-1", "vid-1")).resolves.toBeUndefined();
+    expect(appwrite.deleteFile.mock.calls.map(([p]) => p)).toEqual([
+      { bucketId: "set_videos", fileId: "vid-1" },
+      { bucketId: "set_video_posters", fileId: "vid-1_poster" },
+    ]);
+  });
+
   it("keeps the clip of a set whose delete was refused -- the coach is still watching it", async () => {
     appwrite.getRow.mockResolvedValue({ $id: "st-1" });
     await deleteClipIfSetGone("st-1", "vid-1");

@@ -706,3 +706,26 @@ describe("the athlete's note (F11)", () => {
     expect(container.querySelector("[data-set-note]")).toBeNull();
   });
 });
+
+describe("SetRow — the clip's thumbnail (F12)", () => {
+  it("shows a logged set's clip in the badge corner, in place of the coach's filmed badge", () => {
+    render(
+      <SetRow
+        index={1}
+        set={set({ videoRequired: true, hasVideo: true })}
+        state="logged"
+        clip={{ posterId: null }}
+      />,
+    );
+    const thumb = screen.getByRole("img", { name: "Set 1: video attached" });
+    expect(thumb).toHaveAttribute("data-clip-thumb", "placeholder");
+    expect(document.querySelector("[data-video-badge]")).toBeNull();
+  });
+
+  it("shows nothing for a set without a clip, and never on a row not logged yet", () => {
+    const { rerender } = render(<SetRow index={1} set={set()} state="logged" />);
+    expect(document.querySelector("[data-clip-thumb]")).toBeNull();
+    rerender(<SetRow index={1} set={set()} state="active" clip={{ posterId: "x_poster" }} />);
+    expect(document.querySelector("[data-clip-thumb]")).toBeNull();
+  });
+});

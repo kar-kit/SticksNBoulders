@@ -31,6 +31,11 @@ import type { BackupFile } from "./types";
 export const CLIP_REFERENCES = [
   { tableId: "sets", column: "video_file_id", bucketId: "set_videos" },
   { tableId: "profiles", column: "avatar_file_id", bucketId: "avatars" },
+  // Schema v17 (F12). A poster is deleted with its clip from the phone --
+  // deleting a set, replacing a clip -- and this is the backstop for when that
+  // delete never ran: the logger's undo, which knows no file ids, a poster
+  // whose clip upload was refused, or a phone that went offline for good.
+  { tableId: "sets", column: "video_poster_id", bucketId: "set_video_posters" },
 ] as const;
 
 export interface ClipReference {

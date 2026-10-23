@@ -88,6 +88,15 @@ describe("a set's clip", () => {
     const sets = await fetchSetsForSessions(["s1"]);
     expect(sets.map((each) => each.videoFileId)).toEqual(["vid-1", null]);
   });
+
+  it("brings the clip's poster for the row's thumbnail, only when it is this clip's (F12)", async () => {
+    db.tables!.seed("sets", [
+      { ...set("st-1", "s1"), video_file_id: "vid-1", video_poster_id: "vid-1_poster" },
+      { ...set("st-2", "s1", "joey", 2), video_file_id: "vid-2", video_poster_id: "vid-1_poster" },
+    ]);
+    const sets = await fetchSetsForSessions(["s1"]);
+    expect(sets.map((each) => each.videoPosterId)).toEqual(["vid-1_poster", null]);
+  });
 });
 
 describe("a set's note (F11)", () => {

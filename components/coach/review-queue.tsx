@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { NoteIcon } from "@/components/ui/icons";
 import { useArrivals } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
+import { ClipThumb } from "@/components/video/clip-thumb";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { fetchCoachStatus } from "@/lib/auth/role";
@@ -463,6 +464,12 @@ export function ReviewQueue() {
                         arrived(item.id) && "motion-safe:animate-rise-in",
                       )}
                     >
+                      {/* The clip's poster (F12), from md up only: the
+                          phone strip's chips are 40px and their text is
+                          what they are for. */}
+                      <span className="mr-2 hidden align-middle md:inline-block">
+                        <ClipThumb posterId={item.videoPosterId ?? null} className="h-7 w-7" />
+                      </span>
                       {item.exerciseName}
                       {commentCounts.has(item.id) ? (
                         // A clip already spoken about. Marked rather than hidden:

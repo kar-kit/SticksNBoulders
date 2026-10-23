@@ -34,7 +34,7 @@ Each dump is a directory, and clips live once in `files/` beside them:
 
 ```
 .appwrite-backup/
-  files/set_videos/<fileId>   clip bytes, shared by every dump
+  files/<bucket>/<fileId>     clip, poster and picture bytes, shared by every dump
   2026-10-07T03-15-00-000Z/
     manifest.json             counts, endpoint, schema version, buckets, and what it omits
     files.json                each clip: id, permissions, size, sha256
@@ -223,6 +223,11 @@ npm run clips:sweep                        # lists orphans and reclaimable MB, d
 npm run clips:sweep -- --min-age-days 21   # a longer grace period (minimum 7)
 npm run clips:sweep -- --delete            # deletes them
 ```
+
+Since schema v17 it covers `set_video_posters` too (F12): a poster is an
+orphan once no set's `video_poster_id` names it -- its clip was replaced or
+detached, its set deleted before the phone's clean-up ran, or the phone
+uploaded it and the attach never landed. Same age and backup rules.
 
 Since schema v13 the same sweep also covers the `avatars` bucket: an old
 profile picture whose best-effort delete failed on replace or remove is an
