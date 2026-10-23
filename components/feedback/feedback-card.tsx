@@ -171,7 +171,11 @@ function Said({
   );
 }
 
-function ReplyBox({ label, onSend }: { label: string; onSend: (body: string) => Promise<boolean> }) {
+/**
+ * The athlete's small reply box. Exported for the Clips gallery (F13), which
+ * answers the same thread from the clip's own screen.
+ */
+export function ReplyBox({ label, onSend }: { label: string; onSend: (body: string) => Promise<boolean> }) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);

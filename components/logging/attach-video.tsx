@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { attachClipToSet } from "@/lib/video/upload";
+import { attachClipToSet, type UploadResult } from "@/lib/video/upload";
 import type { VideoAsk } from "@/lib/logging/video-prompt";
 
 /**
@@ -38,8 +38,12 @@ export interface AttachVideoProps {
    * anything, and "Not now" is not recorded -- it only puts the line away.
    */
   ask?: VideoAsk;
-  /** A clip is on its way (queued counts, as it does everywhere else). */
-  onAttached?: () => void;
+  /**
+   * A clip is on its way (queued counts, as it does everywhere else). Given
+   * the result, so a caller replacing a clip knows whether the new one's
+   * attach is already queued (`ok`) or still waiting on the upload.
+   */
+  onAttached?: (result: UploadResult) => void;
 }
 
 export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", onAttached }: AttachVideoProps) {
@@ -65,7 +69,7 @@ export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", 
         ? { status: "done" }
         : { status: pending ? "pending" : "failed", message: result.message },
     );
-    if (result.ok || pending) onAttached?.();
+    if (result.ok || pending) onAttached?.(result);
     if (input.current) input.current.value = "";
   };
 

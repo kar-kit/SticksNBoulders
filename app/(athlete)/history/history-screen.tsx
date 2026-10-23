@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Card, CardMeta, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TextField } from "@/components/ui/input";
@@ -25,6 +26,9 @@ import { useDayLabels } from "@/lib/logging/use-day-labels";
 import { Button } from "@/components/ui/button";
 import { dismissFailed, subscribeToQueue } from "@/lib/offline/client";
 import type { QueuedOp } from "@/lib/offline/queue";
+import { readHistoryView, type HistoryView } from "@/lib/video/my-clips";
+import { cn } from "@/lib/cn";
+import { ClipsView } from "./clips-view";
 
 /**
  * History. Find a past session and see what was done.
@@ -36,8 +40,79 @@ import type { QueuedOp } from "@/lib/offline/queue";
  *
  * Sessions come from the provider Today and Log already use, so the only thing
  * fetched here is the sets, in one query for the whole page.
+ *
+ * Clips (F13) is the other reading of the same log: every set the athlete
+ * filmed, as a grid of posters. A "Sessions | Clips" switch at the top rather
+ * than a fifth tab -- the tab bar stays at four -- and in the URL
+ * (`?view=clips`), so coming Back from a clip lands on the grid, not on
+ * Sessions. Swapped with `replaceState`, so flipping between the two does not
+ * stack entries Back would have to walk through, and the F7 transition reads
+ * a query-only change as no move at all.
  */
 export function HistoryScreen() {
+  const params = useSearchParams();
+  const [view, setView] = useState<HistoryView>(() => readHistoryView(params.get("view")));
+  // Back/forward onto a different ?view, or a link to one.
+  const fromUrl = readHistoryView(params.get("view"));
+  const [lastUrlView, setLastUrlView] = useState(fromUrl);
+  if (fromUrl !== lastUrlView) {
+    setLastUrlView(fromUrl);
+    setView(fromUrl);
+  }
+
+  const choose = (next: HistoryView) => {
+    if (next === view) return;
+    setView(next);
+    const url = new URL(window.location.href);
+    if (next === "clips") url.searchParams.set("view", "clips");
+    else url.searchParams.delete("view");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  return (
+    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
+      <header className="flex flex-col gap-3">
+        <h1 className="m-0 text-display font-semibold">History</h1>
+        <ViewSwitch value={view} onChange={choose} />
+      </header>
+      {view === "clips" ? <ClipsView /> : <SessionsView />}
+    </div>
+  );
+}
+
+const VIEWS: ReadonlyArray<{ value: HistoryView; label: string }> = [
+  { value: "sessions", label: "Sessions" },
+  { value: "clips", label: "Clips" },
+];
+
+/**
+ * A two-way segmented switch. Buttons with `aria-pressed` in a labelled group,
+ * the same pattern as Lift Detail's chart range, rather than the coach's
+ * `Tabs` (coach motion, and a tablist promises arrow-key panels this is not).
+ */
+function ViewSwitch({ value, onChange }: { value: HistoryView; onChange: (next: HistoryView) => void }) {
+  return (
+    <div role="group" aria-label="Show" className="flex gap-1 rounded-chip bg-surface-2 p-1">
+      {VIEWS.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={cn(
+            "tap h-9 flex-1 rounded-chip text-ui",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
+            value === option.value ? "bg-background font-semibold text-foreground" : "text-muted",
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SessionsView() {
   const { state: sessionState } = useSession();
   const { unit } = useUnits();
   const { state: library } = useExerciseLibrary();
@@ -95,22 +170,19 @@ export function HistoryScreen() {
   const hasAny = weeks.some((week) => week.sessions.length > 0);
 
   return (
-    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
-      <header className="flex flex-col gap-3">
-        <h1 className="m-0 text-display font-semibold">History</h1>
-        {hasAny ? (
-          <TextField
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            aria-label="Search by exercise"
-            // The real query is "show me my deadlift sessions", so the field
-            // says so rather than a generic "Search".
-            placeholder="Search by exercise"
-            enterKeyHint="search"
-          />
-        ) : null}
-      </header>
+    <>
+      {hasAny ? (
+        <TextField
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          aria-label="Search by exercise"
+          // The real query is "show me my deadlift sessions", so the field
+          // says so rather than a generic "Search".
+          placeholder="Search by exercise"
+          enterKeyHint="search"
+        />
+      ) : null}
 
       {/*
         A session delete that reached Appwrite after a coach had commented on
@@ -178,6 +250,6 @@ export function HistoryScreen() {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }

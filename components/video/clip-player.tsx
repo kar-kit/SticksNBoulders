@@ -14,6 +14,12 @@ import { cn } from "@/lib/cn";
  * how fast it clears. A coach working through twenty clips should barely touch
  * the mouse -- space to play, arrows to step a frame, and the clearing key
  * handled by the queue above.
+ *
+ * Shared since F13: the athlete's own clip (History, Clips) plays in this
+ * same player, so the speeds, loop and frame steps are the coach's. Motion is
+ * therefore behind each shell's variant (`coach:press`, `athlete:tap`), as on
+ * every shared component (components/ui/coach-gate.test.tsx); inside the
+ * coach shell the classes resolve exactly as before.
  */
 
 /** No real-time option. A clip playing at 1x is what the athlete already saw. */
@@ -45,11 +51,33 @@ export interface ClipPlayerProps {
    * queue minted a while ago, fails on the first request after expiry.
    */
   refreshSrc?: () => Promise<boolean>;
+  /**
+   * What to say when the clip will not play. The default is the coach's
+   * reading (the athlete's phone, the athlete's access); the athlete's own
+   * gallery passes its own words.
+   */
+  failedMessage?: string;
 }
+
+const COACH_FAILED =
+  "This clip would not play. It may still be uploading from their phone, or the athlete may have withdrawn access.";
+
+/** Each shell's press, gated so neither leaks into the other. */
+const CONTROL = "coach:transition-control coach:press athlete:tap";
+
+const STEP =
+  "h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted hover:text-foreground focus-visible:text-foreground md:h-9";
 
 const QUEUE_HINT = "Space plays, arrows step a frame. Enter skips; ⌘/Ctrl + Enter comments and moves on.";
 
-export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refreshSrc }: ClipPlayerProps) {
+export function ClipPlayer({
+  src,
+  clipId,
+  unavailable,
+  hint = QUEUE_HINT,
+  refreshSrc,
+  failedMessage = COACH_FAILED,
+}: ClipPlayerProps) {
   const video = useRef<HTMLVideoElement>(null);
   const [speed, setSpeed] = useState<number>(0.5);
   const [loop, setLoop] = useState(true);
@@ -147,7 +175,7 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
             src={src}
             // A new clip fades up rather than cutting in, so a switch reads
             // as a switch (docs/coach-motion.md). Opacity only.
-            className="size-full object-contain animate-fade-in"
+            className="size-full object-contain coach:animate-fade-in athlete:animate-fade-in"
             controls
             loop={loop}
             playsInline
@@ -157,9 +185,7 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
           />
         ) : (
           <div className="flex size-full items-center justify-center p-6 text-center text-ui text-muted">
-            {failed
-              ? "This clip would not play. It may still be uploading from their phone, or the athlete may have withdrawn access."
-              : (unavailable ?? "Loading the clip…")}
+            {failed ? failedMessage : (unavailable ?? "Loading the clip…")}
           </div>
         )}
       </div>
@@ -173,7 +199,8 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
               onClick={() => setSpeed(option)}
               aria-pressed={speed === option}
               className={cn(
-                "h-10 rounded-chip px-3 text-ui font-medium transition-control press md:h-9",
+                "h-10 rounded-chip px-3 text-ui font-medium md:h-9",
+                CONTROL,
                 speed === option
                   ? "bg-accent-fill text-on-accent"
                   : "border border-border text-muted hover:text-foreground focus-visible:text-foreground",
@@ -189,7 +216,8 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
           onClick={() => setLoop((on) => !on)}
           aria-pressed={loop}
           className={cn(
-            "h-10 rounded-chip px-3 text-ui font-medium transition-control press md:h-9",
+            "h-10 rounded-chip px-3 text-ui font-medium md:h-9",
+            CONTROL,
             loop
               ? "bg-accent-fill text-on-accent"
               : "border border-border text-muted hover:text-foreground focus-visible:text-foreground",
@@ -199,18 +227,10 @@ export function ClipPlayer({ src, clipId, unavailable, hint = QUEUE_HINT, refres
         </button>
 
         <div className="flex items-center gap-1" role="group" aria-label="Frame step">
-          <button
-            type="button"
-            onClick={() => step(-1)}
-            className="h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9"
-          >
+          <button type="button" onClick={() => step(-1)} className={cn(STEP, CONTROL)}>
             ‹ Frame
           </button>
-          <button
-            type="button"
-            onClick={() => step(1)}
-            className="h-10 rounded-chip border border-border px-3 text-ui font-medium text-muted transition-control press hover:text-foreground focus-visible:text-foreground md:h-9"
-          >
+          <button type="button" onClick={() => step(1)} className={cn(STEP, CONTROL)}>
             Frame ›
           </button>
         </div>

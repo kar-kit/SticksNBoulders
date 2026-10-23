@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HistoryScreen } from "./history-screen";
 import type { SessionRecord } from "@/lib/logging/session";
@@ -12,6 +12,16 @@ vi.mock("next/link", () => ({
     </a>
   ),
 }));
+
+// The view lives in ?view= (F13). Mutable so a test can arrive on Clips.
+const url = vi.hoisted(() => ({ search: "" }));
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(url.search),
+}));
+
+// The Clips view has its own tests (clips-view.test.tsx); here it only has
+// to be the thing the switch shows.
+vi.mock("./clips-view", () => ({ ClipsView: () => <section aria-label="Clips">clips grid</section> }));
 
 vi.mock("@/lib/auth/session-context", () => ({
   useSession: () => ({
@@ -94,6 +104,8 @@ function setup(sessions: SessionRecord[] = [session()]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  url.search = "";
+  window.history.replaceState(null, "", "/history");
   dayLabels.map = new Map();
   units.unit = "kg";
   library.exercises = exercises;
@@ -193,5 +205,40 @@ describe("session names", () => {
     setup();
     const card = await screen.findByRole("link", { name: /8 sets/ });
     expect(card.getAttribute("aria-label")).toMatch(/^\w+day \d+ \w{3}, 8 sets$/);
+  });
+});
+
+describe("Sessions | Clips (F13)", () => {
+  it("opens on Sessions, with the switch saying so", async () => {
+    setup();
+    expect(await screen.findByRole("link", { name: /8 sets/ })).toBeInTheDocument();
+    const group = screen.getByRole("group", { name: "Show" });
+    expect(within(group).getByRole("button", { name: "Sessions" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(group).getByRole("button", { name: "Clips" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("region", { name: "Clips" })).not.toBeInTheDocument();
+  });
+
+  it("switches to Clips in place, and writes it to the URL without a new history entry", async () => {
+    const { user } = setup();
+    await screen.findByRole("link", { name: /8 sets/ });
+    const before = window.history.length;
+    await user.click(screen.getByRole("button", { name: "Clips" }));
+    expect(screen.getByRole("region", { name: "Clips" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /8 sets/ })).not.toBeInTheDocument();
+    // The sessions search has nothing to search on the grid.
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(window.location.search).toBe("?view=clips");
+    expect(window.history.length).toBe(before);
+
+    await user.click(screen.getByRole("button", { name: "Sessions" }));
+    expect(await screen.findByRole("link", { name: /8 sets/ })).toBeInTheDocument();
+    expect(window.location.search).toBe("");
+  });
+
+  it("lands on Clips when the URL says so -- coming Back from a clip", () => {
+    url.search = "view=clips";
+    setup();
+    expect(screen.getByRole("region", { name: "Clips" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clips" })).toHaveAttribute("aria-pressed", "true");
   });
 });

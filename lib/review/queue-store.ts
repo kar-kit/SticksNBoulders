@@ -27,7 +27,7 @@ const MAX_CLIPS = 300;
 const MAX_REVIEWS = 1000;
 const PAGE = 100;
 
-interface SetRow {
+export interface SetRow {
   $id: string;
   athlete_id?: unknown;
   exercise_id?: unknown;
@@ -41,6 +41,7 @@ interface SetRow {
   video_file_id?: unknown;
   video_poster_id?: unknown;
   notes?: unknown;
+  is_warmup?: unknown;
   prescription_id?: unknown;
   prescribed?: unknown;
 }
@@ -50,7 +51,8 @@ const maybeNum = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
-function toClip(raw: SetRow): ClipSet | null {
+/** A set row as a clip, or null when it cannot be placed. Shared with the athlete's gallery (F13). */
+export function toClip(raw: SetRow): ClipSet | null {
   const videoFileId = str(raw.video_file_id);
   const athleteId = str(raw.athlete_id);
   const loggedAt = str(raw.logged_at);
@@ -74,6 +76,7 @@ function toClip(raw: SetRow): ClipSet | null {
     // Only the poster OF this clip; a stale one reads as none (F12).
     videoPosterId: posterOf(raw as unknown as Record<string, unknown>),
     notes: str(raw.notes) || null,
+    isWarmup: raw.is_warmup === true,
     prescriptionId: str(raw.prescription_id) || null,
     prescribed: str(raw.prescribed) || null,
   };
