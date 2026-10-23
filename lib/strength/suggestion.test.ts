@@ -12,6 +12,18 @@ const logged = (over: Partial<Parameters<typeof suggestLoad>[0]> = {}) => ({
   ...over,
 });
 
+describe("a set logged below RPE 6 (F10)", () => {
+  it("anchors no suggestion, the same way it estimates no max", () => {
+    // 170 x 5 @ 5 to a 5 @ 8 target is within MAX_SUGGESTION_SPAN, so the
+    // only thing stopping a confident jump is that "easy" is not a count.
+    for (const rpe of [5, 4, 3]) {
+      expect(suggestLoad(logged({ rpe }), { reps: 5, rpe: 8 })).toBeNull();
+      expect(estimateOneRepMax(logged({ rpe }))).toBeNull();
+    }
+    expect(suggestLoad(logged({ rpe: 6 }), { reps: 5, rpe: 8 })).not.toBeNull();
+  });
+});
+
 describe("the ticket's own example", () => {
   /** "Log RPE 7 at 170 and the app suggests the next step." */
   it("suggests going up when the set came in easier than the target", () => {

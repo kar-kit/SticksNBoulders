@@ -29,6 +29,8 @@ function describe(action: Action): string {
       return `create index ${action.tableId}.${action.index.key}`;
     case "recreate-index":
       return `recreate index ${action.tableId}.${action.index.key} — ${action.reason}`;
+    case "update-column":
+      return `update column ${action.tableId}.${action.column.key} — ${action.reason}`;
     case "manual-column-change":
       return `NEEDS A HUMAN: ${action.tableId}.${action.column.key} — ${action.reason}`;
     case "orphan-table":
@@ -85,6 +87,9 @@ export async function applySchema(
         pendingColumns.set(action.tableId, keys);
         break;
       }
+      case "update-column":
+        await driver.updateColumn(schema.id, action.tableId, action.column);
+        break;
       case "recreate-index":
         await driver.deleteIndex(schema.id, action.tableId, action.index.key);
       // falls through: a recreate is a delete then a create

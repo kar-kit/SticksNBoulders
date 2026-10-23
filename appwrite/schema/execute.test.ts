@@ -23,6 +23,21 @@ function fakeDriver() {
     datetime: "datetime",
   };
 
+  /**
+   * Bounds as the server reports them: the declared one, or the type's own
+   * extreme when the column was created without one. Reporting undefined
+   * instead would let the planner skip every bound and prove nothing.
+   */
+  const boundsOf = (column: ColumnSpec) => {
+    if (column.type === "float") {
+      return { min: column.min ?? -Number.MAX_VALUE, max: column.max ?? Number.MAX_VALUE };
+    }
+    if (column.type === "integer") {
+      return { min: column.min ?? Number.MIN_SAFE_INTEGER, max: column.max ?? Number.MAX_SAFE_INTEGER };
+    }
+    return {};
+  };
+
   const find = (tableId: string) => {
     const t = state.tables.find((x) => x.id === tableId);
     if (!t) throw new Error(`fake: no table ${tableId}`);
@@ -79,7 +94,14 @@ function fakeDriver() {
         required: column.required,
         size: column.type === "string" ? column.size : undefined,
         elements: column.type === "enum" ? [...column.elements] : undefined,
+        ...boundsOf(column),
       });
+    },
+    async updateColumn(_db, tableId, column) {
+      calls.push(`updateColumn:${tableId}.${column.key}`);
+      const existing = find(tableId).columns.find((c) => c.key === column.key);
+      if (!existing) throw new Error(`fake: no column ${tableId}.${column.key}`);
+      Object.assign(existing, { required: column.required, ...boundsOf(column) });
     },
     async createIndex(_db, tableId, index: IndexSpec) {
       calls.push(`createIndex:${tableId}.${index.key}`);
@@ -208,6 +230,38 @@ describe("applySchema repairs drift", () => {
     await applySchema(driver, schema);
     const key = schema.tables.find((t) => t.id === "sets")!.indexes[0].key;
     expect(calls.indexOf(`deleteIndex:sets.${key}`)).toBeLessThan(calls.indexOf(`createIndex:sets.${key}`));
+  });
+
+  it("widens sets.rpe from a v15 server in place, and nothing else (v16, F10)", async () => {
+    // The live instance as v15 left it: the whole schema, with RPE floored at 6.
+    const { driver, calls, state } = fakeDriver();
+    await applySchema(driver, schema);
+    state.tables.find((t) => t.id === "sets")!.columns.find((c) => c.key === "rpe")!.min = 6;
+    calls.length = 0;
+
+    const log: string[] = [];
+    const dry = await applySchema(driver, schema, { dryRun: true, log: (m) => log.push(m) });
+    expect(calls, "a dry run writes nothing").toEqual([]);
+    expect(dry.reported).toEqual([]);
+    expect(log).toEqual(["  would update column sets.rpe — min is 6, schema says 3"]);
+
+    const result = await applySchema(driver, schema);
+    expect(result.applied).toMatchObject([{ kind: "update-column", tableId: "sets", column: { key: "rpe" } }]);
+    expect(calls).toEqual(["updateColumn:sets.rpe"]);
+    expect((await applySchema(driver, schema)).noop).toBe(true);
+  });
+
+  it("reports a narrowed bound instead of applying it", async () => {
+    const { driver, calls, state } = fakeDriver();
+    await applySchema(driver, schema);
+    // A server that took RPE 1, against a schema that now says 3.
+    state.tables.find((t) => t.id === "sets")!.columns.find((c) => c.key === "rpe")!.min = 1;
+    calls.length = 0;
+
+    const result = await applySchema(driver, schema);
+    expect(result.noop).toBe(true);
+    expect(calls).toEqual([]);
+    expect(result.reported).toMatchObject([{ kind: "manual-column-change", tableId: "sets", column: { key: "rpe" } }]);
   });
 
   it("reports an orphan without deleting it, and stays a no-op afterwards", async () => {

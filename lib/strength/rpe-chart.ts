@@ -1,4 +1,4 @@
-import { MAX_REPS_TO_FAILURE, repsToFailure, type SetForEstimate } from "./e1rm";
+import { isEstimableRpe, MAX_REPS_TO_FAILURE, repsToFailure, type SetForEstimate } from "./e1rm";
 
 /**
  * The RPE -> %1RM chart, verified.
@@ -132,7 +132,9 @@ export function chartPercentFor(reps: number, rpe: number): number | null {
  */
 export function chartOneRepMax(set: SetForEstimate): number | null {
   if (set.isWarmup) return null;
-  if (set.rpe === null || !Number.isFinite(set.rpe)) return null;
+  // Below 6 included, per MIN_ESTIMABLE_RPE: the chart has cells that far
+  // from failure, but the RPE that would index them is not a count of reps.
+  if (!isEstimableRpe(set.rpe)) return null;
   if (!Number.isFinite(set.loadKg) || set.loadKg <= 0) return null;
   if (!Number.isInteger(set.reps) || set.reps < 1) return null;
 

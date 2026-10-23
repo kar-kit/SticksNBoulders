@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 15,
+  version: 16,
   tables: [
     {
       id: "profiles",
@@ -137,7 +137,15 @@ export const schema: DatabaseSpec = {
         { key: "reps", type: "integer", required: true, min: 0 },
         // Null is a real answer: the athlete tapped "Not sure". A forced guess
         // pollutes the personal RPE curve worse than a null does.
-        { key: "rpe", type: "float", required: false, min: 6, max: 10 },
+        //
+        // v16 (F10) lowered the floor from 6 to 3, for the sheet's "Under 6"
+        // sub-menu: a set too easy to call a 6 is logged as 5, 4 or 3. This is
+        // the logged scale (`RpeValue`), not the prescribable one -- programs
+        // store their RPE inside the load text, parsed on the 6-10 scale
+        // (`PrescribableRpe`), so nothing here lets a coach ask for a 4. A
+        // sub-6 set stores no e1rm_kg (`MIN_ESTIMABLE_RPE`). Widening a float
+        // column's bounds rewrites no row, so the planner applies it in place.
+        { key: "rpe", type: "float", required: false, min: 3, max: 10 },
         { key: "is_warmup", type: "boolean", required: false, default: false },
         // Computed and stored at write time, never derived on read.
         { key: "e1rm_kg", type: "float", required: false, min: 0 },

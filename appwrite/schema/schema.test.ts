@@ -1,6 +1,7 @@
 import { SERVER_ONLY_TABLES } from "@/appwrite/documents/policy";
 import { DATABASE_ID, schema } from "./index";
 import type { TableSpec } from "./types";
+import { LOGGED_RPE_VALUES } from "@/lib/logging/set";
 
 const table = (id: string): TableSpec => {
   const found = schema.tables.find((t) => t.id === id);
@@ -235,7 +236,14 @@ describe("logging rules encoded in the schema", () => {
   it("allows a null RPE, because 'not sure' is a real answer", () => {
     const rpe = table("sets").columns.find((c) => c.key === "rpe");
     expect(rpe?.required).toBe(false);
-    expect(rpe).toMatchObject({ type: "float", min: 6, max: 10 });
+    expect(rpe).toMatchObject({ type: "float", max: 10 });
+  });
+
+  it("takes the sheet's Under 6 answers, down to 3 and no lower (v16, F10)", () => {
+    expect(schema.version).toBe(16);
+    const rpe = table("sets").columns.find((c) => c.key === "rpe");
+    expect(rpe).toEqual({ key: "rpe", type: "float", required: false, min: 3, max: 10 });
+    expect(Math.min(...LOGGED_RPE_VALUES)).toBe(rpe && "min" in rpe ? rpe.min : undefined);
   });
 
   it("carries the warm-up flag that excludes a set from PRs", () => {
@@ -386,7 +394,7 @@ describe("the program tables (Order 19)", () => {
 
 describe("prescribed warm-ups and pause seconds (v15)", () => {
   it("are two nullable integers with no default, so applying them rewrites no line", () => {
-    expect(schema.version).toBe(15);
+    expect(schema.version).toBeGreaterThanOrEqual(15);
     const columns = table("prescriptions").columns;
     expect(columns.find((c) => c.key === "warmup_sets")).toEqual({
       key: "warmup_sets",

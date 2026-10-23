@@ -26,6 +26,9 @@ describe("a bumped load", () => {
     expect(bumpLoad("@9.5", bump({ rpe: 1 }))).toBe("@10");
     expect(bumpLoad("@10", bump({ rpe: 1 }))).toBeNull();
     expect(bumpLoad("@6", bump({ rpe: -1 }))).toBeNull();
+    // The athlete can log below 6 (F10); a bump cannot prescribe it.
+    expect(bumpLoad("@7", bump({ rpe: -2 }))).toBe("@6");
+    expect(bumpLoad("75% @6.5", bump({ rpe: -3 }))).toBe("75% @6");
     expect(bumpLoad("5%", bump({ percent: -10 }))).toBeNull();
     expect(bumpLoad("0.1", bump({ kg: 0.2 }))).toBe("0.3kg");
   });

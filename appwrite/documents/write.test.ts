@@ -231,6 +231,22 @@ describe("set data", () => {
     await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: null, isWarmup: false });
     expect(h.last().data.e1rm_kg).toBeNull();
   });
+
+  it("stores a sub-6 RPE as logged, with no estimate (F10)", async () => {
+    // The RPE is a fact about the set and is kept exactly; the e1RM is not
+    // honest that far from failure, so the column stays unset on create...
+    const h = harness();
+    await createSet(h.deps, h.actor, {
+      sessionId: "s1", exerciseId: "e1", setIndex: 1, loadKg: 100, reps: 5, clientSetId: "cs10", rpe: 4,
+    });
+    expect(h.last().data.rpe).toBe(4);
+    expect(h.last().data.e1rm_kg).toBeUndefined();
+
+    // ...and an edit down to "Under 6" clears the estimate the row had.
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 5, isWarmup: false });
+    expect(h.last().data.rpe).toBe(5);
+    expect(h.last().data.e1rm_kg).toBeNull();
+  });
 });
 
 describe("exercise names", () => {

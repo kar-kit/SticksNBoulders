@@ -87,6 +87,15 @@ describe("priorBests", () => {
   });
 });
 
+describe("priorBests with sets logged below RPE 6", () => {
+  it("takes their weight but not an estimate", () => {
+    // Stored with no e1rm_kg, as the write helper stores them, and recomputed
+    // to nothing too.
+    const before = [raw("2026-10-20T18:00:00Z", { loadKg: 160, reps: 5, rpe: 4, e1rmKg: null })];
+    expect(priorBests([], before, sessionStart)).toEqual({ e1rmKg: null, heaviestKg: 160 });
+  });
+});
+
 describe("repBests", () => {
   it("keeps, per load, the most reps at that load or heavier, heaviest first", () => {
     const before = [
@@ -139,6 +148,27 @@ describe("detectPrs", () => {
     expect(detectPrs([set("a", 145, 5, 9)], bests).size).toBe(0);
     expect(detectPrs([set("b", 150, 5, 9)], bests)).toEqual(new Map([["b", ["e1rm"]]]));
     expect(detectPrs([set("c", 150, 5, null)], bests).size).toBe(0);
+  });
+
+  it("withholds only the e1RM record from a set logged below RPE 6 (F10)", () => {
+    // 150 x 5 @ 9 is an e1RM record above. The same set called a 5 is not:
+    // "easy" is not a count of reps in reserve. Every number it would have
+    // claimed is higher still, which is exactly the overestimate refused.
+    for (const rpe of [5, 4, 3]) {
+      expect(detectPrs([set("a", 150, 5, rpe)], bests).size).toBe(0);
+    }
+    // Weight and rep records never read RPE: 155 on the bar is 155 however it felt.
+    expect(detectPrs([set("w", 155, 2, 4)], bests)).toEqual(new Map([["w", ["weight"]]]));
+    const frontier = { ...bests, repsAt: [{ loadKg: 140, reps: 5 }] };
+    expect(detectPrs([set("r", 140, 6, 5)], frontier)).toEqual(new Map([["r", ["reps"]]]));
+  });
+
+  it("does not let an easy set's would-be estimate raise the bar for a later one", () => {
+    // If 150 x 8 @ 3 counted, it would claim far more than 170 and block the
+    // honest 150 x 5 @ 9 record after it.
+    const found = detectPrs([set("easy", 150, 8, 3), set("real", 150, 5, 9)], bests);
+    expect(found.get("easy")).toBeUndefined();
+    expect(found.get("real")).toEqual(["e1rm"]);
   });
 
   it("gives one set both kinds, once each", () => {

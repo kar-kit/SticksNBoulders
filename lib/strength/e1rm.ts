@@ -68,6 +68,35 @@ export interface SetForEstimate {
  */
 export const MAX_REPS_TO_FAILURE = 12;
 
+/**
+ * The lowest RPE an estimate is made from. Below it, the set is logged and
+ * counted -- volume, tonnage, the heaviest weight, the most reps -- but it
+ * gets no e1RM.
+ *
+ * The whole formula rests on RIR = 10 - RPE, and that equivalence is only as
+ * good as the athlete's sense of how many reps were left. Near failure that
+ * sense is sharp: the difference between one and two in the tank is felt.
+ * Far from it, it is not -- an athlete calling a set RPE 4 is saying "easy",
+ * not "exactly six more", and evidence on RIR-based ratings is that accuracy
+ * falls away as the set gets further from failure ([Inference], from the
+ * Zourdos/Helms RIR-RPE work; the cut-off itself is Joey's call, F10). Six
+ * reps of reserve fed into Brzycki inflates the estimate: 100 x 5 @4 would
+ * claim 138.5 kg, the same as 100 x 11 to failure, and could become the
+ * week's best e1RM, a "record", and the working max a percentage is priced
+ * off.
+ *
+ * Six is also where the coach's scale starts (`PrescribableRpe` in
+ * lib/logging/set.ts), so every RPE the product can prescribe is still one it
+ * can estimate from. Sets logged before F10 were all 6 or above, so the
+ * stored numbers do not move; `npm run e1rm:backfill` would apply this to
+ * anything that slipped through.
+ */
+export const MIN_ESTIMABLE_RPE = 6;
+
+/** Whether an RPE is close enough to failure to estimate a max from. */
+export const isEstimableRpe = (rpe: number | null): rpe is number =>
+  rpe !== null && Number.isFinite(rpe) && rpe >= MIN_ESTIMABLE_RPE && rpe <= 10;
+
 /** RPE is how close to failure the set was; RIR is the same fact counted down. */
 export const repsInReserve = (rpe: number): number => 10 - rpe;
 
@@ -84,11 +113,13 @@ export const repsToFailure = (reps: number, rpe: number): number => reps + repsI
  *   A wrong number is worse than no number, so this stays empty.
  * - **A warm-up.** Excluded from PRs and rollups everywhere else, and a warm-up
  *   flagged at a high RPE is a mis-tap rather than a max.
+ * - **An RPE below 6**, per MIN_ESTIMABLE_RPE: logged as easy, too far from
+ *   failure for reps-in-reserve to be counted. Above 10 is not an RPE at all.
  * - **Too far from failure to mean anything**, per MAX_REPS_TO_FAILURE.
  */
 export function estimateOneRepMax(set: SetForEstimate): number | null {
   if (set.isWarmup) return null;
-  if (set.rpe === null || !Number.isFinite(set.rpe)) return null;
+  if (!isEstimableRpe(set.rpe)) return null;
   if (!Number.isFinite(set.loadKg) || set.loadKg <= 0) return null;
   if (!Number.isInteger(set.reps) || set.reps < 1) return null;
 

@@ -1,6 +1,6 @@
 import { formatPrescription, parsePrescription } from "./prescription";
 import { byPosition, type WeekTree } from "./program";
-import { RPE_VALUES } from "@/lib/logging/set";
+import { PRESCRIBABLE_RPE_VALUES, type PrescribableRpe } from "@/lib/logging/set";
 
 /**
  * Duplicate a week with a bump: the copy is the week with every load moved by
@@ -36,7 +36,7 @@ function step(text: string, label: string): Parsed<number> {
 
 /**
  * The three fields of the form. An RPE step is a half-point multiple because
- * that is all an RPE can be (RPE_VALUES); anything else would round silently.
+ * that is all a prescribed RPE can be (PRESCRIBABLE_RPE_VALUES); anything else would round silently.
  */
 export function parseBump(fields: { kg: string; percent: string; rpe: string }): Parsed<Bump> {
   const kg = step(fields.kg, "Kilos");
@@ -51,10 +51,14 @@ export function parseBump(fields: { kg: string; percent: string; rpe: string }):
 
 export const isNoBump = (bump: Bump): boolean => bump.kg === 0 && bump.percent === 0 && bump.rpe === 0;
 
-const RPE_MIN = RPE_VALUES[0];
-const RPE_MAX = RPE_VALUES[RPE_VALUES.length - 1];
-/** Kept on the scale: +1 on @9.5 is @10, not an RPE that freeform would swallow. */
-const clampRpe = (rpe: number) => Math.min(RPE_MAX, Math.max(RPE_MIN, rpe)) as (typeof RPE_VALUES)[number];
+const RPE_MIN = PRESCRIBABLE_RPE_VALUES[0];
+const RPE_MAX = PRESCRIBABLE_RPE_VALUES[PRESCRIBABLE_RPE_VALUES.length - 1];
+/**
+ * Kept on the coach's scale: +1 on @9.5 is @10, not an RPE that freeform
+ * would swallow, and -2 on @7 is @6, not @5. The athlete can log below 6
+ * (F10); a program cannot ask for it.
+ */
+const clampRpe = (rpe: number) => Math.min(RPE_MAX, Math.max(RPE_MIN, rpe)) as PrescribableRpe;
 /** Two decimals at most: 0.1 + 0.2 is not 0.30000000000000004 kg. */
 const tidy = (value: number) => Math.round(value * 100) / 100;
 

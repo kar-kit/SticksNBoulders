@@ -143,6 +143,65 @@ describe("planSchema drift detection", () => {
   });
 });
 
+describe("planSchema and a numeric column's bounds", () => {
+  const withRpeBounds = (min: number | undefined, max: number | undefined) => {
+    const current = structuredClone(matching);
+    Object.assign(current.tables[0].columns[1], { min, max });
+    return current;
+  };
+  const lowered: DatabaseSpec = structuredClone(tiny);
+  (lowered.tables[0].columns[1] as { min?: number }).min = 3;
+
+  it("plans nothing when the bounds the schema declares match", () => {
+    expect(planSchema(withRpeBounds(6, 10), tiny)).toEqual([]);
+  });
+
+  it("ignores a bound the server does not report", () => {
+    expect(planSchema(withRpeBounds(undefined, undefined), lowered)).toEqual([]);
+  });
+
+  it("ignores a bound the schema does not declare, which Appwrite reports as the type's extreme", () => {
+    const open: DatabaseSpec = structuredClone(tiny);
+    delete (open.tables[0].columns[1] as { max?: number }).max;
+    expect(planSchema(withRpeBounds(6, Number.MAX_VALUE), open)).toEqual([]);
+  });
+
+  it("widens a lowered floor in place: v15's RPE 6 to v16's 3", () => {
+    const plan = planSchema(withRpeBounds(6, 10), lowered);
+    expect(plan).toEqual([
+      {
+        kind: "update-column",
+        tableId: "sets",
+        column: { key: "rpe", type: "float", required: false, min: 3, max: 10 },
+        reason: "min is 6, schema says 3",
+      },
+    ]);
+    expect(plan.every(isExecutable)).toBe(true);
+  });
+
+  it("widens a raised ceiling in place too", () => {
+    const plan = planSchema(withRpeBounds(6, 9), tiny);
+    expect(plan).toMatchObject([{ kind: "update-column", reason: "max is 9, schema says 10" }]);
+  });
+
+  it("reports a narrowing for a human, because rows may sit outside the new range", () => {
+    const plan = planSchema(withRpeBounds(3, 10), tiny);
+    expect(plan).toMatchObject([{ kind: "manual-column-change", tableId: "sets" }]);
+    expect(plan.some(isExecutable)).toBe(false);
+  });
+
+  it("reports one that widens one end and narrows the other, rather than half-applying it", () => {
+    const plan = planSchema(withRpeBounds(8, 12), lowered);
+    expect(plan).toMatchObject([{ kind: "manual-column-change", reason: expect.stringContaining("narrowing") }]);
+  });
+
+  it("leaves a type mismatch to a human without also planning a bounds update", () => {
+    const current = withRpeBounds(6, 10);
+    current.tables[0].columns[1].type = "integer";
+    expect(planSchema(current, lowered).map((a) => a.kind)).toEqual(["manual-column-change"]);
+  });
+});
+
 describe("planSchema refuses to destroy data", () => {
   it("reports a narrowed string column instead of altering it", () => {
     // Shrinking a column truncates. That is an athlete's logged work, so a

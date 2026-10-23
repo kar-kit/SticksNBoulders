@@ -4,8 +4,7 @@ import type { SetForEstimate } from "@/lib/strength/e1rm";
 export { LOADABLE_INCREMENT_KG, roundToLoadable } from "@/lib/strength/plates";
 import { roundToLoadable } from "@/lib/strength/plates";
 import { estimateOneRepMax } from "@/lib/strength/e1rm";
-import type { RpeValue } from "@/lib/logging/set";
-import { RPE_VALUES } from "@/lib/logging/set";
+import { isPrescribableRpe, type PrescribableRpe } from "@/lib/logging/set";
 import type { MaxKind } from "@/lib/strength/reference-max";
 import { loadLabel, loadNumber, type UnitPreference } from "@/lib/units";
 
@@ -64,8 +63,8 @@ export const DEFAULT_BASIS: MaxKind = "training";
 export type PrescriptionSpec =
   | { kind: "fixed"; loadKg: number }
   | { kind: "percent"; percent: number; basis: MaxKind }
-  | { kind: "rpe"; rpe: RpeValue }
-  | { kind: "capped"; percent: number; basis: MaxKind; rpe: RpeValue }
+  | { kind: "rpe"; rpe: PrescribableRpe }
+  | { kind: "capped"; percent: number; basis: MaxKind; rpe: PrescribableRpe }
   /** Exactly what the coach typed, shown to the athlete as written. */
   | { kind: "freeform"; text: string };
 
@@ -73,8 +72,14 @@ export type PrescriptionSpec =
  * Parsing
  * ---------------------------------------------------------------------- */
 
-const isRpe = (value: number): value is RpeValue =>
-  (RPE_VALUES as readonly number[]).includes(value);
+/**
+ * The coach's scale, 6 to 10 in half points -- never the athlete's wider one.
+ * "@5" is not an RPE prescription: it falls through to freeform, which shows
+ * the coach's words as written and prices nothing, rather than being turned
+ * into a weight by a formula that is not trustworthy that far from failure
+ * (lib/logging/set.ts, `PrescribableRpe`).
+ */
+const isRpe = isPrescribableRpe;
 
 /** `@8`, `@8.5`, `rpe8`, `rpe 8.5`. */
 const RPE_PART = /(?:@|rpe\s*)(\d+(?:\.\d+)?)/i;
@@ -204,7 +209,7 @@ export interface ResolvedPrescription {
    */
   loadKg: number | null;
   /** The ceiling on a capped prescription, or the target on an RPE one. */
-  rpe: RpeValue | null;
+  rpe: PrescribableRpe | null;
   /** What the athlete reads on the set row. */
   display: string;
   /**

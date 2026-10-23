@@ -5,10 +5,58 @@
  * the row the athlete tapped.
  */
 
-export type RpeValue = 6 | 6.5 | 7 | 7.5 | 8 | 8.5 | 9 | 9.5 | 10;
+/**
+ * An RPE a coach can prescribe: half points from 6 to 10.
+ *
+ * Deliberately narrower than what an athlete can log (`RpeValue`). A coach
+ * writes "@8" to set an effort; nobody programs a set to be RPE 4, and the
+ * maths that turns a prescription into a weight (Brzycki on reps to failure,
+ * lib/strength/e1rm.ts) is not trustworthy that far from failure anyway. So
+ * the prescription parser, the backoff rule's "until RPE" and the Bump Week
+ * clamp all take this type, and a sub-6 value cannot reach a program by
+ * accident: it is a type error before it is a bug.
+ */
+export type PrescribableRpe = 6 | 6.5 | 7 | 7.5 | 8 | 8.5 | 9 | 9.5 | 10;
 
-/** Half points from 6 to 10. Eleven values including "not sure", which is null. */
-export const RPE_VALUES: readonly RpeValue[] = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+/**
+ * What the athlete answered on the RPE sheet once they had finished the set,
+ * null aside ("Not sure").
+ *
+ * Everything a coach can prescribe, plus whole points 5, 4 and 3 for the sets
+ * that were too easy to call 6 (F10, Joey: "Need a sub RPE 6 sub menu for the
+ * sets that are too easy"). Whole points only below 6: the distinction between
+ * a 4 and a 4.5 is not one an athlete can feel, and the sheet stays one tap.
+ * Nothing below 3, because a set that easy is a warm-up whatever it is called.
+ *
+ * Logging a sub-6 RPE is recording a fact about the set, not asking for a
+ * number from it: such a set gets no e1RM and so no e1RM record, see
+ * `MIN_ESTIMABLE_RPE` in lib/strength/e1rm.ts.
+ */
+export type RpeValue = 3 | 4 | 5 | PrescribableRpe;
+
+/** The prescribable scale, low to high. Nine values. */
+export const PRESCRIBABLE_RPE_VALUES: readonly PrescribableRpe[] = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+
+/**
+ * The "Under 6" sub-menu, in the order the sheet offers them: nearest the
+ * main grid first, so the common "a bit easier than 6" answer is the closest
+ * tap.
+ */
+export const UNDER_SIX_RPE_VALUES: readonly RpeValue[] = [5, 4, 3];
+
+/**
+ * Every RPE an athlete can log, low to high. Twelve values; thirteen answers
+ * with "not sure", which is null.
+ */
+export const LOGGED_RPE_VALUES: readonly RpeValue[] = [3, 4, 5, ...PRESCRIBABLE_RPE_VALUES];
+
+/** Whether a stored or typed number is an RPE an athlete could have logged. */
+export const isLoggedRpe = (value: number): value is RpeValue =>
+  (LOGGED_RPE_VALUES as readonly number[]).includes(value);
+
+/** Whether a number is an RPE a coach may prescribe. Sub-6 is not. */
+export const isPrescribableRpe = (value: number): value is PrescribableRpe =>
+  (PRESCRIBABLE_RPE_VALUES as readonly number[]).includes(value);
 
 export interface LoggableSet {
   loadKg: number | null;
