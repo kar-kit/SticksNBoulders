@@ -94,8 +94,9 @@ blinked is the worst outcome this screen has.
 Comments are read back on the clip they are about. Since Joey's review of the
 dashboard (16 Oct 2026) each clip in the Videos list carries its latest comment
 on one line, and opening it shows the clip and its whole thread together, drawn
-by `CommentThread` (exported from `components/coach/comment-box.tsx`, so the
-queue and the Athlete View render the same words the same way). The separate
+by `CommentThread` (`components/video/comment-thread.tsx` since F13, so the
+queue, the Athlete View and the athlete's Clips gallery render the same words
+the same way). The separate
 `RecentFeedback` list is gone: every comment in it was about one of those clips.
 
 Read-only: replying belongs with the clip in the Review Queue, where the
@@ -134,6 +135,13 @@ replies go through `submitComment` with a `parentId`, exactly as predicted
 above. The unread watermark is kept on the device rather than on a row, because
 anything stamped for the circle would hand the coach a read receipt. See
 `lib/review/feedback-seen.ts`.
+
+F13 adds a second place to answer: a clip opened from History → Clips shows
+its thread and the same `ReplyBox`, posting through `submitComment` with the
+latest thread's opening comment as `parentId` (the Feedback screen's rule).
+Still no new table, policy or route. The box only appears once the coach has
+said something on that clip and while a coach is linked. Reading a thread
+there does not move the Feedback screen's unread watermark.
 
 ## Verified against the instance
 

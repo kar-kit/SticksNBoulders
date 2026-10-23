@@ -22,7 +22,7 @@ import { refreshRollup } from "@/lib/strength/rollup-client";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import { exerciseInUse } from "@/lib/exercises/usage-store";
 import { sessionHasSets } from "@/lib/logging/history-store";
-import { deleteClipIfSetGone } from "@/lib/video/clip-cleanup";
+import { deleteClipIfUnused } from "@/lib/video/clip-cleanup";
 import type { QueuedOp } from "./queue";
 
 /**
@@ -195,7 +195,7 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
     case "clip.delete": {
       // Not a row write: a file in storage, deleted with the athlete's own
       // session, which the file's stamp allows and the coach's does not.
-      await deleteClipIfSetGone(asString(p.setId), asString(p.fileId));
+      await deleteClipIfUnused(asString(p.setId), asString(p.fileId));
       return;
     }
     case "set.attachVideo": {

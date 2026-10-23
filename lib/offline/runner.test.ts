@@ -69,10 +69,10 @@ vi.mock("@/lib/review/comment-store", () => ({ fetchCommentsForSets }));
 
 const sessionHasSets = vi.hoisted(() => vi.fn<(sessionId: string) => Promise<boolean>>());
 const exerciseInUse = vi.hoisted(() => vi.fn<(athleteId: string, exerciseId: string) => Promise<boolean>>());
-const deleteClipIfSetGone = vi.hoisted(() => vi.fn<(setId: string, fileId: string) => Promise<void>>());
+const deleteClipIfUnused = vi.hoisted(() => vi.fn<(setId: string, fileId: string) => Promise<void>>());
 vi.mock("@/lib/logging/history-store", () => ({ sessionHasSets }));
 vi.mock("@/lib/exercises/usage-store", () => ({ exerciseInUse }));
-vi.mock("@/lib/video/clip-cleanup", () => ({ deleteClipIfSetGone }));
+vi.mock("@/lib/video/clip-cleanup", () => ({ deleteClipIfUnused }));
 
 const ACTOR = { userId: "athlete-1" };
 const op = (kind: OpKind, payload: Record<string, unknown>) => newOp(kind, payload, 0, "op-1");
@@ -366,9 +366,9 @@ describe("exercise.rename and exercise.delete", () => {
 
 describe("clip.delete", () => {
   it("hands the set and file to the cleanup, which checks the set has gone", async () => {
-    deleteClipIfSetGone.mockReset().mockResolvedValue(undefined);
+    deleteClipIfUnused.mockReset().mockResolvedValue(undefined);
     await runOp(ACTOR, op("clip.delete", { setId: "st-1", fileId: "vid-1" }));
-    expect(deleteClipIfSetGone).toHaveBeenCalledWith("st-1", "vid-1");
+    expect(deleteClipIfUnused).toHaveBeenCalledWith("st-1", "vid-1");
     expect(rows).toEqual([]);
   });
 });

@@ -207,6 +207,8 @@ would make every apply report drift it cannot fix.
 | `appwrite/schema/` | `BucketSpec`, bucket planning and applying |
 | `lib/video/poster-capture.ts`, `poster-upload.ts`, `poster-cache.ts` | F12 posters: grab, upload, show |
 | `scripts/clip-posters.ts`, `backfill-clip-posters.mts` | `npm run clips:posters` |
+| `lib/video/my-clips.ts`, `my-clips-store.ts` | F13: the athlete's own clips, paged, and delete / replace |
+| `app/(athlete)/history/clips-view.tsx`, `clips/[setId]/` | F13: the Clips grid and one clip |
 
 ## Verified against the live instance
 
@@ -308,3 +310,70 @@ before writing and skips one whose clip changed. Needs ffmpeg on PATH or
 `SNB_FFMPEG`. Order on a live instance: `npm run appwrite:setup` (v17) before
 deploying the client, then the backfill.
 <!-- END: clip posters (F12, schema v17) -->
+
+<!-- BEGIN: athlete clips gallery (F13) -->
+## The athlete's own clips (F13)
+
+History has a **Sessions | Clips** switch at the top (the tab bar stays at
+four tabs). Clips is every set the athlete filmed, newest first, as a
+three-column grid of posters (F12; the camera placeholder where there is none),
+with a row of lift chips to filter it. A tile opens `/history/clips/<setId>`, a
+route rather than a dialog, so Back, deep links and F7's push all work. The
+switch lives in `?view=clips`, swapped with `replaceState`.
+
+**Own clips only.** Every read filters `athlete_id` to the signed-in athlete,
+keeps only rows they authored (`authenticRows`), and checks the owner again
+after parsing (`lib/video/my-clips-store.ts`). This matters because a coach who
+also trains sits in their athletes' circle teams, so Appwrite would serve them
+those sets, and the playback ticket carries identity, not authority. A deep
+link to somebody else's set reads as "not found", and no ticket is minted.
+
+**Paging.** Cursor pages of 36 on `logged_at` desc (`idx_athlete_logged`), with
+"Load more clips". The lift filter is a server query too
+(`idx_athlete_exercise`), so a chosen lift shows all of that lift's clips, not
+the ones in the first page. The chips come from the unfiltered pages loaded so
+far, most-filmed first. A lift filmed only before the loaded pages has no chip
+until "Load more" reaches it.
+
+**One clip** is built from the coach's parts: `ClipPlayer` (now
+`components/video/clip-player.tsx`, motion gated `coach:` / `athlete:`, with a
+`failedMessage` prop and `shortcuts="none"` so Space presses the screen's own
+buttons instead of toggling the video), `CommentThread` (with a `fallbackName` prop), the
+Feedback screen's `ReplyBox`, History's `SetNoteField` saved through `editSet`
+(restating the set's own values, warm-up flag included, which is why `ClipSet`
+now reads `is_warmup`), and the Log's `AttachVideo` for Replace, poster capture
+included. Playback is the usual short-lived ticket from `/api/clip`.
+
+**Delete and replace take the file, not just the row.** Delete queues the
+detach (`set.attachVideo` with nulls) and then `clip.delete` behind it.
+Replace queues `clip.delete` for the old file once the new clip's attach is
+queued; if the new upload is still pending, the old file stays for
+`clips:sweep`. Delete also forgets any replacement still in the resumable-upload
+store for that set, and is disabled while one uploads from the screen, so a
+finished upload cannot re-attach a clip the athlete deleted. `deleteClipIfUnused` (was `deleteClipIfSetGone`) now also
+deletes a file, with its poster, when the set still exists but names another
+file or none. A row that still names the file, or whose column cannot be read,
+keeps it. The queue is strictly ordered, so the file never goes while a row
+still points at it. The set, its numbers, the note and any coach comments stay.
+
+**Offline.** Queued `set.attachVideo`, `set.delete` and `set.update` ops are
+laid over what the server returned (`withQueuedClipState`): a clip deleted
+with no signal stays gone after a reload, a replacement shows its new file,
+and an edited note shows as edited, each with the pending dot. A failed first
+page offers a retry, and a failed "Load more" keeps the grid. Clips still in
+the resumable-upload store are counted in one line above the grid.
+
+**No schema or permission change.** Athlete replies were already proved under
+the symmetric comment policy (docs/comments.md), and `videoPermissions` already
+lets the athlete delete their own clip and poster.
+
+Known edges, for Joey:
+
+- Replacing a clip the coach has already cleared does not put it back in their
+  Review Queue. `set_reviews` is keyed on coach + set, and the Log's Replace
+  has always behaved this way. Re-queueing would need a column on
+  `set_reviews` or on `sets` (a v18).
+- After a delete or replace, the coach's comments stay on the set and now
+  describe a clip that is gone or a different take. The delete confirm says
+  so.
+<!-- END: athlete clips gallery (F13) -->

@@ -43,11 +43,14 @@ describe("classifyNavigation", () => {
     ["/me", "/bodyweight", "push"],
     ["/history/s1", "/lift/squat", "push"],
     ["/today", "/lift/bench", "push"],
+    // History -> Clips -> one clip (F13).
+    ["/history", "/history/clips/st-1", "push"],
     // Back out, by link, router.back() or the browser.
     ["/history/s1", "/history", "pop"],
     ["/lift/squat", "/history/s1", "pop"],
     ["/bodyweight", "/me", "pop"],
     ["/today/program", "/today", "pop"],
+    ["/history/clips/st-1", "/history", "pop"],
     // Tab switches crossfade, from a root or from deep in another tab's stack.
     ["/today", "/log", "tab"],
     ["/log", "/history", "tab"],

@@ -110,3 +110,30 @@ describe("a ticket that expires while the clip is open", () => {
     expect(await screen.findByText(WOULD_NOT_PLAY)).toBeInTheDocument();
   });
 });
+
+describe("shared by both sides (F13)", () => {
+  it("keeps the coach's wording by default, and takes the athlete's own", async () => {
+    const coach = render(<ClipPlayer src={FIRST} clipId="c" />);
+    fireEvent.error(videoIn(coach.container));
+    expect(await screen.findByText(/uploading from their phone/)).toBeInTheDocument();
+    coach.unmount();
+
+    const athlete = render(<ClipPlayer src={FIRST} clipId="c" failedMessage="Yours would not play." />);
+    fireEvent.error(videoIn(athlete.container));
+    expect(await screen.findByText("Yours would not play.")).toBeInTheDocument();
+  });
+
+  it("carries motion only behind each shell's variant, so neither side's leaks into the other", () => {
+    const { container } = render(<ClipPlayer src={FIRST} clipId="c" />);
+    const MOTION = /^(animate-|motion-safe:|transition-control$|press$|press-wide$|tap$)/;
+    const bare = [...container.querySelectorAll<HTMLElement>("*")].flatMap((el) =>
+      (el.getAttribute("class") ?? "").split(/\s+/).filter((token) => MOTION.test(token)),
+    );
+    expect(bare).toEqual([]);
+    const loop = screen.getByRole("button", { name: "Loop" });
+    // The coach's press, exactly as before, inside .coach-scale; the athlete's tap inside .athlete-motion.
+    expect(loop.className).toContain("coach:press");
+    expect(loop.className).toContain("coach:transition-control");
+    expect(loop.className).toContain("athlete:tap");
+  });
+});

@@ -3,14 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import {
-  authorLabel,
-  checkComment,
-  MAX_COMMENT_LENGTH,
-  rejectionMessage,
-  threadComments,
-  type Comment,
-} from "@/lib/review/comments";
+import { CommentThread } from "@/components/video/comment-thread";
+import { checkComment, MAX_COMMENT_LENGTH, rejectionMessage, type Comment } from "@/lib/review/comments";
 
 /**
  * What the coach says, and what has already been said.
@@ -39,12 +33,6 @@ export interface CommentBoxProps {
   onSkip: () => void;
   busy?: boolean;
 }
-
-const timeLabel = (iso: string): string => {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-};
 
 export function CommentBox({
   clipId,
@@ -142,66 +130,6 @@ export function CommentBox({
           Skip
         </Button>
       </div>
-    </div>
-  );
-}
-
-/**
- * What has already been said about one clip, threaded one level deep.
- *
- * Its own export so the Athlete View's clip dialog draws a thread with these
- * exact words and this exact layout rather than a second rendering of the
- * same rows (Joey, 16 Oct 2026: reuse the queue's components). Renders
- * nothing for a clip nobody has spoken about; the caller says so in its own
- * words, since "nothing yet" means different things in the queue and on the
- * athlete's page.
- */
-export function CommentThread({
-  comments,
-  names,
-  viewerId,
-}: {
-  comments: readonly Comment[];
-  names: ReadonlyMap<string, string>;
-  viewerId: string;
-}) {
-  const threads = threadComments(comments);
-  if (threads.length === 0) return null;
-  return (
-    <div className="flex flex-col gap-3">
-      <h3 className="m-0 text-ui font-semibold text-muted">Already said</h3>
-      {threads.map(({ comment, replies }) => (
-        <div key={comment.id} className="flex flex-col gap-2">
-          <Said comment={comment} names={names} viewerId={viewerId} />
-          {replies.map((reply) => (
-            <div key={reply.id} className="pl-5">
-              <Said comment={reply} names={names} viewerId={viewerId} />
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Said({
-  comment,
-  names,
-  viewerId,
-}: {
-  comment: Comment;
-  names: ReadonlyMap<string, string>;
-  viewerId: string;
-}) {
-  return (
-    <div className="rounded-control border border-border p-3">
-      <p className="m-0 text-ui font-semibold text-muted">
-        {/* The coach is reading an athlete here. Order 34 reads the other way
-            and passes its own fallback. */}
-        {authorLabel(comment, names, viewerId, "Your athlete")}
-        <span className="font-medium text-muted-2"> · {timeLabel(comment.createdAt)}</span>
-      </p>
-      <p className="m-0 whitespace-pre-wrap text-body">{comment.body}</p>
     </div>
   );
 }

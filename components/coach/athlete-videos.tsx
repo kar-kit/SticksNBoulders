@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useId, useMemo, useState } from "react";
-import { ClipPlayer } from "@/components/coach/clip-player";
+import { ClipPlayer } from "@/components/video/clip-player";
 import { ClipThumb } from "@/components/video/clip-thumb";
-import { CommentThread } from "@/components/coach/comment-box";
+import { CommentThread } from "@/components/video/comment-thread";
 import { Dialog } from "@/components/ui/dialog";
 import { useArrivals, usePresence } from "@/components/ui/motion";
 import { useSession } from "@/lib/auth/session-context";

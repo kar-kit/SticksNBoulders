@@ -34,6 +34,13 @@ export interface ClipSet {
   videoPosterId?: string | null;
   notes: string | null;
   /**
+   * The set's warm-up flag. Read so a write that restates the set's values
+   * (the athlete's note edit from the Clips gallery, F13) cannot turn a
+   * filmed warm-up into a working set. Optional so a fixture need not spell
+   * it out; absent reads as a working set, as before.
+   */
+  isWarmup?: boolean;
+  /**
    * The line the set was logged against, and the target as it read on the
    * athlete's screen when they logged it -- a snapshot, stored on the set and
    * never recomputed, because logged work is immutable and a coach editing the

@@ -31,7 +31,7 @@ import {
   type RecentSet,
 } from "@/lib/review/queue-store";
 import { ClipContext } from "./clip-context";
-import { ClipPlayer } from "./clip-player";
+import { ClipPlayer } from "@/components/video/clip-player";
 import { CommentBox } from "./comment-box";
 
 /**
