@@ -61,7 +61,7 @@ export interface ExerciseBlockProps {
    * the confirm square logs; the rest wait behind it.
    */
   planned?: readonly PlannedSet[];
-  /** The row the pad is editing, if it is in this exercise. */
+  /** The row the pad is editing, if it is in this exercise: planned, or a logged set being corrected. */
   focusedId?: string | null;
   onFocus?: (clientSetId: string, field: "load" | "reps" | "rpe") => void;
   onConfirm?: (clientSetId: string) => void;
@@ -290,6 +290,7 @@ export function ExerciseBlock({
             state="logged"
             pendingSync={set.pendingSync}
             selected={selectedId === set.clientSetId}
+            focused={focusedId === set.clientSetId}
             onSelect={onSelect ? () => onSelect(set.clientSetId) : undefined}
             onDelete={onDelete ? () => onDelete(set.clientSetId) : undefined}
             deleteBlocked={set.deleteBlocked ?? null}

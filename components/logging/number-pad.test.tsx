@@ -74,3 +74,20 @@ describe("NumberPad", () => {
     expect(pad.className).not.toContain("bg-surface");
   });
 });
+
+describe("NumberPad without onDismiss", () => {
+  it("has no Done, for a sheet with its own Cancel and Save", () => {
+    render(
+      <NumberPad
+        state={beginEdit("load", 140, "kg")}
+        onChange={vi.fn()}
+        onNext={vi.fn()}
+        nextLabel="Reps"
+        isWarmup={false}
+        onToggleWarmup={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reps" })).toBeInTheDocument();
+  });
+});
