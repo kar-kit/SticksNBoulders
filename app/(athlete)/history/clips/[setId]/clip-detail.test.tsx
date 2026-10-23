@@ -249,6 +249,17 @@ describe("deleting the clip", () => {
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/history?view=clips"));
   });
 
+  it("waits while a replacement is uploading: deleting then would be undone when it attached", async () => {
+    let finish: (value: unknown) => void = () => {};
+    attachClipToSet.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const { user, container } = await open();
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await user.upload(input, new File(["x"], "again.mov", { type: "video/quicktime" }));
+    expect(screen.getByRole("button", { name: "Delete clip" })).toBeDisabled();
+    finish({ ok: true, fileId: "file-b" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Delete clip" })).toBeEnabled());
+  });
+
   it("can be called off", async () => {
     const { user } = await open();
     await user.click(screen.getByRole("button", { name: "Delete clip" }));
@@ -264,6 +275,20 @@ describe("deleting the clip", () => {
     await user.click(within(screen.getByRole("group", { name: /Delete this clip\?/ })).getByRole("button", { name: "Delete clip" }));
     expect(await screen.findByText(/wasn't deleted/)).toBeInTheDocument();
     expect(router.push).not.toHaveBeenCalled();
+  });
+});
+
+describe("the keyboard", () => {
+  it("leaves Space to the focused button: the player takes no window-wide keys here", async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const { user, container } = await open();
+    await waitFor(() => expect(container.querySelector("video")).not.toBeNull());
+    screen.getByRole("button", { name: "Delete clip" }).focus();
+    await user.keyboard(" ");
+    expect(screen.getByRole("group", { name: /Delete this clip\?/ })).toBeInTheDocument();
+    expect(play).not.toHaveBeenCalled();
+    // Nor does it promise keys it does not take.
+    expect(screen.queryByText(/Space plays/)).not.toBeInTheDocument();
   });
 });
 

@@ -57,6 +57,13 @@ export interface ClipPlayerProps {
    * gallery passes its own words.
    */
   failedMessage?: string;
+  /**
+   * Space and the arrows on the whole window, the queue's way ("window",
+   * the default), or not at all ("none"). The athlete's clip screen has
+   * buttons around the player (Delete, Save note, Send) that Space must
+   * activate, so it passes "none" and leaves keys to the native controls.
+   */
+  shortcuts?: "window" | "none";
 }
 
 const COACH_FAILED =
@@ -77,6 +84,7 @@ export function ClipPlayer({
   hint = QUEUE_HINT,
   refreshSrc,
   failedMessage = COACH_FAILED,
+  shortcuts = "window",
 }: ClipPlayerProps) {
   const video = useRef<HTMLVideoElement>(null);
   const [speed, setSpeed] = useState<number>(0.5);
@@ -139,6 +147,7 @@ export function ClipPlayer({
   }, []);
 
   useEffect(() => {
+    if (shortcuts === "none") return;
     const onKey = (event: KeyboardEvent) => {
       // Never while the coach is writing. Order 33 puts a comment box on this
       // screen, and a space that pauses the video mid-word would make it
@@ -159,7 +168,7 @@ export function ClipPlayer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [step, toggle]);
+  }, [step, toggle, shortcuts]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -237,7 +246,7 @@ export function ClipPlayer({
       </div>
 
       {/* Keyboard shortcuts mean nothing to a thumb. */}
-      <p className="m-0 hidden text-ui text-muted-2 md:block">{hint}</p>
+      {shortcuts === "window" ? <p className="m-0 hidden text-ui text-muted-2 md:block">{hint}</p> : null}
     </div>
   );
 }

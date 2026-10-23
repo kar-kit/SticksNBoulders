@@ -44,9 +44,18 @@ export interface AttachVideoProps {
    * attach is already queued (`ok`) or still waiting on the upload.
    */
   onAttached?: (result: UploadResult) => void;
+  /** True while this button's upload runs, so a caller can hold back actions it would race. */
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
-export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", onAttached }: AttachVideoProps) {
+export function AttachVideo({
+  setId,
+  athleteId,
+  hasVideo = false,
+  ask = "none",
+  onAttached,
+  onUploadingChange,
+}: AttachVideoProps) {
   const input = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<State>({ status: "idle" });
   const [putAway, setPutAway] = useState(false);
@@ -54,10 +63,11 @@ export function AttachVideo({ setId, athleteId, hasVideo = false, ask = "none", 
   const pick = async (file: File | undefined) => {
     if (!file) return;
     setState({ status: "uploading", percent: 0 });
+    onUploadingChange?.(true);
 
     const result = await attachClipToSet(setId, athleteId, file, {
       onProgress: (percent) => setState({ status: "uploading", percent }),
-    });
+    }).finally(() => onUploadingChange?.(false));
 
     // The message comes from the check that refused it -- "that clip is 48MB,
     // film a shorter one" is actionable on a gym floor; "upload failed" is not.

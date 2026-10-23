@@ -16,6 +16,15 @@ vi.mock("@/appwrite/browser-client", () => ({
 const enqueue = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("@/lib/offline/client", () => ({ enqueue }));
 
+const uploads = vi.hoisted(() => ({
+  pending: [] as { fileId: string; setId: string; athleteId: string }[],
+  forgetUpload: vi.fn(async () => {}),
+}));
+vi.mock("./pending-store", () => ({
+  pendingUploads: async () => uploads.pending,
+  forgetUpload: uploads.forgetUpload,
+}));
+
 const tables = () => db.current as FakeTables;
 
 /** A filmed set, stamped as the athlete's own write would be. */
@@ -38,6 +47,8 @@ const clip = (id: string, athleteId: string, day: number, over: Partial<FakeRow>
 beforeEach(() => {
   db.current = new FakeTables();
   enqueue.mockClear();
+  uploads.pending = [];
+  uploads.forgetUpload.mockClear();
 });
 
 describe("fetchMyClips", () => {
@@ -146,6 +157,16 @@ describe("deleteMyClip", () => {
       ["set.attachVideo", { setId: "st-1", videoFileId: null, videoPosterId: null }],
       ["clip.delete", { setId: "st-1", fileId: "file-1" }],
     ]);
+  });
+
+  it("forgets a replacement still uploading for the set, so it cannot attach itself after the delete", async () => {
+    uploads.pending = [
+      { fileId: "file-new", setId: "st-1", athleteId: "joey" },
+      { fileId: "file-other", setId: "st-2", athleteId: "joey" },
+    ];
+    await deleteMyClip("st-1", "file-1");
+    expect(uploads.forgetUpload.mock.calls).toEqual([["file-new"]]);
+    expect(enqueue).toHaveBeenCalledWith("clip.delete", { setId: "st-1", fileId: "file-1" });
   });
 });
 

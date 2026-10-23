@@ -6,6 +6,7 @@ import { authenticRows } from "@/appwrite/documents";
 import { enqueue } from "@/lib/offline/client";
 import type { ClipSet } from "@/lib/review/queue";
 import { toClip, type SetRow } from "@/lib/review/queue-store";
+import { forgetUpload, pendingUploads } from "./pending-store";
 import { detachClipFromSet } from "./upload";
 
 /**
@@ -103,9 +104,16 @@ export async function fetchMyClip(athleteId: string, setId: string): Promise<Cli
  * id, which is not what "delete" promises somebody who would rather not
  * share a clip (docs/video.md, Permissions).
  *
+ * A replacement still uploading for this set (kept in IndexedDB on gym wifi)
+ * is forgotten first: left, `resumeInterruptedUploads` would finish it on
+ * the next app start and attach it, putting a clip back in front of the
+ * coach after the athlete deleted it.
+ *
  * The set, its numbers, its note and any coach comments stay.
  */
 export async function deleteMyClip(setId: string, fileId: string): Promise<void> {
+  const waiting = (await pendingUploads().catch(() => [])).filter((upload) => upload.setId === setId);
+  for (const upload of waiting) await forgetUpload(upload.fileId);
   await detachClipFromSet(setId);
   await enqueue("clip.delete", { setId, fileId });
 }

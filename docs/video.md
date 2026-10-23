@@ -337,7 +337,8 @@ until "Load more" reaches it.
 
 **One clip** is built from the coach's parts: `ClipPlayer` (now
 `components/video/clip-player.tsx`, motion gated `coach:` / `athlete:`, with a
-`failedMessage` prop), `CommentThread` (with a `fallbackName` prop), the
+`failedMessage` prop and `shortcuts="none"` so Space presses the screen's own
+buttons instead of toggling the video), `CommentThread` (with a `fallbackName` prop), the
 Feedback screen's `ReplyBox`, History's `SetNoteField` saved through `editSet`
 (restating the set's own values, warm-up flag included, which is why `ClipSet`
 now reads `is_warmup`), and the Log's `AttachVideo` for Replace, poster capture
@@ -347,7 +348,9 @@ included. Playback is the usual short-lived ticket from `/api/clip`.
 detach (`set.attachVideo` with nulls) and then `clip.delete` behind it.
 Replace queues `clip.delete` for the old file once the new clip's attach is
 queued; if the new upload is still pending, the old file stays for
-`clips:sweep`. `deleteClipIfUnused` (was `deleteClipIfSetGone`) now also
+`clips:sweep`. Delete also forgets any replacement still in the resumable-upload
+store for that set, and is disabled while one uploads from the screen, so a
+finished upload cannot re-attach a clip the athlete deleted. `deleteClipIfUnused` (was `deleteClipIfSetGone`) now also
 deletes a file, with its poster, when the set still exists but names another
 file or none. A row that still names the file, or whose column cannot be read,
 keeps it. The queue is strictly ordered, so the file never goes while a row

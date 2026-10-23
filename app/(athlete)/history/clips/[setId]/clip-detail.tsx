@@ -72,6 +72,8 @@ export function ClipDetail({ setId }: { setId: string }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** A replacement uploading from this screen; Delete waits for it. */
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => subscribeToQueue(setOps), []);
 
@@ -314,7 +316,8 @@ export function ClipDetail({ setId }: { setId: string }) {
       <ClipPlayer
         src={current?.url ?? null}
         clipId={`${clip.id}:${clip.videoFileId}`}
-        hint="Space plays, arrows step a frame."
+        // No window-wide keys here: Space must press Delete, Save or Send.
+        shortcuts="none"
         refreshSrc={refreshSrc}
         failedMessage={ATHLETE_FAILED}
         unavailable={
@@ -388,7 +391,13 @@ export function ClipDetail({ setId }: { setId: string }) {
       <section aria-label="Clip actions" className="mt-auto flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <p className="m-0 text-caption text-muted">Film it again? The new clip replaces this one.</p>
-          <AttachVideo setId={clip.id} athleteId={viewerId} hasVideo onAttached={replaced} />
+          <AttachVideo
+            setId={clip.id}
+            athleteId={viewerId}
+            hasVideo
+            onAttached={replaced}
+            onUploadingChange={setUploading}
+          />
         </div>
         {confirmingDelete ? (
           <div role="group" aria-labelledby="delete-clip-q" className="flex flex-col gap-3 rounded-card border border-border bg-surface p-3">
@@ -407,7 +416,7 @@ export function ClipDetail({ setId }: { setId: string }) {
                   haptic("warning");
                   void remove();
                 }}
-                disabled={busy}
+                disabled={busy || uploading}
               >
                 Delete clip
               </Button>
@@ -418,7 +427,8 @@ export function ClipDetail({ setId }: { setId: string }) {
             block
             variant="secondary"
             onClick={() => setConfirmingDelete(true)}
-            disabled={busy}
+            // A delete mid-upload would be undone when the upload attached.
+            disabled={busy || uploading}
           >
             Delete clip
           </Button>
