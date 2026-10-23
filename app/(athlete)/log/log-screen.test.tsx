@@ -58,7 +58,7 @@ const editSet = vi.hoisted(() =>
   vi.fn<
     (
       clientSetId: string,
-      edit: { loadKg: number; reps: number; rpe: number | null; isWarmup: boolean },
+      edit: { loadKg: number; reps: number; rpe: number | null; isWarmup: boolean; notes?: string | null },
       set: { exerciseId: string; loggedAt: Date },
     ) => Promise<void>
   >(),
@@ -3503,7 +3503,7 @@ describe("correcting a logged set (F9)", () => {
     expect(screen.queryByRole("region", { name: /^Edit / })).not.toBeInTheDocument();
     expect(editSet).toHaveBeenCalledTimes(1);
     expect(editSet.mock.calls[0][0]).toBe("b");
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 152.5, reps: 3, rpe: 9, isWarmup: false });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 152.5, reps: 3, rpe: 9, isWarmup: false, notes: null });
     expect(editSet.mock.calls[0][2]).toMatchObject({ exerciseId: "squat" });
     const row = screen.getByRole("group", { name: "Set 2" });
     expect(row).toHaveTextContent("152.5");
@@ -3560,7 +3560,7 @@ describe("correcting a logged set (F9)", () => {
     expect(within(sheet()).getByRole("button", { name: "Change RPE, now none, warm-up" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save Set 1" }));
 
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 140, reps: 5, rpe: null, isWarmup: true });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 140, reps: 5, rpe: null, isWarmup: true, notes: null });
     expect(screen.getByRole("group", { name: "Warm-up set" })).toHaveTextContent("140");
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("150");
     expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
@@ -3812,8 +3812,16 @@ describe("correcting a logged set (F9)", () => {
         const ops = (await store.all()).sort((a, b) => a.sequence - b.sequence);
         const create = ops.find((op) => op.kind === "set.create");
         const edit = ops.find((op) => op.kind === "set.update");
-        // Exactly the four values: the clip, the time and the prescription are not the edit's to touch.
-        expect(edit?.payload).toEqual({ setId: create?.payload.setId, loadKg: 142.5, reps: 4, rpe: 8.5, isWarmup: false });
+        // Exactly the four values and the note (none, so cleared): the clip, the
+        // time and the prescription are not the edit's to touch.
+        expect(edit?.payload).toEqual({
+          setId: create?.payload.setId,
+          loadKg: 142.5,
+          reps: 4,
+          rpe: 8.5,
+          isWarmup: false,
+          notes: null,
+        });
         expect(edit!.sequence).toBeGreaterThan(create!.sequence);
         const refreshes = ops.filter((op) => op.kind === "rollup.refresh");
         expect(refreshes.at(-1)!.sequence).toBeGreaterThan(edit!.sequence);
@@ -3825,6 +3833,88 @@ describe("correcting a logged set (F9)", () => {
       expect(row).toHaveTextContent("142.5");
       expect(screen.getByLabelText("Set 1 RPE")).toHaveTextContent("8.5");
       expect(screen.getByText("queued · no signal")).toBeInTheDocument();
+    });
+  });
+
+  describe("the athlete's note (F11)", () => {
+    const noteBox = () => within(sheet()).getByRole("textbox", { name: /^Note on / });
+
+    it("adds a note to the set just logged from its edit sheet, and the row wears it", async () => {
+      twoSets();
+      const { user } = setup({ active: session() });
+      await user.click(await screen.findByRole("group", { name: "Set 2" }));
+      await user.click(within(sheet()).getByRole("button", { name: "Add a note to Set 2" }));
+      // The pad steps aside for the keyboard.
+      expect(within(sheet()).queryByRole("region", { name: /keypad/ })).not.toBeInTheDocument();
+      expect(noteBox()).toHaveFocus();
+      await user.type(noteBox(), " Hip pinched ");
+      await user.click(within(sheet()).getByRole("button", { name: "Save Set 2" }));
+
+      expect(editSet).toHaveBeenCalledTimes(1);
+      expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 150, reps: 5, rpe: 8, isWarmup: false, notes: "Hip pinched" });
+      const row = screen.getByRole("group", { name: "Set 2" }).parentElement!.parentElement!;
+      expect(row.querySelector("[data-set-note]")).toHaveTextContent("Hip pinched");
+    });
+
+    it("opens on the set's note, and saving it blank clears it", async () => {
+      storedSets.value = [logged("a", 140, 20, { setIndex: 1, rpe: 7, notes: "Belt loose" })];
+      const { user } = setup({ active: session() });
+      const row = await screen.findByRole("group", { name: "Set 1" });
+      expect(row.parentElement!.parentElement!.querySelector("[data-set-note]")).toHaveTextContent("Belt loose");
+
+      await user.click(row);
+      await user.click(within(sheet()).getByRole("button", { name: "Change note, now: Belt loose" }));
+      expect(noteBox()).toHaveValue("Belt loose");
+      await user.clear(noteBox());
+      await user.click(within(sheet()).getByRole("button", { name: "Save Set 1" }));
+
+      expect(editSet.mock.calls[0][1]).toMatchObject({ notes: null });
+      expect(document.querySelector("[data-set-note]")).toBeNull();
+    });
+
+    it("writes nothing for an untouched note", async () => {
+      storedSets.value = [logged("a", 140, 20, { setIndex: 1, rpe: 7, notes: "Belt loose" })];
+      const { user } = setup({ active: session() });
+      await user.click(await screen.findByRole("group", { name: "Set 1" }));
+      await user.click(within(sheet()).getByRole("button", { name: "Save Set 1" }));
+      expect(editSet).not.toHaveBeenCalled();
+    });
+
+    it("with no signal, queues the note and shows it again after a reload, through a later warm-up flip", async () => {
+      const store = useRealQueue();
+      const { user, unmount } = setup({ active: session() });
+      await addSquat(user);
+      await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+      for (const key of "140") await user.click(screen.getByRole("button", { name: key }));
+      await user.click(screen.getByRole("button", { name: "Reps" }));
+      await user.click(screen.getByRole("button", { name: "5" }));
+      await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+      await waitFor(async () => expect((await store.all()).some((op) => op.kind === "rollup.refresh")).toBe(true));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      await user.click(screen.getByRole("group", { name: "Set 1" }));
+      await user.click(within(sheet()).getByRole("button", { name: "Add a note to Set 1" }));
+      await user.type(noteBox(), "Knee caved on rep 4");
+      await user.click(screen.getByRole("button", { name: "Save Set 1" }));
+      // Then the set number: an edit that says nothing about the note.
+      await user.click(screen.getByRole("button", { name: "Set 1: mark as warm-up" }));
+
+      await waitFor(async () => {
+        const updates = (await store.all()).filter((op) => op.kind === "set.update").sort((a, b) => a.sequence - b.sequence);
+        expect(updates).toHaveLength(2);
+        expect(updates[0].payload).toMatchObject({ notes: "Knee caved on rep 4" });
+        expect("notes" in updates[1].payload).toBe(false);
+      });
+      expect(document.querySelector("[data-set-note]")).toHaveTextContent("Knee caved on rep 4");
+
+      unmount();
+      setup({ active: session() });
+      const row = await screen.findByRole("group", { name: "Warm-up set" });
+      expect(row.parentElement!.parentElement!.querySelector("[data-set-note]")).toHaveTextContent("Knee caved on rep 4");
+      await user.click(row);
+      expect(within(sheet()).getByRole("button", { name: "Change note, now: Knee caved on rep 4" })).toBeInTheDocument();
     });
   });
 });

@@ -214,6 +214,18 @@ describe("the other writes", () => {
     ]);
   });
 
+  it("writes the athlete's note with a set update, and clears it with null (F11)", async () => {
+    await runOp(ACTOR, op("set.update", { setId: "st-abc", loadKg: 100, reps: 3, rpe: 7, isWarmup: false, notes: "Hip pinched" }));
+    await runOp(ACTOR, op("set.update", { setId: "st-abc", loadKg: 100, reps: 3, rpe: 7, isWarmup: false, notes: null }));
+    expect(rows[0].data).toMatchObject({ notes: "Hip pinched" });
+    expect(rows[1].data).toMatchObject({ notes: null });
+  });
+
+  it("leaves the note column alone when the update carried no note", async () => {
+    await runOp(ACTOR, op("set.update", { setId: "st-abc", loadKg: 100, reps: 3, rpe: 7, isWarmup: true }));
+    expect("notes" in (rows[0].data as Record<string, unknown>)).toBe(false);
+  });
+
   it("creates an exercise under its client id", async () => {
     await runOp(ACTOR, op("exercise.create", { exerciseId: "ex-1", name: "Pause Squat" }));
     expect(rows).toEqual([

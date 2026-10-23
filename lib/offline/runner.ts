@@ -113,6 +113,9 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
         reps: asNumber(p.reps),
         rpe: typeof p.rpe === "number" ? p.rpe : null,
         isWarmup: p.isWarmup === true,
+        // The athlete's note (F11), only when the edit carried one: a key
+        // that is absent leaves the column alone, null clears it.
+        ...("notes" in p && { notes: typeof p.notes === "string" ? p.notes : null }),
       });
       return;
     }

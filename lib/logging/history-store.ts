@@ -36,6 +36,7 @@ interface SetRow {
   logged_at?: unknown;
   e1rm_kg?: unknown;
   video_file_id?: unknown;
+  notes?: unknown;
 }
 
 /** A set with the session it belongs to, and where it sat in its exercise. */
@@ -68,6 +69,9 @@ function toSet(raw: SetRow): HistorySet | null {
     e1rmKg: typeof raw.e1rm_kg === "number" ? raw.e1rm_kg : null,
     loggedAt,
     videoFileId: typeof raw.video_file_id === "string" && raw.video_file_id ? raw.video_file_id : null,
+    // The athlete's note (F11): shown under the set in History and in the
+    // coach's session view, which reads through this same function.
+    notes: typeof raw.notes === "string" && raw.notes.trim() ? raw.notes : null,
   };
 }
 

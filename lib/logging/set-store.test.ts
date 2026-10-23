@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStore } from "@/lib/offline/memory-store";
 import { queuedOps, resetQueueForTests } from "@/lib/offline/client";
 import type { QueueStore, QueuedOp } from "@/lib/offline/queue";
-import { logSet, removeSet } from "./set-store";
+import { editSet, logSet, removeSet } from "./set-store";
 
 // Nothing here should reach the network: no actor is attached, so the queue
 // writes down and never drains. What is on disk afterwards is the assertion.
@@ -140,5 +140,33 @@ describe("removeSet with a clip", () => {
   it("queues no clip delete when the caller does not know of one", async () => {
     await removeSet("st-1", { exerciseId: "squat", loggedAt: LOGGED_AT });
     expect(kinds(await store.all()).map(([kind]) => kind)).not.toContain("clip.delete");
+  });
+});
+
+describe("editSet and the athlete's note (F11)", () => {
+  const SET = { exerciseId: "squat", loggedAt: LOGGED_AT };
+  const values = { loadKg: 140, reps: 5, rpe: 8 as const, isWarmup: false };
+  const updates = async () =>
+    (await store.all()).filter((op) => op.kind === "set.update").map((op) => op.payload);
+
+  it("queues a note trimmed, alongside the four values", async () => {
+    await editSet("st-1", { ...values, notes: "  belt loose  " }, SET);
+    expect(await updates()).toEqual([{ setId: "st-1", ...values, notes: "belt loose" }]);
+  });
+
+  it("queues a blank note as null, which clears it", async () => {
+    await editSet("st-1", { ...values, notes: "   " }, SET);
+    expect((await updates())[0]).toMatchObject({ notes: null });
+  });
+
+  it("leaves the note out of an edit that did not mention it, so the server keeps it", async () => {
+    await editSet("st-1", values, SET);
+    expect(await updates()).toEqual([{ setId: "st-1", ...values }]);
+    expect("notes" in (await updates())[0]).toBe(false);
+  });
+
+  it("caps a note at the column's 500 characters", async () => {
+    await editSet("st-1", { ...values, notes: "x".repeat(700) }, SET);
+    expect(((await updates())[0].notes as string).length).toBe(500);
   });
 });

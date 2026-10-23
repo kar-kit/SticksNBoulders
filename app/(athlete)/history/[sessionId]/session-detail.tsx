@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { SetRow, SetRowHeader } from "@/components/logging/set-row";
 import { NumberPad } from "@/components/logging/number-pad";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
+import { SetNoteField } from "@/components/logging/set-note-field";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { useTrainingSessions } from "@/lib/logging/session-context";
@@ -24,7 +25,8 @@ import {
   reviseSession,
   reviseSessionTotals,
 } from "@/lib/logging/session-edit-store";
-import { mergeById, queuedSets } from "@/lib/logging/offline-view";
+import { mergeById, queuedSetEdits, queuedSets, withSetEdits } from "@/lib/logging/offline-view";
+import { noteOf } from "@/lib/logging/set-note";
 import { useDayLabels } from "@/lib/logging/use-day-labels";
 import { subscribeToQueue } from "@/lib/offline/client";
 import type { QueuedOp } from "@/lib/offline/queue";
@@ -49,6 +51,12 @@ import { DeleteSessionConfirm, SessionFieldsForm } from "./session-fields";
  * whole. Every change to a set restates the session's stored totals behind
  * it, because the History card reads those and nothing else rewrites them.
  *
+ * The athlete's note on each set (F11) shows in full under its row, and is
+ * edited with the rest of the set: the same textarea as the Log's edit
+ * sheet, saved through the same `editSet`. Edits still in the queue are laid
+ * over what Appwrite returned, so a note written with no signal is on screen
+ * after a reload rather than reappearing when the queue drains.
+ *
  * Not here yet, and deliberately absent rather than faked: the prescription the
  * session ran against (Order 22), attached video (Order 29) and the coach's
  * comments threaded on the sets they refer to (phase 3).
@@ -59,6 +67,8 @@ interface Draft {
   reps: number | null;
   rpe: RpeValue | null;
   isWarmup: boolean;
+  /** The note as typed. Blank is none; `noteOf` decides what is stored. */
+  notes: string;
 }
 
 export function SessionDetail({ sessionId }: { sessionId: string }) {
@@ -74,6 +84,12 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [pad, setPad] = useState<PadState | null>(null);
   const [rpeOpen, setRpeOpen] = useState(false);
+  /**
+   * The note's textarea is showing. Opened by "Add a note", or straight away
+   * on a set that already has one: the pad stays the first thing a
+   * correction meets, and the keyboard only comes up when asked for.
+   */
+  const [noteOpen, setNoteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [ops, setOps] = useState<QueuedOp[]>([]);
   const [editingFields, setEditingFields] = useState(false);
@@ -116,7 +132,10 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
     return (id: string) => names.get(id) ?? id;
   }, [library.exercises]);
 
-  const ordered = useMemo(() => setsBySession(sets ?? []).get(sessionId) ?? [], [sets, sessionId]);
+  const ordered = useMemo(
+    () => withSetEdits(setsBySession(sets ?? []).get(sessionId) ?? [], queuedSetEdits(ops)),
+    [sets, sessionId, ops],
+  );
 
   /** Totals from the sets on screen, because this screen is the set list. */
   const summary = useMemo(
@@ -227,9 +246,11 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
       reps: set.reps,
       rpe: (set.rpe as RpeValue | null) ?? null,
       isWarmup: set.isWarmup,
+      notes: set.notes ?? "",
     });
     setPad(beginEdit("load", loadIn(set.loadKg, unit), unit));
     setRpeOpen(false);
+    setNoteOpen(Boolean(set.notes?.trim()));
   };
 
   const stopEditing = () => {
@@ -237,6 +258,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
     setDraft(null);
     setPad(null);
     setRpeOpen(false);
+    setNoteOpen(false);
   };
 
   const focusField = (field: "load" | "reps" | "rpe") => {
@@ -270,6 +292,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
       reps: draft.reps as number,
       rpe: draft.rpe,
       isWarmup: draft.isWarmup,
+      notes: noteOf(draft.notes),
     };
     // Shown corrected straight away. The write is queued, so waiting for it
     // would be waiting for the gym's wifi to agree.
@@ -393,17 +416,45 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                     : block.sets.slice(0, at + 1).filter((s) => !s.isWarmup).length;
                   const active = editingId === set.clientSetId;
                   return active && draft ? (
-                    <SetRow
-                      key={set.clientSetId}
-                      index={draft.isWarmup ? "W" : index}
-                      set={draft}
-                      state="active"
-                      onPressLoad={() => focusField("load")}
-                      onPressReps={() => focusField("reps")}
-                      onPressRpe={() => focusField("rpe")}
-                      onConfirm={save}
-                      unit={unit}
-                    />
+                    <div key={set.clientSetId} className="flex flex-col gap-2">
+                      <SetRow
+                        index={draft.isWarmup ? "W" : index}
+                        set={draft}
+                        state="active"
+                        onPressLoad={() => focusField("load")}
+                        onPressReps={() => focusField("reps")}
+                        onPressRpe={() => focusField("rpe")}
+                        onConfirm={save}
+                        unit={unit}
+                      />
+                      {/* Typing a note puts the keyboard up, so the pad and the
+                          chips step aside rather than stacking under it. */}
+                      {noteOpen ? (
+                        <div
+                          onFocusCapture={() => {
+                            setPad(null);
+                            setRpeOpen(false);
+                          }}
+                        >
+                          <SetNoteField
+                            value={draft.notes}
+                            onChange={(notes) => setDraft((prev) => (prev ? { ...prev, notes } : prev))}
+                            setLabel={index === "W" || draft.isWarmup ? "Warm-up set" : `Set ${index}`}
+                            autoFocus={!draft.notes}
+                          />
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="self-start"
+                          onClick={() => setNoteOpen(true)}
+                          aria-label={`Add a note to ${index === "W" || draft.isWarmup ? "warm-up set" : `set ${index}`}`}
+                        >
+                          + Add a note
+                        </Button>
+                      )}
+                    </div>
                   ) : (
                     <button
                       key={set.clientSetId}
@@ -421,6 +472,8 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                         set={{ ...set, rpe: (set.rpe as RpeValue | null) ?? null }}
                         state="logged"
                         unit={unit}
+                        athleteNote={set.notes ?? null}
+                        athleteNoteFull
                       />
                     </button>
                   );

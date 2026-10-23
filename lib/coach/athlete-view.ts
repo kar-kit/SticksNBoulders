@@ -300,6 +300,28 @@ export interface BlockSet {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /**
+   * The athlete's own note on the set (F11), when they left one. Carried so
+   * the coach reads what was said about an unfilmed set too -- the Review
+   * Queue only ever shows the filmed ones.
+   */
+  notes?: string | null;
+}
+
+/**
+ * The notes in one block, labelled the way the athlete's Log numbers the
+ * sets: working sets counted from 1, warm-ups as "Warm-up". Blank notes are
+ * not notes and are left out.
+ */
+export function blockNotes(block: ExerciseBlock): { label: string; note: string }[] {
+  const notes: { label: string; note: string }[] = [];
+  let working = 0;
+  for (const set of block.sets) {
+    if (!set.isWarmup) working += 1;
+    const note = set.notes?.trim();
+    if (note) notes.push({ label: set.isWarmup ? "Warm-up" : `Set ${working}`, note });
+  }
+  return notes;
 }
 
 export interface ExerciseBlock {
@@ -323,7 +345,13 @@ export function exerciseBlocks(
       block = { exerciseId: set.exerciseId, exerciseName: nameOf(set.exerciseId) ?? UNKNOWN_LIFT, sets: [] };
       blocks.push(block);
     }
-    block.sets.push({ loadKg: set.loadKg, reps: set.reps, rpe: set.rpe, isWarmup: set.isWarmup });
+    block.sets.push({
+      loadKg: set.loadKg,
+      reps: set.reps,
+      rpe: set.rpe,
+      isWarmup: set.isWarmup,
+      ...(set.notes?.trim() ? { notes: set.notes.trim() } : {}),
+    });
   }
   return blocks;
 }

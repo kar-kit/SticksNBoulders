@@ -157,6 +157,9 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
                   >
                     {row.reviewed ? "reviewed" : "waiting"}
                     {row.commentCount > 0 ? ` · ${row.commentCount} comment${row.commentCount === 1 ? "" : "s"}` : ""}
+                    {/* The athlete said something about this set (F11); the
+                        dialog shows what. */}
+                    {row.notes ? " · their note" : ""}
                   </span>
                 </span>
                 {row.latestComment ? (
@@ -278,7 +281,14 @@ function ClipDialog({
             unavailable={current && current.url === null ? "The video for this clip could not be loaded." : undefined}
           />
           <div className="flex min-w-0 flex-col gap-4">
-            {row.notes ? <p className="m-0 text-ui text-muted">“{row.notes}”</p> : null}
+            {row.notes ? (
+              // The athlete's own note on the set (F11), above the thread so it
+              // reads as the context the comments answer.
+              <div>
+                <h3 className="m-0 text-ui font-semibold text-muted">Athlete note</h3>
+                <p className="m-0 whitespace-pre-line text-ui">“{row.notes}”</p>
+              </div>
+            ) : null}
             <CommentThread comments={comments} names={names} viewerId={viewerId} />
             {comments.length === 0 ? (
               <p className="m-0 text-ui text-muted-2">Nothing said on this clip yet.</p>

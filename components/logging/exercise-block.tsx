@@ -38,6 +38,8 @@ export interface LoggedSet extends LoggableSet {
   pr?: readonly PrKind[] | null;
   /** Broken on this page just now: the badge pops in. */
   prFresh?: boolean;
+  /** The athlete's note on the set (F11), shown as a quiet line under the row. */
+  notes?: string | null;
 }
 
 export interface PlannedSet extends LoggableSet {
@@ -299,6 +301,7 @@ export function ExerciseBlock({
             previous={set.previous ?? null}
             pr={set.pr ?? null}
             prFresh={set.prFresh}
+            athleteNote={set.notes ?? null}
           />
         ))}
 

@@ -1,5 +1,6 @@
 import {
   bestEstimates,
+  blockNotes,
   decideAthleteAccess,
   exerciseBlocks,
   liftTabs,
@@ -307,6 +308,24 @@ describe("a session's sets, grouped", () => {
       ["Bench Press", 1],
     ]);
     expect(blocks[0].sets[0].isWarmup).toBe(true);
+  });
+
+  it("carries the athlete's note on a set, and labels notes the way the Log numbers sets (F11)", () => {
+    const [block] = exerciseBlocks(
+      [
+        { exerciseId: SQUAT.id, loadKg: 60, reps: 5, rpe: null, isWarmup: true, notes: " bar felt light " },
+        { exerciseId: SQUAT.id, loadKg: 180, reps: 3, rpe: 8, isWarmup: false, notes: null },
+        { exerciseId: SQUAT.id, loadKg: 185, reps: 3, rpe: 9, isWarmup: false, notes: "Hip pinched" },
+        { exerciseId: SQUAT.id, loadKg: 185, reps: 3, rpe: 9, isWarmup: false, notes: "  " },
+      ],
+      (id) => LIBRARY.find((e) => e.id === id)?.name,
+    );
+    expect(block.sets[0].notes).toBe("bar felt light");
+    expect(block.sets[1]).not.toHaveProperty("notes");
+    expect(blockNotes(block)).toEqual([
+      { label: "Warm-up", note: "bar felt light" },
+      { label: "Set 2", note: "Hip pinched" },
+    ]);
   });
 
   it("keeps a set whose exercise has no name", () => {

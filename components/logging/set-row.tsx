@@ -8,6 +8,7 @@ import { afterExit, useChanged } from "@/components/ui/motion";
 import { haptic } from "@/lib/ui/haptics";
 import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
 import { LoadCell } from "./load-cell";
+import { SetNoteLine } from "./set-note-field";
 import { canComplete, completionBlocker, type LoggableSet } from "@/lib/logging/set";
 import { formatNumber } from "@/lib/logging/prefill";
 import { loadIn, loadLabel, loadNumber, unitName, type UnitPreference } from "@/lib/units";
@@ -136,6 +137,15 @@ export interface SetRowProps {
    * (`animate-spring-pop`). A badge read back after a reload just sits there.
    */
   prFresh?: boolean;
+  /**
+   * Logged rows: the athlete's own note on the set (F11). A quiet line under
+   * the row -- one truncated line by default, the whole note with
+   * `athleteNoteFull` (History, where the note is part of the record). Not
+   * `note`, which is the app explaining a suggested load on a row not yet
+   * logged.
+   */
+  athleteNote?: string | null;
+  athleteNoteFull?: boolean;
 }
 
 export function SetRow({
@@ -164,6 +174,8 @@ export function SetRow({
   onCopyPrevious,
   pr = null,
   prFresh = false,
+  athleteNote = null,
+  athleteNoteFull = false,
 }: SetRowProps) {
   const planned = state === "planned";
   const active = state === "active";
@@ -462,6 +474,10 @@ export function SetRow({
           </span>
           {pendingSync ? <span>queued · no signal</span> : null}
         </div>
+      ) : null}
+
+      {state === "logged" && athleteNote?.trim() ? (
+        <SetNoteLine note={athleteNote.trim()} full={athleteNoteFull} />
       ) : null}
 
       {selected ? (

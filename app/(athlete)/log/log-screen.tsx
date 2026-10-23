@@ -149,7 +149,7 @@ interface LoggedEdit {
   clientSetId: string;
   draft: EditDraft;
   field: EditField;
-  /** The keypad for load or reps. Null while the RPE chips are showing. */
+  /** The keypad for load or reps. Null while the RPE chips or the note are showing. */
   pad: PadState | null;
 }
 
@@ -958,7 +958,9 @@ export function LogScreen() {
     const rpe = isWarmup ? null : rpeToRestore(rowId);
     const edit: SetValues = { loadKg: set.loadKg, reps: set.reps, rpe, isWarmup };
     const before = edits.get(rowId);
-    setEdits((prev) => new Map(prev).set(rowId, edit));
+    // Over this page's last edit of the set, not instead of it: the flip says
+    // nothing about the note, and a note saved here a moment ago stays shown.
+    setEdits((prev) => new Map(prev).set(rowId, { ...prev.get(rowId), ...edit }));
     void editSet(rowId, { ...edit, rpe: rpe as RpeValue | null }, set).catch(() => {
       // Not written to the phone, so not flipped: put the row back.
       setEdits((prev) => {
@@ -1012,7 +1014,7 @@ export function LogScreen() {
       if (!prev || (field === "rpe" && prev.draft.isWarmup)) return prev;
       const { loadKg, reps } = prev.draft;
       const pad =
-        field === "rpe"
+        field === "rpe" || field === "note"
           ? null
           : field === "load"
             ? beginEdit("load", loadKg === null ? null : loadIn(loadKg, unit), unit)
@@ -1045,6 +1047,9 @@ export function LogScreen() {
    * signal and lands behind the set's own create; the week's rollup is
    * refreshed behind it, and Appwrite recomputes the stored e1RM from the
    * four values. The clip is not part of the edit and stays where it is.
+   * The note (F11) rides in the same update, so a note written with no
+   * signal is queued, shown, and read back from the queue after a reload
+   * like any other correction.
    *
    * On screen it shows at once, through the same `edits` map: the PR badges,
    * the Previous line, the numbering, the coach's targets and the session
@@ -1590,6 +1595,7 @@ export function LogScreen() {
           if (isWarmup && editing.field === "rpe") editField("reps");
         }}
         onRpe={(rpe) => editDraft({ rpe })}
+        onNote={(notes) => editDraft({ notes })}
         onSave={saveEdit}
         onCancel={() => setEditing(null)}
         onDelete={() => deleteLogged(editingSet.clientSetId)}
@@ -1706,6 +1712,7 @@ export function LogScreen() {
                     previous: previousByRow.get(s.clientSetId) ?? null,
                     pr: prs.get(s.clientSetId) ?? null,
                     prFresh: confirmedHere.has(s.clientSetId) || editedHere.has(s.clientSetId),
+                    notes: s.notes ?? null,
                   }))}
                   planned={rowsOf(plans, exerciseId).map((row) => ({
                     ...row,

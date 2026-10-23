@@ -168,6 +168,8 @@ describe("the validator's verdict", () => {
 
   it("keeps every row the write helper would produce", () => {
     expect(verdictFor("sets", stamped("sets", { athlete_id: A })).action).toBe("keep");
+    // A set carrying the athlete's note (F11) is judged on its stamp like any other.
+    expect(verdictFor("sets", stamped("sets", { athlete_id: A, notes: "Hip pinched" })).action).toBe("keep");
     expect(verdictFor("exercises", stamped("exercises", { is_global: true })).action).toBe("keep");
     expect(verdictFor("set_comments", stamped("set_comments", { athlete_id: A, author_id: A })).action).toBe("keep");
     expect(verdictFor("profiles", stamped("profiles", { user_id: A }, A)).action).toBe("keep");

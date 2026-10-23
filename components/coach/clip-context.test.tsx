@@ -52,3 +52,16 @@ describe("Adjust program", () => {
     );
   });
 });
+
+describe("the athlete's note (F11)", () => {
+  it("shows what the athlete wrote about the set beside the clip", () => {
+    show({ notes: "Hip pinched out of the hole" });
+    expect(screen.getByRole("heading", { name: "Athlete note" })).toBeInTheDocument();
+    expect(screen.getByText("“Hip pinched out of the hole”")).toBeInTheDocument();
+  });
+
+  it("shows nothing for a set with no note", () => {
+    show();
+    expect(screen.queryByRole("heading", { name: "Athlete note" })).not.toBeInTheDocument();
+  });
+});
