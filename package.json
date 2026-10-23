@@ -20,6 +20,7 @@
     "appwrite:restore": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/appwrite-restore.mts",
     "clips:sweep": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/sweep-orphan-clips.mts",
     "clips:posters": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/backfill-clip-posters.mts",
+    "reviews:clips": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/backfill-review-clips.mts",
     "exercises:seed": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/seed-exercises.mts",
     "programs:seed": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/seed-program.mts",
     "e1rm:backfill": "tsx --env-file-if-exists=.env.local --env-file-if-exists=.local.env scripts/backfill-e1rm.mts",

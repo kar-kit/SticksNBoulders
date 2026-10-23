@@ -1,6 +1,6 @@
 import { reviewPermissions, setPermissions } from "@/appwrite/documents/policy";
 import { FakeTables, type FakeRow } from "@/lib/testing/fake-tables";
-import { fetchClips, fetchReviewedSetIds, subscribeToClips } from "./queue-store";
+import { fetchClips, fetchReviews, subscribeToClips } from "./queue-store";
 
 /**
  * The Review Queue's reads against a fake Appwrite that applies the queries,
@@ -125,7 +125,7 @@ describe("fetchClips", () => {
   });
 });
 
-describe("fetchReviewedSetIds", () => {
+describe("fetchReviews", () => {
   const review = (id: string, coachId: string, setId: string, over: Partial<FakeRow> = {}): FakeRow => ({
     $id: id,
     $permissions: reviewPermissions({ athleteId: "joey", coachId }),
@@ -144,7 +144,18 @@ describe("fetchReviewedSetIds", () => {
       review("r3", "ruairi", "s3", { $permissions: ['read("users")', 'update("user:joey")'] }),
     ]);
 
-    expect([...(await fetchReviewedSetIds("ruairi"))]).toEqual(["s1"]);
+    expect([...(await fetchReviews("ruairi")).keys()]).toEqual(["s1"]);
+  });
+
+  it("keeps which clip each review cleared, and null for a review from before v18", async () => {
+    db.current!.seed("set_reviews", [
+      review("r1", "ruairi", "s1", { video_file_id: "clip-a" }),
+      review("r2", "ruairi", "s2"),
+    ]);
+
+    const reviews = await fetchReviews("ruairi");
+    expect(reviews.get("s1")).toBe("clip-a");
+    expect(reviews.get("s2")).toBeNull();
   });
 });
 

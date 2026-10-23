@@ -722,6 +722,14 @@ describe("SetRow — the clip's thumbnail (F12)", () => {
     expect(document.querySelector("[data-video-badge]")).toBeNull();
   });
 
+  it("is 24 x 34, absolute and centred on the border, so the row does not grow (F15)", () => {
+    render(<SetRow index={1} set={set({ hasVideo: true })} state="logged" clip={{ posterId: null }} />);
+    const thumb = screen.getByRole("img", { name: "Set 1: video attached" });
+    for (const cls of ["absolute", "-top-3", "h-6", "w-[34px]"]) expect(thumb).toHaveClass(cls);
+    expect(thumb).not.toHaveClass("h-5");
+    expect(thumb).not.toHaveClass("w-7");
+  });
+
   it("shows nothing for a set without a clip, and never on a row not logged yet", () => {
     const { rerender } = render(<SetRow index={1} set={set()} state="logged" />);
     expect(document.querySelector("[data-clip-thumb]")).toBeNull();

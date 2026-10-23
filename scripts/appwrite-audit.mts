@@ -476,7 +476,7 @@ try {
   // The coach's side of the review loop, from the coach's own session.
   targets.set_reviews = await ownerCreate(
     "set_reviews",
-    () => markSetReviewed(C.deps, { userId: C.id }, { athleteId: A.id, setId: targets.sets }),
+    () => markSetReviewed(C.deps, { userId: C.id }, { athleteId: A.id, setId: targets.sets, videoFileId: targets.set_videos || `audit-clip-${stamp}` }),
     "coach",
   );
   targets.set_comments = await ownerCreate(
@@ -502,7 +502,7 @@ try {
 
   // Rows the revocation checks read after the targets above are deleted.
   extras.set2 = (await createSet(A.deps, { userId: A.id }, setInput("set2", 145))).$id;
-  extras.review2 = (await markSetReviewed(C.deps, { userId: C.id }, { athleteId: A.id, setId: extras.set2 })).$id;
+  extras.review2 = (await markSetReviewed(C.deps, { userId: C.id }, { athleteId: A.id, setId: extras.set2, videoFileId: `audit-clip2-${stamp}` })).$id;
   extras.comment2 = (
     await postComment(C.deps, { userId: C.id }, {
       athleteId: A.id,
@@ -978,7 +978,9 @@ try {
       sessions: { notes: tag },
       sets: { load_kg: 900 + n },
       bodyweight_entries: { weight_kg: 300 + n },
-      set_reviews: { reviewed_at: new Date(Date.UTC(2020, 0, n)).toISOString() },
+      // v18: re-pointing the review at another clip is what decides whether a
+      // replaced clip comes back, so it is the column worth hijacking.
+      set_reviews: { reviewed_at: new Date(Date.UTC(2020, 0, n)).toISOString(), video_file_id: `hijacked-${n}` },
       set_comments: { body: tag },
       stats_rollups: { tonnage_kg: 90000 + n },
       reference_maxes: { value_kg: 500 + n },
@@ -999,6 +1001,11 @@ try {
     sessions: () => finishSession(A.deps, { userId: A.id }, { sessionId: targets.sessions, setCount: 2, tonnageKg: 1425 }),
     sets: () => updateSet(A.deps, { userId: A.id }, { rowId: targets.sets, loadKg: 142.5, reps: 5, rpe: 8, isWarmup: false }),
     bodyweight_entries: () => reviseBodyweight(A.deps, { userId: A.id }, { weightKg: 82.1, measuredOn: "2026-01-05" }),
+    // v18: clearing a replaced clip meets the review the old one left (same
+    // derived id), so the helper answers the 409 by moving the row onto the
+    // new clip, from the coach's own session.
+    set_reviews: () =>
+      markSetReviewed(C.deps, { userId: C.id }, { athleteId: A.id, setId: targets.sets, videoFileId: `audit-replacement-${stamp}` }),
   };
 
   for (const rule of RULES) {
@@ -1119,7 +1126,7 @@ try {
   );
   check(
     "or clear A's clip from a queue",
-    (await attempt(() => markSetReviewed(C.deps, { userId: C.id }, { athleteId: A.id, setId: targets.sets }))).kind === "denied",
+    (await attempt(() => markSetReviewed(C.deps, { userId: C.id }, { athleteId: A.id, setId: targets.sets, videoFileId: `audit-late-${stamp}` }))).kind === "denied",
   );
   const lateMax = await callRoute(referenceMaxRoute as Handler, "/api/reference-max", C, maxBody(A.id, "training", 200));
   check("or set A's training max through the route", lateMax.status === 403, `${lateMax.status} ${JSON.stringify(lateMax.body)}`);

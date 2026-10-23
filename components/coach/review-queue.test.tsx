@@ -65,7 +65,7 @@ const ALL = [
 
 const queueStore = vi.hoisted(() => ({
   fetchClips: vi.fn(),
-  fetchReviewedSetIds: vi.fn(),
+  fetchReviews: vi.fn(),
   fetchExerciseNames: vi.fn(),
   fetchSessionSets: vi.fn(),
   fetchRecentSets: vi.fn(),
@@ -89,7 +89,7 @@ beforeEach(() => {
   // The instance filters by permission: a coach who left the circle simply
   // gets fewer rows back, never an error.
   queueStore.fetchClips.mockImplementation(async (ids: string[]) => ALL.filter((c) => ids.includes(c.athleteId)));
-  queueStore.fetchReviewedSetIds.mockResolvedValue(new Set());
+  queueStore.fetchReviews.mockResolvedValue(new Map());
   queueStore.fetchExerciseNames.mockImplementation(
     async (ids: string[]) => new Map(ids.map((id) => [id, id.includes("sam") ? "Bench Press" : "Squat"])),
   );
@@ -194,7 +194,10 @@ it("leaves Enter on the focused Adjust program link to the link, rather than cle
   adjust.blur();
   await userEvent.keyboard("{Enter}");
   expect(await screen.findByText("2 waiting")).toBeInTheDocument();
-  expect(queueStore.clearClip).toHaveBeenCalledWith("coach", "joey", "joey-1");
+  expect(queueStore.clearClip).toHaveBeenCalledWith(
+    "coach",
+    expect.objectContaining({ id: "joey-1", athleteId: "joey", videoFileId: ALL[0].videoFileId }),
+  );
 });
 
 it("marks a clip the athlete left a note on, and shows the note beside it (F11)", async () => {
@@ -301,4 +304,19 @@ describe("playback urls for a long queue", () => {
     expect(screen.queryByText("Loading the clip…")).not.toBeInTheDocument();
     expect(container.querySelector("video")).toBeNull();
   });
+});
+
+it("puts a clip back when the athlete replaced the one this coach cleared (v18)", async () => {
+  queueStore.fetchReviews.mockResolvedValue(
+    new Map<string, string | null>([
+      // Cleared, then replaced: the review names the old file.
+      ["joey-1", "an-older-take"],
+      // Cleared and unchanged.
+      ["joey-2", ALL[1].videoFileId],
+      // Cleared before v18, which recorded no file: still cleared.
+      ["sam-1", null],
+    ]),
+  );
+  render(<ReviewQueue />);
+  expect(await screen.findByText("1 waiting")).toBeInTheDocument();
 });

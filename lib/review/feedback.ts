@@ -57,6 +57,22 @@ export function isUnread(comment: Comment, viewerId: string, seenAt: string | nu
   return time(comment.createdAt) > time(seenAt);
 }
 
+/**
+ * The watermark that applies to one clip's comments: the later of the
+ * Feedback screen's watermark and that clip's own mark from the Clips gallery
+ * (lib/review/feedback-seen.ts). Null only when neither exists.
+ */
+export function seenAtFor(
+  setId: string,
+  seenAt: string | null,
+  setSeen: Readonly<Record<string, string>> | undefined,
+): string | null {
+  const mark = setSeen?.[setId] ?? null;
+  if (mark === null) return seenAt;
+  if (seenAt === null) return mark;
+  return time(mark) > time(seenAt) ? mark : seenAt;
+}
+
 export function countUnread(
   comments: readonly Comment[],
   viewerId: string,
@@ -81,6 +97,8 @@ export function buildFeedback(
   sets: ReadonlyMap<string, FeedbackSet>,
   viewerId: string,
   seenAt: string | null,
+  /** Clips whose thread was read in the Clips gallery (F15). */
+  setSeen?: Readonly<Record<string, string>>,
 ): FeedbackCard[] {
   const bySet = new Map<string, Comment[]>();
   for (const comment of comments) {
@@ -100,7 +118,7 @@ export function buildFeedback(
       set: sets.get(setId) ?? null,
       threads: threadComments(onSet),
       lastActivityAt,
-      unread: countUnread(onSet, viewerId, seenAt),
+      unread: countUnread(onSet, viewerId, seenAtFor(setId, seenAt, setSeen)),
     });
   }
 

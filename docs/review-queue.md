@@ -55,6 +55,40 @@ safe now is that `fetchReviewedSetIds` only trusts a review carrying
 The id is `<coachId>_<setId>` rather than random, so clearing the same clip
 twice — a double tap, a replayed request — is one row and not a duplicate.
 
+### A replaced clip comes back (F15, schema v18)
+
+The athlete can replace a clip (the Log's Replace, or the Clips gallery's), and
+a review keyed on coach + set used to keep the new take cleared. Since v18 the
+review row carries `video_file_id`: the set's clip as the coach watched it.
+
+- **A review counts only for the clip it names.** `stillReviewed`
+  (`lib/review/queue.ts`) is the one place that decides, and every reader goes
+  through it: the queue, the Review badge, the Roster's "videos waiting",
+  Athlete View's reviewed/waiting, and the Program Editor's context. The
+  fetcher (`fetchReviews`) returns set id → file id, not a set of ids, so
+  handing it to anything that expects the old `ReadonlySet<string>` does not
+  compile. A direct `reviews.has(clip.id)` still would, and would ignore the
+  clip: always go through `stillReviewed`.
+- **Replace mints a new file id** (`ID.unique()` in `lib/video/upload.ts`), so
+  the set's `video_file_id` changes and the old review stops matching. Realtime
+  already fires on set updates, so the clip reappears live.
+- **Clearing it again meets the old row** at the same derived id. The 409 is
+  answered with an update of `video_file_id` and `reviewed_at` only, with no
+  permissions argument, so the coach's original stamp is untouched and
+  `validate-row` passes. Any other refusal still throws.
+- **Pre-v18 reviews name no clip and stay valid** for whatever the set carries,
+  so deploying v18 refills nobody's queue. The cost: a clip cleared before v18
+  does not come back when replaced. `npm run reviews:clips` closes that: a dry
+  run by default, `-- --yes` stamps each such review with its set's clip, or
+  deletes it (back to the queue) when the clip file is newer than the review,
+  i.e. replaced after it was cleared. Both times are Appwrite's `$createdAt`.
+- **The orphan sweep ignores the column.** After a replace it names the old
+  file on purpose; `NON_OWNING_FILE_COLUMNS` in `appwrite/backup/orphans.ts`
+  keeps it from holding that file alive.
+- **Audit.** `set_reviews` update stays coach-only; the audit's hijack attempt
+  now tries to re-point `video_file_id`, and the coach's own update goes
+  through `markSetReviewed`'s 409 path.
+
 ## Playing the clip
 
 This is the part with no shortcut. A `<video>` element cannot send a header, and

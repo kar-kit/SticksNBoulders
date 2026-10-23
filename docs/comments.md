@@ -140,8 +140,19 @@ F13 adds a second place to answer: a clip opened from History → Clips shows
 its thread and the same `ReplyBox`, posting through `submitComment` with the
 latest thread's opening comment as `parentId` (the Feedback screen's rule).
 Still no new table, policy or route. The box only appears once the coach has
-said something on that clip and while a coach is linked. Reading a thread
-there does not move the Feedback screen's unread watermark.
+said something on that clip and while a coach is linked.
+
+**Reading a thread there counts as reading it (F15).** Opening a clip in the
+gallery marks that clip's thread read up to the coach's newest comment on it,
+and the Today dot recounts. It does not move the Feedback screen's single
+watermark, because that would mark every older unread comment on every other
+clip as seen. Instead `lib/review/feedback-seen.ts` keeps a per-clip mark
+beside the watermark, on the same device and for the same no-read-receipts
+reason; `seenAtFor` takes the later of the two for a clip. The unread count
+reads a page of 100 so it can drop the read clip's comments and still find
+another clip's (the badge is still capped at 10), and the Feedback screen's
+"New" marks honour the same per-clip marks. Marks the watermark overtakes are
+pruned when the Feedback screen is opened.
 
 ## Verified against the instance
 

@@ -116,6 +116,24 @@ describe("fetchUnreadCount", () => {
     expect(has(call, "greaterThan", "created_at")).toBe(true);
   });
 
+  it("leaves out a clip whose thread was read in the Clips gallery, and still counts the others (F15)", async () => {
+    rowsFor.fn = () => [
+      { ...coachComment("read", "s1"), created_at: "2026-09-21T10:00:00.000Z" },
+      { ...coachComment("other", "s2"), created_at: "2026-09-21T09:00:00.000Z" },
+      // Newer than the gallery read: the coach said something since.
+      { ...coachComment("later", "s1"), created_at: "2026-09-22T10:00:00.000Z" },
+    ];
+    const count = await fetchUnreadCount("joey", "2026-09-20T10:00:00.000Z", { s1: "2026-09-21T10:00:00.000Z" });
+    expect(count).toBe(2);
+    expect(has(calls[0], "select")).toBe(true);
+    expect(calls[0].queries.find((q) => q.includes('"select"'))).toContain("set_id");
+  });
+
+  it("never reports more than ten, however wide the page", async () => {
+    rowsFor.fn = () => Array.from({ length: 14 }, (_, i) => coachComment(`c${i}`, `s${i}`));
+    expect(await fetchUnreadCount("joey", null)).toBe(10);
+  });
+
   it("drops the time filter when the athlete has never looked", async () => {
     await fetchUnreadCount("joey", null);
     expect(has(calls[0], "greaterThan")).toBe(false);

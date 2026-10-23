@@ -5,7 +5,8 @@ import { CoachShell, type CoachAthlete } from "@/components/shell/coach-shell";
 import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { fetchProfile } from "@/lib/profile/profile-store";
 import { useRecordMode, useSession } from "@/lib/auth/session-context";
-import { fetchClips, fetchReviewedSetIds, subscribeToClips } from "@/lib/review/queue-store";
+import { fetchClips, fetchReviews, subscribeToClips } from "@/lib/review/queue-store";
+import { stillReviewed } from "@/lib/review/queue";
 import { browserAppwrite } from "@/appwrite/browser-client";
 
 /**
@@ -58,10 +59,8 @@ export function CoachLayoutShell({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     const count = async () => {
-      const [clips, reviewed] = await Promise.all([
-        fetchClips(athleteIds),
-        fetchReviewedSetIds(coachId),
-      ]);
+      const [clips, reviews] = await Promise.all([fetchClips(athleteIds), fetchReviews(coachId)]);
+      const reviewed = stillReviewed(clips, reviews);
       if (!cancelled) setReviewCount(clips.filter((clip) => !reviewed.has(clip.id)).length);
     };
 

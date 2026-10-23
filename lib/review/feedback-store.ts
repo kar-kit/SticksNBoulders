@@ -5,7 +5,7 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 import { authenticRows } from "@/appwrite/documents";
 import { fetchCommentsForAthlete, fetchCommentsForSets } from "./comment-store";
 import type { Comment } from "./comments";
-import { setIdsToFetch, type FeedbackSet } from "./feedback";
+import { seenAtFor, setIdsToFetch, type FeedbackSet } from "./feedback";
 
 /**
  * Reading the athlete's feedback.
@@ -127,25 +127,49 @@ export async function fetchFeedback(
   return { comments, sets };
 }
 
+/** The badge never says more than this; the page is read wider (see below). */
+const UNREAD_CAP = 10;
+const UNREAD_PAGE = 100;
+
 /**
- * How many comments from somebody else arrived after `seenAt`.
+ * How many comments from somebody else arrived after `seenAt`, leaving out
+ * any on a clip whose thread was read in the Clips gallery since (`setSeen`,
+ * F15).
  *
  * Capped rather than counted exactly: the badge says "something new", and
  * Appwrite would charge a full count for a number nobody reads past nine.
+ * The page is wider than the cap because the per-clip marks are applied after
+ * the read: a page of ten could be all from the clip just read while an
+ * eleventh, on another clip, is the one that matters.
  */
-export async function fetchUnreadCount(athleteId: string, seenAt: string | null): Promise<number> {
+export async function fetchUnreadCount(
+  athleteId: string,
+  seenAt: string | null,
+  setSeen: Readonly<Record<string, string>> = {},
+): Promise<number> {
   if (!athleteId) return 0;
   const { tables, databaseId } = browserAppwrite();
   const queries = [
     Query.equal("athlete_id", athleteId),
     Query.notEqual("author_id", athleteId),
-    Query.limit(10),
+    Query.limit(UNREAD_PAGE),
     // author_id is selected so a forged comment cannot light the badge.
-    Query.select(["created_at", "author_id"]),
+    Query.select(["created_at", "author_id", "set_id"]),
   ];
   if (seenAt) queries.push(Query.greaterThan("created_at", seenAt));
   const page = await tables.listRows({ databaseId, tableId: "set_comments", queries });
-  return authenticRows("set_comments", page.rows).length;
+  let unread = 0;
+  for (const row of authenticRows("set_comments", page.rows)) {
+    const raw = row as unknown as { set_id?: unknown; created_at?: unknown };
+    const setId = typeof raw.set_id === "string" ? raw.set_id : "";
+    const createdAt = typeof raw.created_at === "string" ? raw.created_at : "";
+    // The watermark is already applied by the query; only a clip's own,
+    // later mark is left to check here.
+    const mark = setSeen[setId] ? seenAtFor(setId, seenAt, setSeen) : null;
+    if (mark && createdAt && new Date(createdAt).getTime() <= new Date(mark).getTime()) continue;
+    unread++;
+  }
+  return Math.min(unread, UNREAD_CAP);
 }
 
 /**

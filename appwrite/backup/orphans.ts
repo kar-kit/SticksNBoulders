@@ -38,6 +38,18 @@ export const CLIP_REFERENCES = [
   { tableId: "sets", column: "video_poster_id", bucketId: "set_video_posters" },
 ] as const;
 
+/**
+ * Columns that name a file without keeping it. Listed so the schema check in
+ * orphans.test.ts can tell one apart from a reference the sweep forgot.
+ *
+ * `set_reviews.video_file_id` (v18) is which clip a coach cleared. After the
+ * athlete replaces that clip it names the OLD file on purpose -- that is what
+ * puts the set back in the queue -- and the old file is exactly what the
+ * sweep should reclaim. Counting it as a reference would keep every replaced
+ * clip forever.
+ */
+export const NON_OWNING_FILE_COLUMNS = [{ tableId: "set_reviews", column: "video_file_id" }] as const;
+
 export interface ClipReference {
   bucketId: string;
   tableId: string;

@@ -44,7 +44,8 @@ vi.mock("@/lib/logging/session-store", () => ({ fetchRecentSessions: async () =>
 vi.mock("@/lib/logging/history-store", () => ({ fetchSetsForSessions: async () => context.sets }));
 vi.mock("@/lib/review/queue-store", () => ({
   fetchClips: async () => context.clips,
-  fetchReviewedSetIds: async () => context.reviewed,
+  // Reviews from before v18 name no clip, so each counts for the set's clip.
+  fetchReviews: async () => new Map([...context.reviewed].map((id) => [id, null])),
 }));
 const squatMax = {
   id: "m1",

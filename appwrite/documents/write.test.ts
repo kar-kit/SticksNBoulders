@@ -1,5 +1,5 @@
 import { circleTeamId } from "./circle";
-import { exercisePermissions, posterPermissions, sessionPermissions, setPermissions, videoPermissions } from "./policy";
+import { exercisePermissions, posterPermissions, reviewPermissions, sessionPermissions, setPermissions, videoPermissions } from "./policy";
 import type { RowWriter } from "./row-writer";
 import {
   attachVideo,
@@ -15,6 +15,7 @@ import {
   deleteSet,
   EXERCISE_IN_USE,
   finishSession,
+  markSetReviewed,
   normaliseSessionName,
   renameExercise,
   SESSION_HAS_SETS,
@@ -632,5 +633,63 @@ describe("poster permissions mirror the clip's exactly", () => {
     expect(stamp).not.toContain("update(");
     expect(stamp).not.toContain('read("users")');
     expect(stamp).toContain(`delete("user:${ATHLETE}")`);
+  });
+});
+
+describe("clearing a clip records which clip (v18)", () => {
+  const coach = { userId: COACH };
+
+  it("writes the clip's file id with the review, stamped for the coach", async () => {
+    const { deps, last } = harness();
+    await markSetReviewed(deps, coach, { athleteId: ATHLETE, setId: "set_1", videoFileId: "clip_a" });
+    expect(last()).toEqual({
+      op: "create",
+      tableId: "set_reviews",
+      rowId: `${COACH}_set_1`,
+      data: {
+        coach_id: COACH,
+        athlete_id: ATHLETE,
+        set_id: "set_1",
+        reviewed_at: NOW.toISOString(),
+        client_review_id: `${COACH}_set_1`,
+        video_file_id: "clip_a",
+      },
+      permissions: reviewPermissions({ athleteId: ATHLETE, coachId: COACH }),
+    });
+  });
+
+  it("moves an existing review onto a replacement clip, without restamping permissions", async () => {
+    const { deps, calls } = harness();
+    deps.writer.createRow = async () => {
+      throw Object.assign(new Error("Document with the requested ID already exists."), { code: 409 });
+    };
+    await markSetReviewed(deps, coach, { athleteId: ATHLETE, setId: "set_1", videoFileId: "clip_b" });
+    expect(calls).toEqual([
+      {
+        op: "update",
+        tableId: "set_reviews",
+        rowId: `${COACH}_set_1`,
+        data: { video_file_id: "clip_b", reviewed_at: NOW.toISOString() },
+        permissions: undefined,
+      },
+    ]);
+  });
+
+  it("throws any other refusal rather than turning it into an update", async () => {
+    const { deps, calls } = harness();
+    deps.writer.createRow = async () => {
+      throw Object.assign(new Error("not authorized"), { code: 401 });
+    };
+    await expect(
+      markSetReviewed(deps, coach, { athleteId: ATHLETE, setId: "set_1", videoFileId: "clip_b" }),
+    ).rejects.toMatchObject({ code: 401 });
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses a review that names no clip", async () => {
+    const { deps } = harness();
+    await expect(markSetReviewed(deps, coach, { athleteId: ATHLETE, setId: "set_1", videoFileId: "" })).rejects.toThrow(
+      /videoFileId/,
+    );
   });
 });

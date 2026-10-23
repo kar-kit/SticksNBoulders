@@ -60,6 +60,9 @@ vi.mock("@/lib/logging/set-store", () => ({ editSet }));
 const attachClipToSet = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/video/upload", () => ({ attachClipToSet }));
 
+const badge = vi.hoisted(() => ({ markSetSeen: vi.fn() }));
+vi.mock("@/lib/review/feedback-context", () => ({ useFeedbackBadge: () => badge }));
+
 const haptic = vi.hoisted(() => vi.fn(() => false));
 vi.mock("@/lib/ui/haptics", () => ({ haptic }));
 
@@ -314,5 +317,25 @@ describe("replacing the clip", () => {
     await pick(user, container);
     expect(await screen.findByText("It will carry on by itself.")).toBeInTheDocument();
     expect(store.retireReplacedClip).not.toHaveBeenCalled();
+  });
+});
+
+describe("reading the thread clears that clip from the Coach Feedback dot (F15)", () => {
+  it("marks this clip read up to the coach's newest comment, not the athlete's own", async () => {
+    data.comments = [
+      comment("c1", { createdAt: "2026-10-06T20:00:00.000Z" }),
+      comment("c2", { createdAt: "2026-10-07T08:00:00.000Z", parentId: "c1" }),
+      // The athlete's reply is never new to them and does not move the mark.
+      comment("r1", { authorId: "joey", createdAt: "2026-10-08T08:00:00.000Z", parentId: "c1" }),
+    ];
+    await open();
+    await waitFor(() => expect(badge.markSetSeen).toHaveBeenCalledWith("st-1", "2026-10-07T08:00:00.000Z"));
+  });
+
+  it("marks nothing when the coach has said nothing on this clip", async () => {
+    data.comments = [comment("r1", { authorId: "joey" })];
+    await open();
+    await screen.findByText("Hips shot up on rep two.");
+    expect(badge.markSetSeen).not.toHaveBeenCalled();
   });
 });

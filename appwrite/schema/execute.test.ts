@@ -330,3 +330,22 @@ describe("schema v17 on a v16 instance", () => {
     expect((await applySchema(driver, schema)).noop).toBe(true);
   });
 });
+
+describe("v17 -> v18 on a live instance", () => {
+  it("plans exactly one change: the review's clip id column, which rewrites no row", async () => {
+    // A v17 instance is this schema minus set_reviews.video_file_id. The
+    // dry-run lines are what `npm run appwrite:setup -- --dry-run` prints, so
+    // the PR's "Before prod" diff is this test's output, not a guess.
+    const { driver, state } = fakeDriver();
+    await applySchema(driver, schema);
+    const reviews = state.tables.find((t) => t.id === "set_reviews")!;
+    reviews.columns = reviews.columns.filter((c) => c.key !== "video_file_id");
+
+    const lines: string[] = [];
+    const result = await applySchema(driver, schema, { dryRun: true, log: (m) => lines.push(m) });
+
+    expect(lines).toEqual(["  would create column set_reviews.video_file_id (string)"]);
+    expect(result.reported).toEqual([]);
+    expect(result.noop).toBe(false);
+  });
+});

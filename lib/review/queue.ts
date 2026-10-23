@@ -79,6 +79,36 @@ const time = (iso: string): number => {
 };
 
 /**
+ * This coach's reviews: set id to the clip it cleared (v18), or null for a
+ * review written before v18 recorded one.
+ */
+export type ReviewedClips = ReadonlyMap<string, string | null>;
+
+/**
+ * The sets whose CURRENT clip this coach has cleared.
+ *
+ * A review counts only while the set still carries the file it was written
+ * for, so an athlete replacing a clip the coach already cleared (the Log's
+ * Replace, or the Clips gallery's) puts it back in the queue. A review from
+ * before v18 names no file and counts for whatever clip the set has: that is
+ * what it meant when it was written, and treating it as stale would refill
+ * every coach's queue with clips they have already watched.
+ *
+ * Every reader of reviews goes through this one function -- the queue, the
+ * Review badge, the Roster, Athlete View, the Program Editor's context -- so
+ * the number beside "Review" and the clips on screen cannot disagree.
+ */
+export function stillReviewed(clips: readonly ClipSet[], reviews: ReviewedClips): Set<string> {
+  const reviewed = new Set<string>();
+  for (const clip of clips) {
+    if (!reviews.has(clip.id)) continue;
+    const fileId = reviews.get(clip.id);
+    if (fileId === null || fileId === undefined || fileId === clip.videoFileId) reviewed.add(clip.id);
+  }
+  return reviewed;
+}
+
+/**
  * Everything waiting, oldest first.
  *
  * The subtraction is done here rather than in the query because Appwrite has

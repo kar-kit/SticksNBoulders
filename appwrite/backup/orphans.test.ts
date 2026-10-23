@@ -5,6 +5,7 @@ import { schema } from "../schema";
 import type { SourceFile } from "./bucket";
 import {
   CLIP_REFERENCES,
+  NON_OWNING_FILE_COLUMNS,
   DAY_MS,
   DEFAULT_MIN_AGE_DAYS,
   FRESH_BACKUP_HOURS,
@@ -59,10 +60,24 @@ describe("what counts as a reference", () => {
   it("knows every column in the schema that holds a file id", () => {
     // The failure this prevents: a second table starts pointing at clips, the
     // sweep never reads it, and deletes clips out from under it.
+    const exempt = new Set<string>(NON_OWNING_FILE_COLUMNS.map((r) => `${r.tableId}.${r.column}`));
     const fileColumns = schema.tables.flatMap((t) =>
-      t.columns.filter((c) => /(file|poster)_?id$/i.test(c.key)).map((c) => `${t.id}.${c.key}`),
+      t.columns
+        .filter((c) => /(file|poster)_?id$/i.test(c.key))
+        .map((c) => `${t.id}.${c.key}`)
+        .filter((key) => !exempt.has(key)),
     );
     expect(fileColumns.sort()).toEqual(CLIP_REFERENCES.map((r) => `${r.tableId}.${r.column}`).sort());
+  });
+
+  it("does not let a review's record of a replaced clip keep that clip alive (v18)", () => {
+    expect(NON_OWNING_FILE_COLUMNS).toEqual([{ tableId: "set_reviews", column: "video_file_id" }]);
+    expect(referencesIn("set_reviews", [{ $id: "r", data: { video_file_id: "old-take" } }])).toEqual([]);
+    // Every exemption is a real column, so a rename cannot silently widen it.
+    for (const ref of NON_OWNING_FILE_COLUMNS) {
+      const table = schema.tables.find((t) => t.id === ref.tableId);
+      expect(table?.columns.map((c) => c.key)).toContain(ref.column);
+    }
   });
 
   it("points into the buckets the app uploads to, which the schema declares", () => {

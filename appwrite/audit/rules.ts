@@ -169,11 +169,16 @@ export const RULES: readonly ResourceRule[] = [
       // Stamped read(team:circle_A): the athlete is in the circle too.
       read: athleteAndCoach,
       create: ["coach"],
+      // v18: the coach moves their own review onto a replacement clip
+      // (markSetReviewed answers the 409 with an update of video_file_id).
+      // Nobody else may re-point it, or they could keep a replaced clip
+      // cleared -- or put a cleared one back.
       update: ["coach"],
       delete: ["coach"],
     },
     ownerColumn: "athlete_id",
-    notes: "Clearing a coach's queue is not something the person being coached gets to do (policy.ts).",
+    notes:
+      "Clearing a coach's queue is not something the person being coached gets to do (policy.ts). Since v18 the row also names the clip it cleared (video_file_id), and only the coach may change which.",
   },
   {
     key: "set_comments",

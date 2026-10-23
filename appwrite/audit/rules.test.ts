@@ -241,3 +241,15 @@ describe("stored stamps", () => {
     expect(stampDrift(want, [...want].reverse())).toEqual({ missing: [], extra: [] });
   });
 });
+
+describe("set_reviews since v18", () => {
+  const rule = RULES.find((r) => r.key === "set_reviews")!;
+
+  it("lets only the coach re-point a review at another clip", () => {
+    // The review's video_file_id decides whether a replaced clip comes back,
+    // so the athlete whose clip it is must not be able to change it either.
+    for (const actor of ACTORS) {
+      expect(isAllowed(rule, "update", actor), actor).toBe(actor === "coach");
+    }
+  });
+});
