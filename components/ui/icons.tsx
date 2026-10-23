@@ -44,6 +44,13 @@ export const HistoryIcon = (props: IconProps) => (
   </Icon>
 );
 
+/** A line chart on two axes: the exercise header's link to /lift/[id] progress and records. */
+export const ProgressIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M3 3v14h14M6.5 12.5l3-3.5 2.5 2 4-5" />
+  </Icon>
+);
+
 export const MeIcon = (props: IconProps) => (
   <Icon {...props}>
     <circle cx="10" cy="7" r="3.5" />

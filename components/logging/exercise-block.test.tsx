@@ -196,6 +196,13 @@ describe("ExerciseBlock — last time, records and history (F6)", () => {
     expect(onActivate).toHaveBeenCalled();
   });
 
+  it("draws the lift link as a chart, not the History tab's clock", () => {
+    render(<ExerciseBlock name="Squat" sets={[logged("a")]} historyHref="/lift/squat" />);
+    const svg = screen.getByRole("link", { name: "Squat history and records" }).querySelector("svg");
+    expect(svg?.querySelector("circle")).toBeNull();
+    expect(svg?.querySelector("path")).not.toBeNull();
+  });
+
   it("has no history link when none is given", () => {
     render(<ExerciseBlock name="Squat" sets={[logged("a")]} />);
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
