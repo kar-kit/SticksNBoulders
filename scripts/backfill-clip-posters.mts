@@ -20,8 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
-import { AppwriteException, Query, Storage, TablesDB } from "node-appwrite";
-import { InputFile } from "node-appwrite/file";
+import { Query, Storage, TablesDB } from "node-appwrite";
 import { createServerClient } from "../appwrite/server-client";
 import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
@@ -51,7 +50,8 @@ const clips = appwriteBucketSource(storage, {
   apiKey: config.apiKey,
   bucketIds: [VIDEO_BUCKET],
 });
-const notFound = (error: unknown) => error instanceof AppwriteException && error.code === 404;
+// Matched on the code, not instanceof: under tsx the SDK can load twice, so its class is not always ours.
+const notFound = (error: unknown) => (error as { code?: unknown })?.code === 404;
 
 console.log(`${confirmed ? "Making posters on" : "Dry run: planning posters on"} ${config.endpoint}`);
 console.log(`  project ${config.projectId}, database ${config.databaseId}\n`);
@@ -137,7 +137,9 @@ const deps: PosterBackfillDeps = {
     await storage.createFile({
       bucketId: POSTER_BUCKET,
       fileId: posterId,
-      file: InputFile.fromBuffer(Buffer.from(bytes), "poster.jpg"),
+      // A plain File, as appwrite-audit uploads: node-appwrite/file can load as a second copy of the SDK,
+      // whose InputFile the client then fails to recognise ("File not found in payload").
+      file: new File([Buffer.from(bytes)], "poster.jpg", { type: "image/jpeg" }),
       permissions,
     });
   },
