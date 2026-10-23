@@ -197,6 +197,17 @@ it("leaves Enter on the focused Adjust program link to the link, rather than cle
   expect(queueStore.clearClip).toHaveBeenCalledWith("coach", "joey", "joey-1");
 });
 
+it("marks a clip the athlete left a note on, and shows the note beside it (F11)", async () => {
+  queueStore.fetchClips.mockImplementation(async (ids: string[]) =>
+    [{ ...ALL[0], notes: "Hip pinched" }, ALL[1], ALL[2]].filter((c) => ids.includes(c.athleteId)),
+  );
+  render(<ReviewQueue />);
+  await screen.findByText("3 waiting");
+  expect(screen.getAllByRole("img", { name: "athlete left a note" })).toHaveLength(1);
+  // The first clip is the current one, so its note is in the context panel.
+  expect(screen.getByText("“Hip pinched”")).toBeInTheDocument();
+});
+
 /** Joey's clips, oldest first, enough of them to need more than one URL request. */
 const many = (count: number): ClipSet[] =>
   Array.from({ length: count }, (_, i) =>

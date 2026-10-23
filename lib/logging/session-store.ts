@@ -22,6 +22,11 @@ export type UnnamedSet = Omit<SessionSet, "exerciseName"> & {
    * still finds its line's block after a reload.
    */
   prescriptionId?: string;
+  /**
+   * The athlete's own note on the set (F11), or absent/null for none. Read
+   * back so the Log's note mark and the edit sheet's note survive a reload.
+   */
+  notes?: string | null;
 };
 
 /**
@@ -105,6 +110,7 @@ interface SetRow {
   logged_at?: unknown;
   video_file_id?: unknown;
   prescription_id?: unknown;
+  notes?: unknown;
 }
 
 /**
@@ -138,6 +144,7 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
         isWarmup: row.is_warmup === true,
         loggedAt,
         hasVideo: typeof row.video_file_id === "string" && row.video_file_id !== "",
+        ...(typeof row.notes === "string" && row.notes.trim() ? { notes: row.notes } : {}),
         ...(typeof row.prescription_id === "string" && row.prescription_id
           ? { prescriptionId: row.prescription_id }
           : {}),

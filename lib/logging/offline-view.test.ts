@@ -222,4 +222,34 @@ describe("queued set edits", () => {
     const sets = [set("st-1")];
     expect(withSetEdits(sets, new Map())).toBe(sets);
   });
+
+  describe("the athlete's note (F11)", () => {
+    const noted = (setId: string, notes: string | null) =>
+      op("set.update", { setId, loadKg: 100, reps: 5, rpe: 8, isWarmup: false, notes });
+
+    it("carries a queued note, so it is on screen after a reload with no signal", () => {
+      const next = withSetEdits([set("st-1")], queuedSetEdits([noted("st-1", "Hip pinched")]));
+      expect(next[0]).toMatchObject({ clientSetId: "st-1", notes: "Hip pinched" });
+    });
+
+    it("carries a cleared note as null, over a note the server still has", () => {
+      const next = withSetEdits([{ ...set("st-1"), notes: "old" }], queuedSetEdits([noted("st-1", null)]));
+      expect(next[0].notes).toBeNull();
+    });
+
+    it("keeps a queued note through a later warm-up flip that says nothing about it", () => {
+      const edits = queuedSetEdits([noted("st-1", "Hip pinched"), update("st-1", true)]);
+      expect(edits.get("st-1")).toEqual({ loadKg: 100, reps: 5, rpe: null, isWarmup: true, notes: "Hip pinched" });
+    });
+
+    it("lets a later note replace an earlier one", () => {
+      const edits = queuedSetEdits([noted("st-1", "first"), noted("st-1", "second")]);
+      expect(edits.get("st-1")?.notes).toBe("second");
+    });
+
+    it("leaves a set's own note alone under an edit with no note in it", () => {
+      const next = withSetEdits([{ ...set("st-1"), notes: "kept" }], queuedSetEdits([update("st-1", true)]));
+      expect(next[0].notes).toBe("kept");
+    });
+  });
 });

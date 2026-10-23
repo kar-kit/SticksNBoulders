@@ -7,7 +7,7 @@ function setup(overrides: Partial<EditSetSheetProps> = {}) {
   const props: EditSetSheetProps = {
     setLabel: "Set 2",
     exerciseName: "Squat",
-    draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false },
+    draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, notes: "" },
     field: "load",
     pad: beginEdit("load", 140, "kg"),
     unit: "kg",
@@ -16,6 +16,7 @@ function setup(overrides: Partial<EditSetSheetProps> = {}) {
     onPadChange: vi.fn(),
     onToggleWarmup: vi.fn(),
     onRpe: vi.fn(),
+    onNote: vi.fn(),
     onSave: vi.fn(),
     onCancel: vi.fn(),
     onDelete: vi.fn(),
@@ -37,7 +38,7 @@ describe("EditSetSheet", () => {
   });
 
   it("titles a warm-up as one", () => {
-    setup({ setLabel: "Warm-up set", draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true } });
+    setup({ setLabel: "Warm-up set", draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true, notes: "" } });
     expect(screen.getByRole("heading", { name: "Edit warm-up" })).toBeInTheDocument();
     // Never asked for RPE, so the field cannot be opened, and Next on reps saves.
     expect(screen.getByRole("button", { name: "Change RPE, now none, warm-up" })).toBeDisabled();
@@ -59,7 +60,7 @@ describe("EditSetSheet", () => {
   it("saves from the pad's Next on the last field of a warm-up", async () => {
     const { props, user } = setup({
       setLabel: "Warm-up set",
-      draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true },
+      draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true, notes: "" },
       field: "reps",
       pad: beginEdit("reps", 5),
     });
@@ -75,7 +76,7 @@ describe("EditSetSheet", () => {
   });
 
   it("holds Save back for a draft that is not a set", () => {
-    setup({ canSave: false, draft: { loadKg: null, reps: 5, rpe: 8, isWarmup: false } });
+    setup({ canSave: false, draft: { loadKg: null, reps: 5, rpe: 8, isWarmup: false, notes: "" } });
     expect(screen.getByRole("button", { name: "Save Set 2" })).toBeDisabled();
   });
 
@@ -89,5 +90,38 @@ describe("EditSetSheet", () => {
     setup({ deleteBlocked: "Your coach has commented on this set, so it stays." });
     expect(screen.getByText(/Your coach has commented/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete Set 2" })).not.toBeInTheDocument();
+  });
+
+  describe("the note (F11)", () => {
+    it("offers to add a note when there is none, and opens the note field", async () => {
+      const { props, user } = setup();
+      await user.click(screen.getByRole("button", { name: "Add a note to Set 2" }));
+      expect(props.onField).toHaveBeenCalledWith("note");
+    });
+
+    it("shows the note as it stands on the cell", () => {
+      setup({ draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, notes: "Hip pinched" } });
+      expect(screen.getByRole("button", { name: "Change note, now: Hip pinched" })).toHaveTextContent("Hip pinched");
+    });
+
+    it("swaps the pad for a textarea on the note field and reports what is typed", async () => {
+      const { props, user } = setup({ field: "note", pad: null });
+      expect(screen.queryByRole("button", { name: "Reps" })).not.toBeInTheDocument();
+      const box = screen.getByRole("textbox", { name: "Note on Set 2" });
+      expect(box).toHaveFocus();
+      expect(box).toHaveAttribute("maxLength", "500");
+      await user.type(box, "B");
+      expect(props.onNote).toHaveBeenCalledWith("B");
+    });
+
+    it("counts down only near the 500-character limit", () => {
+      setup({ field: "note", pad: null, draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, notes: "x".repeat(460) } });
+      expect(screen.getByText("40 left")).toBeInTheDocument();
+    });
+
+    it("shows no counter on a short note", () => {
+      setup({ field: "note", pad: null, draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, notes: "felt slow" } });
+      expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
+    });
   });
 });

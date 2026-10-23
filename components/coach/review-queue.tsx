@@ -5,6 +5,7 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 import { Button } from "@/components/ui/button";
 import { UserAvatar } from "@/components/profile/user-avatar";
 import { EmptyState } from "@/components/ui/empty-state";
+import { NoteIcon } from "@/components/ui/icons";
 import { useArrivals } from "@/components/ui/motion";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/auth/session-context";
@@ -469,6 +470,14 @@ export function ReviewQueue() {
                         // know they have been here before opening it.
                         <span className="ml-1 text-muted-2" aria-label="already commented">
                           ·
+                        </span>
+                      ) : null}
+                      {item.notes ? (
+                        // The athlete left a note on the set (F11). Marked in the
+                        // list so a coach clearing fast knows there is something
+                        // to read beside the clip, not only to watch.
+                        <span role="img" aria-label="athlete left a note" className="ml-1 inline-flex align-[-1px] text-muted-2">
+                          <NoteIcon width={12} height={12} />
                         </span>
                       ) : null}
                     </button>

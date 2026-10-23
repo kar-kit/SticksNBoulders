@@ -173,7 +173,7 @@ describe("correcting a set", () => {
 
     await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
     expect(editSet.mock.calls[0][0]).toBe("st-1");
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 145, reps: 5, rpe: 8, isWarmup: false });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 145, reps: 5, rpe: 8, isWarmup: false, notes: null });
     // And the exercise and the set's own logged time, so the rollup for the
     // week it was logged in is recomputed, not this week's.
     expect(editSet.mock.calls[0][2]).toEqual({ exerciseId: "squat", loggedAt: new Date("2026-09-14T09:30:00Z") });
@@ -287,7 +287,7 @@ describe("for an athlete who reads pounds", () => {
     await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
 
     await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 142.882, reps: 5, rpe: 8, isWarmup: false });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 142.882, reps: 5, rpe: 8, isWarmup: false, notes: null });
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("315");
   });
 });
@@ -443,5 +443,60 @@ describe("deleting a whole session", () => {
     await user.click(screen.getByRole("button", { name: "Keep it" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(sessionEdits.checkSessionDeletable).not.toHaveBeenCalled();
+  });
+});
+
+describe("the athlete's note on a set (F11)", () => {
+  it("shows a set's note in full under its row", async () => {
+    loaded.sets = [set({ clientSetId: "st-1", notes: "Left hip pinched out of the hole.\nBelt one notch tighter." })];
+    setup();
+    const note = await screen.findByText(/Left hip pinched out of the hole/);
+    expect(note.closest("[data-set-note]")).toHaveTextContent("Belt one notch tighter.");
+  });
+
+  it("adds a note to a set from the row's edit, saved through editSet with the four values", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    await user.click(screen.getByRole("button", { name: "Add a note to set 1" }));
+    const box = screen.getByRole("textbox", { name: "Note on Set 1" });
+    expect(box).toHaveFocus();
+    await user.type(box, "  Felt slow off the chest  ");
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(editSet.mock.calls[0][1]).toEqual({
+      loadKg: 140,
+      reps: 5,
+      rpe: 8,
+      isWarmup: false,
+      notes: "Felt slow off the chest",
+    });
+    // Shown at once, trimmed.
+    expect(await screen.findByText("Felt slow off the chest")).toBeInTheDocument();
+  });
+
+  it("opens straight onto an existing note, and a blank one clears it", async () => {
+    loaded.sets = [set({ clientSetId: "st-1", notes: "Hip pinched" })];
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    const box = screen.getByRole("textbox", { name: "Note on Set 1" });
+    expect(box).toHaveValue("Hip pinched");
+    await user.clear(box);
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(editSet.mock.calls[0][1]).toMatchObject({ notes: null });
+    expect(screen.queryByText("Hip pinched")).not.toBeInTheDocument();
+  });
+
+  it("counts down near the 500-character limit and stops there", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    await user.click(screen.getByRole("button", { name: "Add a note to set 1" }));
+    const box = screen.getByRole("textbox", { name: "Note on Set 1" });
+    expect(box).toHaveAttribute("maxLength", "500");
+    await user.click(box);
+    await user.paste("x".repeat(450));
+    expect(screen.getByText("50 left")).toBeInTheDocument();
   });
 });

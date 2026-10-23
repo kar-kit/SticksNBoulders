@@ -122,6 +122,14 @@ describe("an opened clip", () => {
     expect(within(dialog).getByRole("link", { name: /Review/ })).toHaveAttribute("href", "/coach/review");
     expect(within(dialog).getByText("Nothing said on this clip yet.")).toBeInTheDocument();
     expect(within(dialog).getByText("“Knee felt fine”")).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "Athlete note" })).toBeInTheDocument();
+  });
+
+  it("marks a clip the athlete left a note on in the list, and only that one (F11)", async () => {
+    render(<AthleteVideos {...props} />);
+    const bench = await screen.findByRole("button", { name: /Bench Press/ });
+    expect(screen.getByRole("button", { name: /Squat/ })).toHaveTextContent("their note");
+    expect(bench).not.toHaveTextContent("their note");
   });
 
   it("closes through the caller", async () => {

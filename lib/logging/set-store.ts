@@ -4,6 +4,7 @@ import { forgetUpload, pendingUploads } from "@/lib/video/pending-store";
 import { weekStart } from "@/lib/strength/rollup";
 import type { UnnamedSet } from "./session-store";
 import type { RpeValue } from "./set";
+import { noteOf } from "./set-note";
 
 /**
  * Writing sets.
@@ -76,6 +77,13 @@ export interface SetEdit {
   reps: number;
   rpe: RpeValue | null;
   isWarmup: boolean;
+  /**
+   * The athlete's note (F11). Absent leaves the stored note alone, which is
+   * what the set number's warm-up flip wants: it restates the four values
+   * and has no business with the note. A string sets it; null or blank
+   * clears it.
+   */
+  notes?: string | null;
 }
 
 /**
@@ -97,6 +105,9 @@ export async function editSet(
     reps: edit.reps,
     rpe: edit.rpe,
     isWarmup: edit.isWarmup,
+    // Only when the edit says something about the note, so a queued flip
+    // replayed after a queued note does not wipe it on the server.
+    ...(edit.notes !== undefined && { notes: noteOf(edit.notes) }),
   });
   await queueRollupRefresh(set.exerciseId, set.loggedAt);
 }

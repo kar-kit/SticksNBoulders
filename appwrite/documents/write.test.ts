@@ -213,6 +213,23 @@ describe("set data", () => {
     expect(h.last().data.rpe).toBeNull();
   });
 
+  it("writes the athlete's note trimmed and capped, clears a blank one, and leaves it alone when absent (F11)", async () => {
+    const h = harness();
+    const base = { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: false };
+    await updateSet(h.deps, h.actor, { ...base, notes: "  Hip pinched  " });
+    expect(h.last().data.notes).toBe("Hip pinched");
+    await updateSet(h.deps, h.actor, { ...base, notes: "x".repeat(600) });
+    expect(h.last().data.notes).toHaveLength(500);
+    await updateSet(h.deps, h.actor, { ...base, notes: "  " });
+    expect(h.last().data.notes).toBeNull();
+    await updateSet(h.deps, h.actor, { ...base, notes: null });
+    expect(h.last().data.notes).toBeNull();
+    await updateSet(h.deps, h.actor, base);
+    expect("notes" in h.last().data).toBe(false);
+    // Still the athlete's own stamp: a note is theirs to write and nobody else's.
+    expect(h.last().permissions).toContain(`update("user:${ATHLETE}")`);
+  });
+
   it("recomputes e1RM from the corrected values", async () => {
     // The gap Order 11 left open. An edit that changes reps and leaves the old
     // estimate on the row is the drift computing it in the helper prevents.

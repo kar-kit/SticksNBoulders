@@ -105,7 +105,8 @@ export function ClipContext({ item, sessionSets, recent, previousBestKg }: ClipC
       {item.notes ? (
         <div>
           <h3 className="m-0 text-ui font-semibold text-muted">Athlete note</h3>
-          <p className="m-0 text-body">“{item.notes}”</p>
+          {/* The athlete's own note on the set (F11), line breaks kept. */}
+          <p className="m-0 whitespace-pre-line text-body">“{item.notes}”</p>
         </div>
       ) : null}
 

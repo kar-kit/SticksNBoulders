@@ -7,8 +7,10 @@ import type { EditDraft } from "@/lib/logging/logged-edit";
 import type { PadState } from "@/lib/logging/number-pad";
 import type { RpeValue } from "@/lib/logging/set";
 import { loadNumber, unitName, type UnitPreference } from "@/lib/units";
+import { NoteIcon } from "@/components/ui/icons";
 import { NumberPad } from "./number-pad";
 import { RpeSheet } from "./rpe-sheet";
+import { SetNoteField } from "./set-note-field";
 
 /**
  * Correcting a logged set, in the Log's sheet (F9).
@@ -29,6 +31,13 @@ import { RpeSheet } from "./rpe-sheet";
  * - No Done on the pad. Cancel and Save are the two ways out, and they mean
  *   exactly what they say.
  *
+ * The note (F11) is the fourth field, under the three values: one full-width
+ * cell showing the note as it stands or "Add a note", which swaps the pad for
+ * a textarea. It is here rather than on the row because this sheet is
+ * already one tap from any logged set, including the one just logged, and a
+ * note is a correction's sibling: something about the set, said afterwards.
+ * Blank and Save clears it.
+ *
  * Delete set lives here too. Tapping a logged row used to open a strip with
  * Delete and Keep; tapping it now opens this, so the non-gesture path to a
  * delete (for a screen reader, a keyboard, or anyone who never swipes) moves
@@ -37,7 +46,7 @@ import { RpeSheet } from "./rpe-sheet";
  * Presentational: the screen owns the draft and every write.
  */
 
-export type EditField = "load" | "reps" | "rpe";
+export type EditField = "load" | "reps" | "rpe" | "note";
 
 export interface EditSetSheetProps {
   /** "Set 2", or "Warm-up set": the row's own label, as the list numbers it. */
@@ -54,6 +63,8 @@ export interface EditSetSheetProps {
   onPadChange: (next: PadState) => void;
   onToggleWarmup: (isWarmup: boolean) => void;
   onRpe: (value: RpeValue | null) => void;
+  /** A key in the note's textarea: the draft's note as typed. */
+  onNote: (text: string) => void;
   onSave: () => void;
   onCancel: () => void;
   onDelete?: () => void;
@@ -73,13 +84,15 @@ export function EditSetSheet({
   onPadChange,
   onToggleWarmup,
   onRpe,
+  onNote,
   onSave,
   onCancel,
   onDelete,
   deleteBlocked = null,
 }: EditSetSheetProps) {
   const title = setLabel === "Warm-up set" ? "Edit warm-up" : `Edit ${setLabel.toLowerCase()}`;
-  const showPad = field !== "rpe" && pad !== null;
+  const showPad = (field === "load" || field === "reps") && pad !== null;
+  const note = draft.notes.trim();
   // The RPE sheet titles itself by number; a warm-up never reaches it.
   const rpeNumber = Number(setLabel.replace(/\D+/g, "")) || 1;
 
@@ -105,7 +118,7 @@ export function EditSetSheet({
       disabled: draft.isWarmup,
     },
   ];
-  const fieldWord: Record<EditField, string> = { load: "weight", reps: "reps", rpe: "RPE" };
+  const fieldWord: Record<EditField, string> = { load: "weight", reps: "reps", rpe: "RPE", note: "note" };
 
   return (
     <section aria-label={`Edit ${setLabel}`} data-edit-sheet="" className="flex flex-none flex-col">
@@ -146,7 +159,33 @@ export function EditSetSheet({
         ))}
       </div>
 
-      {showPad ? (
+      <div className="px-3 pt-2">
+        <button
+          type="button"
+          aria-pressed={field === "note"}
+          aria-label={note ? `Change note, now: ${note}` : `Add a note to ${setLabel}`}
+          onClick={() => onField("note")}
+          className={cn(
+            "flex h-10 w-full items-center gap-2 rounded-control border px-3 text-left text-caption",
+            field === "note" ? "border-accent-line bg-surface-2" : "border-border bg-surface",
+            note ? "text-foreground" : "text-muted",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
+          )}
+        >
+          <NoteIcon width={14} height={14} className="flex-none text-muted-2" />
+          <span className="min-w-0 truncate">{note || "Add a note"}</span>
+        </button>
+      </div>
+
+      {field === "note" ? (
+        <SetNoteField
+          className="px-3 pt-3 pb-2"
+          value={draft.notes}
+          onChange={onNote}
+          setLabel={setLabel}
+          autoFocus
+        />
+      ) : showPad ? (
         <NumberPad
           inSheet
           state={pad}

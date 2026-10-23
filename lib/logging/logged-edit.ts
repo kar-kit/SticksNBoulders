@@ -1,5 +1,6 @@
 import { canComplete, type RpeValue } from "./set";
 import type { SetValues } from "./offline-view";
+import { noteOf } from "./set-note";
 
 /**
  * Correcting a set already logged, from the Log (F9).
@@ -29,6 +30,11 @@ export interface EditDraft {
   reps: number | null;
   rpe: RpeValue | null;
   isWarmup: boolean;
+  /**
+   * The note as typed (F11), untrimmed so the textarea keeps the athlete's
+   * spaces while they type. Blank is no note; `editOf` decides what is stored.
+   */
+  notes: string;
 }
 
 /**
@@ -45,12 +51,17 @@ export function draftOf(set: SetValues, heldRpe: number | null = null): EditDraf
     reps: set.reps,
     rpe: ((set.isWarmup ? heldRpe : set.rpe) ?? null) as RpeValue | null,
     isWarmup: set.isWarmup,
+    notes: set.notes ?? "",
   };
 }
 
 /**
  * What Save writes, or null when the draft is not a set yet (no load, no
  * reps, or zero of either: the same rule as the confirm square).
+ *
+ * The note always goes with it, trimmed, and null when blank: a Save from
+ * this sheet is a statement about the whole set, note included, so emptying
+ * the note and saving clears it.
  *
  * A warm-up is saved with no RPE. Warm-ups never ask for one and are left out
  * of PRs and rollups, and the stored e1RM is recomputed from these four
@@ -63,6 +74,7 @@ export function editOf(draft: EditDraft): SetValues | null {
     reps: draft.reps as number,
     rpe: draft.isWarmup ? null : draft.rpe,
     isWarmup: draft.isWarmup,
+    notes: noteOf(draft.notes),
   };
 }
 
@@ -76,6 +88,9 @@ export function changesSet(set: SetValues, edit: SetValues): boolean {
     set.loadKg !== edit.loadKg ||
     set.reps !== edit.reps ||
     (set.rpe ?? null) !== (edit.rpe ?? null) ||
-    set.isWarmup !== edit.isWarmup
+    set.isWarmup !== edit.isWarmup ||
+    // A set with no note and a draft left blank are the same: absent, null
+    // and "" all mean none.
+    (edit.notes !== undefined && noteOf(set.notes) !== noteOf(edit.notes))
   );
 }

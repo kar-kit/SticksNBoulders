@@ -683,3 +683,26 @@ describe("SetRow — PR badge (F6)", () => {
     expect(screen.queryByRole("img", { name: /personal record/ })).not.toBeInTheDocument();
   });
 });
+
+describe("the athlete's note (F11)", () => {
+  const done: LoggableSet = { loadKg: 140, reps: 5, rpe: 8, isWarmup: false };
+
+  it("puts a quiet one-line note under a logged row", () => {
+    const { container } = render(<SetRow index={1} set={done} state="logged" athleteNote="  Hip pinched  " />);
+    const line = container.querySelector("[data-set-note]")!;
+    expect(line).toHaveTextContent("Your note: Hip pinched");
+    expect(line.querySelector(".truncate")).not.toBeNull();
+  });
+
+  it("wraps the whole note when asked, as History does", () => {
+    const { container } = render(<SetRow index={1} set={done} state="logged" athleteNote="A long note" athleteNoteFull />);
+    expect(container.querySelector("[data-set-note] .truncate")).toBeNull();
+  });
+
+  it("shows nothing for a blank note, or on a row not logged yet", () => {
+    const { container, rerender } = render(<SetRow index={1} set={done} state="logged" athleteNote="   " />);
+    expect(container.querySelector("[data-set-note]")).toBeNull();
+    rerender(<SetRow index={1} set={done} state="active" athleteNote="Hip pinched" />);
+    expect(container.querySelector("[data-set-note]")).toBeNull();
+  });
+});

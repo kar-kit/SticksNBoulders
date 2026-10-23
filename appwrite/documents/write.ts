@@ -381,6 +381,8 @@ export async function finishSession(deps: WriteDeps, actor: Actor, input: Finish
 export const SESSION_NAME_MAX = 80;
 /** The `sessions.notes` column's size. */
 export const SESSION_NOTES_MAX = 1000;
+/** The `sets.notes` column's size: the athlete's note on one set (F11). */
+export const SET_NOTES_MAX = 500;
 
 /**
  * A typed session name as stored: trimmed, whitespace collapsed, capped to the
@@ -570,7 +572,12 @@ export interface UpdateSetInput {
   rpe: number | null;
   isWarmup: boolean;
   videoFileId?: string;
-  notes?: string;
+  /**
+   * The athlete's own note on the set (F11). Undefined leaves the column
+   * alone; null or blank clears it, written as null because undefined would
+   * leave the old note in place, the same trap as `video_file_id`.
+   */
+  notes?: string | null;
 }
 
 /**
@@ -607,7 +614,12 @@ export async function updateSet(deps: WriteDeps, actor: Actor, input: UpdateSetI
         isWarmup: input.isWarmup,
       }),
       ...(input.videoFileId !== undefined && { video_file_id: input.videoFileId }),
-      ...(input.notes !== undefined && { notes: input.notes }),
+      // Trimmed and capped here as well as on the device, the way session
+      // notes are: the column refuses anything over 500, and a refused update
+      // would be a set correction lost for one character too many.
+      ...(input.notes !== undefined && {
+        notes: input.notes?.trim() ? input.notes.trim().slice(0, SET_NOTES_MAX) : null,
+      }),
     },
     permissions: setPermissions({ athleteId: actor.userId }),
   });

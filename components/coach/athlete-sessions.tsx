@@ -6,7 +6,7 @@ import { fetchRecentSessions } from "@/lib/logging/session-store";
 import { exerciseIdsOf, fetchSetsForSessions, setsBySession, type HistorySet } from "@/lib/logging/history-store";
 import { formatDuration, formatTonnage, groupByWeek, historyCards } from "@/lib/logging/history";
 import { sessionDateLabel, type SessionRecord } from "@/lib/logging/session";
-import { exerciseBlocks } from "@/lib/coach/athlete-view";
+import { blockNotes, exerciseBlocks } from "@/lib/coach/athlete-view";
 import { formatNumber } from "@/lib/logging/prefill";
 import type { Exercise } from "@/lib/exercises/match";
 import { cn } from "@/lib/cn";
@@ -20,6 +20,11 @@ import { cn } from "@/lib/cn";
  * row, not from summing sets -- see historyCards for why. The sets are one
  * query for the whole page, already needed for the exercise names, so opening
  * a session costs no round trip.
+ *
+ * The athlete's note on a set (F11) shows under its exercise, labelled by set
+ * the way their Log numbers it. This is the one place a coach sees notes on
+ * sets that were not filmed; the Review Queue and Videos show the note
+ * beside the clip.
  *
  * Read-only. Logged work belongs to the athlete; a coach correcting a typo in
  * somebody else's log is a different feature, and not an agreed one.
@@ -144,6 +149,15 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                                   </span>
                                 ))}
                               </span>
+                              {blockNotes(block).length > 0 ? (
+                                <ul aria-label={`Athlete notes on ${block.exerciseName}`} className="m-0 flex list-none flex-col gap-0.5 p-0">
+                                  {blockNotes(block).map((entry, at) => (
+                                    <li key={`${entry.label}-${at}`} className="text-ui text-muted">
+                                      <span className="font-mono text-meta text-muted-2">{entry.label}</span> “{entry.note}”
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
                             </div>
                           ))}
                           {(view.grouped.get(card.sessionId) ?? []).length === 0 ? (

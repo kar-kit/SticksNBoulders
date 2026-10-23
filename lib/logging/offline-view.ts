@@ -117,6 +117,7 @@ export function queuedSets(ops: readonly QueuedOp[], sessionId: string): Unnamed
         isWarmup: op.payload.isWarmup === true,
         loggedAt,
         ...(str(op.payload.prescriptionId) ? { prescriptionId: str(op.payload.prescriptionId) } : {}),
+        ...(str(op.payload.notes) ? { notes: str(op.payload.notes) } : {}),
       } satisfies UnnamedSet;
     })
     .filter((set) => set !== null);
@@ -128,6 +129,13 @@ export interface SetValues {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /**
+   * The athlete's note (F11). Absent when the edit did not touch it -- the
+   * warm-up flip restates the four numbers and nothing else -- so laying an
+   * edit over a set never drops a note it did not mean to. Null is a note
+   * cleared.
+   */
+  notes?: string | null;
 }
 
 /**
@@ -158,11 +166,17 @@ export function queuedSetEdits(ops: readonly QueuedOp[]): Map<string, SetValues>
     if (op.kind !== "set.update") continue;
     const id = str(op.payload.setId);
     if (!id) continue;
+    // Laid over the set's earlier edits rather than replacing them: a note
+    // written, then the set number tapped, is two queued updates, and only
+    // the first says anything about the note. The latest wins on what it
+    // carries; what it leaves out comes from the one before.
     edits.set(id, {
+      ...edits.get(id),
       loadKg: num(op.payload.loadKg),
       reps: num(op.payload.reps),
       rpe: typeof op.payload.rpe === "number" ? op.payload.rpe : null,
       isWarmup: op.payload.isWarmup === true,
+      ...("notes" in op.payload && { notes: str(op.payload.notes) || null }),
     });
   }
   return edits;

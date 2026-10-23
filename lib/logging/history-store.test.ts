@@ -89,3 +89,15 @@ describe("a set's clip", () => {
     expect(sets.map((each) => each.videoFileId)).toEqual(["vid-1", null]);
   });
 });
+
+describe("a set's note (F11)", () => {
+  it("comes back with the set, and a blank one as none", async () => {
+    db.tables!.seed("sets", [
+      { ...set("st-1", "s1"), notes: "Hip pinched" },
+      { ...set("st-2", "s1", "joey", 2), notes: "   " },
+      set("st-3", "s1", "joey", 3),
+    ]);
+    const sets = await fetchSetsForSessions(["s1"]);
+    expect(sets.map((each) => each.notes)).toEqual(["Hip pinched", null, null]);
+  });
+});
