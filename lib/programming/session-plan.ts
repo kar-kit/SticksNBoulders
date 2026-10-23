@@ -1,6 +1,6 @@
 import type { SetForEstimate } from "@/lib/strength/e1rm";
 import { resolveMaxes, type EstimatedInput, type ReferenceMaxEntry } from "@/lib/strength/reference-max";
-import type { RpeValue } from "@/lib/logging/set";
+import type { PrescribableRpe } from "@/lib/logging/set";
 import { resolvePrefill } from "@/lib/logging/prefill";
 import type { PlannedRow } from "@/lib/logging/plan";
 import { loadNumber, type UnitPreference } from "@/lib/units";
@@ -79,8 +79,8 @@ export interface SetTarget {
   loadKg: number | null;
   reps: number | null;
   repMax: number | null;
-  /** An RPE target, or a capped prescription's ceiling. */
-  rpe: RpeValue | null;
+  /** An RPE target, or a capped prescription's ceiling. Always on the coach's 6-10 scale. */
+  rpe: PrescribableRpe | null;
   kind: PrescriptionKind | null;
   /** The load as the athlete reads it: "152.5 kg (75%)", "RPE 8", or the coach's words. */
   display: string;

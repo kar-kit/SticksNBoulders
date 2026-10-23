@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RpeSheet } from "./rpe-sheet";
 
@@ -45,6 +45,49 @@ describe("RpeSheet", () => {
     expect(screen.getByRole("button", { name: "Not sure" })).toHaveAttribute("aria-pressed", "false");
     rerender(<RpeSheet setIndex={1} value={null} onSelect={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Not sure" })).toHaveAttribute("aria-pressed", "true");
+  });
+});
+
+describe("RpeSheet's Under 6 sub-menu (F10)", () => {
+  it("keeps 5, 4 and 3 behind one chip, so the main grid is unchanged", () => {
+    render(<RpeSheet setIndex={1} value={null} onSelect={vi.fn()} />);
+    const chip = screen.getByRole("button", { name: "Under 6" });
+    expect(chip).toHaveAttribute("aria-expanded", "false");
+    for (const label of ["5", "4", "3"]) {
+      expect(screen.queryByRole("button", { name: label })).not.toBeInTheDocument();
+    }
+  });
+
+  it("opens 5, 4 and 3 in that order, nearest the grid first", async () => {
+    render(<RpeSheet setIndex={1} value={null} onSelect={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Under 6" }));
+    expect(screen.getByRole("button", { name: "Under 6" })).toHaveAttribute("aria-expanded", "true");
+    const group = screen.getByRole("group", { name: "RPE under 6" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["5", "4", "3"]);
+  });
+
+  it("records nothing for opening it, only for a value", async () => {
+    const onSelect = vi.fn();
+    render(<RpeSheet setIndex={1} value={8} onSelect={onSelect} />);
+    await userEvent.click(screen.getByRole("button", { name: "Under 6" }));
+    expect(onSelect).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "4" }));
+    expect(onSelect).toHaveBeenCalledWith(4);
+  });
+
+  it("closes again on a second tap", async () => {
+    render(<RpeSheet setIndex={1} value={null} onSelect={vi.fn()} />);
+    const chip = screen.getByRole("button", { name: "Under 6" });
+    await userEvent.click(chip);
+    await userEvent.click(chip);
+    expect(screen.queryByRole("group", { name: "RPE under 6" })).not.toBeInTheDocument();
+  });
+
+  it("opens by itself on a set that already carries a sub-6 answer, with it pressed", () => {
+    render(<RpeSheet setIndex={1} value={5} onSelect={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Under 6" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "5" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Not sure" })).toHaveAttribute("aria-pressed", "false");
   });
 });
 

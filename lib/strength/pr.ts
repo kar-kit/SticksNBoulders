@@ -9,7 +9,8 @@ import { weekStart } from "./rollup";
  * Pure. Three kinds. The first two are already records on Lift Detail:
  *
  * - **e1RM**: the set's estimated one-rep max beats the best estimate ever.
- *   Needs an RPE, like every estimate (lib/strength/e1rm.ts).
+ *   Needs an RPE of 6 or more, like every estimate (lib/strength/e1rm.ts,
+ *   `MIN_ESTIMABLE_RPE`): a set logged "Under 6" can never be one.
  * - **Weight**: the heaviest load ever put on the bar for a working set.
  * - **Reps**: more reps than ever at this load or heavier. 140 x 6 over a
  *   prior 140 x 5 is one, and so is 140 x 6 when the most at 140 or more was
@@ -19,6 +20,17 @@ import { weekStart } from "./rollup";
  *   back-off at a weight never used before a record just for being new. It needs something at this load or heavier
  *   to beat: a set heavier than anything before is a weight record, not
  *   also a rep record by beating zero.
+ *
+ * ## Sets logged below RPE 6
+ *
+ * They lose the e1RM record and keep the other two. A weight record and a
+ * rep record are facts about what was on the bar and how many times it moved,
+ * and neither reads the RPE: 140 x 8 is eight reps at 140 whether the athlete
+ * called it a 9 or a 4, and if anything an easy one is the more impressive.
+ * Only the estimate depends on how close to failure the set was, so only the
+ * estimate is withheld. The rollups agree by construction: their heaviest set
+ * and most reps never read RPE either, and their best e1RM reads the stored
+ * `e1rm_kg`, which is null for these sets.
  *
  * ## Why the rep record reads raw sets
  *

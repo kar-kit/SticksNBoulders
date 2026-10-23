@@ -1,6 +1,6 @@
-import { MAX_REPS_TO_FAILURE, repsToFailure, type SetForEstimate } from "./e1rm";
+import { isEstimableRpe, MAX_REPS_TO_FAILURE, repsToFailure, type SetForEstimate } from "./e1rm";
 import { roundToLoadable } from "./plates";
-import type { RpeValue } from "@/lib/logging/set";
+import type { PrescribableRpe } from "@/lib/logging/set";
 import type { UnitPreference } from "@/lib/units";
 
 /**
@@ -52,7 +52,8 @@ export interface LoggedSet extends SetForEstimate {
 /** Where the next set is meant to land, from the prescription. */
 export interface SetTarget {
   reps: number;
-  rpe: RpeValue;
+  /** From a prescription, so on the coach's 6-10 scale. */
+  rpe: PrescribableRpe;
 }
 
 export interface LoadSuggestion {
@@ -89,6 +90,11 @@ const NEAR_MAXIMAL_REPS_FROM_FAILURE = 3;
  *   the set could be a grinder or an easy back-off at the same load and reps,
  *   and `estimateOneRepMax` refuses it for the same reason.
  * - **A warm-up.** It says nothing about what is left in the tank.
+ * - **A logged RPE below 6** (F10). "Easy" is an honest answer and not a
+ *   count of reps in reserve, so it anchors nothing, exactly as it estimates
+ *   nothing (`MIN_ESTIMABLE_RPE`). Prefill falls back to repeating the set,
+ *   which for an athlete who just said "too easy" is the conservative choice
+ *   rather than a jump the formula would overstate.
  * - **Either end outside the chart's range**, per `MAX_REPS_TO_FAILURE`.
  * - **A target further than `MAX_SUGGESTION_SPAN`** from what was just done.
  *
@@ -103,7 +109,7 @@ export function suggestLoad(
   unit: UnitPreference = "kg",
 ): LoadSuggestion | null {
   if (logged.isWarmup) return null;
-  if (logged.rpe === null || !Number.isFinite(logged.rpe)) return null;
+  if (!isEstimableRpe(logged.rpe)) return null;
   if (!Number.isFinite(logged.loadKg) || logged.loadKg <= 0) return null;
   if (!Number.isInteger(logged.reps) || logged.reps < 1) return null;
   if (!Number.isInteger(target.reps) || target.reps < 1) return null;

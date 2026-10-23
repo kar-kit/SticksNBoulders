@@ -36,6 +36,18 @@ describe("buildLogRows", () => {
     expect(rows[0]).toHaveLength(LOG_COLUMNS.length);
   });
 
+  it("exports a sub-6 RPE as logged, with the e1RM cell blank (F10)", () => {
+    const rows = buildLogRows(
+      [{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: null }],
+      [set({ loadKg: 100, reps: 8, rpe: 4, e1rmKg: null })],
+      names,
+    );
+    const rpe = LOG_COLUMNS.indexOf("RPE");
+    expect(rows[0][rpe]).toBe(4);
+    expect(rows[0][rpe + 2]).toBeNull();
+    expect(toCsv(LOG_COLUMNS, rows)).toContain(",100,8,4,No,,");
+  });
+
   it("appends the session name as the last column, so no existing column moves", () => {
     expect(LOG_COLUMNS.at(-1)).toBe("Session name");
     expect(LOG_COLUMNS.indexOf("Session notes")).toBe(11);

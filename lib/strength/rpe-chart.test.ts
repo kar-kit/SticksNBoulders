@@ -174,6 +174,9 @@ describe("the chart as a rival to Brzycki", () => {
       { loadKg: 60, reps: 20, rpe: 8 },
       { loadKg: 0, reps: 5, rpe: 8 },
       { loadKg: 170, reps: 0, rpe: 8 },
+      // Logged "Under 6" (F10): the chart has a cell for it, the RPE does not mean it.
+      { loadKg: 100, reps: 5, rpe: 5 },
+      { loadKg: 100, reps: 3, rpe: 3 },
     ];
     for (const set of cases) {
       expect(chartOneRepMax(set)).toBeNull();

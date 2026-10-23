@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   estimateOneRepMax,
+  isEstimableRpe,
   MAX_REPS_TO_FAILURE,
+  MIN_ESTIMABLE_RPE,
   repsInReserve,
   repsToFailure,
 } from "./e1rm";
@@ -82,6 +84,25 @@ describe("when there is no honest estimate", () => {
     expect(set({ reps: 10, rpe: 8 })).not.toBeNull();
     expect(set({ reps: 11, rpe: 8 })).toBeNull();
     expect(set({ reps: 20, rpe: 6 })).toBeNull();
+  });
+
+  it("says nothing for a set logged below RPE 6 (F10)", () => {
+    // 100 x 5 @ 4 would be eleven reps to failure, inside MAX_REPS_TO_FAILURE,
+    // and Brzycki would call it 138.5 kg: the same as 100 x 11 to failure.
+    // "Easy" is not a count of reps in reserve, so it estimates nothing.
+    expect(MIN_ESTIMABLE_RPE).toBe(6);
+    expect(repsToFailure(5, 4)).toBeLessThanOrEqual(MAX_REPS_TO_FAILURE);
+    for (const rpe of [5, 4, 3]) {
+      expect(set({ loadKg: 100, reps: 5, rpe })).toBeNull();
+      expect(set({ loadKg: 200, reps: 1, rpe })).toBeNull();
+    }
+    // Six is still the coach's scale, so it still estimates.
+    expect(set({ rpe: 6 })).toBe(180);
+  });
+
+  it("knows which RPEs an estimate can be made from", () => {
+    for (const rpe of [6, 6.5, 8, 10]) expect(isEstimableRpe(rpe)).toBe(true);
+    for (const rpe of [null, 5, 5.5, 3, 10.5, Number.NaN]) expect(isEstimableRpe(rpe)).toBe(false);
   });
 
   it("says nothing for numbers that are not a set", () => {

@@ -1,4 +1,14 @@
-import { asksForRpe, canComplete, completionBlocker, countsTowardPrs, RPE_VALUES } from "./set";
+import {
+  asksForRpe,
+  canComplete,
+  completionBlocker,
+  countsTowardPrs,
+  isLoggedRpe,
+  isPrescribableRpe,
+  LOGGED_RPE_VALUES,
+  PRESCRIBABLE_RPE_VALUES,
+  UNDER_SIX_RPE_VALUES,
+} from "./set";
 import type { LoggableSet } from "./set";
 
 function set(overrides: Partial<LoggableSet> = {}): LoggableSet {
@@ -27,8 +37,23 @@ describe("warm-up exclusion", () => {
 });
 
 describe("RPE", () => {
-  it("offers half points from 6 to 10 and nothing else", () => {
-    expect(RPE_VALUES).toEqual([6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10]);
+  it("lets a coach prescribe half points from 6 to 10 and nothing else", () => {
+    expect(PRESCRIBABLE_RPE_VALUES).toEqual([6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10]);
+  });
+
+  it("lets an athlete log 5, 4 and 3 on top of that, for sets too easy to call 6", () => {
+    expect(UNDER_SIX_RPE_VALUES).toEqual([5, 4, 3]);
+    expect(LOGGED_RPE_VALUES).toEqual([3, 4, 5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10]);
+  });
+
+  it("keeps sub-6 off the prescribable scale while it is loggable", () => {
+    for (const rpe of [3, 4, 5]) {
+      expect(isLoggedRpe(rpe)).toBe(true);
+      expect(isPrescribableRpe(rpe)).toBe(false);
+    }
+    expect(isPrescribableRpe(6)).toBe(true);
+    // No half points below 6, and nothing outside the scale either way.
+    for (const rpe of [2, 4.5, 5.5, 10.5, 11, Number.NaN]) expect(isLoggedRpe(rpe)).toBe(false);
   });
 
   it("asks working sets but never warm-ups", () => {

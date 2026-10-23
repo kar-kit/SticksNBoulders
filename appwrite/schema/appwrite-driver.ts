@@ -1,6 +1,6 @@
 import { Storage, TablesDB, type Client } from "node-appwrite";
 import type { SchemaDriver } from "./driver";
-import type { CurrentState } from "./plan";
+import type { CurrentState, NumericColumnSpec } from "./plan";
 import type { BucketSpec, ColumnSpec, IndexSpec, TableSpec } from "./types";
 
 const INDEX_TYPE = { key: "key", unique: "unique", fulltext: "fulltext" } as const;
@@ -8,6 +8,15 @@ const INDEX_TYPE = { key: "key", unique: "unique", fulltext: "fulltext" } as con
 /** Appwrite builds columns in the background; this is how long we wait. */
 const COLUMN_READY_TIMEOUT_MS = 30_000;
 const COLUMN_POLL_MS = 400;
+
+/**
+ * A numeric column's bound as a number. Integer bounds can arrive as a
+ * bigint from this SDK, and the unset ones are the 64-bit extremes, which a
+ * number holds imprecisely -- harmless, because the planner never compares a
+ * bound the schema does not declare.
+ */
+const bound = (value: unknown): number | undefined =>
+  typeof value === "number" ? value : typeof value === "bigint" ? Number(value) : undefined;
 
 export function createAppwriteDriver(client: Client): SchemaDriver {
   const db = new TablesDB(client);
@@ -52,6 +61,8 @@ export function createAppwriteDriver(client: Client): SchemaDriver {
             size: typeof c.size === "number" ? c.size : undefined,
             elements: Array.isArray(c.elements) ? (c.elements as string[]) : undefined,
             default: c.default,
+            min: bound(c.min),
+            max: bound(c.max),
           })),
           indexes: (t.indexes ?? []).map((i: Record<string, unknown>) => ({
             key: String(i.key),
@@ -153,6 +164,23 @@ export function createAppwriteDriver(client: Client): SchemaDriver {
           await db.createDatetimeColumn({ ...base, xdefault: column.default });
           return;
       }
+    },
+
+    async updateColumn(databaseId, tableId, column: NumericColumnSpec) {
+      // `xdefault` is typed optional but the SDK throws on undefined
+      // ('Missing required parameter: "xdefault"', node-appwrite 28): the
+      // server takes null as "no default", so a column without one says so.
+      const base = {
+        databaseId,
+        tableId,
+        key: column.key,
+        required: column.required,
+        xdefault: (column.default ?? null) as number,
+        min: column.min,
+        max: column.max,
+      };
+      if (column.type === "float") await db.updateFloatColumn(base);
+      else await db.updateIntegerColumn(base);
     },
 
     async createIndex(databaseId, tableId, index: IndexSpec) {

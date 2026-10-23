@@ -92,7 +92,9 @@ describe("RPE", () => {
    */
   it("does not clamp an out-of-range value, it keeps the coach's words", () => {
     expect(parse("@12")).toEqual({ kind: "freeform", text: "@12" });
+    // An athlete can log 5 since F10; a coach still cannot prescribe it.
     expect(parse("@5")).toEqual({ kind: "freeform", text: "@5" });
+    expect(parse("75% @4")).toEqual({ kind: "freeform", text: "75% @4" });
     expect(parse("@8.25")).toMatchObject({ kind: "freeform" });
   });
 });

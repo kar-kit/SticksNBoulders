@@ -13,6 +13,14 @@ export interface CurrentColumn {
   size?: number;
   elements?: string[];
   default?: unknown;
+  /**
+   * Bounds of an integer or float column, as the server reports them.
+   * Appwrite reports a bound the column was created without as the type's
+   * own extreme (about +/-1.8e308 for a float), so a bound the schema does
+   * not declare is never compared -- see `boundsChange`.
+   */
+  min?: number;
+  max?: number;
 }
 
 export interface CurrentIndex {
@@ -59,6 +67,16 @@ export type Action =
    * an athlete's logged work, so a mismatch is reported and a human decides.
    */
   | { kind: "manual-column-change"; tableId: string; column: ColumnSpec; reason: string }
+  /**
+   * A numeric column's bounds, widened in place. Auto-applied, unlike every
+   * other column change, because it is the one that cannot touch a stored
+   * value: every row already inside the old range is inside the new one, and
+   * Appwrite validates bounds on write, never by rewriting rows. Narrowing is
+   * the opposite -- rows can sit outside the new range and fail their next
+   * update -- so it stays a `manual-column-change`. First used by v16, which
+   * lowered sets.rpe's floor from 6 to 3 (F10).
+   */
+  | { kind: "update-column"; tableId: string; column: NumericColumnSpec; reason: string }
   /** Something exists on the server that the schema does not describe. */
   | { kind: "orphan-table"; tableId: string }
   | { kind: "orphan-column"; tableId: string; key: string }
@@ -66,6 +84,8 @@ export type Action =
   | { kind: "create-bucket"; bucket: BucketSpec }
   | { kind: "update-bucket"; bucket: BucketSpec; reason: string }
   | { kind: "orphan-bucket"; bucketId: string };
+
+export type NumericColumnSpec = Extract<ColumnSpec, { type: "integer" | "float" }>;
 
 const APPWRITE_TYPE: Record<ColumnSpec["type"], string> = {
   string: "string",
@@ -92,6 +112,40 @@ function columnMismatch(spec: ColumnSpec, actual: CurrentColumn): string | null 
     if (a !== b) return `elements are [${a}], schema says [${b}]`;
   }
   return null;
+}
+
+/**
+ * How a numeric column's declared bounds differ from the server's, and
+ * whether the change only widens them. Null when they agree.
+ *
+ * Only bounds the schema declares are compared, and only against a bound the
+ * server reports. That is the same rule `indexMismatch` applies to orders, for
+ * the same reason: an undeclared bound comes back as the type's extreme, and
+ * "fixing" it would rebuild columns on every run. It also means a bound
+ * dropped from the schema is not loosened on the server; drop one by hand.
+ *
+ * Before v16 the planner compared no bounds at all. Every bound in the schema
+ * was set when its column was created and none had changed since (git log on
+ * index.ts), so turning the comparison on reports nothing new against a
+ * server that was built from this file. [Unverified] against the live
+ * instance until `npm run appwrite:setup -- --dry-run` is run there; it
+ * should list exactly one change, sets.rpe.
+ */
+function boundsChange(
+  spec: NumericColumnSpec,
+  actual: CurrentColumn,
+): { reason: string; widens: boolean } | null {
+  const parts: string[] = [];
+  let widens = true;
+  if (spec.min !== undefined && typeof actual.min === "number" && actual.min !== spec.min) {
+    parts.push(`min is ${actual.min}, schema says ${spec.min}`);
+    if (spec.min > actual.min) widens = false;
+  }
+  if (spec.max !== undefined && typeof actual.max === "number" && actual.max !== spec.max) {
+    parts.push(`max is ${actual.max}, schema says ${spec.max}`);
+    if (spec.max < actual.max) widens = false;
+  }
+  return parts.length === 0 ? null : { reason: parts.join("; "), widens };
 }
 
 function indexMismatch(spec: IndexSpec, actual: CurrentIndex): string | null {
@@ -163,7 +217,23 @@ export function planSchema(current: CurrentState, desired: DatabaseSpec): Action
         continue;
       }
       const reason = columnMismatch(column, actualColumn);
-      if (reason) actions.push({ kind: "manual-column-change", tableId: table.id, column, reason });
+      if (reason) {
+        actions.push({ kind: "manual-column-change", tableId: table.id, column, reason });
+        continue;
+      }
+      if (column.type === "integer" || column.type === "float") {
+        const bounds = boundsChange(column, actualColumn);
+        if (bounds?.widens) {
+          actions.push({ kind: "update-column", tableId: table.id, column, reason: bounds.reason });
+        } else if (bounds) {
+          actions.push({
+            kind: "manual-column-change",
+            tableId: table.id,
+            column,
+            reason: `${bounds.reason} -- narrowing can leave existing rows outside the range`,
+          });
+        }
+      }
     }
 
     const indexesByKey = new Map(actual.indexes.map((i) => [i.key, i]));

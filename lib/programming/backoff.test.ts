@@ -63,6 +63,7 @@ describe("parsing a backoff cell", () => {
       "21 x 90%",
       "-50% until @9", // half the bar is a typo
       "-5% until @12", // not on the chart
+      "-5% until @5", // loggable since F10, never prescribable
       "-5% until @8.25",
       "-5% until @9 max 0",
       "then drop a bit",
@@ -180,6 +181,11 @@ describe("how long a backoff runs", () => {
     expect(backoffRun(r, [set(170, 3, 8)])).toEqual({ sets: 2, done: false });
     expect(backoffRun(r, [set(170, 3, 8), set(170, 3, 9)])).toEqual({ sets: 2, done: true });
     expect(backoffRun(r, [set(170, 3, 9.5)])).toEqual({ sets: 1, done: true });
+  });
+
+  it("drop: a set logged below RPE 6 cannot end the run either", () => {
+    // "Too easy" says the drop went too far, not that it has done its job.
+    expect(backoffRun(rule("-5% until @9"), [set(170, 3, 4)])).toEqual({ sets: 2, done: false });
   });
 
   it("drop: a set logged without an RPE cannot end the run", () => {

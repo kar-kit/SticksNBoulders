@@ -1,5 +1,5 @@
 import type { BucketSpec, ColumnSpec, IndexSpec, TableSpec } from "./types";
-import type { CurrentState } from "./plan";
+import type { CurrentState, NumericColumnSpec } from "./plan";
 
 /**
  * The narrow surface the executor needs. Appwrite's SDK is wide and its shapes
@@ -12,6 +12,12 @@ export interface SchemaDriver {
   createTable(databaseId: string, table: TableSpec): Promise<void>;
   updateTable(databaseId: string, table: TableSpec): Promise<void>;
   createColumn(databaseId: string, tableId: string, column: ColumnSpec): Promise<void>;
+  /**
+   * Re-states an existing numeric column's required flag, default and
+   * bounds. Only ever called for a widening (`update-column` in plan.ts), so
+   * it rewrites no row.
+   */
+  updateColumn(databaseId: string, tableId: string, column: NumericColumnSpec): Promise<void>;
   createIndex(databaseId: string, tableId: string, index: IndexSpec): Promise<void>;
   deleteIndex(databaseId: string, tableId: string, key: string): Promise<void>;
   /**

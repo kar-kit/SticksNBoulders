@@ -1,7 +1,7 @@
 import type { SetForEstimate } from "@/lib/strength/e1rm";
 import { roundToLoadable } from "@/lib/strength/plates";
 import { loadLabel, type UnitPreference } from "@/lib/units";
-import { RPE_VALUES, type RpeValue } from "@/lib/logging/set";
+import { isPrescribableRpe, type PrescribableRpe } from "@/lib/logging/set";
 
 /**
  * Backoff rules on a prescription line. Order 21. Source: Inferred.
@@ -41,7 +41,7 @@ export type BackoffRule =
    * same load for every set, until one is logged at RPE >= untilRpe or the cap
    * is reached. The drop is measured on LOAD, not on e1RM -- [SME to confirm].
    */
-  | { kind: "drop"; dropPercent: number; untilRpe: RpeValue; maxSets: number | null };
+  | { kind: "drop"; dropPercent: number; untilRpe: PrescribableRpe; maxSets: number | null };
 
 /**
  * How many sets a drop rule plans when the coach names no cap.
@@ -58,7 +58,12 @@ export const BACKOFF_MAX_LENGTH = 40;
 
 const MAX_SETS = 20;
 
-const isRpe = (value: number): value is RpeValue => (RPE_VALUES as readonly number[]).includes(value);
+/**
+ * "Until RPE" is a prescription, so it is on the coach's 6-10 scale. A run
+ * stops at the first set logged at or above it, so a sub-6 set never stops
+ * one -- which is right, a set that easy says the drop went too far.
+ */
+const isRpe = isPrescribableRpe;
 
 const trim = (value: number): string => (Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2))));
 
