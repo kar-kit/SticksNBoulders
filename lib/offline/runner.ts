@@ -13,6 +13,7 @@ import {
   renameExercise,
   updateSession,
   updateSet,
+  posterIdFor,
   type Actor,
 } from "@/appwrite/documents";
 import { ensureMyCircle } from "@/lib/auth/circle";
@@ -201,10 +202,19 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
       // The upload already happened; this is the durable record of it. Null is
       // a real value here -- detaching a clip has to clear the id, not leave
       // it pointing at a file that is gone.
+      const videoFileId = typeof p.videoFileId === "string" ? p.videoFileId : null;
+      // The poster (F12) is checked here rather than trusted: `attachVideo`
+      // refuses a poster that is not this clip's own with a plain Error, which
+      // the queue classifies as retryable -- one bad payload would wedge every
+      // set queued behind it. A poster that does not match is dropped and the
+      // clip still attaches; a clip without a thumbnail is the fallback anyway.
+      const videoPosterId =
+        videoFileId !== null && p.videoPosterId === posterIdFor(videoFileId) ? posterIdFor(videoFileId) : null;
       try {
         await attachVideo(browserWriteDeps(() => ""), actor, {
           rowId: asString(p.setId),
-          videoFileId: typeof p.videoFileId === "string" ? p.videoFileId : null,
+          videoFileId,
+          videoPosterId,
         });
       } catch (error) {
         // The set was deleted while its clip was still uploading. There is

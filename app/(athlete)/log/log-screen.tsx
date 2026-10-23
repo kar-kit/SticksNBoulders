@@ -1713,6 +1713,10 @@ export function LogScreen() {
                     pr: prs.get(s.clientSetId) ?? null,
                     prFresh: confirmedHere.has(s.clientSetId) || editedHere.has(s.clientSetId),
                     notes: s.notes ?? null,
+                    // Any set with a clip shows its thumbnail (F12). One
+                    // attached on this page has no poster id yet: the
+                    // placeholder until the next load.
+                    clip: hasClip(s) ? { posterId: s.videoPosterId ?? null } : null,
                   }))}
                   planned={rowsOf(plans, exerciseId).map((row) => ({
                     ...row,

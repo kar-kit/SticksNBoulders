@@ -58,7 +58,7 @@ describe("person columns", () => {
     const uncovered = schema.tables.filter((t) => personColumnsOf(t).length === 0).map((t) => t.id);
     expect(uncovered).toEqual([]);
     expect(schema.tables.length).toBe(16);
-    expect(schema.buckets.map((b) => b.id).sort()).toEqual(["avatars", "set_videos"]);
+    expect(schema.buckets.map((b) => b.id).sort()).toEqual(["avatars", "set_video_posters", "set_videos"]);
   });
 });
 

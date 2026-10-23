@@ -1,6 +1,6 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
-import { authenticRows } from "@/appwrite/documents";
+import { authenticRows, posterOf } from "@/appwrite/documents";
 import type { UnnamedSet } from "./session-store";
 
 /**
@@ -46,6 +46,8 @@ export interface HistorySet extends UnnamedSet {
   e1rmKg: number | null;
   /** The attached clip, so deleting the set from History can take it too. */
   videoFileId?: string | null;
+  /** That clip's poster (F12), for the row's thumbnail; null for none. */
+  videoPosterId?: string | null;
 }
 
 const asNumber = (value: unknown): number =>
@@ -69,6 +71,7 @@ function toSet(raw: SetRow): HistorySet | null {
     e1rmKg: typeof raw.e1rm_kg === "number" ? raw.e1rm_kg : null,
     loggedAt,
     videoFileId: typeof raw.video_file_id === "string" && raw.video_file_id ? raw.video_file_id : null,
+    videoPosterId: posterOf(raw as unknown as Record<string, unknown>),
     // The athlete's note (F11): shown under the set in History and in the
     // coach's session view, which reads through this same function.
     notes: typeof raw.notes === "string" && raw.notes.trim() ? raw.notes : null,

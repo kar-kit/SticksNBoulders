@@ -58,6 +58,13 @@ describe("the audit's rules", () => {
     for (const op of ["create", "update", "delete"] as const) expect(isAllowed(rule, op, "coach"), op).toBe(false);
   });
 
+  it("expects a clip's poster to be allowed exactly what the clip is (F12)", () => {
+    const clip = RULES.find((r) => r.key === "set_videos")!;
+    const poster = RULES.find((r) => r.key === "set_video_posters")!;
+    expect(poster.kind).toBe("bucket");
+    expect(poster.allow).toEqual(clip.allow);
+  });
+
   it("expects a program to be read by its coach and athlete and written by nobody from a session", () => {
     for (const table of ["programs", "program_blocks", "program_weeks", "program_days", "prescriptions"]) {
       const rule = RULES.find((r) => r.resource === table)!;

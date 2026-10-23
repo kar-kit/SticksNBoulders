@@ -205,6 +205,8 @@ would make every apply report drift it cannot fix.
 | `appwrite/documents/policy.ts` | `videoPermissions` |
 | `components/logging/attach-video.tsx` | The camera button and its progress line |
 | `appwrite/schema/` | `BucketSpec`, bucket planning and applying |
+| `lib/video/poster-capture.ts`, `poster-upload.ts`, `poster-cache.ts` | F12 posters: grab, upload, show |
+| `scripts/clip-posters.ts`, `backfill-clip-posters.mts` | `npm run clips:posters` |
 
 ## Verified against the live instance
 
@@ -251,3 +253,58 @@ Bench Press, Close Grip Bench Press, Sumo Deadlift, Romanian Deadlift ...) is
 Ruairi's call. His quote says to record variations "if you have questions", which
 reads as coach-flagged rather than default. Not guessed at here.
 <!-- END: video default (compounds by default) -->
+
+<!-- BEGIN: clip posters (F12, schema v17) -->
+## Thumbnails: a poster frame per clip (F12, schema v17)
+
+Appwrite file previews are image-only, so a clip had no thumbnail anywhere.
+Each clip now gets a **poster**: one frame, longer edge 320px, WebP or JPEG,
+in its own bucket `set_video_posters`, named by `sets.video_poster_id`.
+
+**Where it is made.** On the phone, at upload (`lib/video/poster-capture.ts`):
+a hidden muted `playsinline` `<video>` on a blob URL of the picked file, seeked
+to 0.5s (a third of a shorter clip; frame 0 is often black), drawn to a canvas
+and encoded WebP, falling back to JPEG when the browser hands back a PNG
+(Safari). Grab and poster upload start the moment the clip is picked and run
+while the clip uploads (`lib/video/poster-upload.ts`); the poster id rides in
+the same `set.attachVideo` op, and the clip stays in IndexedDB until that op is
+queued. Every failure -- undecodable codec, a seek that never completes (8s
+cap), an upload that fails or takes over 10s, a file already at the poster id
+with someone else's permissions -- is logged and the clip attaches without a
+poster. A poster never delays or fails a set or a clip.
+A resumed upload makes its poster from the blob kept in IndexedDB.
+
+[Inference] iOS Safari decodes the iPhone's own HEVC `.mov` natively, so
+capture should work for iPhone clips; it needs `muted` + `playsinline`, both
+set. [Unverified] on a real device. [Inference] Chrome on Android decodes HEVC
+only where the phone's hardware does, so some Android HEVC clips will yield no
+poster and fall back to the placeholder until the backfill makes one.
+
+**The id is derived, not random:** `<clipId>_poster` (`appwrite/documents/poster.ts`).
+Retries, resumes and the backfill all aim at one file (409 = already there),
+and deleting a set's clip deletes its poster without queueing anything new
+(`lib/video/clip-cleanup.ts`). Readers accept `video_poster_id` only when it
+is the poster of the row's own `video_file_id` (`posterOf`), so a stale one
+reads as none rather than showing a frame of a different rep.
+
+**Permissions** are the clip's, by definition: `posterPermissions` is
+`videoPermissions`. Audit rule `set_video_posters` mirrors `set_videos` cell
+for cell. The bucket is encrypted (every file is far under Appwrite's 20MB
+encryption cutoff) and capped at 1MB.
+
+**Where it shows** (`components/video/clip-thumb.tsx`, a camera placeholder
+whenever there is no poster or it cannot be read): logged set rows on the Log
+and in History (in the badge corner, never a column), the coach's athlete
+Videos list, and the Review Queue rail from md up. Bytes are fetched through
+the SDK like profile pictures (`lib/video/poster-cache.ts`), at most four at a
+time and only once a thumbnail is near the screen.
+
+**Backfill.** `npm run clips:posters` plans (reads only); `-- --yes` renders a
+frame with ffmpeg for every authentic set with a clip and no valid poster,
+uploads it with the athlete's poster stamp, and points the set through
+`setPosterOnSet` (`appwrite/documents/poster-admin.ts`). Idempotent; refuses to
+point at a file at the poster id with any other permissions; re-reads each row
+before writing and skips one whose clip changed. Needs ffmpeg on PATH or
+`SNB_FFMPEG`. Order on a live instance: `npm run appwrite:setup` (v17) before
+deploying the client, then the backfill.
+<!-- END: clip posters (F12, schema v17) -->

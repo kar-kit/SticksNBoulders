@@ -40,6 +40,8 @@ export interface LoggedSet extends LoggableSet {
   prFresh?: boolean;
   /** The athlete's note on the set (F11), shown as a quiet line under the row. */
   notes?: string | null;
+  /** The set has a clip (F12): its poster, or null for the placeholder. Absent when there is no clip. */
+  clip?: { posterId: string | null } | null;
 }
 
 export interface PlannedSet extends LoggableSet {
@@ -302,6 +304,7 @@ export function ExerciseBlock({
             pr={set.pr ?? null}
             prFresh={set.prFresh}
             athleteNote={set.notes ?? null}
+            clip={set.clip ?? null}
           />
         ))}
 

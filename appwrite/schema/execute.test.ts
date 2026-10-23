@@ -1,6 +1,6 @@
 import type { SchemaDriver } from "./driver";
 import { applySchema } from "./execute";
-import type { CurrentState } from "./plan";
+import { isExecutable, planSchema, type CurrentState } from "./plan";
 import { schema } from "./index";
 import type { ColumnSpec, DatabaseSpec, IndexSpec, TableSpec } from "./types";
 
@@ -273,5 +273,60 @@ describe("applySchema repairs drift", () => {
     expect(result.reported).toContainEqual({ kind: "orphan-table", tableId: "leaderboards" });
     expect(result.noop).toBe(true);
     expect(state.tables.some((t) => t.id === "leaderboards")).toBe(true);
+  });
+});
+
+/**
+ * Schema v17 (F12, clip thumbnails) against an instance still on v16.
+ *
+ * The planner handles new buckets and columns generically, so what is worth
+ * pinning is the exact plan the live dry run should print: one bucket, one
+ * column, nothing else -- no update to a table, no index, nothing touching
+ * the clip bucket. Anything more in the live dry run means the instance has
+ * drifted from v16 and wants a look before `--yes`.
+ */
+describe("schema v17 on a v16 instance", () => {
+  const v16: DatabaseSpec = {
+    ...schema,
+    version: 16,
+    buckets: schema.buckets.filter((b) => b.id !== "set_video_posters"),
+    tables: schema.tables.map((t) =>
+      t.id === "sets" ? { ...t, columns: t.columns.filter((c) => c.key !== "video_poster_id") } : t,
+    ),
+  };
+
+  it("plans exactly the poster bucket and the sets.video_poster_id column", async () => {
+    const { driver } = fakeDriver();
+    await applySchema(driver, v16);
+    const plan = planSchema(await driver.readState(schema.id), schema);
+    expect(plan.map((a) => a.kind).sort()).toEqual(["create-bucket", "create-column"]);
+    expect(plan).toContainEqual({
+      kind: "create-column",
+      tableId: "sets",
+      column: { key: "video_poster_id", type: "string", size: 36, required: false },
+    });
+    const bucket = plan.find((a) => a.kind === "create-bucket");
+    expect(bucket).toMatchObject({
+      bucket: {
+        id: "set_video_posters",
+        fileSecurity: true,
+        permissions: ['create("users")'],
+        allowedFileExtensions: ["webp", "jpg", "jpeg"],
+      },
+    });
+    expect(plan.every(isExecutable)).toBe(true);
+  });
+
+  it("writes nothing on a dry run, then applies and settles", async () => {
+    const { driver, calls } = fakeDriver();
+    await applySchema(driver, v16);
+    calls.length = 0;
+    expect((await applySchema(driver, schema, { dryRun: true })).applied).toEqual([]);
+    expect(calls).toEqual([]);
+
+    const applied = await applySchema(driver, schema);
+    expect([...calls].sort()).toEqual(["createBucket:set_video_posters", "createColumn:sets.video_poster_id"]);
+    expect(applied.reported).toEqual([]);
+    expect((await applySchema(driver, schema)).noop).toBe(true);
   });
 });

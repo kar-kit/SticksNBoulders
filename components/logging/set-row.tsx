@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type 
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { CameraIcon, TrashIcon } from "@/components/ui/icons";
+import { ClipThumb } from "@/components/video/clip-thumb";
 import { afterExit, useChanged } from "@/components/ui/motion";
 import { haptic } from "@/lib/ui/haptics";
 import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
@@ -146,6 +147,15 @@ export interface SetRowProps {
    */
   athleteNote?: string | null;
   athleteNoteFull?: boolean;
+  /**
+   * Logged rows with a clip on them (F12): the clip's poster, as a small
+   * thumbnail in the corner the video badge uses -- never a column, which
+   * belongs to the confirm target. `posterId` null shows the camera
+   * placeholder: a clip from before v17, or one the phone could not grab a
+   * frame from. Takes the place of the coach's "filmed" badge, which says
+   * the same thing.
+   */
+  clip?: { posterId: string | null } | null;
 }
 
 export function SetRow({
@@ -176,6 +186,7 @@ export function SetRow({
   prFresh = false,
   athleteNote = null,
   athleteNoteFull = false,
+  clip = null,
 }: SetRowProps) {
   const planned = state === "planned";
   const active = state === "active";
@@ -199,7 +210,9 @@ export function SetRow({
 
   const size = warmup ? "warmup" : editing ? "active" : "logged";
   const setLabel = index === "W" ? "Warm-up set" : `Set ${index}`;
-  const videoBadge = set.videoRequired && !showCameraInRpeCell ? videoBadgeOf(set, editing, setLabel) : null;
+  const thumb = state === "logged" && clip ? clip : null;
+  const videoBadge =
+    !thumb && set.videoRequired && !showCameraInRpeCell ? videoBadgeOf(set, editing, setLabel) : null;
   const records = state === "logged" && pr && pr.length > 0 ? pr : null;
   const previousText = previous ? `${loadNumber(previous.loadKg, unit)} × ${previous.reps}` : null;
   const copyable = Boolean(previousText && editing && onCopyPrevious);
@@ -381,6 +394,16 @@ export function SetRow({
             </span>
           )}
 
+          {thumb ? (
+            // The clip's frame, in the badge's corner and over the border, so
+            // it takes no column and moves with a swipe.
+            <ClipThumb
+              posterId={thumb.posterId}
+              label={`${setLabel}: video attached`}
+              className="pointer-events-none absolute -top-2.5 right-2 h-5 w-7"
+            />
+          ) : null}
+
           {videoBadge ? (
             // Pinned to the row's top-right corner, over the border, so it
             // takes no column from the cells and moves with a swipe.
@@ -408,7 +431,7 @@ export function SetRow({
               data-pr={records.join(" ")}
               className={cn(
                 "pointer-events-none absolute -top-2 flex h-4 items-center rounded-full bg-accent-fill px-1.5 font-mono text-label font-semibold text-on-accent",
-                videoBadge ? "right-9" : "right-2",
+                thumb ? "right-11" : videoBadge ? "right-9" : "right-2",
                 prFresh && "motion-safe:animate-spring-pop",
               )}
             >

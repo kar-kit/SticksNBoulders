@@ -16,6 +16,11 @@ vi.mock("./resumable-upload", () => transport);
 const offline = vi.hoisted(() => ({ enqueue: vi.fn() }));
 vi.mock("@/lib/offline/client", () => offline);
 
+// The poster (F12) is best effort and tested on its own (poster-upload.test.ts);
+// here it only has to arrive in the attach op, or not.
+const posters = vi.hoisted(() => ({ startPoster: vi.fn() }));
+vi.mock("./poster-upload", () => posters);
+
 const pending = (over: Partial<PendingUpload> = {}): PendingUpload => ({
   fileId: "file-1",
   setId: "set-1",
@@ -39,6 +44,7 @@ beforeEach(() => {
   store.refundAttempt.mockResolvedValue(undefined);
   store.rememberUpload.mockResolvedValue(undefined);
   offline.enqueue.mockResolvedValue(undefined);
+  posters.startPoster.mockImplementation(async (_clip: Blob, clipId: string) => `${clipId}_poster`);
 });
 
 describe("picking up an interrupted upload", () => {
@@ -59,6 +65,7 @@ describe("picking up an interrupted upload", () => {
     expect(offline.enqueue).toHaveBeenCalledWith("set.attachVideo", {
       setId: "set-1",
       videoFileId: "file-1",
+      videoPosterId: "file-1_poster",
     });
     expect(store.forgetUpload).toHaveBeenCalledWith("file-1");
   });
@@ -166,7 +173,59 @@ describe("picking up an interrupted upload", () => {
     expect(offline.enqueue).toHaveBeenCalledWith("set.attachVideo", {
       setId: "set-b",
       videoFileId: "good",
+      videoPosterId: "good_poster",
     });
+  });
+});
+
+describe("the poster never costs the clip (F12)", () => {
+  const clip = () => new File([new Uint8Array(16)], "squat.mov", { type: "video/quicktime" });
+
+  it("attaches the clip without a poster when the frame grab or its upload fails", async () => {
+    transport.uploadResumable.mockImplementation(async (_blob, { fileId }) => ({ ok: true, fileId }));
+    posters.startPoster.mockResolvedValue(null);
+
+    const result = await attachClipToSet("set-1", "joey", clip());
+    expect(result.ok).toBe(true);
+    expect(offline.enqueue).toHaveBeenCalledWith("set.attachVideo", expect.objectContaining({ videoPosterId: null }));
+  });
+
+  it("starts the poster from the same file, under the clip's id, before the clip finishes", async () => {
+    transport.uploadResumable.mockImplementation(async (_blob, { fileId }) => ({ ok: true, fileId }));
+    const file = clip();
+    await attachClipToSet("set-1", "joey", file);
+    const fileId = store.rememberUpload.mock.calls[0][0].fileId;
+    expect(posters.startPoster).toHaveBeenCalledWith(file, fileId, "joey");
+    expect(posters.startPoster.mock.invocationCallOrder[0]).toBeLessThan(
+      transport.uploadResumable.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps the clip on the phone until its attach is queued, so a lock while the poster settles loses nothing", async () => {
+    transport.uploadResumable.mockImplementation(async (_blob, { fileId }) => ({ ok: true, fileId }));
+    await attachClipToSet("set-1", "joey", clip());
+    expect(store.forgetUpload.mock.invocationCallOrder[0]).toBeGreaterThan(offline.enqueue.mock.invocationCallOrder[0]);
+
+    vi.clearAllMocks();
+    store.pendingUploads.mockResolvedValue([pending()]);
+    transport.uploadResumable.mockResolvedValue({ ok: true, fileId: "file-1" });
+    posters.startPoster.mockResolvedValue(null);
+    await resumeInterruptedUploads("joey");
+    expect(store.forgetUpload.mock.invocationCallOrder[0]).toBeGreaterThan(offline.enqueue.mock.invocationCallOrder[0]);
+  });
+
+  it("attaches nothing for a clip that did not land", async () => {
+    transport.uploadResumable.mockResolvedValue({ ok: false, retryable: true, message: "x", uploadedCount: 0 });
+    await attachClipToSet("set-1", "joey", clip());
+    expect(offline.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("makes a poster for a resumed clip from the blob kept on the phone", async () => {
+    const blob = new Blob(["kept"]);
+    store.pendingUploads.mockResolvedValue([pending({ blob })]);
+    transport.uploadResumable.mockResolvedValue({ ok: true, fileId: "file-1" });
+    await resumeInterruptedUploads("joey");
+    expect(posters.startPoster).toHaveBeenCalledWith(blob, "file-1", "joey");
   });
 });
 
@@ -185,7 +244,11 @@ describe("attaching a fresh clip to a set", () => {
     const fileId = rememberedId();
     expect(result).toEqual({ ok: true, fileId });
     // Through the queue, keyed to the same id the upload used.
-    expect(offline.enqueue).toHaveBeenCalledWith("set.attachVideo", { setId: "set-1", videoFileId: fileId });
+    expect(offline.enqueue).toHaveBeenCalledWith("set.attachVideo", {
+      setId: "set-1",
+      videoFileId: fileId,
+      videoPosterId: `${fileId}_poster`,
+    });
     expect(transport.uploadResumable.mock.calls[0][1]).toMatchObject({ fileId, athleteId: "joey" });
     expect(store.forgetUpload).toHaveBeenCalledWith(fileId);
   });

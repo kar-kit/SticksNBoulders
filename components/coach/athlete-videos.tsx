@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useMemo, useState } from "react";
 import { ClipPlayer } from "@/components/coach/clip-player";
+import { ClipThumb } from "@/components/video/clip-thumb";
 import { CommentThread } from "@/components/coach/comment-box";
 import { Dialog } from "@/components/ui/dialog";
 import { useArrivals, usePresence } from "@/components/ui/motion";
@@ -137,11 +138,14 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
                 aria-haspopup="dialog"
                 onClick={() => onOpen(row.id)}
                 className={cn(
-                  "flex w-full flex-col gap-0.5 rounded-control border border-border bg-surface px-3 py-2 text-left",
+                  "flex w-full items-center gap-3 rounded-control border border-border bg-surface px-3 py-2 text-left",
                   "transition-control press-wide hover:bg-surface-2 focus-visible:bg-surface-2",
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
                 )}
               >
+                {/* The clip's poster (F12), or the camera placeholder. */}
+                <ClipThumb posterId={row.videoPosterId ?? null} className="h-12 w-12" />
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="grid w-full grid-cols-[52px_minmax(0,1fr)] items-baseline gap-x-3 md:grid-cols-[52px_minmax(0,1fr)_auto]">
                   <span className="font-mono text-meta text-muted-2">{shortDate(new Date(row.loggedAt))}</span>
                   <span className="min-w-0 truncate text-ui">
@@ -172,6 +176,7 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
                     {row.latestComment.body}
                   </span>
                 ) : null}
+                </span>
               </button>
             </li>
           ))}

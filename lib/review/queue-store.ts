@@ -3,7 +3,7 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { authenticRows, markSetReviewed, unmarkSetReviewed, type Actor } from "@/appwrite/documents";
+import { authenticRows, markSetReviewed, posterOf, unmarkSetReviewed, type Actor } from "@/appwrite/documents";
 import type { ClipSet } from "./queue";
 
 /**
@@ -39,6 +39,7 @@ interface SetRow {
   e1rm_kg?: unknown;
   logged_at?: unknown;
   video_file_id?: unknown;
+  video_poster_id?: unknown;
   notes?: unknown;
   prescription_id?: unknown;
   prescribed?: unknown;
@@ -70,6 +71,8 @@ function toClip(raw: SetRow): ClipSet | null {
     e1rmKg: maybeNum(raw.e1rm_kg),
     loggedAt,
     videoFileId,
+    // Only the poster OF this clip; a stale one reads as none (F12).
+    videoPosterId: posterOf(raw as unknown as Record<string, unknown>),
     notes: str(raw.notes) || null,
     prescriptionId: str(raw.prescription_id) || null,
     prescribed: str(raw.prescribed) || null,

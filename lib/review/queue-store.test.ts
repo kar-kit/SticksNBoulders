@@ -52,6 +52,21 @@ beforeEach(() => {
 });
 
 describe("fetchClips", () => {
+  it("carries the clip's own poster, and reads a stale or missing one as none (F12)", async () => {
+    db.current!.seed("sets", [
+      clip("p1", "joey", { video_poster_id: "file-p1_poster" }),
+      // Left over from a clip since replaced: a frame of a different rep.
+      clip("p2", "joey", { video_poster_id: "file-old_poster" }),
+      clip("p3", "joey"),
+    ]);
+    const clips = await fetchClips(["joey"]);
+    expect(Object.fromEntries(clips.map((c) => [c.id, c.videoPosterId]))).toEqual({
+      p1: "file-p1_poster",
+      p2: null,
+      p3: null,
+    });
+  });
+
   it("returns filmed sets of the requested athletes only", async () => {
     db.current!.seed("sets", [
       clip("a1", "joey"),

@@ -2,6 +2,7 @@ import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import { isSuggestionMode, type SuggestionMode } from "@/lib/coach/suggestion-mode";
 import { isOwnAvatarFileId } from "./avatar";
 import { circleTeamId } from "./circle";
+import { posterIdFor } from "./poster";
 import {
   bodyweightPermissions,
   exercisePermissions,
@@ -629,6 +630,15 @@ export interface AttachVideoInput {
   rowId: string;
   /** The storage file id, or null to detach a clip that was removed. */
   videoFileId: string | null;
+  /**
+   * The clip's poster (F12, schema v17), or null when there is none: a frame
+   * grab the phone could not make, or a detach. Optional so an op queued
+   * before v17 still runs -- and absent is written as null too, never left
+   * alone, because a replaced clip must not keep the previous clip's poster.
+   * A poster id that is not this clip's own (`posterIdFor`) is refused here,
+   * so the app never writes a row a reader would distrust.
+   */
+  videoPosterId?: string | null;
 }
 
 /**
@@ -646,13 +656,18 @@ export interface AttachVideoInput {
  * clip that uploaded on gym wifi is not lost to a dropped response.
  */
 export async function attachVideo(deps: WriteDeps, actor: Actor, input: AttachVideoInput) {
+  const poster = input.videoPosterId ?? null;
+  if (poster !== null && (input.videoFileId === null || poster !== posterIdFor(input.videoFileId))) {
+    throw new Error(`attachVideo: ${poster} is not the poster of clip ${input.videoFileId}`);
+  }
   return deps.writer.updateRow({
     databaseId: deps.databaseId,
     tableId: "sets",
     rowId: input.rowId,
     // Null rather than undefined when detaching: undefined would leave the old
-    // id in place, pointing at a file that has been deleted.
-    data: { video_file_id: input.videoFileId },
+    // id in place, pointing at a file that has been deleted. The poster moves
+    // with the clip for the same reason.
+    data: { video_file_id: input.videoFileId, video_poster_id: poster },
     permissions: setPermissions({ athleteId: actor.userId }),
   });
 }

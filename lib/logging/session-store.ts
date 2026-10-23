@@ -1,6 +1,6 @@
 import { ID, Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
-import { authenticRows } from "@/appwrite/documents";
+import { authenticRows, posterOf } from "@/appwrite/documents";
 import { enqueue } from "@/lib/offline/client";
 import type { SessionRecord, SessionSet } from "./session";
 
@@ -16,6 +16,8 @@ export type UnnamedSet = Omit<SessionSet, "exerciseName"> & {
   setIndex?: number | undefined;
   /** A clip is attached. Read at load; a clip attached on this page is tracked by the screen. */
   hasVideo?: boolean;
+  /** That clip's poster (F12), or null for none. Read at load, like `hasVideo`. */
+  videoPosterId?: string | null;
   /**
    * The prescription line this set answered, when it did. Read back so a
    * set logged on a swapped variant (Dumbbell Row against a Barbell Row line)
@@ -109,6 +111,7 @@ interface SetRow {
   is_warmup?: unknown;
   logged_at?: unknown;
   video_file_id?: unknown;
+  video_poster_id?: unknown;
   prescription_id?: unknown;
   notes?: unknown;
 }
@@ -144,6 +147,7 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
         isWarmup: row.is_warmup === true,
         loggedAt,
         hasVideo: typeof row.video_file_id === "string" && row.video_file_id !== "",
+        videoPosterId: posterOf(raw as unknown as Record<string, unknown>),
         ...(typeof row.notes === "string" && row.notes.trim() ? { notes: row.notes } : {}),
         ...(typeof row.prescription_id === "string" && row.prescription_id
           ? { prescriptionId: row.prescription_id }

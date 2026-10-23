@@ -27,8 +27,12 @@ export { deleteOrphanClip, type ClipStore } from "./clip-admin";
 
 export { AVATAR_BUCKET, avatarOf, isOwnAvatarFileId, newAvatarFileId } from "./avatar";
 
+export { POSTER_BUCKET, posterIdFor, posterOf } from "./poster";
+
 export {
   avatarPermissions,
+  posterPermissions,
+  videoPermissions,
   exercisePermissions,
   invitePermissions,
   linkPermissions,

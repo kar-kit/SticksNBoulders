@@ -4,8 +4,10 @@
  *
  * Used by `e2e:prune` (every stranded fixture on the instance) and by the
  * e2e runner's crash net (only the accounts that run created). Reaches all 16
- * tables in appwrite/schema through their person columns, and both buckets:
- * a clip is reached through a deletable set's `video_file_id`, a picture
+ * tables in appwrite/schema through their person columns, and all three
+ * buckets: a clip is reached through a deletable set's `video_file_id`, its
+ * poster through the id derived from the clip's (appwrite/documents/poster.ts)
+ * -- so a poster uploaded but never pointed at goes too -- and a picture
  * through the owner's avatar namespace (appwrite/documents/avatar.ts).
  *
  * What it will not do, by design:
@@ -21,6 +23,7 @@ import { AppwriteException, Query, Storage, TablesDB, Teams, Users, type Client 
 import { schema } from "../appwrite/schema";
 import { circleTeamId } from "../appwrite/documents/circle";
 import { AVATAR_BUCKET, isOwnAvatarFileId } from "../appwrite/documents/avatar";
+import { POSTER_BUCKET, posterIdFor } from "../appwrite/documents/poster";
 import { isFixtureEmail, mayDeleteRow, permissionsOwnedByFixtures, personColumnsOf } from "./e2e-fixture-scope";
 
 const CLIP_BUCKET = "set_videos";
@@ -127,15 +130,23 @@ export async function purgeFixtureUsers(
       if (typeof set.video_file_id === "string" && set.video_file_id) clipIds.add(set.video_file_id);
     }
     const files: Array<{ bucketId: string; fileId: string }> = [];
-    for (const fileId of clipIds) {
+    const candidates = [...clipIds].flatMap((clipId) => {
+      const posterId = posterIdFor(clipId);
+      return [
+        { bucketId: CLIP_BUCKET, fileId: clipId },
+        ...(posterId ? [{ bucketId: POSTER_BUCKET, fileId: posterId }] : []),
+      ];
+    });
+    for (const { bucketId, fileId } of candidates) {
       try {
-        const file = await storage.getFile({ bucketId: CLIP_BUCKET, fileId });
+        const file = await storage.getFile({ bucketId, fileId });
         const verdict = permissionsOwnedByFixtures(file.$permissions, fixtureIds);
-        if (verdict.ok) files.push({ bucketId: CLIP_BUCKET, fileId });
-        else report.skipped.push(`${CLIP_BUCKET}/${fileId}: ${verdict.reason}`);
+        if (verdict.ok) files.push({ bucketId, fileId });
+        else report.skipped.push(`${bucketId}/${fileId}: ${verdict.reason}`);
       } catch (error) {
-        // Fixture sets often name a file that was never uploaded.
-        if (!notFound(error)) report.errors.push(`get ${CLIP_BUCKET}/${fileId}: ${String(error)}`);
+        // Fixture sets often name a file that was never uploaded, and most
+        // clips have no poster.
+        if (!notFound(error)) report.errors.push(`get ${bucketId}/${fileId}: ${String(error)}`);
       }
     }
     try {

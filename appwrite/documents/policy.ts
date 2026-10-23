@@ -300,6 +300,23 @@ export function videoPermissions({ athleteId }: RowOwner): string[] {
 }
 
 /**
+ * A clip's poster: the still a thumbnail shows (F12, schema v17).
+ *
+ * Exactly the clip's own stamp, and deliberately so rather than by
+ * coincidence. A poster is a frame OF the clip, so anyone who could not watch
+ * the clip must not see the frame either, and anyone who can watch it gains
+ * nothing by being refused the frame. Defined as the same function rather than
+ * a copy so the two can never drift: a test asserts they are equal, and a
+ * change to who may see a clip is a change to who may see its poster.
+ *
+ * The athlete may delete, for the clip's reason -- deleting a set or replacing
+ * a clip takes its poster with it. The coach may not.
+ */
+export function posterPermissions(owner: RowOwner): string[] {
+  return videoPermissions(owner);
+}
+
+/**
  * A profile picture.
  *
  * The audience of the profile row that points at it, and deliberately no

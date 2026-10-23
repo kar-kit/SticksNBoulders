@@ -256,6 +256,24 @@ export const RULES: readonly ResourceRule[] = [
       "stamped with A's permissions -- not whether they can upload at all.",
   },
   {
+    key: "set_video_posters",
+    kind: "bucket",
+    resource: "set_video_posters",
+    target: "the poster of A's clip",
+    // The clip's own row, cell for cell: a poster is a frame OF the clip, so
+    // its audience is the clip's (`posterPermissions` is `videoPermissions`).
+    // A difference here is a poster showing someone a clip they cannot watch.
+    allow: {
+      read: athleteAndCoach,
+      create: owner,
+      update: nobody,
+      delete: owner,
+    },
+    notes:
+      "Mirrors set_videos. Create asks whether an outsider can upload a poster stamped with A's poster " +
+      "permissions; pointing A's set at it is a separate write only A (or the backfill's key) makes.",
+  },
+  {
     key: "avatars",
     kind: "bucket",
     resource: "avatars",
