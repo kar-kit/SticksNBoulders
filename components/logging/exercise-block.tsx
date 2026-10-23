@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useArrivals } from "@/components/ui/motion";
 import { Button } from "@/components/ui/button";
-import { HistoryIcon, TrashIcon } from "@/components/ui/icons";
+import { ProgressIcon, TrashIcon } from "@/components/ui/icons";
 import { SetRow, SetRowHeader } from "./set-row";
 import type { LoggableSet, RpeValue } from "@/lib/logging/set";
 import { plannedIndex } from "@/lib/logging/plan";
@@ -203,7 +203,7 @@ export function ExerciseBlock({
             aria-label={`${name} history and records`}
             className="flex size-11 flex-none items-center justify-center rounded-chip text-muted tap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line"
           >
-            <HistoryIcon />
+            <ProgressIcon />
           </Link>
         ) : null}
         {onSwap ? (
