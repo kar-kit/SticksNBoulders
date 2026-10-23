@@ -81,7 +81,11 @@ export interface SetRowProps {
    * derived from row state and never from a request.
    */
   suggested?: boolean;
-  /** The pad is editing this row. Only one row on the screen ever is. */
+  /**
+   * The pad is editing this row. Only one row on the screen ever is. On a
+   * logged row that is the Log's edit sheet correcting it (F9): the row
+   * keeps showing what was logged, outlined, until the sheet saves.
+   */
   focused?: boolean;
   /**
    * Rows not logged yet (active and planned): drop it before it is done.
@@ -91,9 +95,11 @@ export interface SetRowProps {
    */
   onDiscard?: () => void;
   /**
-   * Logged rows only. Tapping the row opens its actions; swiping it left
-   * deletes it straight away. Both end in the screen's undo toast, so neither
-   * asks "are you sure?" first.
+   * Logged rows only. Tapping the row opens what the screen offers for it --
+   * on the Log, the edit sheet (which carries Delete); `selected` is the
+   * older inline Delete / Keep strip. Swiping it left deletes it straight
+   * away. Deletes end in the screen's undo toast, so none asks "are you
+   * sure?" first.
    */
   onSelect?: () => void;
   selected?: boolean;
@@ -267,6 +273,7 @@ export function SetRow({
                   uploading && !selected ? "rounded-t-control" : "rounded-control",
                   selectable && "cursor-pointer focus-visible:outline-2 focus-visible:outline-accent-line",
                   selected && "outline outline-1 outline-border",
+                  focused && "outline outline-2 outline-accent-line",
                 ),
           )}
         >

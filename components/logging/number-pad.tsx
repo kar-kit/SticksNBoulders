@@ -23,7 +23,12 @@ export interface NumberPadProps {
   nextLabel: string;
   isWarmup: boolean;
   onToggleWarmup: (isWarmup: boolean) => void;
-  onDismiss: () => void;
+  /**
+   * Closes the pad, keeping what was typed. Absent hides Done: the Log's
+   * edit sheet for a logged set has its own Cancel and Save, and a third
+   * way out whose meaning sits somewhere between them is one too many.
+   */
+  onDismiss?: () => void;
   /**
    * Drawn inside a sheet that owns the edge and the fill (the Log screen's
    * LogSheet). Without it the pad draws its own top border, as History's
@@ -150,13 +155,15 @@ export function NumberPad({
         >
           Warm-up
         </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          className="flex h-12 flex-1 items-center justify-center rounded-control border border-border bg-surface text-ui font-medium text-muted"
-        >
-          Done
-        </button>
+        {onDismiss ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="flex h-12 flex-1 items-center justify-center rounded-control border border-border bg-surface text-ui font-medium text-muted"
+          >
+            Done
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onNext}

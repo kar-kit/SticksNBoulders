@@ -8,6 +8,7 @@ import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 import { ExerciseBlock, type LoggedSet } from "@/components/logging/exercise-block";
 import { LogSheet } from "@/components/logging/log-sheet";
 import { NumberPad } from "@/components/logging/number-pad";
+import { EditSetSheet, type EditField } from "@/components/logging/edit-set-sheet";
 import { RestBar } from "@/components/logging/rest-bar";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
 import { VariantSheet } from "@/components/logging/variant-sheet";
@@ -39,6 +40,7 @@ import { pendingOps } from "@/lib/offline/queue";
 import type { QueuedOp } from "@/lib/offline/queue";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import { beginEdit, padValue, rpeAfterWarmupChange, type PadState } from "@/lib/logging/number-pad";
+import { changesSet, draftOf, editOf, type EditDraft } from "@/lib/logging/logged-edit";
 import {
   addRow,
   afterConfirm,
@@ -136,8 +138,20 @@ interface PendingDelete {
 
 const NO_IDS: ReadonlySet<string> = new Set();
 
-const COACH_COMMENTED =
-  "Your coach has commented on this set, so it stays. Correct it from History if the numbers are wrong.";
+const COACH_COMMENTED = "Your coach has commented on this set, so it stays. You can still correct its numbers above.";
+
+/**
+ * A logged set open in the edit sheet (F9): which set, the values being typed,
+ * and the field the keypad or the RPE chips are on. The set itself is not
+ * touched until Save -- see lib/logging/logged-edit.ts.
+ */
+interface LoggedEdit {
+  clientSetId: string;
+  draft: EditDraft;
+  field: EditField;
+  /** The keypad for load or reps. Null while the RPE chips are showing. */
+  pad: PadState | null;
+}
 
 export function LogScreen() {
   const router = useRouter();
@@ -202,10 +216,24 @@ export function LogScreen() {
   /** The queue as it stands, from the first render: opened from Today, it is already read in. */
   const [ops, setOps] = useState<QueuedOp[]>(queuedOps);
   const [rest, setRest] = useState<RestTimer | null>(null);
-  /** The logged set whose Delete is showing. */
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  /**
+   * The logged set being corrected in the sheet, if any. Tapping a logged
+   * row used to open an inline Delete / Keep strip; it opens this instead,
+   * and Delete moved into it (F9).
+   */
+  const [editing, setEditing] = useState<LoggedEdit | null>(null);
+  /** An edit the phone could not write down. Said out loud, like a set that was not saved. */
+  const [editUnsaved, setEditUnsaved] = useState(false);
+  /** Sets corrected on this page: a record an edit uncovers pops its badge in, as a confirm's does. */
+  const [editedHere, setEditedHere] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * The RPE a set had when it was made a warm-up on this page, by the set
+   * number or the edit sheet. Made working again, it gets that number back
+   * rather than the one it was first logged with.
+   */
+  const heldRpe = useRef(new Map<string, number | null>());
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
-  /** Warm-up flips made on this page, over whatever the server or queue last said. */
+  /** Warm-up flips and edits made on this page, over whatever the server or queue last said. */
   const [edits, setEdits] = useState<ReadonlyMap<string, SetValues>>(() => new Map());
   /** Deleted on this page, whether or not the delete has reached Appwrite. */
   const [deleted, setDeleted] = useState<ReadonlySet<string>>(() => new Set());
@@ -587,6 +615,8 @@ export function LogScreen() {
         swapping?: { exerciseId: string; blockId: string };
         /** A set confirmed in this same tick, not in state yet. */
         justLogged?: UnnamedSet;
+        /** A logged set corrected in this same tick: its new values, over the old in state. */
+        edited?: UnnamedSet;
         reprice?: ReadonlySet<string>;
       } = {},
     ) =>
@@ -594,10 +624,10 @@ export function LogScreen() {
         before,
         after,
         (exerciseId) => {
-          const { swapping, justLogged } = options;
+          const { swapping, justLogged, edited } = options;
           const blockId = swapping?.exerciseId === exerciseId ? swapping.blockId : blockOf(exerciseId);
           const logged: LoggedForTarget[] = [
-            ...setsOfBlock(blockId),
+            ...setsOfBlock(blockId).map((set) => (set.clientSetId === edited?.clientSetId ? edited : set)),
             ...(justLogged && blockOf(justLogged.exerciseId) === blockId ? [justLogged] : []),
           ];
           const targets = targetsOf(blockId, logged);
@@ -698,6 +728,8 @@ export function LogScreen() {
     setPad(null);
     setRpeOpen(false);
     setSwapFor(null);
+    // An edit not saved is an edit cancelled: the set still shows what was logged.
+    setEditing(null);
   };
 
   /**
@@ -721,7 +753,7 @@ export function LogScreen() {
       const next = prescribe(plans, moved);
       setPlans(next);
       setFocusId(head.clientSetId);
-      setSelectedId(null);
+      setEditing(null);
       setPad(null);
       setRpeOpen(false);
       setSwapFor(null);
@@ -789,7 +821,7 @@ export function LogScreen() {
    * new row's numbers are one tap away if they need changing.
    */
   const addSet = (blockId: string) => {
-    setSelectedId(null);
+    setEditing(null);
     const exerciseId = currentOf(blockId);
     const next = prescribe(
       plans,
@@ -833,7 +865,7 @@ export function LogScreen() {
     const row = plans.find((each) => each.clientSetId === rowId);
     if (!row) return;
     setFocusId(row.clientSetId);
-    setSelectedId(null);
+    setEditing(null);
     setSwapFor(null);
     if (field === "rpe") {
       if (row.isWarmup) return; // Warm-ups never ask.
@@ -917,9 +949,13 @@ export function LogScreen() {
     // Still on its way to the phone's storage: an edit queued now could
     // outlive a create that fails.
     if (!set || saving.has(rowId)) return;
+    // The number flips the set as it stands; a draft open on it would save
+    // over the flip with the old flag, so it closes unsaved.
+    if (editing?.clientSetId === rowId) setEditing(null);
     const isWarmup = !set.isWarmup;
     // A warm-up carries no RPE. Flipped back on this page, it gets its RPE back.
-    const rpe = isWarmup ? null : (asLogged.find((s) => s.clientSetId === rowId)?.rpe ?? null);
+    if (isWarmup) heldRpe.current.set(rowId, set.rpe ?? null);
+    const rpe = isWarmup ? null : rpeToRestore(rowId);
     const edit: SetValues = { loadKg: set.loadKg, reps: set.reps, rpe, isWarmup };
     const before = edits.get(rowId);
     setEdits((prev) => new Map(prev).set(rowId, edit));
@@ -934,6 +970,130 @@ export function LogScreen() {
     });
   };
 
+  /** The RPE a warm-up made working again should carry: the one it had on this page, else as logged. */
+  const rpeToRestore = (rowId: string): number | null =>
+    heldRpe.current.has(rowId)
+      ? (heldRpe.current.get(rowId) ?? null)
+      : (asLogged.find((s) => s.clientSetId === rowId)?.rpe ?? null);
+
+  /* --- Correcting a logged set (F9) ------------------------------------ */
+
+  /**
+   * A tap on a logged row: the sheet opens on it, prefilled with its load,
+   * reps and RPE, on the weight -- the number most often mistyped, and the
+   * one the keypad's Next walks on from.
+   *
+   * A second tap on the same row closes it unsaved, the way the old Delete /
+   * Keep strip toggled. A set still on its way to the phone's storage is not
+   * opened, for the same reason the set number will not flip it: an edit
+   * queued now could outlive a create that fails.
+   */
+  const openEdit = (clientSetId: string) => {
+    if (editing?.clientSetId === clientSetId) {
+      setEditing(null);
+      return;
+    }
+    const set = all.find((s) => s.clientSetId === clientSetId);
+    if (!set || saving.has(clientSetId)) return;
+    closeSheets();
+    setAddingInline(false);
+    setEditUnsaved(false);
+    setEditing({
+      clientSetId,
+      draft: draftOf(set, rpeToRestore(clientSetId)),
+      field: "load",
+      pad: beginEdit("load", loadIn(set.loadKg, unit), unit),
+    });
+  };
+
+  /** Moves the edit sheet to another field; the keypad starts from the draft's number. */
+  const editField = (field: EditField) => {
+    setEditing((prev) => {
+      if (!prev || (field === "rpe" && prev.draft.isWarmup)) return prev;
+      const { loadKg, reps } = prev.draft;
+      const pad =
+        field === "rpe"
+          ? null
+          : field === "load"
+            ? beginEdit("load", loadKg === null ? null : loadIn(loadKg, unit), unit)
+            : beginEdit("reps", reps);
+      return { ...prev, field, pad };
+    });
+  };
+
+  /**
+   * A key in the edit sheet. Only a key changes the draft: an untouched load
+   * stays the exact kilos logged, rather than coming back through a pounds
+   * round trip a gram off and reading as an edit.
+   */
+  const applyEditPad = (next: PadState) => {
+    setEditing((prev) => {
+      if (!prev) return prev;
+      const typed = padValue(next);
+      const value = next.field === "load" && typed !== null ? loadFromInput(typed, next.unit ?? "kg") : typed;
+      const draft = { ...prev.draft, [next.field === "load" ? "loadKg" : "reps"]: value };
+      return { ...prev, pad: next, draft };
+    });
+  };
+
+  const editDraft = (change: Partial<EditDraft>) =>
+    setEditing((prev) => (prev ? { ...prev, draft: { ...prev.draft, ...change } } : prev));
+
+  /**
+   * Save in the edit sheet: the correction goes through `editSet`, exactly
+   * as the set number's warm-up flip does. Queued, so it is instant with no
+   * signal and lands behind the set's own create; the week's rollup is
+   * refreshed behind it, and Appwrite recomputes the stored e1RM from the
+   * four values. The clip is not part of the edit and stays where it is.
+   *
+   * On screen it shows at once, through the same `edits` map: the PR badges,
+   * the Previous line, the numbering, the coach's targets and the session
+   * totals are all derived from those lists, so all of them follow. When
+   * the set corrected is the exercise's latest, untouched rows behind it
+   * follow too, as they would have if it had been logged that way.
+   *
+   * If the phone cannot write the edit down, the set goes back to what it
+   * was and the athlete is told -- a correction that silently undid itself
+   * would be worse than none.
+   */
+  const saveEdit = () => {
+    if (!editing) return;
+    const id = editing.clientSetId;
+    const edit = editOf(editing.draft);
+    if (!edit) return;
+    setEditing(null);
+    const set = all.find((s) => s.clientSetId === id);
+    if (!set || saving.has(id) || !changesSet(set, edit)) return;
+    if (edit.isWarmup && !set.isWarmup) heldRpe.current.set(id, editing.draft.rpe);
+    if (!edit.isWarmup) heldRpe.current.delete(id);
+
+    const before = edits.get(id);
+    setEdits((prev) => new Map(prev).set(id, edit));
+    setEditedHere((prev) => new Set(prev).add(id));
+    setEditUnsaved(false);
+
+    if (setsOf(set.exerciseId).at(-1)?.clientSetId === id) {
+      const corrected: UnnamedSet = { ...set, ...edit };
+      const behind = refreshBehind(plans, corrected);
+      if (behind.reprice.size > 0) {
+        setPlans(prescribe(plans, behind.rows, { edited: corrected, reprice: behind.reprice }));
+      }
+    }
+
+    void editSet(id, { ...edit, rpe: edit.rpe as RpeValue | null }, set).catch(() => {
+      // Not written to the phone, so not corrected. Only if nothing newer
+      // has been laid over it since.
+      setEdits((prev) => {
+        if (prev.get(id) !== edit) return prev;
+        const next = new Map(prev);
+        if (before) next.set(id, before);
+        else next.delete(id);
+        return next;
+      });
+      setEditUnsaved(true);
+    });
+  };
+
   const confirmSet = async (rowId: string) => {
     const row = plans.find((each) => each.clientSetId === rowId);
     // The coach's video ask is a nudge, never a gate (Order 30): the badge
@@ -943,7 +1103,7 @@ export function LogScreen() {
     // this makes the rule hold even if a stale handler fires.
     if (headOf(plans, row.exerciseId)?.clientSetId !== rowId) return;
     setBusy(true);
-    setSelectedId(null);
+    setEditing(null);
     // The row leaves the plan at once, so a tap on Add set while the write is
     // still reaching the phone builds on a logged set rather than behind a
     // planned one. It carries the queued mark until the queue holds it, and
@@ -1101,11 +1261,6 @@ export function LogScreen() {
     };
   }, [commitDelete]);
 
-  const selectSet = (clientSetId: string) => {
-    closeSheets();
-    setSelectedId((prev) => (prev === clientSetId ? null : clientSetId));
-  };
-
   const deleteLogged = (clientSetId: string) => {
     const set = all.find((s) => s.clientSetId === clientSetId);
     if (!set || commented.has(clientSetId)) return;
@@ -1127,7 +1282,7 @@ export function LogScreen() {
 
     pendingRef.current = pending;
     setPendingDelete(pending);
-    setSelectedId(null);
+    setEditing(null);
     undoTimer.current = setTimeout(commitDelete, UNDO_MS);
   };
 
@@ -1157,7 +1312,7 @@ export function LogScreen() {
       setFocusId(null);
       closeSheets();
     }
-    setSelectedId(null);
+    setEditing(null);
     setHiddenBlocks((prev) => {
       const ids = new Set(prev.sessionId === sessionId ? prev.ids : NO_IDS);
       ids.add(exerciseId);
@@ -1376,8 +1531,11 @@ export function LogScreen() {
    * lasts five seconds, and hiding the rest timer to show it would cost more
    * than it saves.
    */
-  const bottom: "pad" | "rpe" | "swap" | "confirm" | "rest" | "add" =
-    pad !== null
+  const editingSet = editing ? (all.find((s) => s.clientSetId === editing.clientSetId) ?? null) : null;
+  const bottom: "edit" | "pad" | "rpe" | "swap" | "confirm" | "rest" | "add" =
+    editingSet !== null
+      ? "edit"
+      : pad !== null
       ? "pad"
       : rpeOpen
         ? "rpe"
@@ -1406,8 +1564,38 @@ export function LogScreen() {
    * logged. Each still takes its turn in `bottom`, so only the winner shows
    * and the sheet swaps content rather than stacking.
    */
+  const editLabel = (() => {
+    if (!editingSet) return "Set";
+    if (editingSet.isWarmup) return "Warm-up set";
+    const mine = setsOfBlock(blockOf(editingSet.exerciseId));
+    const at = mine.findIndex((s) => s.clientSetId === editingSet.clientSetId);
+    return `Set ${mine.slice(0, at + 1).filter((s) => !s.isWarmup).length}`;
+  })();
+
   const sheet =
-    bottom === "swap" && swapFor !== null && swapping.length > 0 ? (
+    bottom === "edit" && editing && editingSet ? (
+      <EditSetSheet
+        setLabel={editLabel}
+        exerciseName={nameFor(editingSet.exerciseId) ?? editingSet.exerciseId}
+        draft={editing.draft}
+        field={editing.field}
+        pad={editing.pad}
+        unit={unit}
+        canSave={editOf(editing.draft) !== null}
+        onField={editField}
+        onPadChange={applyEditPad}
+        onToggleWarmup={(isWarmup) => {
+          editDraft({ isWarmup });
+          // A warm-up is never asked for RPE: off the chips, onto the reps.
+          if (isWarmup && editing.field === "rpe") editField("reps");
+        }}
+        onRpe={(rpe) => editDraft({ rpe })}
+        onSave={saveEdit}
+        onCancel={() => setEditing(null)}
+        onDelete={() => deleteLogged(editingSet.clientSetId)}
+        deleteBlocked={undeletable.has(editingSet.clientSetId) ? COACH_COMMENTED : null}
+      />
+    ) : bottom === "swap" && swapFor !== null && swapping.length > 0 ? (
       <VariantSheet
         name={blockName(swapFor, swapFor)}
         options={swapping}
@@ -1449,6 +1637,8 @@ export function LogScreen() {
       />
     ) : null;
   const sheetField = bottom === "pad" && pad !== null ? pad.field : bottom === "rpe" ? "rpe" : null;
+  const revealKey =
+    bottom === "edit" && editing ? `edit:${editing.clientSetId}:${editing.field}` : sheetField && `${focusId}:${sheetField}`;
 
   return (
     // The sheet's containing block: it sticks to the bottom of <main> for as
@@ -1515,7 +1705,7 @@ export function LogScreen() {
                       commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,
                     previous: previousByRow.get(s.clientSetId) ?? null,
                     pr: prs.get(s.clientSetId) ?? null,
-                    prFresh: confirmedHere.has(s.clientSetId),
+                    prFresh: confirmedHere.has(s.clientSetId) || editedHere.has(s.clientSetId),
                   }))}
                   planned={rowsOf(plans, exerciseId).map((row) => ({
                     ...row,
@@ -1523,7 +1713,7 @@ export function LogScreen() {
                   }))}
                   onCopyPrevious={copyPrevious}
                   historyHref={`/lift/${encodeURIComponent(exerciseId)}`}
-                  focusedId={pad !== null || rpeOpen ? focusId : null}
+                  focusedId={editingSet ? editingSet.clientSetId : pad !== null || rpeOpen ? focusId : null}
                   target={targetFor(block.id)}
                   unit={unit}
                   onFocus={focusField}
@@ -1532,8 +1722,7 @@ export function LogScreen() {
                   onToggleWarmup={toggleWarmupOf}
                   onAddSet={() => addSet(block.id)}
                   onActivate={() => activate(block.id)}
-                  selectedId={selectedId}
-                  onSelect={selectSet}
+                  onSelect={openEdit}
                   onDelete={deleteLogged}
                   onRemove={() => removeExercise(block.id, block.name)}
                   removeBlocked={(() => {
@@ -1691,6 +1880,21 @@ export function LogScreen() {
             </div>
           ) : null}
 
+          {editUnsaved ? (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-3 rounded-card border border-danger-line bg-surface p-3"
+            >
+              <p className="m-0 text-caption text-foreground">
+                That change wasn&rsquo;t saved &mdash; this phone couldn&rsquo;t store it. The set is as it was
+                logged. Free up some space, then edit it again.
+              </p>
+              <Button variant="ghost" size="sm" onClick={() => setEditUnsaved(false)}>
+                OK
+              </Button>
+            </div>
+          ) : null}
+
           {/*
             A delete that reached Appwrite after the coach had commented. Nothing
             was lost -- the set is back where it was -- so this can be dismissed,
@@ -1741,7 +1945,7 @@ export function LogScreen() {
       </div>
 
       {/* One sheet at a time, pinned where a thumb already is. */}
-      <LogSheet anchor={sheetAnchor} revealKey={sheetField && `${focusId}:${sheetField}`}>
+      <LogSheet anchor={sheetAnchor} revealKey={revealKey}>
         {sheet}
       </LogSheet>
     </div>

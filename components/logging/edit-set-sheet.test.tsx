@@ -1,0 +1,93 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { EditSetSheet, type EditSetSheetProps } from "./edit-set-sheet";
+import { beginEdit } from "@/lib/logging/number-pad";
+
+function setup(overrides: Partial<EditSetSheetProps> = {}) {
+  const props: EditSetSheetProps = {
+    setLabel: "Set 2",
+    exerciseName: "Squat",
+    draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false },
+    field: "load",
+    pad: beginEdit("load", 140, "kg"),
+    unit: "kg",
+    canSave: true,
+    onField: vi.fn(),
+    onPadChange: vi.fn(),
+    onToggleWarmup: vi.fn(),
+    onRpe: vi.fn(),
+    onSave: vi.fn(),
+    onCancel: vi.fn(),
+    onDelete: vi.fn(),
+    ...overrides,
+  };
+  render(<EditSetSheet {...props} />);
+  return { props, user: userEvent.setup() };
+}
+
+describe("EditSetSheet", () => {
+  it("says which set it is editing, and offers Cancel and Save rather than Done or a confirm", () => {
+    setup();
+    const sheet = screen.getByRole("region", { name: "Edit Set 2" });
+    expect(within(sheet).getByRole("heading", { name: "Edit set 2" })).toBeInTheDocument();
+    expect(sheet).toHaveTextContent("Squat · logged");
+    expect(screen.getByRole("button", { name: "Cancel, keep Set 2 as logged" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Set 2" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+  });
+
+  it("titles a warm-up as one", () => {
+    setup({ setLabel: "Warm-up set", draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true } });
+    expect(screen.getByRole("heading", { name: "Edit warm-up" })).toBeInTheDocument();
+    // Never asked for RPE, so the field cannot be opened, and Next on reps saves.
+    expect(screen.getByRole("button", { name: "Change RPE, now none, warm-up" })).toBeDisabled();
+  });
+
+  it("shows the values in the athlete's unit", () => {
+    setup({ unit: "lb", pad: beginEdit("load", 308.6, "lb") });
+    expect(screen.getByRole("button", { name: "Change weight, now 308.6 pounds" })).toBeInTheDocument();
+  });
+
+  it("moves between fields from the values strip and the pad's Next", async () => {
+    const { props, user } = setup();
+    await user.click(screen.getByRole("button", { name: "Change RPE, now 8" }));
+    expect(props.onField).toHaveBeenCalledWith("rpe");
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    expect(props.onField).toHaveBeenCalledWith("reps");
+  });
+
+  it("saves from the pad's Next on the last field of a warm-up", async () => {
+    const { props, user } = setup({
+      setLabel: "Warm-up set",
+      draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true },
+      field: "reps",
+      pad: beginEdit("reps", 5),
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(props.onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("puts the RPE chips in place of the pad on the RPE field", async () => {
+    const { props, user } = setup({ field: "rpe", pad: null });
+    expect(screen.queryByRole("region", { name: /keypad/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "9" }));
+    expect(props.onRpe).toHaveBeenCalledWith(9);
+  });
+
+  it("holds Save back for a draft that is not a set", () => {
+    setup({ canSave: false, draft: { loadKg: null, reps: 5, rpe: 8, isWarmup: false } });
+    expect(screen.getByRole("button", { name: "Save Set 2" })).toBeDisabled();
+  });
+
+  it("keeps the non-gesture Delete, or says why there is none", async () => {
+    const { props, user } = setup();
+    await user.click(screen.getByRole("button", { name: "Delete Set 2" }));
+    expect(props.onDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows why a set cannot be deleted in place of Delete", () => {
+    setup({ deleteBlocked: "Your coach has commented on this set, so it stays." });
+    expect(screen.getByText(/Your coach has commented/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete Set 2" })).not.toBeInTheDocument();
+  });
+});
