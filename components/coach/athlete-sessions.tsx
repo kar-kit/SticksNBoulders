@@ -10,6 +10,7 @@ import { blockNotes, exerciseBlocks } from "@/lib/coach/athlete-view";
 import { formatNumber } from "@/lib/logging/prefill";
 import type { Exercise } from "@/lib/exercises/match";
 import { cn } from "@/lib/cn";
+import { FailedMark } from "@/components/ui/failed-mark";
 
 /**
  * Their training history, as the coach reads it: the last 25 sessions grouped
@@ -146,6 +147,7 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                                     {formatNumber(set.loadKg)} × {set.reps}
                                     {set.rpe === null ? "" : ` @${formatNumber(set.rpe)}`}
                                     {set.isWarmup ? " (warm-up)" : ""}
+                                    {set.failed ? <FailedMark className="ml-1.5 align-middle" /> : null}
                                   </span>
                                 ))}
                               </span>

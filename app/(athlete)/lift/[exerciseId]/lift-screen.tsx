@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FailedMark } from "@/components/ui/failed-mark";
 import { E1rmChart } from "@/components/charts/e1rm-chart";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
@@ -184,6 +185,7 @@ export function LiftScreen({ exerciseId }: { exerciseId: string }) {
                     <span className="font-mono text-meta text-muted-2">{dayLabel(set.loggedAt)}</span>
                     <span className="flex-1 text-body tabular-nums">
                       {w(set.loadKg)} × {set.reps}
+                      {set.failed ? <FailedMark className="ml-2 align-middle" /> : null}
                     </span>
                     <span className="font-mono text-meta text-muted">
                       {set.rpe === null ? "" : `RPE ${formatNumber(set.rpe)}`}

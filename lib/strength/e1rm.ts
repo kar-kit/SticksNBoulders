@@ -56,6 +56,11 @@ export interface SetForEstimate {
   /** Null when the athlete answered "Not sure". */
   rpe: number | null;
   isWarmup?: boolean;
+  /**
+   * The athlete missed the set (F19, schema v19): `reps` is what they
+   * completed, and the set never reached its target. Absent reads as false.
+   */
+  failed?: boolean;
 }
 
 /**
@@ -116,9 +121,15 @@ export const repsToFailure = (reps: number, rpe: number): number => reps + repsI
  * - **An RPE below 6**, per MIN_ESTIMABLE_RPE: logged as easy, too far from
  *   failure for reps-in-reserve to be counted. Above 10 is not an RPE at all.
  * - **Too far from failure to mean anything**, per MAX_REPS_TO_FAILURE.
+ * - **A failed set** (F19). The reps it records are the ones completed before
+ *   the bar stopped, and whatever RPE was tapped, the set hit failure short of
+ *   what the athlete set out to do. Brzycki on "3 of 5, then stuck" is not an
+ *   estimate anyone should program off, so it gets none -- and with none, no
+ *   e1RM record, no best e1RM in the rollup, no working max for the day.
  */
 export function estimateOneRepMax(set: SetForEstimate): number | null {
   if (set.isWarmup) return null;
+  if (set.failed) return null;
   if (!isEstimableRpe(set.rpe)) return null;
   if (!Number.isFinite(set.loadKg) || set.loadKg <= 0) return null;
   if (!Number.isInteger(set.reps) || set.reps < 1) return null;

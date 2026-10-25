@@ -99,7 +99,7 @@ describe("every write stamps permissions", () => {
 
   it("re-stamps on update, so a row does not keep a stale policy", async () => {
     const h = harness();
-    await updateSet(h.deps, h.actor, { rowId: "row1", loadKg: 145, reps: 5, rpe: 8, isWarmup: false });
+    await updateSet(h.deps, h.actor, { rowId: "row1", loadKg: 145, reps: 5, rpe: 8, isWarmup: false, failed: false });
     expect(h.last().permissions).toContain(`read("team:${circleTeamId(ATHLETE)}")`);
   });
 
@@ -211,13 +211,13 @@ describe("set data", () => {
 
   it("clears an RPE back to null on update when asked", async () => {
     const h = harness();
-    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: null, isWarmup: false });
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: null, isWarmup: false, failed: false });
     expect(h.last().data.rpe).toBeNull();
   });
 
   it("writes the athlete's note trimmed and capped, clears a blank one, and leaves it alone when absent (F11)", async () => {
     const h = harness();
-    const base = { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: false };
+    const base = { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: false, failed: false };
     await updateSet(h.deps, h.actor, { ...base, notes: "  Hip pinched  " });
     expect(h.last().data.notes).toBe("Hip pinched");
     await updateSet(h.deps, h.actor, { ...base, notes: "x".repeat(600) });
@@ -236,7 +236,7 @@ describe("set data", () => {
     // The gap Order 11 left open. An edit that changes reps and leaves the old
     // estimate on the row is the drift computing it in the helper prevents.
     const h = harness();
-    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: false });
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: false, failed: false });
     expect(h.last().data.e1rm_kg).toBe(168);
   });
 
@@ -244,10 +244,10 @@ describe("set data", () => {
     // Null, not undefined: undefined leaves the stale number in place, which is
     // the whole failure being fixed.
     const h = harness();
-    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: true });
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 8, isWarmup: true, failed: false });
     expect(h.last().data.e1rm_kg).toBeNull();
 
-    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: null, isWarmup: false });
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: null, isWarmup: false, failed: false });
     expect(h.last().data.e1rm_kg).toBeNull();
   });
 
@@ -262,7 +262,7 @@ describe("set data", () => {
     expect(h.last().data.e1rm_kg).toBeUndefined();
 
     // ...and an edit down to "Under 6" clears the estimate the row had.
-    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 5, isWarmup: false });
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 140, reps: 5, rpe: 5, isWarmup: false, failed: false });
     expect(h.last().data.rpe).toBe(5);
     expect(h.last().data.e1rm_kg).toBeNull();
   });
@@ -691,5 +691,34 @@ describe("clearing a clip records which clip (v18)", () => {
     await expect(markSetReviewed(deps, coach, { athleteId: ATHLETE, setId: "set_1", videoFileId: "" })).rejects.toThrow(
       /videoFileId/,
     );
+  });
+});
+
+describe("failed sets (F19, schema v19)", () => {
+  it("writes the flag on create, false when absent, and stores no e1RM for a miss", async () => {
+    const h = harness();
+    await createSet(h.deps, h.actor, {
+      sessionId: "s1", exerciseId: "e1", setIndex: 2, loadKg: 200, reps: 0, rpe: 10, failed: true, clientSetId: "cs-miss",
+    });
+    expect(h.last().data).toMatchObject({ reps: 0, failed: true });
+    expect(h.last().data.e1rm_kg).toBeUndefined();
+
+    await createSet(h.deps, h.actor, {
+      sessionId: "s1", exerciseId: "e1", setIndex: 1, loadKg: 180, reps: 3, rpe: 9, clientSetId: "cs-made",
+    });
+    expect(h.last().data.failed).toBe(false);
+    expect(h.last().data.e1rm_kg).toBeGreaterThan(180);
+  });
+
+  it("clears the stored e1RM when a correction marks the set failed, and restores it when unmarked", async () => {
+    const h = harness();
+    const base = { rowId: "r1", loadKg: 150, reps: 3, rpe: 9, isWarmup: false };
+    await updateSet(h.deps, h.actor, { ...base, failed: true });
+    expect(h.last().data).toMatchObject({ failed: true, e1rm_kg: null });
+    await updateSet(h.deps, h.actor, { ...base, failed: false });
+    expect(h.last().data.failed).toBe(false);
+    expect(h.last().data.e1rm_kg).toBeGreaterThan(150);
+    // Stamped by the same helper as every other set write: the athlete alone.
+    expect(h.last().permissions).toEqual(setPermissions({ athleteId: ATHLETE }));
   });
 });

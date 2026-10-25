@@ -508,7 +508,10 @@ export function LogScreen() {
   const lastLoggedOf = useCallback(
     (exerciseId: string) => {
       const last = setsOf(exerciseId).at(-1);
-      return last ? { loadKg: last.loadKg, reps: last.reps } : null;
+      // After a miss (F19), Add set repeats the load and not the reps: the
+      // stored reps are what was managed, not what is being attempted. Zero
+      // is never a usable prefill, so the row's reps start blank.
+      return last ? { loadKg: last.loadKg, reps: last.failed ? 0 : last.reps } : null;
     },
     [setsOf],
   );
@@ -591,7 +594,15 @@ export function LogScreen() {
       const history = histories.get(exerciseId);
       if (!history) continue;
       const mine = detectPrs(
-        list.map((s) => ({ clientSetId: s.clientSetId, loadKg: s.loadKg, reps: s.reps, rpe: s.rpe ?? null, isWarmup: s.isWarmup })),
+        list.map((s) => ({
+          clientSetId: s.clientSetId,
+          loadKg: s.loadKg,
+          reps: s.reps,
+          rpe: s.rpe ?? null,
+          isWarmup: s.isWarmup,
+          // F19: a missed set is never a record, nor a best a later set must beat.
+          failed: s.failed === true,
+        })),
         history.bests,
       );
       for (const [id, kinds] of mine) found.set(id, kinds);
@@ -831,7 +842,8 @@ export function LogScreen() {
     const prescribedNext = targets ? nextTarget(targets, logged) : null;
     return nextSetSuggestion(
       suggestionMode,
-      { loadKg: last.loadKg, reps: last.reps, rpe: last.rpe ?? null, isWarmup: last.isWarmup },
+      // A failed set anchors no suggestion (F19, lib/strength/suggestion.ts).
+      { loadKg: last.loadKg, reps: last.reps, rpe: last.rpe ?? null, isWarmup: last.isWarmup, failed: last.failed === true },
       setTargetFor(prescribedNext),
       unit,
     );
@@ -934,18 +946,37 @@ export function LogScreen() {
     setPlans((prev) =>
       prev.map((row) =>
         row.clientSetId === rowId
-          ? { ...row, loadKg: previous.loadKg, reps: previous.reps, note: null, suggested: false, touched: true }
+          ? {
+              ...row,
+              loadKg: previous.loadKg,
+              // A set missed last time (F19) gives its load, not the reps
+              // that were managed; the row keeps whatever reps it had.
+              reps: previous.failed ? row.reps : previous.reps,
+              note: null,
+              suggested: false,
+              touched: true,
+            }
           : row,
       ),
     );
     if (focusId === rowId && pad) {
-      setPad(pad.field === "load" ? beginEdit("load", loadIn(previous.loadKg, unit), unit) : beginEdit("reps", previous.reps));
+      const reps = previous.failed ? (plans.find((row) => row.clientSetId === rowId)?.reps ?? null) : previous.reps;
+      setPad(pad.field === "load" ? beginEdit("load", loadIn(previous.loadKg, unit), unit) : beginEdit("reps", reps));
     }
   };
 
   const toggleWarmup = (isWarmup: boolean) => {
     updateFocused((row) => ({ ...row, isWarmup, rpe: rpeAfterWarmupChange(isWarmup, row.rpe) }));
     if (isWarmup) setRpeOpen(false);
+  };
+
+  /**
+   * The Failed switch in the keypad or the RPE chips (F19): the row will be
+   * logged as missed. It neither closes the sheet nor logs anything; the
+   * confirm square does, and accepts 0 reps on a failed row.
+   */
+  const toggleFailed = (failed: boolean) => {
+    updateFocused((row) => ({ ...row, failed }));
   };
 
   /**
@@ -980,12 +1011,13 @@ export function LogScreen() {
     // A warm-up carries no RPE. Flipped back on this page, it gets its RPE back.
     if (isWarmup) heldRpe.current.set(rowId, set.rpe ?? null);
     const rpe = isWarmup ? null : rpeToRestore(rowId);
-    const edit: SetValues = { loadKg: set.loadKg, reps: set.reps, rpe, isWarmup };
+    // The failed flag restated as it stands (F19): a flip must not un-fail a set.
+    const edit: SetValues = { loadKg: set.loadKg, reps: set.reps, rpe, isWarmup, failed: set.failed === true };
     const before = edits.get(rowId);
     // Over this page's last edit of the set, not instead of it: the flip says
     // nothing about the note, and a note saved here a moment ago stays shown.
     setEdits((prev) => new Map(prev).set(rowId, { ...prev.get(rowId), ...edit }));
-    void editSet(rowId, { ...edit, rpe: rpe as RpeValue | null }, set).catch(() => {
+    void editSet(rowId, { ...edit, rpe: rpe as RpeValue | null, failed: set.failed === true }, set).catch(() => {
       // Not written to the phone, so not flipped: put the row back.
       setEdits((prev) => {
         const next = new Map(prev);
@@ -1110,7 +1142,7 @@ export function LogScreen() {
       }
     }
 
-    void editSet(id, { ...edit, rpe: edit.rpe as RpeValue | null }, set).catch(() => {
+    void editSet(id, { ...edit, rpe: edit.rpe as RpeValue | null, failed: edit.failed === true }, set).catch(() => {
       // Not written to the phone, so not corrected. Only if nothing newer
       // has been laid over it since.
       setEdits((prev) => {
@@ -1146,6 +1178,7 @@ export function LogScreen() {
       reps: row.reps as number,
       rpe: row.rpe,
       isWarmup: row.isWarmup,
+      ...(row.failed ? { failed: true } : {}),
       loggedAt: new Date(),
       // What a reload reads back from the queue too: it keeps a swapped
       // variant's set in its line's block.
@@ -1183,6 +1216,7 @@ export function LogScreen() {
         reps: optimistic.reps,
         rpe: row.rpe,
         isWarmup: row.isWarmup,
+        failed: row.failed === true,
         clientSetId: row.clientSetId,
         // Warm-ups answer no prescription: targets count working sets only.
         ...(row.prescriptionId && !row.isWarmup
@@ -1661,6 +1695,7 @@ export function LogScreen() {
           if (isWarmup && editing.field === "rpe") editField("reps");
         }}
         onRpe={(rpe) => editDraft({ rpe })}
+        onToggleFailed={(failed) => editDraft({ failed })}
         onNote={(notes) => editDraft({ notes })}
         onSave={saveEdit}
         onCancel={() => setEditing(null)}
@@ -1715,6 +1750,8 @@ export function LogScreen() {
         nextLabel={pad.field === "load" ? "Reps" : focused.isWarmup ? "Done" : "RPE"}
         isWarmup={focused.isWarmup}
         onToggleWarmup={toggleWarmup}
+        failed={focused.failed === true}
+        onToggleFailed={toggleFailed}
         onDismiss={() => setPad(null)}
       />
     ) : bottom === "rpe" && focused ? (
@@ -1726,6 +1763,8 @@ export function LogScreen() {
           updateFocused((row) => ({ ...row, rpe: value }));
           setRpeOpen(false);
         }}
+        failed={focused.failed === true}
+        onToggleFailed={toggleFailed}
       />
     ) : null;
   const sheetField = bottom === "pad" && pad !== null ? pad.field : bottom === "rpe" ? "rpe" : null;
@@ -1792,6 +1831,7 @@ export function LogScreen() {
                     reps: s.reps,
                     rpe: (s.rpe as RpeValue | null) ?? null,
                     isWarmup: s.isWarmup,
+                    ...(s.failed ? { failed: true } : {}),
                     ...(asked(s.clientSetId) ? { videoRequired: true, hasVideo: hasClip(s) } : {}),
                     deleteBlocked:
                       commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,

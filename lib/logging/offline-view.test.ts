@@ -202,7 +202,7 @@ describe("queued set edits", () => {
 
   it("keeps the latest pending edit per set", () => {
     const edits = queuedSetEdits([update("st-1", true), update("st-1", false, 8), update("st-2", true)]);
-    expect(edits.get("st-1")).toEqual({ loadKg: 100, reps: 5, rpe: 8, isWarmup: false });
+    expect(edits.get("st-1")).toEqual({ loadKg: 100, reps: 5, rpe: 8, isWarmup: false, failed: false });
     expect(edits.get("st-2")).toMatchObject({ isWarmup: true, rpe: null });
   });
 
@@ -239,7 +239,7 @@ describe("queued set edits", () => {
 
     it("keeps a queued note through a later warm-up flip that says nothing about it", () => {
       const edits = queuedSetEdits([noted("st-1", "Hip pinched"), update("st-1", true)]);
-      expect(edits.get("st-1")).toEqual({ loadKg: 100, reps: 5, rpe: null, isWarmup: true, notes: "Hip pinched" });
+      expect(edits.get("st-1")).toEqual({ loadKg: 100, reps: 5, rpe: null, isWarmup: true, failed: false, notes: "Hip pinched" });
     });
 
     it("lets a later note replace an earlier one", () => {
@@ -251,5 +251,24 @@ describe("queued set edits", () => {
       const next = withSetEdits([{ ...set("st-1"), notes: "kept" }], queuedSetEdits([update("st-1", true)]));
       expect(next[0].notes).toBe("kept");
     });
+  });
+});
+
+describe("failed sets in the queue (F19)", () => {
+  it("shows a queued failed set as failed after a reload, and an older op as made", () => {
+    const sets = queuedSets(
+      [
+        op("set.create", { setId: "st-1", sessionId: "cs-1", exerciseId: "ex-1", loadKg: 200, reps: 0, rpe: 10, isWarmup: false, failed: true, loggedAt: STARTED }),
+        op("set.create", { setId: "st-2", sessionId: "cs-1", exerciseId: "ex-1", loadKg: 180, reps: 1, rpe: 9, isWarmup: false, loggedAt: STARTED }),
+      ],
+      "cs-1",
+    );
+    expect(sets[0]).toMatchObject({ clientSetId: "st-1", reps: 0, failed: true });
+    expect(sets[1].failed).toBeUndefined();
+  });
+
+  it("lays a queued correction's flag over the set", () => {
+    const edits = queuedSetEdits([op("set.update", { setId: "st-1", loadKg: 150, reps: 2, rpe: null, isWarmup: false, failed: true })]);
+    expect(edits.get("st-1")).toMatchObject({ reps: 2, failed: true });
   });
 });

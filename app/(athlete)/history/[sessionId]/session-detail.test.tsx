@@ -173,7 +173,7 @@ describe("correcting a set", () => {
 
     await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
     expect(editSet.mock.calls[0][0]).toBe("st-1");
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 145, reps: 5, rpe: 8, isWarmup: false, notes: null });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 145, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: null });
     // And the exercise and the set's own logged time, so the rollup for the
     // week it was logged in is recomputed, not this week's.
     expect(editSet.mock.calls[0][2]).toEqual({ exerciseId: "squat", loggedAt: new Date("2026-09-14T09:30:00Z") });
@@ -287,7 +287,7 @@ describe("for an athlete who reads pounds", () => {
     await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
 
     await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 142.882, reps: 5, rpe: 8, isWarmup: false, notes: null });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 142.882, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: null });
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("315");
   });
 });
@@ -469,6 +469,7 @@ describe("the athlete's note on a set (F11)", () => {
       reps: 5,
       rpe: 8,
       isWarmup: false,
+      failed: false,
       notes: "Felt slow off the chest",
     });
     // Shown at once, trimmed.
@@ -498,5 +499,25 @@ describe("the athlete's note on a set (F11)", () => {
     await user.click(box);
     await user.paste("x".repeat(450));
     expect(screen.getByText("50 left")).toBeInTheDocument();
+  });
+});
+
+describe("a failed set (F19)", () => {
+  it("is marked Failed on its row in History", async () => {
+    loaded.sets = [set({ clientSetId: "st-1", loadKg: 200, reps: 0, rpe: 10, e1rmKg: null, failed: true })];
+    setup();
+    expect(await screen.findByRole("img", { name: "Set 1: failed" })).toBeInTheDocument();
+  });
+
+  it("can be corrected to failed with the reps actually completed, from the pad's switch", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "Backspace" }));
+    await user.click(screen.getByRole("button", { name: "2" }));
+    await user.click(screen.getByRole("switch", { name: "Failed" }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 140, reps: 2, rpe: 8, isWarmup: false, failed: true, notes: null });
   });
 });

@@ -127,7 +127,15 @@ for (const row of setRows) {
   const week = weekStart(loggedAt);
   const key = `${athleteId}/${exerciseId}/${week.toISOString()}`;
   const bucket = buckets.get(key) ?? { athleteId, exerciseId, weekStart: week, sets: [] };
-  bucket.sets.push({ loadKg, reps, isWarmup: row.is_warmup === true, e1rmKg: num(row.e1rm_kg), loggedAt });
+  bucket.sets.push({
+    loadKg,
+    reps,
+    isWarmup: row.is_warmup === true,
+    // F19: a failed set counts toward volume and never toward a best.
+    failed: row.failed === true,
+    e1rmKg: num(row.e1rm_kg),
+    loggedAt,
+  });
   buckets.set(key, bucket);
 }
 

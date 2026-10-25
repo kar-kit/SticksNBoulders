@@ -54,6 +54,7 @@ interface SetRow {
   reps?: unknown;
   rpe?: unknown;
   is_warmup?: unknown;
+  failed?: unknown;
   e1rm_kg?: unknown;
 }
 
@@ -109,6 +110,8 @@ for (const row of rows) {
           reps,
           rpe: num(row.rpe),
           isWarmup: row.is_warmup === true,
+          // F19: a failed set is owed no estimate, so a re-run clears any.
+          failed: row.failed === true,
         });
 
   if (stored === to) agreed += 1;

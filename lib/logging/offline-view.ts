@@ -115,6 +115,7 @@ export function queuedSets(ops: readonly QueuedOp[], sessionId: string): Unnamed
         reps: num(op.payload.reps),
         rpe: typeof op.payload.rpe === "number" ? op.payload.rpe : null,
         isWarmup: op.payload.isWarmup === true,
+        ...(op.payload.failed === true ? { failed: true } : {}),
         loggedAt,
         ...(str(op.payload.prescriptionId) ? { prescriptionId: str(op.payload.prescriptionId) } : {}),
         ...(str(op.payload.notes) ? { notes: str(op.payload.notes) } : {}),
@@ -129,6 +130,11 @@ export interface SetValues {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /**
+   * The athlete missed the set (F19). Optional on the read side: a set or a
+   * queued edit from before v19 carries none, and none reads as false.
+   */
+  failed?: boolean;
   /**
    * The athlete's note (F11). Absent when the edit did not touch it -- the
    * warm-up flip restates the four numbers and nothing else -- so laying an
@@ -176,6 +182,7 @@ export function queuedSetEdits(ops: readonly QueuedOp[]): Map<string, SetValues>
       reps: num(op.payload.reps),
       rpe: typeof op.payload.rpe === "number" ? op.payload.rpe : null,
       isWarmup: op.payload.isWarmup === true,
+      failed: op.payload.failed === true,
       ...("notes" in op.payload && { notes: str(op.payload.notes) || null }),
     });
   }

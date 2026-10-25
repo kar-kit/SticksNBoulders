@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { E1rmChart } from "@/components/charts/e1rm-chart";
 import { Tabs } from "@/components/ui/tabs";
+import { FailedMark } from "@/components/ui/failed-mark";
 import { TextField } from "@/components/ui/input";
 import { fetchExerciseLibrary } from "@/lib/exercises/library";
 import { liftTabs, shortDate, type LiftTab } from "@/lib/coach/athlete-view";
@@ -244,6 +245,7 @@ function LiftPanel({
                 <span className="font-mono text-meta text-muted-2">{shortDate(set.loggedAt)}</span>
                 <span className="text-ui tabular-nums">
                   {formatNumber(set.loadKg)} × {set.reps}
+                  {set.failed ? <FailedMark className="ml-2 align-middle" /> : null}
                 </span>
                 <span className="font-mono text-meta text-muted">
                   {set.rpe === null ? "" : `RPE ${formatNumber(set.rpe)}`}

@@ -50,6 +50,14 @@ agree rather than quietly differing by a warm-up.
 weight: 140×5 is a better week than 140×3, and a rollup that called them equal
 would flatten exactly the progress the chart exists to show.
 
+**Failed sets (F19, schema v19)** are work done: their stored reps (the ones
+completed, 0 allowed) count toward set count, volume and tonnage like any
+working set's. They are never a best -- not `best_single`, not `best_reps`,
+and they carry no e1RM -- because those columns are what Lift Detail calls
+records and what the Log's PR badges are measured against. A missed 200 must
+not become the weight to beat. `rollup-admin.ts` and `rollups:rebuild` both
+read `failed` off the row (null on every set before v19 reads as made).
+
 A week with no working sets produces **no row**, rather than a row of zeroes. A
 row of zeroes is a different statement — it says the week happened and was
 empty.

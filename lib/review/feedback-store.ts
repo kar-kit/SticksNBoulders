@@ -33,6 +33,7 @@ interface SetRow {
   reps?: unknown;
   rpe?: unknown;
   is_warmup?: unknown;
+  failed?: unknown;
   logged_at?: unknown;
   video_file_id?: unknown;
   notes?: unknown;
@@ -51,6 +52,7 @@ function toFeedbackSet(raw: SetRow): FeedbackSet {
     reps: num(raw.reps),
     rpe: typeof raw.rpe === "number" && Number.isFinite(raw.rpe) ? raw.rpe : null,
     isWarmup: raw.is_warmup === true,
+    failed: raw.failed === true,
     loggedAt: str(raw.logged_at),
     videoFileId: str(raw.video_file_id) || null,
     notes: str(raw.notes) || null,
@@ -81,6 +83,9 @@ export async function fetchSetsByIds(setIds: readonly string[]): Promise<Map<str
           "reps",
           "rpe",
           "is_warmup",
+          // v19 (F19). Selecting a column the instance lacks is refused, so
+          // this client needs the v19 schema applied before it ships.
+          "failed",
           "logged_at",
           "video_file_id",
           "notes",

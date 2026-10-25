@@ -300,6 +300,8 @@ export interface BlockSet {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19: the athlete missed it. The coach sees it marked, not hidden. */
+  failed?: boolean;
   /**
    * The athlete's own note on the set (F11), when they left one. Carried so
    * the coach reads what was said about an unfilmed set too -- the Review
@@ -350,6 +352,7 @@ export function exerciseBlocks(
       reps: set.reps,
       rpe: set.rpe,
       isWarmup: set.isWarmup,
+      ...(set.failed ? { failed: true } : {}),
       ...(set.notes?.trim() ? { notes: set.notes.trim() } : {}),
     });
   }

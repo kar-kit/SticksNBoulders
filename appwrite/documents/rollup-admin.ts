@@ -120,6 +120,8 @@ export async function rebuildRollup(
       loadKg: Number(row.load_kg) || 0,
       reps: Number(row.reps) || 0,
       isWarmup: row.is_warmup === true,
+      // F19: counted, never a best. Null on rows before v19 reads as false.
+      failed: row.failed === true,
       e1rmKg: typeof row.e1rm_kg === "number" ? row.e1rm_kg : null,
       loggedAt: new Date(String(row.logged_at)),
     }));

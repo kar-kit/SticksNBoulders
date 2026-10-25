@@ -46,6 +46,9 @@ const SET_COLUMNS = [
   "reps",
   "rpe",
   "is_warmup",
+  // v19 (F19). Like `name` below, a select of a column the instance lacks is
+  // refused, so the export needs the v19 schema applied before it ships.
+  "failed",
   "e1rm_kg",
   "logged_at",
   "notes",
@@ -81,6 +84,8 @@ const SetRow = z.object({
   reps: z.number().int(),
   rpe: optionalNumber,
   is_warmup: z.boolean().nullish().transform((value) => value === true),
+  // Null on every set before v19, and null is not failed.
+  failed: z.boolean().nullish().transform((value) => value === true),
   e1rm_kg: optionalNumber,
   logged_at: date,
   notes: optionalText,
@@ -162,6 +167,7 @@ export async function fetchTrainingLog(
       reps: row.reps,
       rpe: row.rpe,
       isWarmup: row.is_warmup,
+      failed: row.failed,
       e1rmKg: row.e1rm_kg,
       loggedAt: row.logged_at,
       notes: row.notes,

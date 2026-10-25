@@ -29,6 +29,12 @@ export interface SessionSet {
   /** Null is a real answer: the athlete tapped "Not sure". */
   rpe: number | null;
   isWarmup: boolean;
+  /**
+   * The athlete missed the set (F19, schema v19); `reps` is what they
+   * completed. Absent reads as false. Counts toward set count and tonnage
+   * like any set, and toward no record.
+   */
+  failed?: boolean;
   loggedAt: Date;
 }
 

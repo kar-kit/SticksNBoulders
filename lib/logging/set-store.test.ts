@@ -25,6 +25,7 @@ const log = (setId: string) =>
     reps: 5,
     rpe: 8,
     isWarmup: false,
+    failed: false,
     clientSetId: setId,
   });
 
@@ -145,7 +146,7 @@ describe("removeSet with a clip", () => {
 
 describe("editSet and the athlete's note (F11)", () => {
   const SET = { exerciseId: "squat", loggedAt: LOGGED_AT };
-  const values = { loadKg: 140, reps: 5, rpe: 8 as const, isWarmup: false };
+  const values = { loadKg: 140, reps: 5, rpe: 8 as const, isWarmup: false, failed: false };
   const updates = async () =>
     (await store.all()).filter((op) => op.kind === "set.update").map((op) => op.payload);
 
@@ -168,5 +169,34 @@ describe("editSet and the athlete's note (F11)", () => {
   it("caps a note at the column's 500 characters", async () => {
     await editSet("st-1", { ...values, notes: "x".repeat(700) }, SET);
     expect(((await updates())[0].notes as string).length).toBe(500);
+  });
+});
+
+describe("failed sets (F19)", () => {
+  it("queues the flag with the set, 0 reps and all, and hands it back on the logged set", async () => {
+    const logged = await logSet({
+      sessionId: "cs-1",
+      exerciseId: "squat",
+      setIndex: 3,
+      loadKg: 200,
+      reps: 0,
+      rpe: 10,
+      isWarmup: false,
+      failed: true,
+      clientSetId: "st-miss",
+    });
+    const create = (await store.all()).find((op) => op.kind === "set.create");
+    expect(create?.payload).toMatchObject({ setId: "st-miss", loadKg: 200, reps: 0, failed: true });
+    expect(logged).toMatchObject({ reps: 0, failed: true });
+  });
+
+  it("restates the flag on every correction, so a flip cannot un-fail a set", async () => {
+    await editSet(
+      "st-1",
+      { loadKg: 140, reps: 2, rpe: null, isWarmup: false, failed: true },
+      { exerciseId: "squat", loggedAt: LOGGED_AT },
+    );
+    const update = (await store.all()).find((op) => op.kind === "set.update");
+    expect(update?.payload).toEqual({ setId: "st-1", loadKg: 140, reps: 2, rpe: null, isWarmup: false, failed: true });
   });
 });

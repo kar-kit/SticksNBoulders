@@ -42,6 +42,7 @@ export interface SetRow {
   video_poster_id?: unknown;
   notes?: unknown;
   is_warmup?: unknown;
+  failed?: unknown;
   prescription_id?: unknown;
   prescribed?: unknown;
 }
@@ -77,6 +78,7 @@ export function toClip(raw: SetRow): ClipSet | null {
     videoPosterId: posterOf(raw as unknown as Record<string, unknown>),
     notes: str(raw.notes) || null,
     isWarmup: raw.is_warmup === true,
+    failed: raw.failed === true,
     prescriptionId: str(raw.prescription_id) || null,
     prescribed: str(raw.prescribed) || null,
   };
@@ -197,6 +199,8 @@ export interface RecentSet {
   reps: number;
   rpe: number | null;
   e1rmKg: number | null;
+  /** F19: a missed set, marked in the panel rather than hidden from it. */
+  failed?: boolean;
 }
 
 /**
@@ -235,6 +239,7 @@ export async function fetchRecentSets(
       reps: num(raw.reps),
       rpe: maybeNum(raw.rpe),
       e1rmKg: maybeNum(raw.e1rm_kg),
+      ...(raw.failed === true ? { failed: true } : {}),
     };
   });
 }

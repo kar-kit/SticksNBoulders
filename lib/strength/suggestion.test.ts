@@ -154,3 +154,10 @@ describe("for an athlete who trains in pounds", () => {
     expect(suggestLoad(logged(), { reps: 5, rpe: 8 })?.loadKg).toBe(175);
   });
 });
+
+describe("a failed set (F19)", () => {
+  it("anchors no suggestion, whatever RPE was tapped", () => {
+    expect(suggestLoad(logged({ rpe: 9 }), { reps: 5, rpe: 8 })).not.toBeNull();
+    expect(suggestLoad({ ...logged({ rpe: 9 }), failed: true }, { reps: 5, rpe: 8 })).toBeNull();
+  });
+});

@@ -91,3 +91,31 @@ describe("NumberPad without onDismiss", () => {
     expect(screen.getByRole("button", { name: "Reps" })).toBeInTheDocument();
   });
 });
+
+describe("NumberPad's Failed switch (F19)", () => {
+  it("is a labelled switch beside Warm-up when the screen records failure", async () => {
+    const onToggleFailed = vi.fn();
+    setup({ state: beginEdit("reps", 0), failed: false, onToggleFailed });
+    const toggle = screen.getByRole("switch", { name: "Failed" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await userEvent.click(toggle);
+    expect(onToggleFailed).toHaveBeenCalledWith(true);
+  });
+
+  it("shows as on for a row already marked failed", () => {
+    setup({ failed: true, onToggleFailed: vi.fn() });
+    expect(screen.getByRole("switch", { name: "Failed" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("is absent where the screen passes no handler", () => {
+    setup();
+    expect(screen.queryByRole("switch", { name: "Failed" })).not.toBeInTheDocument();
+  });
+
+  it("types a 0 into reps, which is what a missed single is logged as", async () => {
+    const onChange = vi.fn();
+    setup({ state: beginEdit("reps", null), onChange, onToggleFailed: vi.fn() });
+    await userEvent.click(screen.getByRole("button", { name: "0" }));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ field: "reps", text: "0" }));
+  });
+});

@@ -2304,7 +2304,7 @@ describe("the set number flips warm-up (Set Row, F2)", () => {
     expect(editSet).toHaveBeenCalledTimes(1);
     expect(editSet.mock.calls[0][0]).toBe("a");
     // A warm-up carries no RPE, so the stored e1RM goes with it.
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 60, reps: 5, rpe: null, isWarmup: true });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 60, reps: 5, rpe: null, isWarmup: true, failed: false });
     expect(editSet.mock.calls[0][2]).toMatchObject({ exerciseId: "squat" });
     expect(screen.getByRole("group", { name: "Warm-up set" })).toHaveTextContent("60");
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
@@ -2319,7 +2319,7 @@ describe("the set number flips warm-up (Set Row, F2)", () => {
     expect(screen.getByLabelText("Warm-up set RPE")).toHaveTextContent("—");
 
     await user.click(screen.getByRole("button", { name: "Warm-up set: make it a working set" }));
-    expect(editSet.mock.calls[1][1]).toEqual({ loadKg: 140, reps: 5, rpe: 8, isWarmup: false });
+    expect(editSet.mock.calls[1][1]).toEqual({ loadKg: 140, reps: 5, rpe: 8, isWarmup: false, failed: false });
     expect(screen.getByLabelText("Set 1 RPE")).toHaveTextContent("8");
   });
 
@@ -2742,7 +2742,7 @@ describe("following a coach's program (F5)", () => {
       await act(async () => {
         await realSetStore.value.logSet({
           sessionId: "s1", exerciseId: "squat", setIndex: 1, loadKg: 150, reps: 5, rpe: null,
-          isWarmup: false, clientSetId: "q1", prescriptionId: "sq", prescribed: "5 reps · 2s pause · 150 kg (75%)",
+          isWarmup: false, failed: false, clientSetId: "q1", prescriptionId: "sq", prescribed: "5 reps · 2s pause · 150 kg (75%)",
         });
       });
       expect((await store.all()).length).toBeGreaterThan(0);
@@ -3648,7 +3648,7 @@ describe("correcting a logged set (F9)", () => {
     expect(screen.queryByRole("region", { name: /^Edit / })).not.toBeInTheDocument();
     expect(editSet).toHaveBeenCalledTimes(1);
     expect(editSet.mock.calls[0][0]).toBe("b");
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 152.5, reps: 3, rpe: 9, isWarmup: false, notes: null });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 152.5, reps: 3, rpe: 9, isWarmup: false, failed: false, notes: null });
     expect(editSet.mock.calls[0][2]).toMatchObject({ exerciseId: "squat" });
     const row = screen.getByRole("group", { name: "Set 2" });
     expect(row).toHaveTextContent("152.5");
@@ -3709,7 +3709,7 @@ describe("correcting a logged set (F9)", () => {
     expect(within(sheet()).getByRole("button", { name: "Change RPE, now none, warm-up" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save Set 1" }));
 
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 140, reps: 5, rpe: null, isWarmup: true, notes: null });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 140, reps: 5, rpe: null, isWarmup: true, failed: false, notes: null });
     expect(screen.getByRole("group", { name: "Warm-up set" })).toHaveTextContent("140");
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("150");
     expect(screen.queryByRole("group", { name: "Set 2" })).not.toBeInTheDocument();
@@ -3764,7 +3764,7 @@ describe("correcting a logged set (F9)", () => {
     // The set number flips without opening the sheet.
     await user.click(screen.getByRole("button", { name: "Set 2: mark as warm-up" }));
     expect(screen.queryByRole("region", { name: /^Edit / })).not.toBeInTheDocument();
-    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 150, reps: 5, rpe: null, isWarmup: true });
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 150, reps: 5, rpe: null, isWarmup: true, failed: false });
 
     const row = screen.getByRole("group", { name: "Set 1" });
     fireEvent.pointerDown(row, { clientX: 300, clientY: 10 });
@@ -3969,6 +3969,7 @@ describe("correcting a logged set (F9)", () => {
           reps: 4,
           rpe: 8.5,
           isWarmup: false,
+          failed: false,
           notes: null,
         });
         expect(edit!.sequence).toBeGreaterThan(create!.sequence);
@@ -4000,7 +4001,7 @@ describe("correcting a logged set (F9)", () => {
       await user.click(within(sheet()).getByRole("button", { name: "Save Set 2" }));
 
       expect(editSet).toHaveBeenCalledTimes(1);
-      expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 150, reps: 5, rpe: 8, isWarmup: false, notes: "Hip pinched" });
+      expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 150, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: "Hip pinched" });
       const row = screen.getByRole("group", { name: "Set 2" }).parentElement!.parentElement!;
       expect(row.querySelector("[data-set-note]")).toHaveTextContent("Hip pinched");
     });
@@ -4228,5 +4229,117 @@ describe("a clip from the edit sheet (F17)", () => {
     expect(within(sheet()).getByRole("button", { name: "Delete Set 1" })).toBeDisabled();
     await act(async () => finish({ ok: true, fileId: "file-new" }));
     expect(within(sheet()).getByRole("button", { name: "Delete Set 1" })).toBeEnabled();
+  });
+});
+
+describe("marking a set failed (F19)", () => {
+  const addSquat = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+  };
+  const sheet = () => screen.getByRole("region", { name: /^Edit / });
+  beforeEach(() => resetQueueForTests());
+
+  it("logs a missed single as load x 0 from the keypad's switch, marked on the row", async () => {
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+    for (const key of ["2", "0", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "0" }));
+    // 0 reps is not a set until it is a missed one.
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeDisabled();
+    await user.click(screen.getByRole("switch", { name: "Failed" }));
+    expect(screen.getByRole("switch", { name: "Failed" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("img", { name: "Set 1: failed" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ loadKg: 200, reps: 0, failed: true, isWarmup: false });
+    expect(await screen.findByRole("img", { name: "Set 1: failed" })).toBeInTheDocument();
+  });
+
+  it("marks it from the RPE chips too, without closing them, and the RPE still goes with it", async () => {
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+    for (const key of ["1", "8", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "3" }));
+    await user.click(screen.getByRole("button", { name: "RPE" }));
+    await user.click(screen.getByRole("switch", { name: "Failed" }));
+    // Still on the chips.
+    expect(screen.getByRole("region", { name: "RPE for set 1" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "10" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ loadKg: 180, reps: 3, rpe: 10, failed: true });
+  });
+
+  it("logs a made set as not failed", async () => {
+    const { user } = setup({ active: session() });
+    await addSquat(user);
+    await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+    for (const key of ["1", "4", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    await user.click(screen.getByRole("button", { name: "5" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ failed: false });
+    expect(screen.queryByRole("img", { name: /failed/ })).not.toBeInTheDocument();
+  });
+
+  it("badges no record for a failed set, and a made set after it is still measured against the old bests", async () => {
+    exerciseHistory.value.squat = { previous: [], bests: { e1rmKg: 170, heaviestKg: 150 } };
+    storedSets.value = [
+      // Heavier than ever, but missed.
+      logged("miss", 160, 10, { reps: 0, rpe: 10, failed: true }),
+      // Heavier than the old 150, made: a weight record, even after the miss at 160.
+      logged("made", 155, 5, { reps: 1, rpe: 9 }),
+    ];
+    setup({ active: session() });
+    await screen.findByRole("img", { name: "Set 1: failed" });
+    expect(await screen.findByRole("img", { name: /Set 2: personal record/ })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Set 1: personal record/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a set missed last time in its Previous line, marked", async () => {
+    exerciseHistory.value.squat = {
+      previous: [{ loadKg: 200, reps: 0, isWarmup: false, failed: true }],
+      bests: null,
+    };
+    storedSets.value = [logged("a", 190, 5, { reps: 1, rpe: 9 })];
+    setup({ active: session() });
+    const row = await screen.findByRole("group", { name: "Set 1" });
+    await waitFor(() =>
+      expect(row.closest("div.flex-col")?.querySelector("[data-previous]")).toHaveTextContent("200 × 0 · failed"),
+    );
+  });
+
+  it("keeps the flag through the set number's warm-up flip", async () => {
+    storedSets.value = [logged("a", 200, 20, { reps: 0, rpe: 10, failed: true }), logged("b", 140, 10, { rpe: 8 })];
+    const { user } = setup({ active: session() });
+    await screen.findByRole("group", { name: "Set 2" });
+    await user.click(screen.getByRole("button", { name: "Set 1: mark as warm-up" }));
+    expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 200, reps: 0, rpe: null, isWarmup: true, failed: true });
+  });
+
+  it("corrects a logged set to failed from the edit sheet, and back", async () => {
+    storedSets.value = [logged("a", 180, 20, { setIndex: 1, reps: 3, rpe: 9 })];
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    await user.click(within(sheet()).getByRole("switch", { name: "Failed" }));
+    expect(within(sheet()).getByRole("button", { name: "Change reps, now 3, failed set" })).toBeInTheDocument();
+    await user.click(within(sheet()).getByRole("button", { name: "Save Set 1" }));
+    expect(editSet).toHaveBeenCalledTimes(1);
+    expect(editSet.mock.calls[0][1]).toMatchObject({ loadKg: 180, reps: 3, rpe: 9, failed: true });
+    expect(await screen.findByRole("img", { name: "Set 1: failed" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    expect(within(sheet()).getByRole("switch", { name: "Failed" })).toHaveAttribute("aria-checked", "true");
+    await user.click(within(sheet()).getByRole("switch", { name: "Failed" }));
+    await user.click(within(sheet()).getByRole("button", { name: "Save Set 1" }));
+    expect(editSet.mock.calls[1][1]).toMatchObject({ failed: false });
+    await waitFor(() => expect(screen.queryByRole("img", { name: "Set 1: failed" })).not.toBeInTheDocument());
   });
 });

@@ -299,9 +299,18 @@ fallback: a rule that does not parse is refused on the cell and by the route.
   top set's exact load (it is already on the bar).
 - **No top set yet** = no load. The athlete reads "90% of top set"; the row
   falls back to repeating, as for an unresolved percentage.
+- **Failed sets (F19)** are never the top set. A missed 200 after a made 190
+  prices the backoff off 190; a line whose only sets were missed has no top
+  set, so its backoff has no load (above). [Inference] Pricing "90% of the top
+  set" off a miss would treat the miss as the day's top set, which is the
+  reading of "not a successful set" the product wants; [SME to confirm] with
+  Ruairi whether he would rather back off from the attempted weight.
 - **Run length**: a percent rule is N slots. A drop rule grows one slot at a
   time; the set that reaches the stop RPE ends it; a set logged without RPE
-  cannot end it; the cap ends it regardless.
+  cannot end it; the cap ends it regardless. A failed set (F19) ends it too,
+  whatever RPE it carries: a miss is past any stop RPE a coach can write, and
+  planning another set at that weight after one would be the app pushing on
+  after failure.
 - In the logger (`targetsFor`), backoff slots follow the line's own sets and
   carry `backoff: { rule, topSet }`. New rows (Add set, or opening an
   exercise; a confirm adds none) get the load as the coach's

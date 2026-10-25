@@ -21,16 +21,27 @@ export interface HistorySet {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19: the athlete missed it. Absent reads as false. */
+  failed?: boolean;
   loggedAt: Date;
   /** Stored at write time; null when the set had no honest estimate. */
   e1rmKg: number | null;
 }
 
-/** What one earlier set was, as shown beside a row. */
+/**
+ * What one earlier set was, as shown beside a row.
+ *
+ * A failed set (F19) stays in the list, in its place, and carries the flag:
+ * hiding it would shift every later set of last time onto the wrong row, and
+ * "you missed this last week" is exactly what an athlete loading the bar
+ * wants to see. The row shows it as `PREV 200 × 0 · failed`.
+ */
 export interface PreviousSet {
   loadKg: number;
   reps: number;
   isWarmup: boolean;
+  /** Absent reads as false: every set before v19, and the device cache's older entries. */
+  failed?: boolean;
 }
 
 /**
@@ -58,7 +69,7 @@ export function previousSessionSets(
       if (byTime !== 0) return byTime;
       return (a.setIndex ?? Number.MAX_SAFE_INTEGER) - (b.setIndex ?? Number.MAX_SAFE_INTEGER);
     })
-    .map(({ loadKg, reps, isWarmup }) => ({ loadKg, reps, isWarmup }));
+    .map(({ loadKg, reps, isWarmup, failed }) => ({ loadKg, reps, isWarmup, ...(failed ? { failed: true } : {}) }));
 }
 
 /**
@@ -106,6 +117,12 @@ export function alignPrevious(
  * in the background), so the first row of a free exercise still fills in.
  * Each row takes the set it lines up with, or last time's final working set
  * when this session goes further than that one did.
+ *
+ * A failed set last time (F19) gives its load and not its reps: the reps
+ * stored on a miss are what the athlete managed, not what they set out to
+ * do, and prefilling "200 × 0" would hand them a row that cannot be logged
+ * as a made set. The athlete types the reps; the Previous line beside the
+ * row says what happened.
  */
 export function fillFromLastSession(
   rows: readonly PlannedRow[],
@@ -128,7 +145,7 @@ export function fillFromLastSession(
     if (prefill.source !== "last-session") return row;
     changed = true;
     // No note: the Previous line under the row already says where it came from.
-    return { ...row, loadKg: prefill.loadKg, reps: prefill.reps };
+    return { ...row, loadKg: prefill.loadKg, reps: last.failed ? null : prefill.reps };
   });
   return changed ? next : (rows as PlannedRow[]);
 }

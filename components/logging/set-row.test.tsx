@@ -737,3 +737,31 @@ describe("SetRow — the clip's thumbnail (F12)", () => {
     expect(document.querySelector("[data-clip-thumb]")).toBeNull();
   });
 });
+
+describe("SetRow — a failed set (F19)", () => {
+  it("wears a Failed marker on a logged row, and no PR badge however good the numbers look", () => {
+    render(<SetRow index={2} set={set({ loadKg: 200, reps: 0, failed: true })} state="logged" />);
+    expect(screen.getByRole("img", { name: "Set 2: failed" })).toHaveTextContent("Failed");
+    expect(screen.getByLabelText("Set 2 reps")).toHaveTextContent("0");
+  });
+
+  it("wears it on a row not logged yet too, so the switch is visibly on the right set", () => {
+    render(<SetRow index={1} set={set({ reps: 0, failed: true })} state="active" onConfirm={vi.fn()} />);
+    expect(screen.getByRole("img", { name: "Set 1: failed" })).toBeInTheDocument();
+    // 0 reps is a set that can be logged, because it was missed.
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+  });
+
+  it("does not let a made row log with 0 reps", () => {
+    render(<SetRow index={1} set={set({ reps: 0 })} state="active" onConfirm={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeDisabled();
+    expect(screen.queryByRole("img", { name: /failed/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps a set missed last time in the Previous line, marked", () => {
+    render(<SetRow index={1} set={set()} state="logged" previous={{ loadKg: 200, reps: 0, failed: true }} />);
+    expect(screen.getByLabelText("Set 1 last time: 200 kilograms for 0 reps, failed")).toHaveTextContent(
+      "PREV 200 × 0 · failed",
+    );
+  });
+});

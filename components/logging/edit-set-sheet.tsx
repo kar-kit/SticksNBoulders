@@ -39,6 +39,13 @@ import { SetNoteField } from "./set-note-field";
  * note is a correction's sibling: something about the set, said afterwards.
  * Blank and Save clears it.
  *
+ * Failed (F19) is the same switch as in the logging keypad, on the pad and
+ * under the RPE chips, so a set logged as made can be corrected to a miss
+ * (or back) with the reps it actually got -- 0 included -- and Save
+ * recomputes the stored e1RM without it. The strip says FAILED under the
+ * reps while the draft is one, so the correction is in view whichever
+ * field is open.
+ *
  * Delete set lives here too. Tapping a logged row used to open a strip with
  * Delete and Keep; tapping it now opens this, so the non-gesture path to a
  * delete (for a screen reader, a keyboard, or anyone who never swipes) moves
@@ -71,6 +78,8 @@ export interface EditSetSheetProps {
   onPadChange: (next: PadState) => void;
   onToggleWarmup: (isWarmup: boolean) => void;
   onRpe: (value: RpeValue | null) => void;
+  /** The Failed switch (F19), on the pad and under the RPE chips. */
+  onToggleFailed: (failed: boolean) => void;
   /** A key in the note's textarea: the draft's note as typed. */
   onNote: (text: string) => void;
   onSave: () => void;
@@ -96,6 +105,7 @@ export function EditSetSheet({
   onPadChange,
   onToggleWarmup,
   onRpe,
+  onToggleFailed,
   onNote,
   onSave,
   onCancel,
@@ -119,9 +129,10 @@ export function EditSetSheet({
     },
     {
       field: "reps",
-      label: "REPS",
+      // A failed draft's reps are the ones completed (F19), and the cell says so.
+      label: draft.failed ? "REPS · FAILED" : "REPS",
       value: draft.reps === null ? "—" : String(draft.reps),
-      spoken: draft.reps === null ? "empty" : String(draft.reps),
+      spoken: (draft.reps === null ? "empty" : String(draft.reps)) + (draft.failed ? ", failed set" : ""),
     },
     {
       field: "rpe",
@@ -167,7 +178,14 @@ export function EditSetSheet({
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
             )}
           >
-            <span className="font-mono text-label-xs text-muted-2">{cell.label}</span>
+            <span
+              className={cn(
+                "font-mono text-label-xs",
+                cell.field === "reps" && draft.failed ? "text-danger-line" : "text-muted-2",
+              )}
+            >
+              {cell.label}
+            </span>
             <span className="text-value-sm font-semibold tabular-nums text-foreground">{cell.value}</span>
           </button>
         ))}
@@ -208,9 +226,18 @@ export function EditSetSheet({
           nextLabel={pad.field === "load" ? "Reps" : draft.isWarmup ? "Save" : "RPE"}
           isWarmup={draft.isWarmup}
           onToggleWarmup={onToggleWarmup}
+          failed={draft.failed}
+          onToggleFailed={onToggleFailed}
         />
       ) : (
-        <RpeSheet inSheet setIndex={rpeNumber} value={draft.rpe} onSelect={onRpe} />
+        <RpeSheet
+          inSheet
+          setIndex={rpeNumber}
+          value={draft.rpe}
+          onSelect={onRpe}
+          failed={draft.failed}
+          onToggleFailed={onToggleFailed}
+        />
       )}
 
       {video ? (

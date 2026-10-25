@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/cn";
+import { FailedSwitch } from "./failed-switch";
 import { haptic } from "@/lib/ui/haptics";
 import { canStepDown, padDisplay, press, step, stepSize, type PadKey, type PadState } from "@/lib/logging/number-pad";
 
@@ -13,6 +14,10 @@ import { canStepDown, padDisplay, press, step, stepSize, type PadKey, type PadSt
  * than behind a long press -- the component spec's own objection to hidden
  * gestures on the most-used screen in the app is that they are a support
  * burden, and it applies to the flag as much as to anything else.
+ *
+ * The Failed switch (F19) sits beside it for the same reason, when the
+ * screen offers one: a missed set is logged with the reps actually
+ * completed -- typed on this pad, 0 included -- and the flag says the rest.
  */
 
 export interface NumberPadProps {
@@ -23,6 +28,12 @@ export interface NumberPadProps {
   nextLabel: string;
   isWarmup: boolean;
   onToggleWarmup: (isWarmup: boolean) => void;
+  /**
+   * The set was missed (F19). With `onToggleFailed`, a Failed switch beside
+   * Warm-up; without it, none (a screen that does not record failure).
+   */
+  failed?: boolean;
+  onToggleFailed?: (failed: boolean) => void;
   /**
    * Closes the pad, keeping what was typed. Absent hides Done: the Log's
    * edit sheet for a logged set has its own Cancel and Save, and a third
@@ -65,6 +76,8 @@ export function NumberPad({
   nextLabel,
   isWarmup,
   onToggleWarmup,
+  failed = false,
+  onToggleFailed,
   onDismiss,
   inSheet = false,
 }: NumberPadProps) {
@@ -155,6 +168,7 @@ export function NumberPad({
         >
           Warm-up
         </button>
+        {onToggleFailed ? <FailedSwitch failed={failed} onToggle={onToggleFailed} /> : null}
         {onDismiss ? (
           <button
             type="button"

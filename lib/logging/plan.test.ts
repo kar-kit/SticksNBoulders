@@ -304,3 +304,12 @@ describe("refreshBehind (F5)", () => {
     expect(out.rows).toEqual(rows);
   });
 });
+
+describe("refreshBehind after a failed set (F19)", () => {
+  it("leaves the rows behind alone, as after a warm-up: a miss is not the set to repeat", () => {
+    const rows = [row({ clientSetId: "a", loadKg: null, reps: 5 })];
+    const out = refreshBehind(rows, { exerciseId: "squat", loadKg: 200, reps: 0, isWarmup: false, failed: true });
+    expect(out.reprice.size).toBe(0);
+    expect(out.rows[0]).toBe(rows[0]);
+  });
+});

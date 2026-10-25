@@ -50,6 +50,9 @@ const COLUMNS = [
   "reps",
   "rpe",
   "is_warmup",
+  // v19 (F19): a failed set lines up in Previous with its marker, and is
+  // never a best. Selecting it needs the v19 schema on the instance.
+  "failed",
   "e1rm_kg",
   "logged_at",
 ];
@@ -76,6 +79,7 @@ function toHistorySet(row: Record<string, unknown> & { $id: string }): HistorySe
     reps: num(row.reps) ?? 0,
     rpe: num(row.rpe),
     isWarmup: row.is_warmup === true,
+    ...(row.failed === true ? { failed: true } : {}),
     loggedAt,
     e1rmKg: num(row.e1rm_kg),
   };

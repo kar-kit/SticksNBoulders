@@ -8,6 +8,7 @@ import { ClipThumb } from "@/components/video/clip-thumb";
 import { afterExit, useChanged } from "@/components/ui/motion";
 import { haptic } from "@/lib/ui/haptics";
 import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
+import { FailedMark } from "@/components/ui/failed-mark";
 import { LoadCell } from "./load-cell";
 import { SetNoteLine } from "./set-note-field";
 import { canComplete, completionBlocker, type LoggableSet } from "@/lib/logging/set";
@@ -125,7 +126,7 @@ export interface SetRowProps {
    * squeezing the load. Absent when there is no last time or it could not
    * be read: nothing is shown, never an error.
    */
-  previous?: { loadKg: number; reps: number } | null;
+  previous?: { loadKg: number; reps: number; failed?: boolean } | null;
   /**
    * Rows not logged yet: copies `previous` into the row. Makes the Previous
    * line a button.
@@ -214,11 +215,19 @@ export function SetRow({
   const videoBadge =
     !thumb && set.videoRequired && !showCameraInRpeCell ? videoBadgeOf(set, editing, setLabel) : null;
   const records = state === "logged" && pr && pr.length > 0 ? pr : null;
-  const previousText = previous ? `${loadNumber(previous.loadKg, unit)} × ${previous.reps}` : null;
+  // A set missed last time stays in line with its marker (F19), rather than
+  // vanishing and sliding every later set onto the wrong row.
+  const previousText = previous
+    ? `${loadNumber(previous.loadKg, unit)} × ${previous.reps}${previous.failed ? " · failed" : ""}`
+    : null;
   const copyable = Boolean(previousText && editing && onCopyPrevious);
   const spokenPrevious = previous
-    ? `${loadNumber(previous.loadKg, unit)} ${unitName(unit)} for ${previous.reps} reps`
+    ? `${loadNumber(previous.loadKg, unit)} ${unitName(unit)} for ${previous.reps} reps${previous.failed ? ", failed" : ""}`
     : "";
+  // F19: the athlete missed it. Marked on the row in every state -- before
+  // the confirm, so the switch in the sheet is visibly on the right set, and
+  // after it, in the Log and in History, where it reads as part of the record.
+  const failed = set.failed === true;
 
   const label = (
     <span
@@ -423,6 +432,13 @@ export function SetRow({
             >
               <CameraIcon width={11} height={11} />
             </span>
+          ) : null}
+
+          {failed ? (
+            // Top-left over the border, opposite the PR and video corner, so
+            // it takes no column and never sits under either. A failed set
+            // is never a record, so the two never meet anyway.
+            <FailedMark label={`${setLabel}: failed`} className="pointer-events-none absolute -top-2 left-2" />
           ) : null}
 
           {records ? (

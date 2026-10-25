@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 18,
+  version: 19,
   tables: [
     {
       id: "profiles",
@@ -147,6 +147,14 @@ export const schema: DatabaseSpec = {
         // column's bounds rewrites no row, so the planner applies it in place.
         { key: "rpe", type: "float", required: false, min: 3, max: 10 },
         { key: "is_warmup", type: "boolean", required: false, default: false },
+        // v19 (F19): the athlete missed the set -- `reps` is what they actually
+        // completed, 0 allowed. A failed set counts toward set count, volume
+        // and tonnage (its stored reps, as-is) but gets no e1rm_kg and is
+        // never a record of any kind. No default, like `video_default`: null
+        // on every row written before v19 reads as false, so applying it
+        // rewrites nothing and needs no backfill. No index: nothing filters
+        // by it. Row-level permissions cover it like every other set column.
+        { key: "failed", type: "boolean", required: false },
         // Computed and stored at write time, never derived on read.
         { key: "e1rm_kg", type: "float", required: false, min: 0 },
         { key: "logged_at", type: "datetime", required: true },

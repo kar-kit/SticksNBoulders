@@ -77,6 +77,7 @@ export function withQueuedClipState<T extends ClipSet>(clips: readonly T[], ops:
         reps: edit.reps,
         rpe: edit.rpe,
         isWarmup: edit.isWarmup,
+        failed: edit.failed === true,
         ...(edit.notes !== undefined && { notes: edit.notes }),
       };
     }

@@ -15,6 +15,8 @@ import type { PrKind } from "@/lib/strength/pr";
 export interface PreviousValues {
   loadKg: number;
   reps: number;
+  /** F19: last time's set was missed; the line says so. */
+  failed?: boolean;
 }
 
 /**

@@ -34,7 +34,13 @@ function parsePrevious(value: unknown): PreviousSet[] | null {
   if (!Array.isArray(value)) return null;
   const sets = value.filter(
     (s): s is PreviousSet =>
-      typeof s === "object" && s !== null && finite(s.loadKg) && finite(s.reps) && typeof s.isWarmup === "boolean",
+      typeof s === "object" &&
+      s !== null &&
+      finite(s.loadKg) &&
+      finite(s.reps) &&
+      typeof s.isWarmup === "boolean" &&
+      // F19. Optional, so an entry remembered before v19 still parses.
+      (s.failed === undefined || typeof s.failed === "boolean"),
   );
   return sets.length === value.length ? sets : null;
 }

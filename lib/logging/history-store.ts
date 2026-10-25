@@ -33,6 +33,7 @@ interface SetRow {
   load_kg?: unknown;
   reps?: unknown;
   is_warmup?: unknown;
+  failed?: unknown;
   logged_at?: unknown;
   e1rm_kg?: unknown;
   video_file_id?: unknown;
@@ -68,6 +69,7 @@ function toSet(raw: SetRow): HistorySet | null {
     reps: asNumber(raw.reps),
     rpe: typeof raw.rpe === "number" ? raw.rpe : null,
     isWarmup: raw.is_warmup === true,
+    ...(raw.failed === true ? { failed: true } : {}),
     e1rmKg: typeof raw.e1rm_kg === "number" ? raw.e1rm_kg : null,
     loggedAt,
     videoFileId: typeof raw.video_file_id === "string" && raw.video_file_id ? raw.video_file_id : null,

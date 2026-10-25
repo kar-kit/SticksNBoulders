@@ -135,6 +135,8 @@ describe("fetchTrainingLog", () => {
       reps: 3,
       rpe: 8.5,
       isWarmup: false,
+      // Absent on the row (every set before v19) reads as not failed.
+      failed: false,
       e1rmKg: null,
       loggedAt: new Date("2026-09-14T18:00:00Z"),
       notes: null,

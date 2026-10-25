@@ -349,3 +349,38 @@ describe("v17 -> v18 on a live instance", () => {
     expect(result.noop).toBe(false);
   });
 });
+
+describe("v18 -> v19 on a live instance", () => {
+  it("plans exactly one change: the sets.failed column, which rewrites no row", async () => {
+    // A v18 instance is this schema minus sets.failed. The dry-run lines are
+    // what `npm run appwrite:setup -- --dry-run` prints, so the PR's "Before
+    // prod" diff is this test's output, not a guess.
+    const { driver, state } = fakeDriver();
+    await applySchema(driver, schema);
+    const sets = state.tables.find((t) => t.id === "sets")!;
+    sets.columns = sets.columns.filter((c) => c.key !== "failed");
+
+    const lines: string[] = [];
+    const result = await applySchema(driver, schema, { dryRun: true, log: (m) => lines.push(m) });
+
+    expect(lines).toEqual(["  would create column sets.failed (boolean)"]);
+    expect(result.reported).toEqual([]);
+    expect(result.noop).toBe(false);
+  });
+
+  it("writes nothing on the dry run, then creates the one column and settles", async () => {
+    const { driver, state, calls } = fakeDriver();
+    await applySchema(driver, schema);
+    const sets = state.tables.find((t) => t.id === "sets")!;
+    sets.columns = sets.columns.filter((c) => c.key !== "failed");
+    calls.length = 0;
+
+    expect((await applySchema(driver, schema, { dryRun: true })).applied).toEqual([]);
+    expect(calls).toEqual([]);
+
+    const applied = await applySchema(driver, schema);
+    expect(calls).toEqual(["createColumn:sets.failed"]);
+    expect(applied.reported).toEqual([]);
+    expect((await applySchema(driver, schema)).noop).toBe(true);
+  });
+});

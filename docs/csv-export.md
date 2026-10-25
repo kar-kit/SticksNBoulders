@@ -36,6 +36,7 @@ coach's laptop gets a plain download.
 | Prescription | `sets.prescribed` | the target as the athlete saw it when logging, e.g. `5 x 152.5 kg (75%)`; blank for a set nobody prescribed |
 | Session notes | `sessions.notes` | [Inference] not in the ticket; added so "full log" means full |
 | Session name | `sessions.name` | the athlete's own name for the session (v14), blank if never named. Appended last so no existing column moves. The program-day fallback History shows is not exported |
+| Failed | `sets.failed` | `Yes` / `No` (v19, F19). `Yes` means the athlete missed the set: Reps is what they completed (0 allowed) and e1RM is blank. Appended after Session name for the same reason. Selecting the column needs the v19 schema on the instance |
 
 One row per set, not a pre-aggregated layout, because a set table is what a
 pivot table can do anything with. The Prescription column shipped empty before

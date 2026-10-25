@@ -166,3 +166,32 @@ describe("fillFromLastSession (prefill rule 4)", () => {
     expect(work).toMatchObject({ loadKg: 140, reps: 5 });
   });
 });
+
+describe("failed sets in Previous (F19)", () => {
+  it("stay in line, in their place, carrying the flag", () => {
+    const sets = [
+      history({ sessionId: "tue", loggedAt: at("2026-10-20T18:00:00Z"), loadKg: 190, reps: 1 }),
+      history({ sessionId: "tue", loggedAt: at("2026-10-20T18:05:00Z"), loadKg: 200, reps: 0, failed: true }),
+      history({ sessionId: "tue", loggedAt: at("2026-10-20T18:10:00Z"), loadKg: 160, reps: 5 }),
+    ];
+    expect(previousSessionSets(sets)).toEqual([
+      { loadKg: 190, reps: 1, isWarmup: false },
+      { loadKg: 200, reps: 0, isWarmup: false, failed: true },
+      { loadKg: 160, reps: 5, isWarmup: false },
+    ]);
+  });
+
+  it("fill a blank row with their load and not the reps that were managed", () => {
+    const blank: PlannedRow = {
+      exerciseId: "squat",
+      clientSetId: "r1",
+      loadKg: null,
+      reps: null,
+      rpe: null,
+      isWarmup: false,
+      planned: false,
+    };
+    const [filled] = fillFromLastSession([blank], "squat", [{ loadKg: 200, reps: 2, isWarmup: false, failed: true }], 0);
+    expect(filled).toMatchObject({ loadKg: 200, reps: null });
+  });
+});

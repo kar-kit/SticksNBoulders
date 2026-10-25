@@ -113,3 +113,18 @@ describe("when there is no honest estimate", () => {
     expect(set({ loadKg: Number.NaN })).toBeNull();
   });
 });
+
+describe("a failed set (F19)", () => {
+  it("gets no estimate, whatever its load, reps and RPE", () => {
+    // 150 x 3 @ 9 would otherwise be ~163 kg.
+    expect(estimateOneRepMax({ loadKg: 150, reps: 3, rpe: 9 })).not.toBeNull();
+    expect(estimateOneRepMax({ loadKg: 150, reps: 3, rpe: 9, failed: true })).toBeNull();
+    expect(estimateOneRepMax({ loadKg: 200, reps: 0, rpe: 10, failed: true })).toBeNull();
+  });
+
+  it("is a made set when the flag is false or absent, as on every set before v19", () => {
+    expect(estimateOneRepMax({ loadKg: 150, reps: 3, rpe: 9, failed: false })).toBe(
+      estimateOneRepMax({ loadKg: 150, reps: 3, rpe: 9 }),
+    );
+  });
+});

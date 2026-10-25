@@ -372,3 +372,21 @@ describe("clip.delete", () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe("failed sets through the queue (F19)", () => {
+  it("writes a queued failed set as failed, 0 reps, with no e1RM", async () => {
+    await runOp(ACTOR, op("set.create", { ...SET, reps: 0, rpe: 10, isWarmup: false, failed: true }));
+    expect(rows[0].data).toMatchObject({ reps: 0, failed: true });
+    expect(rows[0].data?.e1rm_kg).toBeUndefined();
+  });
+
+  it("writes an op queued before v19, which has no flag, as a made set", async () => {
+    await runOp(ACTOR, op("set.create", { ...SET, isWarmup: false }));
+    expect(rows[0].data).toMatchObject({ failed: false });
+  });
+
+  it("restates the flag on an update, and clears the estimate of a set corrected to failed", async () => {
+    await runOp(ACTOR, op("set.update", { setId: "st-abc", loadKg: 150, reps: 3, rpe: 9, isWarmup: false, failed: true }));
+    expect(rows[0].data).toMatchObject({ failed: true, e1rm_kg: null });
+  });
+});
