@@ -5,8 +5,9 @@ import { cn } from "@/lib/cn";
 import { afterExit } from "@/components/ui/motion";
 
 /**
- * A modal over the coach's screen: the browser's own `<dialog>`, opened with
- * `showModal()`.
+ * A modal over the coach's screen -- and, small and on the spring
+ * (`size="sm"`, `feel="athlete"`), the one question the Log screen asks
+ * (F18) -- the browser's own `<dialog>`, opened with `showModal()`.
  *
  * Native rather than hand-built because the modal behaviour is the hard part
  * and the platform already does it: the rest of the page goes inert, focus
@@ -44,7 +45,14 @@ export interface DialogProps {
    * (lib/cn.ts), so an overriding width would lose to the default by CSS
    * order rather than by intent.
    */
-  size?: "md" | "lg";
+  size?: "sm" | "md" | "lg";
+  /**
+   * Whose motion it moves with. The coach's (the default) settles in on
+   * `ease-out` over `panel`; the athlete's arrives on the spring, as
+   * everything on the phone does (docs/athlete-motion.md). Both leave on
+   * `ease-in` over `base`: something leaving gets out of the way.
+   */
+  feel?: "coach" | "athlete";
   /** Closed and fading out; see `usePresence`. Omitted, it is open while mounted. */
   leaving?: boolean;
   /** The fade-out has played and it can be unmounted. */
@@ -59,11 +67,13 @@ function handBack(opener: { current: HTMLElement | null }) {
 }
 
 const WIDTH = {
+  /** A question on a phone: one line and two buttons, a thumb's width from each edge. */
+  sm: "w-[min(360px,calc(100vw-2rem))]",
   md: "w-[min(640px,calc(100vw-4rem))]",
   lg: "w-[min(880px,calc(100vw-4rem))]",
 } as const;
 
-export function Dialog({ labelledBy, onClose, children, size = "lg", leaving = false, onExited }: DialogProps) {
+export function Dialog({ labelledBy, onClose, children, size = "lg", feel = "coach", leaving = false, onExited }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const requested = useRef(false);
   const onCloseRef = useRef(onClose);
@@ -153,11 +163,15 @@ export function Dialog({ labelledBy, onClose, children, size = "lg", leaving = f
         "backdrop:transition-[opacity,overlay,display] backdrop:transition-discrete",
         leaving
           ? "duration-base ease-in backdrop:duration-base backdrop:ease-in"
-          : "duration-panel ease-out backdrop:duration-panel backdrop:ease-out",
+          : feel === "athlete"
+            ? // The spring and its own duration, always together; the backdrop
+              // only fades, so it takes the plain fade-in.
+              "duration-spring ease-spring backdrop:duration-base backdrop:ease-out"
+            : "duration-panel ease-out backdrop:duration-panel backdrop:ease-out",
         WIDTH[size],
       )}
     >
-      <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto p-6">{children}</div>
+      <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain p-6">{children}</div>
     </dialog>
   );
 }

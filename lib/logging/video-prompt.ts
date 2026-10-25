@@ -27,7 +27,11 @@ export type VideoAsk =
   | "none"
   /** Requested: the camera button stands out while the sets are still being done. */
   | "emphasise"
-  /** Requested, every set of the flagged line logged, still no clip: say so once. */
+  /**
+   * Requested, every set of the flagged line logged, still no clip. The camera
+   * stands out as for "emphasise"; the words are said once, by the popup after
+   * logging a requested set (F18), which the Log screen drives, not this.
+   */
   | "prompt";
 
 /**
