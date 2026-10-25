@@ -468,7 +468,9 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                         setEditingFields(false);
                         startEditing(set);
                       }}
-                      aria-label={`Edit ${index === "W" ? "warm-up set" : `set ${index}`} of ${block.name}`}
+                      // A button's content is not read inside its name, so the
+                      // Failed mark (F19) is said here as well.
+                      aria-label={`Edit ${index === "W" ? "warm-up set" : `set ${index}`} of ${block.name}${set.failed ? ", failed" : ""}`}
                       className="w-full text-left"
                     >
                       <SetRow

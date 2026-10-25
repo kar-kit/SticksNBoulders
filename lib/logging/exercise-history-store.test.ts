@@ -231,3 +231,24 @@ describe("fetchSetsBefore", () => {
     expect(history.bests).toEqual({ e1rmKg: null, heaviestKg: 100, repsAt: null });
   });
 });
+
+describe("failed sets read back (F19)", () => {
+  it("keep their place and flag in Previous, and are never a best or a point on the rep frontier", async () => {
+    db.tables.sets = [
+      setRow("tue", "2026-10-20T18:00:00Z", { load_kg: 150, reps: 3, rpe: 9 }),
+      // Would be the heaviest set and the frontier's point at 160, were it made.
+      setRow("tue", "2026-10-20T18:05:00Z", { load_kg: 160, reps: 2, rpe: 10, failed: true, e1rm_kg: 999 }),
+      // Would be ten at 100, were it made.
+      setRow("tue", "2026-10-20T18:10:00Z", { load_kg: 100, reps: 10, failed: true }),
+    ];
+    db.tables.stats_rollups = [];
+    const history = await fetchExerciseHistory("joey", "squat", "now", sessionStart);
+    expect(history.previous).toEqual([
+      { loadKg: 150, reps: 3, isWarmup: false },
+      { loadKg: 160, reps: 2, isWarmup: false, failed: true },
+      { loadKg: 100, reps: 10, isWarmup: false, failed: true },
+    ]);
+    expect(history.bests).toMatchObject({ heaviestKg: 150, repsAt: [{ loadKg: 150, reps: 3 }] });
+    expect(history.bests?.e1rmKg).not.toBe(999);
+  });
+});

@@ -507,6 +507,8 @@ describe("a failed set (F19)", () => {
     loaded.sets = [set({ clientSetId: "st-1", loadKg: 200, reps: 0, rpe: 10, e1rmKg: null, failed: true })];
     setup();
     expect(await screen.findByRole("img", { name: "Set 1: failed" })).toBeInTheDocument();
+    // The row is a button, whose name is all a screen reader hears of it.
+    expect(screen.getByRole("button", { name: "Edit set 1 of Squat, failed" })).toBeInTheDocument();
   });
 
   it("can be corrected to failed with the reps actually completed, from the pad's switch", async () => {
