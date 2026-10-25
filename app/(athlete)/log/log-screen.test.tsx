@@ -2783,20 +2783,152 @@ describe("following a coach's program (F5)", () => {
       await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
     });
 
-    it("keeps asking on the logged set, and the camera prompts once the line is done", async () => {
+    const popup = () => screen.queryByRole("dialog", { name: "Your coach asked for a clip of this set" });
+
+    it("keeps asking on the logged set, and the camera stands out until a clip is on", async () => {
       const { user } = setup({ active: session({ programDayId: "d1" }) });
       await screen.findByRole("group", { name: "Set 1" });
       await dropWarmups(user);
       await user.click(screen.getByRole("button", { name: "Log Set 1" }));
       await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
       expect(screen.getByRole("img", { name: "Set 1: your coach asked for a video, not filmed yet" })).toBeInTheDocument();
-      // Still sets to do: the camera stands out but does not interrupt.
       expect(within(squatBlock()).getByRole("button", { name: "Add video" })).toHaveAttribute("data-video-ask", "emphasise");
+      await user.click(await screen.findByRole("button", { name: "Later" }));
 
       await user.click(screen.getByRole("button", { name: "Log Set 2" }));
       await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
-      expect(within(squatBlock()).getByText("Your coach asked for a clip of this one.")).toBeInTheDocument();
+      expect(within(squatBlock()).getByRole("button", { name: "Add video" })).toHaveAttribute("data-video-ask", "prompt");
+      // The inline line is gone: the popup said it, once.
+      expect(screen.queryByText("Your coach asked for a clip of this one.")).not.toBeInTheDocument();
       expect(within(squatBlock()).getAllByRole("img", { name: /not filmed yet/ })).toHaveLength(2);
+    });
+
+    describe("the popup after logging a requested set (F18)", () => {
+      const settle = () =>
+        act(async () => {
+          for (let i = 0; i < 5; i++) await Promise.resolve();
+        });
+      // A resumed line lays out nothing by itself; the block's name opens the next row.
+      const openNext = async (user: ReturnType<typeof userEvent.setup>) => {
+        await screen.findByRole("group", { name: "Set 1" });
+        await settle();
+        await user.click(within(squatBlock()).getByRole("button", { name: "Squat" }));
+        await screen.findByRole("group", { name: "Set 2" });
+      };
+      it("asks right after the first requested set is logged, aimed at that set, without blocking the log", async () => {
+        const { user } = setup({ active: session({ programDayId: "d1" }) });
+        await screen.findByRole("group", { name: "Set 1" });
+        await dropWarmups(user);
+        expect(popup()).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+        // The set is written first; the question comes after.
+        await waitFor(() => expect(popup()).toBeInTheDocument());
+        expect(logSet).toHaveBeenCalledTimes(1);
+        expect(within(popup()!).getByRole("button", { name: "Attach now" })).toBeInTheDocument();
+      });
+
+      it("asks once per exercise: Later is not followed by another popup on the next set", async () => {
+        const { user } = setup({ active: session({ programDayId: "d1" }) });
+        await screen.findByRole("group", { name: "Set 1" });
+        await dropWarmups(user);
+        await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+        await user.click(await screen.findByRole("button", { name: "Later" }));
+        expect(popup()).not.toBeInTheDocument();
+        // The badge stays as the reminder.
+        expect(screen.getByRole("img", { name: "Set 1: your coach asked for a video, not filmed yet" })).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+        await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+        await settle();
+        expect(popup()).not.toBeInTheDocument();
+      });
+
+      it("remembers Later across a reload of the same session", async () => {
+        const first = setup({ active: session({ programDayId: "d1" }) });
+        await screen.findByRole("group", { name: "Set 1" });
+        await dropWarmups(first.user);
+        await first.user.click(screen.getByRole("button", { name: "Log Set 1" }));
+        await first.user.click(await screen.findByRole("button", { name: "Later" }));
+
+        // Back with Set 1 on the server and Set 2 still to do.
+        storedSets.value = [logged("a", 150, 1, { setIndex: 1, prescriptionId: "sq" })];
+        const { user } = reload(first.unmount);
+        await openNext(user);
+        expect(popup()).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+        await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+        await settle();
+        expect(popup()).not.toBeInTheDocument();
+      });
+
+      it("does not pop up for sets already logged when the session is reopened", async () => {
+        storedSets.value = [logged("a", 150, 1, { setIndex: 1, prescriptionId: "sq" })];
+        setup({ active: session({ programDayId: "d1" }) });
+        expect(await screen.findByRole("img", { name: "Set 1: your coach asked for a video, not filmed yet" })).toBeInTheDocument();
+        await settle();
+        expect(popup()).not.toBeInTheDocument();
+      });
+
+      it("opens the picker for the logged set from Attach now", async () => {
+        const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+        try {
+          const { user } = setup({ active: session({ programDayId: "d1" }) });
+          await screen.findByRole("group", { name: "Set 1" });
+          await dropWarmups(user);
+          await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+          await user.click(await screen.findByRole("button", { name: "Attach now" }));
+          expect(click).toHaveBeenCalledTimes(1);
+          const input = click.mock.contexts[0] as HTMLInputElement;
+          expect(input.type).toBe("file");
+          expect(squatBlock().contains(input)).toBe(true);
+          expect(popup()).not.toBeInTheDocument();
+        } finally {
+          click.mockRestore();
+        }
+      });
+
+      it("never asks for a warm-up, even on a row the coach flagged", async () => {
+        const { user } = setup({ active: session({ programDayId: "d1" }) });
+        await screen.findByRole("group", { name: "Set 1" });
+        await dropWarmups(user);
+        await user.click(screen.getByRole("button", { name: "Set 1 weight in kilograms" }));
+        await user.click(screen.getByRole("switch", { name: "Warm-up" }));
+        await user.click(screen.getByRole("button", { name: "Log Warm-up set" }));
+        await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+        await settle();
+        expect(popup()).not.toBeInTheDocument();
+      });
+
+      it("never asks when the exercise already has a clip", async () => {
+        storedSets.value = [logged("a", 150, 1, { setIndex: 1, prescriptionId: "sq", hasVideo: true })];
+        const { user } = setup({ active: session({ programDayId: "d1" }) });
+        await openNext(user);
+        await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+        await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+        await settle();
+        expect(popup()).not.toBeInTheDocument();
+      });
+
+      it("never asks for a set the phone could not write down", async () => {
+        logSet.mockRejectedValueOnce(new Error("quota"));
+        const { user } = setup({ active: session({ programDayId: "d1" }) });
+        await screen.findByRole("group", { name: "Set 1" });
+        await dropWarmups(user);
+        await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+        await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+        await settle();
+        expect(popup()).not.toBeInTheDocument();
+      });
+
+      it("never asks for an exercise the coach did not flag", async () => {
+        const { user } = setup({ active: session({ programDayId: "d1" }) });
+        await screen.findByRole("group", { name: "Set 1" });
+        await user.click(within(screen.getByRole("region", { name: "Barbell Row" })).getByRole("button", { name: "Barbell Row" }));
+        await user.click(within(screen.getByRole("region", { name: "Barbell Row" })).getByRole("button", { name: "Log Set 1" }));
+        await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+        await settle();
+        expect(popup()).not.toBeInTheDocument();
+      });
     });
 
     it("reads a clip already on a logged set as answered after a reload", async () => {

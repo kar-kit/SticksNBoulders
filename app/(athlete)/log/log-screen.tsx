@@ -22,6 +22,7 @@ import { setForNewClip } from "@/lib/video/clip";
 import { retireReplacedClip } from "@/lib/video/my-clips-store";
 import type { UploadResult } from "@/lib/video/upload";
 import { videoAsk } from "@/lib/logging/video-prompt";
+import { rememberNudged, wasNudged } from "@/lib/logging/video-nudge";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { resolveOrCreateExercise } from "@/lib/exercises/library";
 import type { Exercise } from "@/lib/exercises/match";
@@ -357,6 +358,15 @@ export function LogScreen() {
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   /** The edit sheet's "Discard changes?" is up (F16). */
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  /**
+   * The working set this page last logged, with its block, while its
+   * exercise has not had the coach's video popup this session (F18). The
+   * camera turns it into the popup only if the coach asked for that set and
+   * nothing of the exercise is filmed; otherwise it simply waits to be
+   * replaced by the next set. Never read back after a reload: the popup
+   * answers the moment of logging, not the state of the session.
+   */
+  const [nudgeCandidate, setNudgeCandidate] = useState<{ setId: string; blockId: string } | null>(null);
   const targetsOf = useCallback(
     (exerciseId: string, logged: readonly LoggedForTarget[]): SetTarget[] | null => {
       const planned = plan.find((p) => p.exerciseId === exerciseId);
@@ -1203,6 +1213,11 @@ export function LogScreen() {
     // Saved: the queued mark carries on until Appwrite has it, and any
     // earlier warning is out of date.
     setUnsaved(false);
+    // Only now, with the set on the phone and the clip's attach able to queue
+    // behind it: a set that failed to write never asks for a clip. Warm-ups
+    // never ask, and an exercise already asked this session is not asked again.
+    const blockId = blockOf(row.exerciseId);
+    if (!row.isWarmup && !wasNudged(active.id, blockId)) setNudgeCandidate({ setId: row.clientSetId, blockId });
   };
 
   const discardPlanned = (rowId: string) => {
@@ -1851,12 +1866,23 @@ export function LogScreen() {
                       loggedWorking: workingIds.length,
                       hasClip: mine.some(hasClip),
                     });
+                    // F18: right after logging a set the coach asked to see,
+                    // once per exercise per session, never over a clip.
+                    const nudge =
+                      ask !== "none" &&
+                      nudgeCandidate?.blockId === block.id &&
+                      nudgeCandidate.setId === target.clientSetId &&
+                      asked(target.clientSetId) &&
+                      !hasClip(target);
                     return (
                       <AttachVideo
                         key={target.clientSetId}
                         setId={target.clientSetId}
                         athleteId={athleteId}
                         ask={ask}
+                        nudge={nudge}
+                        onNudgeShown={() => rememberNudged(active.id, block.id)}
+                        onNudgeClose={() => setNudgeCandidate(null)}
                         onAttached={clipAttached(target.clientSetId, clipFileOf(target))}
                       />
                     );
@@ -2038,7 +2064,7 @@ export function LogScreen() {
       {/* A sibling, not inside the sheet: an Escape here must not reach the
           sheet's own Escape and ask again. */}
       {confirmDiscard && editSheet ? (
-        <Dialog labelledBy="discard-edit-q" size="md" onClose={() => setConfirmDiscard(false)}>
+        <Dialog labelledBy="discard-edit-q" size="sm" feel="athlete" onClose={() => setConfirmDiscard(false)}>
           <h2 id="discard-edit-q" className="m-0 text-title font-semibold">
             Discard changes?
           </h2>

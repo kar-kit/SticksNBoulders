@@ -486,11 +486,12 @@ draft without asking.
   `LogSheet` is untouched. The `bottom` arbiter still picks "edit", but the
   Log now hands that sheet to `ModalSheet` and gives `LogSheet` nothing.
 - **Dismissing.** A tap on the scrim or Escape is a request (`onDismiss`).
-  An untouched draft closes. A changed one opens "Discard changes?" (the
-  coach `Dialog`, rendered as a sibling so its Escape cannot reach the
-  sheet's), with Keep editing or Discard. A changed draft is the inverse of
-  Save's no-op: `editOf(draft) === null || changesSet(set, edit)`. Cancel and
-  Save in the sheet do not ask, because they already say what they do.
+  An untouched draft closes. A changed one opens "Discard changes?" in the
+  `Dialog` at `size="sm"`, `feel="athlete"` (F18's phone question), with
+  Keep editing or Discard. It is rendered as a sibling of the sheet so its
+  Escape cannot reach the sheet's. A changed draft is the inverse of Save's
+  no-op: `editOf(draft) === null || changesSet(set, edit)`. Cancel and Save
+  in the sheet do not ask, because they already say what they do.
 - **Motion.** The scrim (`bg-black/70`, Dialog's dim) is a child of the
   full-screen, transparent dialog, not `::backdrop`, so it can fade out while
   leaving. It fades in on `animate-fade-in` and out on `animate-fade-out`. The
@@ -511,3 +512,14 @@ scrim stops touches reaching `<main>`, the keyboard for the note field does
 not hide the panel, and during the 240 ms exit the tab bar may paint over the
 fading scrim. The dialog is no longer in the top layer by then, and the tab
 bar has its own `view-transition-name`. That last one is cosmetic.
+
+## The video ask popup (F18)
+
+_Added 25 Oct 2026._ `Dialog` takes `feel="athlete"`: it arrives on
+`ease-spring` / `duration-spring` (scale 0.98 and 4 px below to rest, behind
+`motion-safe:`, the fade always), its backdrop fades in on `ease-out` /
+`base`, and it leaves on `ease-in` / `base` like the coach's. It is still
+inside `.athlete-motion` in the DOM even in the top layer, so the reduced-motion
+floor (which covers `::backdrop`) makes it instant. Exit goes through
+`usePresence` + `afterExit`. See docs/video.md, "The coach's ask as a popup".
+
