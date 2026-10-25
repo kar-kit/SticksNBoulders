@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/logging/prefill";
@@ -43,6 +44,13 @@ import { SetNoteField } from "./set-note-field";
  * delete (for a screen reader, a keyboard, or anyone who never swipes) moves
  * in with it rather than disappearing.
  *
+ * The set's clip (F17) is here as well: Add video on a set with none, Replace
+ * video on one that has one. It is the Log's own camera (`AttachVideo`),
+ * passed in by the screen, so it uploads, captures the poster and queues the
+ * attach exactly as the camera under the block does. A clip is not part of
+ * the draft: it goes up the moment it is picked, and Cancel does not take it
+ * back, which the line beside it says.
+ *
  * Presentational: the screen owns the draft and every write.
  */
 
@@ -70,6 +78,10 @@ export interface EditSetSheetProps {
   onDelete?: () => void;
   /** Why this set cannot be deleted, shown in place of Delete. */
   deleteBlocked?: string | null;
+  /** Delete held back for a moment: a clip for this set is uploading. */
+  deleteDisabled?: boolean;
+  /** The set's camera (F17): an `AttachVideo` for this set. */
+  video?: ReactNode;
 }
 
 export function EditSetSheet({
@@ -89,6 +101,8 @@ export function EditSetSheet({
   onCancel,
   onDelete,
   deleteBlocked = null,
+  deleteDisabled = false,
+  video = null,
 }: EditSetSheetProps) {
   const title = setLabel === "Warm-up set" ? "Edit warm-up" : `Edit ${setLabel.toLowerCase()}`;
   const showPad = (field === "load" || field === "reps") && pad !== null;
@@ -199,11 +213,21 @@ export function EditSetSheet({
         <RpeSheet inSheet setIndex={rpeNumber} value={draft.rpe} onSelect={onRpe} />
       )}
 
+      {video ? (
+        <div role="group" aria-label="Video" className="flex items-center justify-between gap-3 px-3 pt-1 pb-2">
+          <p className="m-0 flex min-w-0 flex-col text-caption">
+            <span className="font-mono text-label-xs text-muted-2">VIDEO</span>
+            <span className="text-muted">Goes up straight away, not on Save.</span>
+          </p>
+          {video}
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-center px-3 pb-3">
         {deleteBlocked ? (
           <p className="m-0 text-center text-caption text-muted">{deleteBlocked}</p>
         ) : onDelete ? (
-          <Button variant="danger" onClick={onDelete} aria-label={`Delete ${setLabel}`}>
+          <Button variant="danger" onClick={onDelete} disabled={deleteDisabled} aria-label={`Delete ${setLabel}`}>
             Delete set
           </Button>
         ) : null}

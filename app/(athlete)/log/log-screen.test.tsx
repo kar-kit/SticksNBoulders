@@ -77,6 +77,19 @@ vi.mock("@/lib/logging/set-store", async (importOriginal) => {
   };
 });
 
+// The clip upload and the old file's retirement, for attaching from the edit
+// sheet (F17). Everything else in both modules is the real thing.
+const attachClipToSet = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/video/upload", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/video/upload")>()),
+  attachClipToSet,
+}));
+const retireReplacedClip = vi.hoisted(() => vi.fn<(setId: string, fileId: string) => Promise<void>>(async () => {}));
+vi.mock("@/lib/video/my-clips-store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/video/my-clips-store")>()),
+  retireReplacedClip,
+}));
+
 // The Log landing's "This week" rollup read. Rows are this week's by default.
 const weekRollups = vi.hoisted(() => ({
   value: [] as { weekStart: string; setCount: number; tonnageKg: number }[],
@@ -3649,19 +3662,23 @@ describe("correcting a logged set (F9)", () => {
     expect(finish).toHaveBeenCalledWith("s1", { setCount: 2, tonnageKg: 1157.5 });
   });
 
-  it("leaves the set exactly as logged on Cancel, or on a second tap of the row", async () => {
+  it("leaves the set exactly as logged on Cancel, or on a confirmed tap on the dimmed page", async () => {
     twoSets();
     const { user } = setup({ active: session() });
     await user.click(await screen.findByRole("group", { name: "Set 1" }));
     await type(user, "99");
+    // Cancel is explicit, so it does not ask.
     await user.click(screen.getByRole("button", { name: "Cancel, keep Set 1 as logged" }));
+    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).not.toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
 
     await user.click(screen.getByRole("group", { name: "Set 1" }));
     // Opens on the logged numbers again, not the abandoned draft.
     expect(within(sheet()).getByRole("region", { name: "Weight, kg keypad" })).toHaveTextContent("140");
     await type(user, "99");
-    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    // The rows are behind the scrim now (F16); the scrim is the way out.
+    await user.click(document.querySelector("[data-scrim]")!);
+    await user.click(screen.getByRole("button", { name: "Discard" }));
     expect(screen.queryByRole("region", { name: /^Edit / })).not.toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Set 1" })).toHaveTextContent("140");
     expect(editSet).not.toHaveBeenCalled();
@@ -4048,5 +4065,168 @@ describe("correcting a logged set (F9)", () => {
       await user.click(row);
       expect(within(sheet()).getByRole("button", { name: "Change note, now: Knee caved on rep 4" })).toBeInTheDocument();
     });
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+describe("the edit sheet over a dimmed page (F16)", () => {
+  const sheet = () => screen.getByRole("region", { name: /^Edit / });
+  const scrim = () => document.querySelector<HTMLElement>("[data-scrim]");
+  const twoSets = () => {
+    storedSets.value = [
+      logged("a", 140, 20, { setIndex: 1, rpe: 7 }),
+      logged("b", 150, 10, { setIndex: 2, rpe: 8 }),
+    ];
+  };
+  beforeEach(() => resetQueueForTests());
+
+  it("puts the edit sheet in a modal over a scrim, and the logging keypad in neither", async () => {
+    const { user, unmount } = setup({ active: session() });
+    await user.type(screen.getByRole("combobox"), "squat");
+    await user.click(screen.getByRole("option", { name: "Squat" }));
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    // Logging: the pinned sheet, the rows still live, nothing dimmed.
+    expect(screen.getByRole("region", { name: "Weight, kg keypad" })).toBeInTheDocument();
+    expect(scrim()).toBeNull();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    unmount();
+
+    twoSets();
+    const again = setup({ active: session() });
+    await again.user.click(await screen.findByRole("group", { name: "Set 2" }));
+    const modal = screen.getByRole("dialog", { name: "Edit Set 2" });
+    expect(modal).toContainElement(sheet());
+    expect(modal).toContainElement(scrim());
+    expect(document.querySelector("[data-log-sheet]")).toBeNull();
+  });
+
+  it("closes on a scrim tap when nothing has changed, writing nothing", async () => {
+    twoSets();
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 2" }));
+    await user.click(scrim()!);
+    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /^Edit / })).not.toBeInTheDocument();
+    expect(editSet).not.toHaveBeenCalled();
+  });
+
+  it("asks before discarding a changed draft; Keep editing keeps it, Discard drops it", async () => {
+    twoSets();
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 2" }));
+    await user.click(within(sheet()).getByRole("button", { name: "1" }));
+    await user.click(within(sheet()).getByRole("button", { name: "6" }));
+    await user.click(within(sheet()).getByRole("button", { name: "0" }));
+
+    await user.click(scrim()!);
+    const ask = screen.getByRole("dialog", { name: "Discard changes?" });
+    expect(ask).toHaveTextContent("Set 2 stays as logged.");
+    await user.click(within(ask).getByRole("button", { name: "Keep editing" }));
+    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).not.toBeInTheDocument();
+    // The draft is still there.
+    expect(within(sheet()).getByRole("region", { name: "Weight, kg keypad" })).toHaveTextContent("160");
+
+    // Asked again on the next tap, not swallowed.
+    await user.click(scrim()!);
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.queryByRole("region", { name: /^Edit / })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Set 2" })).toHaveTextContent("150");
+    expect(editSet).not.toHaveBeenCalled();
+  });
+
+  it("treats Escape as the scrim: closes untouched, asks when changed", async () => {
+    twoSets();
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Edit Set 1" }), { key: "Escape" });
+    expect(screen.queryByRole("region", { name: /^Edit / })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("group", { name: "Set 1" }));
+    await user.click(within(sheet()).getByRole("button", { name: "9" }));
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Edit Set 1" }), { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Discard changes?" })).toBeInTheDocument();
+    expect(sheet()).toBeInTheDocument();
+  });
+
+  it("saves from the sheet as before, with no confirm", async () => {
+    twoSets();
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 2" }));
+    await user.click(within(sheet()).getByRole("button", { name: "9" }));
+    await user.click(screen.getByRole("button", { name: "Save Set 2" }));
+    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).not.toBeInTheDocument();
+    expect(editSet).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a clip from the edit sheet (F17)", () => {
+  const sheet = () => screen.getByRole("region", { name: /^Edit / });
+  const clip = () => new File([new Uint8Array(16)], "set.mp4", { type: "video/mp4" });
+  const pick = async (user: ReturnType<typeof userEvent.setup>) => {
+    const input = sheet().querySelector<HTMLInputElement>('input[type="file"]')!;
+    await user.upload(input, clip());
+  };
+  beforeEach(() => {
+    resetQueueForTests();
+    attachClipToSet.mockReset();
+    retireReplacedClip.mockClear();
+  });
+
+  it("offers Add video on a set with no clip, and attaches through the Log's upload path", async () => {
+    storedSets.value = [logged("a", 140, 20, { setIndex: 1, rpe: 7 })];
+    attachClipToSet.mockResolvedValue({ ok: true, fileId: "file-new" });
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    const video = within(sheet()).getByRole("group", { name: "Video" });
+    await user.click(within(video).getByRole("button", { name: "Add video" }));
+    await pick(user);
+
+    expect(attachClipToSet).toHaveBeenCalledWith("a", "joey", expect.any(File), expect.anything());
+    expect(await within(video).findByRole("button", { name: "Replace video" })).toBeInTheDocument();
+    // Nothing to retire.
+    expect(retireReplacedClip).not.toHaveBeenCalled();
+    // The clip is not part of the draft: closing writes no edit.
+    await user.click(document.querySelector<HTMLElement>("[data-scrim]")!);
+    expect(editSet).not.toHaveBeenCalled();
+  });
+
+  it("offers Replace video on a filmed set and retires the old file once the new attach is queued", async () => {
+    storedSets.value = [logged("a", 140, 20, { setIndex: 1, rpe: 7, hasVideo: true, videoFileId: "file-old" })];
+    attachClipToSet.mockResolvedValue({ ok: true, fileId: "file-new" });
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    expect(within(sheet()).getByRole("button", { name: "Replace video" })).toBeInTheDocument();
+    await pick(user);
+
+    await waitFor(() => expect(retireReplacedClip).toHaveBeenCalledWith("a", "file-old"));
+
+    // A second replace on the same page retires the first replacement, not the original.
+    attachClipToSet.mockResolvedValue({ ok: true, fileId: "file-newer" });
+    await pick(user);
+    await waitFor(() => expect(retireReplacedClip).toHaveBeenLastCalledWith("a", "file-new"));
+    expect(retireReplacedClip).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves the old file alone while the replacement is still pending", async () => {
+    storedSets.value = [logged("a", 140, 20, { setIndex: 1, rpe: 7, hasVideo: true, videoFileId: "file-old" })];
+    attachClipToSet.mockResolvedValue({ ok: false, reason: "pending", message: "It will carry on by itself." });
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    await pick(user);
+    expect(await within(sheet()).findByText("It will carry on by itself.")).toBeInTheDocument();
+    expect(retireReplacedClip).not.toHaveBeenCalled();
+  });
+
+  it("holds Delete back while the clip uploads", async () => {
+    storedSets.value = [logged("a", 140, 20, { setIndex: 1, rpe: 7 })];
+    let finish: (value: unknown) => void = () => {};
+    attachClipToSet.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    await pick(user);
+    expect(within(sheet()).getByRole("button", { name: "Delete Set 1" })).toBeDisabled();
+    await act(async () => finish({ ok: true, fileId: "file-new" }));
+    expect(within(sheet()).getByRole("button", { name: "Delete Set 1" })).toBeEnabled();
   });
 });

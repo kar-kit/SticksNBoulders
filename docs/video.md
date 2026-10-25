@@ -379,6 +379,35 @@ Known edges, for Joey:
   so.
 <!-- END: athlete clips gallery (F13) -->
 
+## Add or replace a clip from the edit sheet (F17)
+
+_25 Oct 2026. Source: Joey._ The Log's "Edit set N" sheet has a Video row:
+**Add video** on a set with no clip, **Replace video** on one that has one.
+It is the same `AttachVideo` as the camera under each block, so the upload,
+resume, poster capture (F12) and the queued `set.attachVideo` are the
+normal path. No `ask`: the coach's nudge stays on the block's camera, and
+`attach-video.tsx` is unchanged.
+
+- **The old file goes**, as on the Clips screen (F13): once the new clip's
+  attach is queued (`ok`), the Log queues `retireReplacedClip(setId, old)`,
+  and `deleteClipIfUnused` removes the file and its poster when the set no
+  longer names it. A pending replacement leaves the old file for
+  `clips:sweep`. To know the old file id, `fetchSessionSets` now reads
+  `videoFileId` alongside `hasVideo`. The Log also remembers the file each
+  clip on this page went up as, so a second replace retires the first
+  replacement, not the original.
+- **The block's camera** now does the same when it replaces a clip. It used
+  to leave the old file for the sweep.
+- **Review Queue.** The attach rewrites `video_file_id`, so a replaced clip
+  the coach had cleared comes back (F15, schema v18). Nothing new is needed.
+- **Not part of the draft.** A clip goes up as soon as it is picked, so
+  Cancel and Discard do not undo it. The row says "Goes up straight away,
+  not on Save."
+- **Delete set waits** while the sheet's upload runs. A finished upload must
+  not re-attach a clip to a set just deleted, for the same reason the Clips
+  screen holds back Delete clip.
+
+
 <!-- BEGIN: the coach's ask as a popup (F18) -->
 ## The coach's ask as a popup (F18)
 

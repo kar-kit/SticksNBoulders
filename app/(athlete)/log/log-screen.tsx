@@ -7,6 +7,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 import { ExerciseBlock, type LoggedSet } from "@/components/logging/exercise-block";
 import { LogSheet } from "@/components/logging/log-sheet";
+import { ModalSheet } from "@/components/logging/modal-sheet";
+import { Dialog } from "@/components/ui/dialog";
 import { NumberPad } from "@/components/logging/number-pad";
 import { EditSetSheet, type EditField } from "@/components/logging/edit-set-sheet";
 import { RestBar } from "@/components/logging/rest-bar";
@@ -17,6 +19,8 @@ import { UndoToast } from "@/components/ui/undo-toast";
 import { useSession } from "@/lib/auth/session-context";
 import { AttachVideo } from "@/components/logging/attach-video";
 import { setForNewClip } from "@/lib/video/clip";
+import { retireReplacedClip } from "@/lib/video/my-clips-store";
+import type { UploadResult } from "@/lib/video/upload";
 import { videoAsk } from "@/lib/logging/video-prompt";
 import { rememberNudged, wasNudged } from "@/lib/logging/video-nudge";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
@@ -344,6 +348,16 @@ export function LogScreen() {
   const plan = useMemo(() => (prescribed.status === "ready" ? planDay(prescribed.day.prescriptions) : []), [prescribed]);
   /** Sets a clip was attached to on this page; sets read from Appwrite carry their own flag. */
   const [filmed, setFilmed] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * The file each of those clips went up as, once its attach is queued, so a
+   * second replace on this page retires the right file (F17). A set read from
+   * Appwrite carries its own `videoFileId`.
+   */
+  const [clipFiles, setClipFiles] = useState<ReadonlyMap<string, string>>(new Map());
+  /** The set a clip is uploading for from the edit sheet; its Delete waits. */
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  /** The edit sheet's "Discard changes?" is up (F16). */
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   /**
    * The working set this page last logged, with its block, while its
    * exercise has not had the coach's video popup this session (F18). The
@@ -1010,6 +1024,7 @@ export function LogScreen() {
     closeSheets();
     setAddingInline(false);
     setEditUnsaved(false);
+    setConfirmDiscard(false);
     setEditing({
       clientSetId,
       draft: draftOf(set, rpeToRestore(clientSetId)),
@@ -1592,7 +1607,43 @@ export function LogScreen() {
     return `Set ${mine.slice(0, at + 1).filter((s) => !s.isWarmup).length}`;
   })();
 
-  const sheet =
+  /** The file a set's clip is in now, as far as this page knows. */
+  const clipFileOf = (set: { clientSetId: string; videoFileId?: string | null }) =>
+    clipFiles.get(set.clientSetId) ?? set.videoFileId ?? null;
+
+  /**
+   * A clip on its way to `setId`, from the block's camera or the edit sheet.
+   * A replacement retires the file it replaced once its own attach is
+   * queued, the way the Clips screen does (docs/video.md, F13): queued any
+   * earlier, the cleanup would find the set still naming the old file and
+   * keep it for good. A clip still uploading leaves the old file for the
+   * sweep. The new file is what the set names from here on, so the coach's
+   * Review Queue sees a replaced clip as new (F15).
+   */
+  const clipAttached = (setId: string, oldFileId: string | null) => (result: UploadResult) => {
+    setFilmed((prev) => new Set(prev).add(setId));
+    if (!result.ok) return;
+    setClipFiles((prev) => new Map(prev).set(setId, result.fileId));
+    if (oldFileId && result.fileId !== oldFileId) void retireReplacedClip(setId, oldFileId).catch(() => {});
+  };
+
+  /**
+   * Whether closing the edit sheet now would lose anything: the inverse of
+   * Save's no-op, so a sheet Save would simply close never asks first.
+   */
+  const editDirty = (() => {
+    if (!editing || !editingSet) return false;
+    const edit = editOf(editing.draft);
+    return edit === null || changesSet(editingSet, edit);
+  })();
+
+  /** A tap on the scrim, or Escape (F16): an untouched draft just closes. */
+  const dismissEdit = () => {
+    if (editDirty) setConfirmDiscard(true);
+    else setEditing(null);
+  };
+
+  const editSheet =
     bottom === "edit" && editing && editingSet ? (
       <EditSetSheet
         setLabel={editLabel}
@@ -1615,8 +1666,28 @@ export function LogScreen() {
         onCancel={() => setEditing(null)}
         onDelete={() => deleteLogged(editingSet.clientSetId)}
         deleteBlocked={undeletable.has(editingSet.clientSetId) ? COACH_COMMENTED : null}
+        // A finished upload must not re-attach a clip to a set just deleted.
+        deleteDisabled={uploadingFor === editingSet.clientSetId}
+        video={
+          athleteId ? (
+            <AttachVideo
+              key={editingSet.clientSetId}
+              setId={editingSet.clientSetId}
+              athleteId={athleteId}
+              hasVideo={Boolean(editingSet.hasVideo) || filmed.has(editingSet.clientSetId)}
+              onAttached={clipAttached(editingSet.clientSetId, clipFileOf(editingSet))}
+              onUploadingChange={(uploading) => {
+                const id = editingSet.clientSetId;
+                setUploadingFor((was) => (uploading ? id : was === id ? null : was));
+              }}
+            />
+          ) : null
+        }
       />
-    ) : bottom === "swap" && swapFor !== null && swapping.length > 0 ? (
+    ) : null;
+
+  const sheet =
+    bottom === "swap" && swapFor !== null && swapping.length > 0 ? (
       <VariantSheet
         name={blockName(swapFor, swapFor)}
         options={swapping}
@@ -1812,7 +1883,7 @@ export function LogScreen() {
                         nudge={nudge}
                         onNudgeShown={() => rememberNudged(active.id, block.id)}
                         onNudgeClose={() => setNudgeCandidate(null)}
-                        onAttached={() => setFilmed((prev) => new Set(prev).add(target.clientSetId))}
+                        onAttached={clipAttached(target.clientSetId, clipFileOf(target))}
                       />
                     );
                   })()}
@@ -1985,6 +2056,36 @@ export function LogScreen() {
       <LogSheet anchor={sheetAnchor} revealKey={revealKey}>
         {sheet}
       </LogSheet>
+
+      {/* Editing a logged set is modal, over a dimmed page (F16). */}
+      <ModalSheet label={`Edit ${editLabel}`} onDismiss={dismissEdit} anchor={sheetAnchor} revealKey={revealKey}>
+        {editSheet}
+      </ModalSheet>
+      {/* A sibling, not inside the sheet: an Escape here must not reach the
+          sheet's own Escape and ask again. */}
+      {confirmDiscard && editSheet ? (
+        <Dialog labelledBy="discard-edit-q" size="sm" feel="athlete" onClose={() => setConfirmDiscard(false)}>
+          <h2 id="discard-edit-q" className="m-0 text-title font-semibold">
+            Discard changes?
+          </h2>
+          <p className="mt-2 mb-0 text-body text-muted">{editLabel} stays as logged.</p>
+          <div className="mt-5 flex gap-3">
+            <Button block variant="secondary" onClick={() => setConfirmDiscard(false)}>
+              Keep editing
+            </Button>
+            <Button
+              block
+              variant="danger"
+              onClick={() => {
+                setConfirmDiscard(false);
+                setEditing(null);
+              }}
+            >
+              Discard
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
     </div>
   );
 }

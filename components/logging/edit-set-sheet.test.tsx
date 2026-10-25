@@ -124,4 +124,23 @@ describe("EditSetSheet", () => {
       expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
     });
   });
+
+  describe("the set's clip (F17)", () => {
+    it("shows the camera it is given in a Video row, saying it does not wait for Save", () => {
+      setup({ video: <button type="button">Replace video</button> });
+      const row = screen.getByRole("group", { name: "Video" });
+      expect(within(row).getByRole("button", { name: "Replace video" })).toBeInTheDocument();
+      expect(row).toHaveTextContent("Goes up straight away, not on Save.");
+    });
+
+    it("has no Video row without one", () => {
+      setup();
+      expect(screen.queryByRole("group", { name: "Video" })).not.toBeInTheDocument();
+    });
+
+    it("holds Delete back while told to", () => {
+      setup({ deleteDisabled: true });
+      expect(screen.getByRole("button", { name: "Delete Set 2" })).toBeDisabled();
+    });
+  });
 });
