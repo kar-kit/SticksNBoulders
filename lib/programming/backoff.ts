@@ -181,11 +181,18 @@ export interface TopSet {
  * they weighed -- a heavy opener single is not the set the coach prescribed.
  * Null when nothing usable has been logged, and then the backoff has no load
  * rather than a guessed one.
+ *
+ * A failed set (F19) is never the top set either. "90% of the top set" means
+ * 90% of a weight the athlete actually moved for the prescribed work; pricing
+ * the backoff off a miss would treat the miss as the day's top set. So a
+ * failed attempt at 200 after a made 190 prices off 190, and a line whose
+ * only sets failed leaves its backoff with no load -- the athlete reads the
+ * rule and the row repeats, the same as before any top set existed.
  */
 export function topSetOf(sets: readonly SetForEstimate[]): TopSet | null {
   let best: SetForEstimate | null = null;
   for (const set of sets) {
-    if (set.isWarmup || !(Number.isFinite(set.loadKg) && set.loadKg > 0)) continue;
+    if (set.isWarmup || set.failed || !(Number.isFinite(set.loadKg) && set.loadKg > 0)) continue;
     if (best === null || set.loadKg >= best.loadKg) best = set;
   }
   return best ? { loadKg: best.loadKg, reps: best.reps, rpe: best.rpe } : null;
@@ -222,7 +229,10 @@ export function backoffLoad(rule: BackoffRule, topLoadKg: number, unit: UnitPref
  * in the run counts, the run ends at the first set logged at or above the
  * stop RPE (that set included), and while it has not ended there is one more
  * set to do -- up to the cap. A set logged without an RPE cannot end the run,
- * because "Not sure" is not an answer to "did that reach @9".
+ * because "Not sure" is not an answer to "did that reach @9". A failed set
+ * (F19) does end it, whatever RPE it carries: a miss went past any stop RPE a
+ * coach can write, and planning another set at the same weight after one
+ * would be the app pushing on after failure.
  *
  * `after` is the working sets logged after the line's own sets, in order. Some
  * may belong to later lines; the run only consumes what it needs.
@@ -234,7 +244,7 @@ export function backoffRun(rule: BackoffRule, after: readonly SetForEstimate[]):
   for (const set of after) {
     if (logged >= cap) break;
     logged++;
-    if (set.rpe !== null && set.rpe >= rule.untilRpe) return { sets: logged, done: true };
+    if (set.failed || (set.rpe !== null && set.rpe >= rule.untilRpe)) return { sets: logged, done: true };
   }
   return logged >= cap ? { sets: logged, done: true } : { sets: logged + 1, done: false };
 }

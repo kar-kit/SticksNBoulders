@@ -74,3 +74,13 @@ it("shows no notes list for an exercise nobody wrote about", async () => {
   await user.click(await screen.findByRole("button", { name: /Squat/ }));
   expect(screen.queryByRole("list", { name: /Athlete notes/ })).not.toBeInTheDocument();
 });
+
+it("marks a missed set Failed beside its numbers, so the coach never reads it as made (F19)", async () => {
+  sets.rows = [set({ clientSetId: "a", loadKg: 180, reps: 3 }), set({ clientSetId: "b", setIndex: 2, loadKg: 200, reps: 0, rpe: 10, failed: true })];
+  const user = userEvent.setup();
+  render(<AthleteSessions athleteId="joey" />);
+  await user.click(await screen.findByRole("button", { name: /Squat/ }));
+  const marks = document.querySelectorAll("[data-failed]");
+  expect(marks).toHaveLength(1);
+  expect(marks[0].parentElement).toHaveTextContent("200 × 0 @10Failed");
+});

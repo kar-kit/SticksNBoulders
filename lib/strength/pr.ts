@@ -32,6 +32,18 @@ import { weekStart } from "./rollup";
  * and most reps never read RPE either, and their best e1RM reads the stored
  * `e1rm_kg`, which is null for these sets.
  *
+ * ## Failed sets (F19)
+ *
+ * Never a record of any kind, and never a best to beat. A miss at 200 is not
+ * the heaviest weight lifted, 3 of a failed 5 at 140 is not a rep max, and
+ * a failed set has no e1RM (lib/strength/e1rm.ts). So `priorBests` and
+ * `repBests` skip them, which is also what keeps the Log's device cache
+ * (`snb.exercise-history`) clean: it stores those two answers, not the
+ * sets. `detectPrs` badges none and lets none into the session's running
+ * frontier or heaviest weight, so a failed 150 does not make a made 150
+ * after it look like a non-record. The rollups agree: `rollupFrom` keeps
+ * failed sets out of its bests (lib/strength/rollup.ts).
+ *
  * ## Why the rep record reads raw sets
  *
  * The rollups keep the week's heaviest set and the week's most reps, each
@@ -86,6 +98,8 @@ export interface PriorSet {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19. Absent reads as false. */
+  failed?: boolean;
   loggedAt: Date;
   /** As stored on the set. Recomputed from load, reps and RPE when absent. */
   e1rmKg?: number | null;
@@ -97,6 +111,8 @@ export interface SessionSetForPr {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19. Absent reads as false. */
+  failed?: boolean;
 }
 
 /**
@@ -137,7 +153,7 @@ export function priorBests(
   }
 
   for (const set of before) {
-    if (set.isWarmup || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
+    if (set.isWarmup || set.failed || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
     if (!usable(set.loadKg) || !(set.reps > 0)) continue;
     any = true;
     const estimate = usable(set.e1rmKg) ? set.e1rmKg : estimateOneRepMax({ ...set, isWarmup: false });
@@ -160,7 +176,7 @@ export function priorBests(
 export function repBests(before: readonly PriorSet[], sessionStart: Date): RepBest[] {
   const mostAt = new Map<number, number>();
   for (const set of before) {
-    if (set.isWarmup || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
+    if (set.isWarmup || set.failed || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
     if (!usable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
     const load = tenth(set.loadKg);
     mostAt.set(load, Math.max(mostAt.get(load) ?? 0, set.reps));
@@ -199,7 +215,9 @@ function mostRepsAtOrAbove(frontier: readonly RepBest[], load: number): number {
  * prior best (a lift never logged with an RPE has no e1RM to beat; a history
  * not read in full has no rep frontier) badges nothing of that kind.
  *
- * Warm-ups never count, and neither does an incomplete set.
+ * Warm-ups never count, and neither does an incomplete set or a failed one
+ * (F19): no badge, and no place in the running bests a later set is measured
+ * against.
  */
 export function detectPrs(
   sets: readonly SessionSetForPr[],
@@ -212,7 +230,7 @@ export function detectPrs(
   let frontier = bests.repsAt ? frontierOf(bests.repsAt.map((p) => ({ loadKg: tenth(p.loadKg), reps: p.reps }))) : null;
 
   for (const set of sets) {
-    if (set.isWarmup || !usable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
+    if (set.isWarmup || set.failed || !usable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
     const kinds: PrKind[] = [];
 
     const estimate = estimateOneRepMax({ loadKg: set.loadKg, reps: set.reps, rpe: set.rpe, isWarmup: false });

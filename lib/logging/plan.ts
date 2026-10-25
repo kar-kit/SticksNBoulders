@@ -26,6 +26,12 @@ export interface PlannedRow {
   rpe: RpeValue | null;
   isWarmup: boolean;
   /**
+   * The athlete flipped the Failed switch for this row (F19): it will be
+   * logged as missed, with the reps typed as the ones completed. Absent is
+   * false; a new row never starts failed.
+   */
+  failed?: boolean;
+  /**
    * The athlete asked for this row with Add set, or it sits behind one they
    * did. Planned rows survive moving to another exercise; the automatic row
    * that tapping an exercise's name opens does not, which keeps a trail of
@@ -176,13 +182,20 @@ export function afterConfirm(
  * weight once its top set exists, a weight priced off today's top set moves
  * with it. Warm-up rows are left blank -- the athlete's ramp is theirs -- and
  * a warm-up logged ahead changes nothing.
+ *
+ * Neither does a failed set (F19). Repeating it would hand the next row the
+ * reps the athlete managed rather than the ones they were after (a missed
+ * single repeats as "200 x 0", which cannot even be logged as made), and
+ * repricing off it would treat the miss as the set to build on. The rows
+ * behind keep what they had; the coach's backoff, which is priced off the
+ * line's top set, already leaves a failed set out (`topSetOf`).
  */
 export function refreshBehind(
   rows: readonly PlannedRow[],
-  logged: { exerciseId: string; loadKg: number; reps: number; isWarmup: boolean },
+  logged: { exerciseId: string; loadKg: number; reps: number; isWarmup: boolean; failed?: boolean },
 ): { rows: PlannedRow[]; reprice: Set<string> } {
   const reprice = new Set<string>();
-  if (logged.isWarmup) return { rows: [...rows], reprice };
+  if (logged.isWarmup || logged.failed) return { rows: [...rows], reprice };
   const next = rows.map((row) => {
     if (row.exerciseId !== logged.exerciseId || row.touched || row.isWarmup) return row;
     reprice.add(row.clientSetId);

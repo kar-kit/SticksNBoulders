@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/cn";
+import { FailedSwitch } from "./failed-switch";
 import { formatNumber } from "@/lib/logging/prefill";
 import { UNDER_SIX_RPE_VALUES, type RpeValue } from "@/lib/logging/set";
 
@@ -32,6 +33,15 @@ import { UNDER_SIX_RPE_VALUES, type RpeValue } from "@/lib/logging/set";
  * e1RM and no e1RM record (lib/strength/e1rm.ts, `MIN_ESTIMABLE_RPE`), and a
  * coach can never prescribe it (`PrescribableRpe`). Nothing on this sheet says
  * so, because nothing the athlete would do differently follows from it.
+ *
+ * ## Failed (F19)
+ *
+ * A switch under the chips, when the screen passes `onToggleFailed`: "I
+ * missed this one". It sits next to RPE because that is the question being
+ * answered here -- how did the set go -- and it does not close the sheet the
+ * way a chip does, so the athlete can mark the miss and still give an RPE
+ * (or "Not sure"). The reps on the row are the ones completed; the flag is
+ * what keeps that number out of every e1RM and record (lib/strength/pr.ts).
  */
 
 const WHOLE_ROW: RpeValue[] = [6, 6.5, 7, 7.5, 8, 8.5];
@@ -47,6 +57,9 @@ export interface RpeSheetProps {
   onSelect: (value: RpeValue | null) => void;
   /** Drawn inside a sheet that owns the edge and the fill (LogSheet). */
   inSheet?: boolean;
+  /** The set was missed (F19). Shown as a switch only with `onToggleFailed`. */
+  failed?: boolean;
+  onToggleFailed?: (failed: boolean) => void;
 }
 
 function chipClasses(selected: boolean, half: boolean) {
@@ -68,7 +81,7 @@ function wordChipClasses(active: boolean) {
   );
 }
 
-export function RpeSheet({ setIndex, value, onSelect, inSheet = false }: RpeSheetProps) {
+export function RpeSheet({ setIndex, value, onSelect, inSheet = false, failed = false, onToggleFailed }: RpeSheetProps) {
   const isHalf = (v: RpeValue) => !Number.isInteger(v);
   // Seeded from the value, not synced to it: the sheet is mounted per opening,
   // and once open the athlete's own taps decide whether the row shows.
@@ -148,6 +161,12 @@ export function RpeSheet({ setIndex, value, onSelect, inSheet = false }: RpeShee
               {formatNumber(v)}
             </button>
           ))}
+        </div>
+      ) : null}
+
+      {onToggleFailed ? (
+        <div className="flex">
+          <FailedSwitch failed={failed} onToggle={onToggleFailed} hint="Reps are the ones you completed" />
         </div>
       ) : null}
     </section>

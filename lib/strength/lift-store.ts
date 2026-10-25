@@ -64,6 +64,8 @@ export interface LiftSet {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19: a missed set. Listed with its marker; it is real work. */
+  failed?: boolean;
   loggedAt: Date;
 }
 
@@ -91,7 +93,7 @@ export async function fetchRecentSetsFor(athleteId: string, exerciseId: string):
   });
 
   return authenticRows("sets", rows.rows)
-    .map((row) => {
+    .map((row): LiftSet | null => {
       const loggedAt = new Date(String(row.logged_at));
       if (Number.isNaN(loggedAt.getTime())) return null;
       return {
@@ -100,8 +102,9 @@ export async function fetchRecentSetsFor(athleteId: string, exerciseId: string):
         reps: num(row.reps) ?? 0,
         rpe: num(row.rpe),
         isWarmup: row.is_warmup === true,
+        failed: row.failed === true,
         loggedAt,
-      } satisfies LiftSet;
+      };
     })
     .filter((set): set is LiftSet => set !== null);
 }

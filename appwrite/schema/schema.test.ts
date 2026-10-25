@@ -495,7 +495,7 @@ describe("clip posters (v17, F12)", () => {
 
 describe("re-queueing a replaced clip (v18)", () => {
   it("records which clip a review cleared, as one nullable id, so every existing review is untouched", () => {
-    expect(schema.version).toBe(18);
+    expect(schema.version).toBeGreaterThanOrEqual(18);
     expect(table("set_reviews").columns.find((c) => c.key === "video_file_id")).toEqual({
       key: "video_file_id",
       type: "string",
@@ -505,5 +505,24 @@ describe("re-queueing a replaced clip (v18)", () => {
     });
     // Compared in memory against the set's clip, never queried by.
     expect(table("set_reviews").indexes.some((i) => i.columns.includes("video_file_id"))).toBe(false);
+  });
+});
+
+describe("failed sets (v19, F19)", () => {
+  it("record a miss as one nullable boolean with no default, so every existing set is untouched", () => {
+    expect(schema.version).toBe(19);
+    // No default: a default would have Appwrite stamp a value on every row
+    // when the column is created. Null reads as not failed everywhere.
+    expect(table("sets").columns.find((c) => c.key === "failed")).toEqual({
+      key: "failed",
+      type: "boolean",
+      required: false,
+    });
+    // Read with the row, never filtered or sorted by.
+    expect(table("sets").indexes.some((i) => i.columns.includes("failed"))).toBe(false);
+  });
+
+  it("let reps go to 0, which is how a missed single is logged", () => {
+    expect(table("sets").columns.find((c) => c.key === "reps")).toMatchObject({ type: "integer", min: 0 });
   });
 });

@@ -25,6 +25,8 @@ export interface ContextSet {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19: a missed set. Said in words, so the coach never reads it as made. */
+  failed?: boolean;
   loggedAt: Date;
 }
 
@@ -48,11 +50,13 @@ const kg = (value: number) => (Number.isInteger(value) ? String(value) : String(
  * One session's sets of one exercise, in words, with straight sets folded:
  * "165 × 5 @7.5 ×3" is three identical sets, the way a coach writes them.
  * Only consecutive repeats fold, so a top set between two backoffs stays put.
+ * A missed set (F19) reads "200 × 0 @10 failed", and never folds into a made
+ * one at the same numbers.
  */
-export function setsInWords(sets: readonly Pick<ContextSet, "loadKg" | "reps" | "rpe">[]): string {
+export function setsInWords(sets: readonly Pick<ContextSet, "loadKg" | "reps" | "rpe" | "failed">[]): string {
   const parts: { text: string; count: number }[] = [];
   for (const set of sets) {
-    const text = `${kg(set.loadKg)} × ${set.reps}${set.rpe === null ? "" : ` @${kg(set.rpe)}`}`;
+    const text = `${kg(set.loadKg)} × ${set.reps}${set.rpe === null ? "" : ` @${kg(set.rpe)}`}${set.failed ? " failed" : ""}`;
     const last = parts.at(-1);
     if (last?.text === text) last.count += 1;
     else parts.push({ text, count: 1 });

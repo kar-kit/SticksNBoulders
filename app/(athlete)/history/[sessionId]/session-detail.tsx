@@ -67,6 +67,8 @@ interface Draft {
   reps: number | null;
   rpe: RpeValue | null;
   isWarmup: boolean;
+  /** F19: the athlete missed it; reps are the ones completed, 0 allowed. */
+  failed: boolean;
   /** The note as typed. Blank is none; `noteOf` decides what is stored. */
   notes: string;
 }
@@ -246,6 +248,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
       reps: set.reps,
       rpe: (set.rpe as RpeValue | null) ?? null,
       isWarmup: set.isWarmup,
+      failed: set.failed === true,
       notes: set.notes ?? "",
     });
     setPad(beginEdit("load", loadIn(set.loadKg, unit), unit));
@@ -292,6 +295,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
       reps: draft.reps as number,
       rpe: draft.rpe,
       isWarmup: draft.isWarmup,
+      failed: draft.failed,
       notes: noteOf(draft.notes),
     };
     // Shown corrected straight away. The write is queued, so waiting for it
@@ -464,7 +468,9 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                         setEditingFields(false);
                         startEditing(set);
                       }}
-                      aria-label={`Edit ${index === "W" ? "warm-up set" : `set ${index}`} of ${block.name}`}
+                      // A button's content is not read inside its name, so the
+                      // Failed mark (F19) is said here as well.
+                      aria-label={`Edit ${index === "W" ? "warm-up set" : `set ${index}`} of ${block.name}${set.failed ? ", failed" : ""}`}
                       className="w-full text-left"
                     >
                       <SetRow
@@ -534,6 +540,8 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                 prev ? { ...prev, isWarmup, rpe: rpeAfterWarmupChange(isWarmup, prev.rpe) } : prev,
               )
             }
+            failed={draft.failed}
+            onToggleFailed={(failed) => setDraft((prev) => (prev ? { ...prev, failed } : prev))}
             onDismiss={() => setPad(null)}
           />
         ) : null}
@@ -546,6 +554,8 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
               setDraft((prev) => (prev ? { ...prev, rpe: value } : prev));
               setRpeOpen(false);
             }}
+            failed={draft.failed}
+            onToggleFailed={(failed) => setDraft((prev) => (prev ? { ...prev, failed } : prev))}
           />
         ) : null}
       </div>

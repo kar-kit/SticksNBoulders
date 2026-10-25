@@ -473,3 +473,21 @@ describe("backoffs for an athlete who reads pounds", () => {
     expect(loadIn(next.loadKg!, "lb")).toBe(360);
   });
 });
+
+describe("failed sets (F19)", () => {
+  const failed = (loadKg: number, reps: number, rpe: number | null) => ({ ...set(loadKg, reps, rpe), failed: true });
+
+  it("are never the top set a backoff is priced off", () => {
+    // Missed 200, made 190: the backoff is a percentage of 190.
+    expect(topSetOf([set(190, 1, 9), failed(200, 0, 10)])).toEqual({ loadKg: 190, reps: 1, rpe: 9 });
+    // A line whose only set was missed has no top set, so no backoff load.
+    expect(topSetOf([failed(200, 0, 10)])).toBeNull();
+  });
+
+  it("end a drop-until-RPE run, whatever RPE they carry", () => {
+    const rule = { kind: "drop", dropPercent: 5, untilRpe: 9, maxSets: null } as const;
+    expect(backoffRun(rule, [set(170, 3, 8), failed(170, 2, null)])).toEqual({ sets: 2, done: true });
+    // A made set below the stop RPE keeps the run going, as before.
+    expect(backoffRun(rule, [set(170, 3, 8)])).toEqual({ sets: 2, done: false });
+  });
+});

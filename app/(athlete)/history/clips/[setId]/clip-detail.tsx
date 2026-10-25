@@ -227,6 +227,7 @@ export function ClipDetail({ setId }: { setId: string }) {
     reps: clip.reps,
     rpe: clip.rpe,
     isWarmup: clip.isWarmup === true,
+    failed: clip.failed === true,
     loggedAt: clip.loggedAt,
     videoFileId: clip.videoFileId,
     notes: clip.notes,
@@ -250,6 +251,8 @@ export function ClipDetail({ setId }: { setId: string }) {
           reps: clip.reps,
           rpe: clip.rpe as RpeValue | null,
           isWarmup: clip.isWarmup === true,
+          // Restated too (F19): a note edit must not un-fail a missed set.
+          failed: clip.failed === true,
           notes: noteOf(noteDraft),
         },
         { exerciseId: clip.exerciseId, loggedAt: new Date(clip.loggedAt) },

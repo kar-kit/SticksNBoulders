@@ -30,6 +30,8 @@ export interface EditDraft {
   reps: number | null;
   rpe: RpeValue | null;
   isWarmup: boolean;
+  /** The athlete missed the set (F19): reps is what they completed, 0 allowed. */
+  failed: boolean;
   /**
    * The note as typed (F11), untrimmed so the textarea keeps the athlete's
    * spaces while they type. Blank is no note; `editOf` decides what is stored.
@@ -51,13 +53,15 @@ export function draftOf(set: SetValues, heldRpe: number | null = null): EditDraf
     reps: set.reps,
     rpe: ((set.isWarmup ? heldRpe : set.rpe) ?? null) as RpeValue | null,
     isWarmup: set.isWarmup,
+    failed: set.failed === true,
     notes: set.notes ?? "",
   };
 }
 
 /**
  * What Save writes, or null when the draft is not a set yet (no load, no
- * reps, or zero of either: the same rule as the confirm square).
+ * reps, or zero of either: the same rule as the confirm square -- except
+ * that a failed set may be saved with 0 reps, F19).
  *
  * The note always goes with it, trimmed, and null when blank: a Save from
  * this sheet is a statement about the whole set, note included, so emptying
@@ -74,6 +78,7 @@ export function editOf(draft: EditDraft): SetValues | null {
     reps: draft.reps as number,
     rpe: draft.isWarmup ? null : draft.rpe,
     isWarmup: draft.isWarmup,
+    failed: draft.failed,
     notes: noteOf(draft.notes),
   };
 }
@@ -89,6 +94,8 @@ export function changesSet(set: SetValues, edit: SetValues): boolean {
     set.reps !== edit.reps ||
     (set.rpe ?? null) !== (edit.rpe ?? null) ||
     set.isWarmup !== edit.isWarmup ||
+    // Absent is false: every set before v19, and every edit that predates F19.
+    (set.failed === true) !== (edit.failed === true) ||
     // A set with no note and a draft left blank are the same: absent, null
     // and "" all mean none.
     (edit.notes !== undefined && noteOf(set.notes) !== noteOf(edit.notes))

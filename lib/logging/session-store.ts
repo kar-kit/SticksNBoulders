@@ -114,6 +114,7 @@ interface SetRow {
   load_kg?: unknown;
   reps?: unknown;
   is_warmup?: unknown;
+  failed?: unknown;
   logged_at?: unknown;
   video_file_id?: unknown;
   video_poster_id?: unknown;
@@ -150,6 +151,7 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
         reps: asNumber(row.reps),
         rpe: typeof row.rpe === "number" ? row.rpe : null,
         isWarmup: row.is_warmup === true,
+        ...(row.failed === true ? { failed: true } : {}),
         loggedAt,
         hasVideo: typeof row.video_file_id === "string" && row.video_file_id !== "",
         videoFileId: typeof row.video_file_id === "string" && row.video_file_id !== "" ? row.video_file_id : null,

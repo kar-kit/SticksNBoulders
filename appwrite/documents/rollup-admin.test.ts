@@ -219,3 +219,20 @@ describe("rebuilding a week that holds a forged set", () => {
     expect(t.db.stats_rollups).toHaveLength(0);
   });
 });
+
+describe("a failed set in the week (F19)", () => {
+  it("counts toward the week's volume and tonnage, and is never its best", async () => {
+    const t = tables([set("made", 150, 3, { e1rm_kg: 165 }), set("miss", 170, 1, { failed: true })]);
+    await rebuild(t.store);
+    expect(t.db.stats_rollups[0]).toMatchObject({
+      set_count: 2,
+      volume_reps: 4,
+      tonnage_kg: 620,
+      best_single_kg: 150,
+      best_single_reps: 3,
+      best_reps: 3,
+      best_reps_load_kg: 150,
+      best_e1rm_kg: 165,
+    });
+  });
+});

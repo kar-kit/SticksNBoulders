@@ -132,6 +132,8 @@ export function chartPercentFor(reps: number, rpe: number): number | null {
  */
 export function chartOneRepMax(set: SetForEstimate): number | null {
   if (set.isWarmup) return null;
+  // A failed set (F19) estimates nothing, as in estimateOneRepMax.
+  if (set.failed) return null;
   // Below 6 included, per MIN_ESTIMABLE_RPE: the chart has cells that far
   // from failure, but the RPE that would index them is not a count of reps.
   if (!isEstimableRpe(set.rpe)) return null;

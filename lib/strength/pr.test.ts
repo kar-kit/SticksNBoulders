@@ -344,3 +344,37 @@ describe("sessionPrs", () => {
     expect(sessionPrs([{ ...set("a", 100, 5), exerciseId: "squat" }], new Map())).toEqual([]);
   });
 });
+
+describe("failed sets (F19)", () => {
+  it("are never a prior best: not the heaviest, not an e1RM, not on the rep frontier", () => {
+    const before = [
+      raw("2026-10-20T18:00:00Z", { loadKg: 140, reps: 5, rpe: 8 }),
+      raw("2026-10-20T18:10:00Z", { loadKg: 160, reps: 0, rpe: 10, failed: true }),
+      raw("2026-10-20T18:20:00Z", { loadKg: 120, reps: 4, rpe: 10, failed: true, e1rmKg: 999 }),
+    ];
+    const bests = priorBests([], before, sessionStart);
+    expect(bests?.heaviestKg).toBe(140);
+    // 140 x 5 @ 8 by Brzycki (140 x 36 / 30); the 999 on the failed set is ignored.
+    expect(bests?.e1rmKg).toBe(168);
+    expect(repBests(before, sessionStart)).toEqual([{ loadKg: 140, reps: 5 }]);
+  });
+
+  it("leave no prior bests at all when they are all an athlete has done", () => {
+    expect(priorBests([], [raw("2026-10-20T18:00:00Z", { loadKg: 160, reps: 1, failed: true })], sessionStart)).toBeNull();
+  });
+
+  it("badge nothing today, and do not raise the bar a later made set has to clear", () => {
+    const bests = { e1rmKg: 160, heaviestKg: 150, repsAt: [{ loadKg: 140, reps: 5 }] };
+    const sets: SessionSetForPr[] = [
+      // Would be a weight record and a rep record, were it made.
+      { ...set("f1", 155, 6, 10), failed: true },
+      // So this is still a weight record over 150, and a rep record at 140.
+      set("ok", 152.5, 1, 8),
+      set("reps", 140, 6, 9),
+    ];
+    const found = detectPrs(sets, bests);
+    expect(found.has("f1")).toBe(false);
+    expect(found.get("ok")).toContain("weight");
+    expect(found.get("reps")).toContain("reps");
+  });
+});

@@ -73,9 +73,9 @@ describe("buildTrainingLogExport", () => {
     });
 
     expect(lines(built.parts)).toEqual([
-      "Date,Session,Exercise,Set,Load (kg),Reps,RPE,Warm-up,e1RM (kg),Notes,Prescription,Session notes,Session name",
-      "2026-09-14,1,Squat,1,60,5,,Yes,,,,PB day,",
-      "2026-09-14,1,Squat,2,142.5,3,8.5,No,155,felt fast,3 x 142.5 kg @ RPE 8,PB day,",
+      "Date,Session,Exercise,Set,Load (kg),Reps,RPE,Warm-up,e1RM (kg),Notes,Prescription,Session notes,Session name,Failed",
+      "2026-09-14,1,Squat,1,60,5,,Yes,,,,PB day,,No",
+      "2026-09-14,1,Squat,2,142.5,3,8.5,No,155,felt fast,3 x 142.5 kg @ RPE 8,PB day,,No",
       "",
     ]);
     expect(built).toMatchObject({
@@ -90,8 +90,8 @@ describe("buildTrainingLogExport", () => {
     const tables = new FakeTables().seed("sets", [set("f1", "ath")]);
     const built = await buildTrainingLogExport(tables, "db", { id: "ath", name: null });
     const [, row] = lines(built.parts);
-    // Column 11 of 12, empty, with the session-notes cell still after it.
-    expect(row.split(",")).toHaveLength(13);
+    // Column 11 of 14, empty, with the session-notes cell still after it.
+    expect(row.split(",")).toHaveLength(14);
     expect(row.split(",")[10]).toBe("");
   });
 });

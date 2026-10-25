@@ -16,6 +16,7 @@ const set = (over: Partial<ExportSet>): ExportSet => ({
   reps: 5,
   rpe: null,
   isWarmup: false,
+  failed: false,
   e1rmKg: null,
   loggedAt: new Date("2026-09-14T18:00:00Z"),
   notes: null,
@@ -31,7 +32,7 @@ describe("buildLogRows", () => {
       names,
     );
     expect(rows).toEqual([
-      ["2026-09-14", 1, "Squat", 1, 140, 5, 8, false, 168, "fast", null, "Good day", "Heavy singles"],
+      ["2026-09-14", 1, "Squat", 1, 140, 5, 8, false, 168, "fast", null, "Good day", "Heavy singles", false],
     ]);
     expect(rows[0]).toHaveLength(LOG_COLUMNS.length);
   });
@@ -48,12 +49,28 @@ describe("buildLogRows", () => {
     expect(toCsv(LOG_COLUMNS, rows)).toContain(",100,8,4,No,,");
   });
 
-  it("appends the session name as the last column, so no existing column moves", () => {
-    expect(LOG_COLUMNS.at(-1)).toBe("Session name");
+  it("appends the session name after the session notes, so no existing column moves", () => {
     expect(LOG_COLUMNS.indexOf("Session notes")).toBe(11);
+    expect(LOG_COLUMNS.indexOf("Session name")).toBe(12);
     const rows = buildLogRows([{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: null }], [set({})], names);
     // A session nobody named exports a blank cell, not the date or a day label.
-    expect(rows[0].at(-1)).toBeNull();
+    expect(rows[0][12]).toBeNull();
+  });
+
+  it("appends Failed as the last column (F19, v19): Yes on a missed set, its completed reps, no e1RM", () => {
+    expect(LOG_COLUMNS.at(-1)).toBe("Failed");
+    expect(LOG_COLUMNS).toHaveLength(14);
+    const rows = buildLogRows(
+      [{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: null }],
+      [set({ loadKg: 200, reps: 0, rpe: 10, failed: true, e1rmKg: null }), set({ loadKg: 180, reps: 1, rpe: 9 })],
+      names,
+    );
+    expect(rows.map((row) => row.at(-1))).toEqual([true, false]);
+    const csv = toCsv(LOG_COLUMNS, rows);
+    expect(csv).toContain(",200,0,10,No,,");
+    expect(csv.split("\r\n")[0].endsWith(",Session name,Failed")).toBe(true);
+    expect(csv.split("\r\n")[1].endsWith(",Yes")).toBe(true);
+    expect(csv.split("\r\n")[2].endsWith(",No")).toBe(true);
   });
 
   it("numbers sessions oldest first and orders rows by session", () => {

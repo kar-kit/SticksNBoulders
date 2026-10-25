@@ -95,6 +95,10 @@ const NEAR_MAXIMAL_REPS_FROM_FAILURE = 3;
  *   nothing (`MIN_ESTIMABLE_RPE`). Prefill falls back to repeating the set,
  *   which for an athlete who just said "too easy" is the conservative choice
  *   rather than a jump the formula would overstate.
+ * - **A failed set** (F19). The athlete missed it, so it is not the last
+ *   set "going well at RPE x" -- whatever RPE was tapped -- and stepping the
+ *   load up or down from it would be a ratio off a set that did not happen
+ *   as recorded. `estimateOneRepMax` refuses it for the same reason.
  * - **Either end outside the chart's range**, per `MAX_REPS_TO_FAILURE`.
  * - **A target further than `MAX_SUGGESTION_SPAN`** from what was just done.
  *
@@ -109,6 +113,7 @@ export function suggestLoad(
   unit: UnitPreference = "kg",
 ): LoadSuggestion | null {
   if (logged.isWarmup) return null;
+  if (logged.failed) return null;
   if (!isEstimableRpe(logged.rpe)) return null;
   if (!Number.isFinite(logged.loadKg) || logged.loadKg <= 0) return null;
   if (!Number.isInteger(logged.reps) || logged.reps < 1) return null;

@@ -159,7 +159,7 @@ try {
   check("the file starts with a UTF-8 BOM", text.charCodeAt(0) === 0xfeff);
   check(
     "the header is the Order 39 column list",
-    lines[0] === "﻿Date,Session,Exercise,Set,Load (kg),Reps,RPE,Warm-up,e1RM (kg),Notes,Prescription,Session notes,Session name",
+    lines[0] === "﻿Date,Session,Exercise,Set,Load (kg),Reps,RPE,Warm-up,e1RM (kg),Notes,Prescription,Session notes,Session name,Failed",
   );
   check("the first row is session 1, set 1, an ISO date", lines[1]?.startsWith("2026-01-05,1,'-pause squat,1,100,5,,Yes,"));
   check("a note with a comma, quotes and a newline stays one cell", text.includes('"knee caved, ""rep 4""\nfilmed it"'));

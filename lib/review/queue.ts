@@ -41,6 +41,12 @@ export interface ClipSet {
    */
   isWarmup?: boolean;
   /**
+   * The athlete missed the set (F19). Shown to the coach beside the numbers,
+   * and restated by the athlete's note edit for the same reason as
+   * `isWarmup`. Optional; absent reads as not failed.
+   */
+  failed?: boolean;
+  /**
    * The line the set was logged against, and the target as it read on the
    * athlete's screen when they logged it -- a snapshot, stored on the set and
    * never recomputed, because logged work is immutable and a coach editing the

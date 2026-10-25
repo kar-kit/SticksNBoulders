@@ -65,6 +65,14 @@ distinction the RPE sheet exists to capture.
 - **More than 12 reps to failure.** Past roughly ten reps the set is limited by
   endurance rather than maximal strength. The cutoff stops a twenty-rep back-off
   becoming somebody's best e1RM of the week.
+- **A failed set (F19, schema v19).** `sets.failed` is true: the athlete missed
+  it, and `reps` holds the reps actually completed (0 allowed). Whatever RPE was
+  tapped, Brzycki on "3 of 5, then stuck" is not an estimate to program off, so
+  `estimateOneRepMax` and `chartOneRepMax` both return null. `createSet` and
+  `updateSet` pass the flag, so marking a set failed (or un-failing it) from the
+  edit sheet recomputes the stored value like any other correction, and
+  `e1rm:backfill` reads `failed` too, so a re-run clears any estimate a failed
+  set should not have.
 
 ## Where it is computed
 

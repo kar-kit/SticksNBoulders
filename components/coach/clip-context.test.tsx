@@ -65,3 +65,27 @@ describe("the athlete's note (F11)", () => {
     expect(screen.queryByRole("heading", { name: "Athlete note" })).not.toBeInTheDocument();
   });
 });
+
+describe("a failed set (F19)", () => {
+  it("is marked Failed beside the set's numbers, with no e1RM line", () => {
+    show({ loadKg: 200, reps: 0, rpe: 10, e1rmKg: null, failed: true });
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.queryByText(/^e1RM/)).not.toBeInTheDocument();
+  });
+
+  it("marks a missed set among the recent ones, and nothing on a made clip", () => {
+    render(
+      <ClipContext
+        item={item()}
+        sessionSets={[]}
+        recent={[
+          { loggedAt: "2026-10-01T10:00:00.000Z", loadKg: 190, reps: 1, rpe: 10, e1rmKg: null, failed: true },
+          { loggedAt: "2026-09-28T10:00:00.000Z", loadKg: 180, reps: 2, rpe: 9, e1rmKg: 192 },
+        ]}
+        previousBestKg={null}
+      />,
+    );
+    expect(screen.getAllByText("Failed")).toHaveLength(1);
+    expect(screen.getByText("Failed").closest("li")).toHaveTextContent("190 kg × 1");
+  });
+});

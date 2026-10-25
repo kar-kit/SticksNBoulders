@@ -54,8 +54,9 @@ export interface AthleteVideosProps {
   onClose: () => void;
 }
 
+/** "180 × 3 @9", and " · failed" on a missed set (F19): the reps are the ones completed. */
 const loadLabel = (row: VideoRow) =>
-  `${formatNumber(row.loadKg)} × ${row.reps}${row.rpe === null ? "" : ` @${formatNumber(row.rpe)}`}`;
+  `${formatNumber(row.loadKg)} × ${row.reps}${row.rpe === null ? "" : ` @${formatNumber(row.rpe)}`}${row.failed ? " · failed" : ""}`;
 
 export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onClose }: AthleteVideosProps) {
   const { state: session } = useSession();

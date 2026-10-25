@@ -32,6 +32,8 @@ export interface ExportSet {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19: the athlete missed it; `reps` is what they completed. */
+  failed: boolean;
   e1rmKg: number | null;
   loggedAt: Date;
   notes: string | null;
@@ -70,6 +72,9 @@ export const LOG_COLUMNS = [
   // under a coach's formulas. The stored name only: the program-day fallback
   // History shows is a display rule, and the day is already in Prescription.
   "Session name",
+  // v19 (F19), appended last for the same reason. `Yes` on a missed set,
+  // whose Reps are the ones completed and whose e1RM is blank.
+  "Failed",
 ] as const;
 
 /**
@@ -168,6 +173,7 @@ export function buildLogRows(
         prescriptionFor(set),
         session?.notes ?? null,
         session?.name ?? null,
+        set.failed,
       ]);
     }
   }

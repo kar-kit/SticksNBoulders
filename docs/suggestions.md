@@ -66,6 +66,11 @@ Null rather than a guess, and each refusal is a real case:
   could be a grinder or an easy back-off at the same load and reps.
   `estimateOneRepMax` refuses it for the same reason.
 - **A warm-up** — says nothing about what is left in the tank.
+- **A failed set (F19)** — the athlete missed it, so whatever RPE was tapped it
+  is not "the day going at RPE x", and a ratio off it would price the next set
+  from a set that did not happen as recorded. The row repeats instead, and Add
+  set after a miss repeats its load but not its reps (the reps stored on a miss
+  are what was managed, so the row's reps start blank).
 - **Either end past `MAX_REPS_TO_FAILURE`.**
 - **A target further than the span above.**
 

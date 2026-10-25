@@ -523,3 +523,50 @@ inside `.athlete-motion` in the DOM even in the top layer, so the reduced-motion
 floor (which covers `::backdrop`) makes it instant. Exit goes through
 `usePresence` + `afterExit`. See docs/video.md, "The coach's ask as a popup".
 
+
+## Marking a set failed (F19)
+
+_25 Oct 2026. Source: Joey. Schema v19 (`sets.failed`)._ An athlete who misses
+a set logs the reps they actually completed -- 0 for a missed single -- and
+flips **Failed**. A failed set counts toward set count, volume and tonnage with
+those reps, and toward nothing else: no e1RM, no PR of any kind, never a best
+in the rollups or the rep frontier (docs/e1rm.md, docs/rollups.md,
+lib/strength/pr.ts).
+
+- **Where the switch is.** `components/logging/failed-switch.tsx`, one
+  component in two places of the keypad sheet: the number pad's bottom row,
+  beside Warm-up, and under the RPE chips ("next to RPE", the question being
+  answered there). The edit sheet (F9/F16) passes it to both too, and History's
+  in-place editor to its pad and chips. Never on the row itself: a stray thumb
+  on the most-tapped surface could fail a set nobody missed.
+- **Semantics.** `role="switch"` + `aria-checked`, named "Failed" by
+  `aria-label`; under the chips it carries a description, "Reps are the ones
+  you completed", by `aria-describedby`, so the name stays one word. Toggling
+  records nothing and never closes the RPE chips (a chip does): the confirm
+  square or Save writes the set, as for every other field. The confirm square
+  accepts 0 reps only on a failed row (`canComplete`).
+- **Motion.** `tap` press and `haptic("light")`, like Warm-up. On is
+  `bg-danger-fill` (paint only, so it answers under reduced motion too): the
+  accent means good news here (the confirm, a PR) and a miss is not one.
+- **The marker.** `components/ui/failed-mark.tsx`, a static outlined pill in
+  `danger-line`, the word "Failed", never colour alone. On a set row it sits on
+  the top border at the left (`-top-2 left-2`), opposite the PR and video
+  corner, takes no column and no height, and moves with a swipe. It shows on a
+  row not logged yet as well, so the switch is visibly on the right set. No
+  animation, so no `athlete:` gate is needed on the shared side. The same mark
+  sits beside the numbers in History, Lift Detail's recent sets, the coach's
+  session list, Athlete View's lift panel and the Review Queue's clip panel
+  (main set and recent sets); the coach's clip list and the program editor's
+  context drawer say "failed" in words.
+- **Previous (F6).** A set missed last time stays in line, marked: `PREV 200 ×
+  0 · failed`. Hiding it would slide every later set of last time onto the
+  wrong row. Copying it (the PREV tap) and prefill rule 4 take its load and
+  not its reps.
+- **Next rows.** A failed set reprices nothing behind it (`refreshBehind`
+  treats it like a warm-up) and anchors no suggestion; Add set after it repeats
+  the load with the reps blank.
+- **Offline.** The flag rides in `set.create` / `set.update` ops like the other
+  values; `queuedSets` and `queuedSetEdits` read it back after a reload, and an
+  op queued by a pre-v19 client reads as made. Every correction restates it, so
+  the set number's warm-up flip or a note edit from the Clips gallery cannot
+  un-fail a set.

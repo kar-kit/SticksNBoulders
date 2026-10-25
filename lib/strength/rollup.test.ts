@@ -295,3 +295,42 @@ describe("rollupMatches", () => {
     expect(rollupMatches({ ...computed, [field]: (before as number) + 1 }, computed)).toBe(false);
   });
 });
+
+describe("a failed set (F19)", () => {
+  it("counts toward set count, volume and tonnage with the reps completed", () => {
+    const r = rollupFrom([set({ loadKg: 100, reps: 5 }), set({ loadKg: 120, reps: 2, failed: true, e1rmKg: null })]);
+    expect(r.setCount).toBe(2);
+    expect(r.volumeReps).toBe(7);
+    expect(r.tonnageKg).toBe(740);
+  });
+
+  it("is never the heaviest set, the most reps or the best e1RM", () => {
+    const r = rollupFrom([
+      set({ loadKg: 140, reps: 3, e1rmKg: 150 }),
+      // Heavier than anything made, and more reps than anything made.
+      set({ loadKg: 160, reps: 0, failed: true, e1rmKg: null }),
+      set({ loadKg: 100, reps: 9, failed: true, e1rmKg: null }),
+    ]);
+    expect(r).toMatchObject({
+      bestSingleKg: 140,
+      bestSingleReps: 3,
+      bestReps: 3,
+      bestRepsLoadKg: 140,
+      bestE1rmKg: 150,
+    });
+  });
+
+  it("leaves a week of only failed sets counted but with no bests", () => {
+    const r = rollupFrom([set({ loadKg: 200, reps: 0, failed: true, e1rmKg: null })]);
+    expect(r).toEqual({
+      setCount: 1,
+      volumeReps: 0,
+      tonnageKg: 0,
+      bestE1rmKg: null,
+      bestSingleKg: null,
+      bestSingleReps: null,
+      bestReps: null,
+      bestRepsLoadKg: null,
+    });
+  });
+});

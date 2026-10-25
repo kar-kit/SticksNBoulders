@@ -1,5 +1,6 @@
 "use client";
 
+import { FailedMark } from "@/components/ui/failed-mark";
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -66,6 +67,7 @@ export function SetContext({ set, exerciseName }: { set: FeedbackSet; exerciseNa
         <span className="text-body font-semibold text-muted">
           {set.rpe === null ? "RPE —" : `RPE ${set.rpe}`}
         </span>
+        {set.failed ? <FailedMark className="ml-2 align-middle" /> : null}
       </p>
     </div>
   );

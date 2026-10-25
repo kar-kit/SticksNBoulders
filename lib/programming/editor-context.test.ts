@@ -78,3 +78,15 @@ describe("the context drawer's waiting clips", () => {
     expect(rows.map((r) => [r.id, r.exerciseName])).toEqual([["b", "Squat"]]);
   });
 });
+
+describe("failed sets in the coach's context drawer (F19)", () => {
+  it("say so in words, and never fold into a made set at the same numbers", () => {
+    expect(
+      setsInWords([
+        { loadKg: 200, reps: 1, rpe: 10 },
+        { loadKg: 200, reps: 1, rpe: 10, failed: true },
+        { loadKg: 200, reps: 0, rpe: 10, failed: true },
+      ]),
+    ).toBe("200 × 1 @10, 200 × 1 @10 failed, 200 × 0 @10 failed");
+  });
+});

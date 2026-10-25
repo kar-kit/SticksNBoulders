@@ -221,7 +221,7 @@ describe("the note", () => {
     await user.click(screen.getByRole("button", { name: "Save note" }));
     expect(editSet).toHaveBeenCalledWith(
       "st-1",
-      { loadKg: 180, reps: 3, rpe: null, isWarmup: true, notes: "bar path drifted" },
+      { loadKg: 180, reps: 3, rpe: null, isWarmup: true, failed: false, notes: "bar path drifted" },
       { exerciseId: "squat", loggedAt: new Date(data.clip!.loggedAt) },
     );
     expect(await screen.findByText("bar path drifted")).toBeInTheDocument();

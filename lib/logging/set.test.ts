@@ -107,3 +107,22 @@ describe("completion validity", () => {
     expect(canComplete(set(overrides))).toBe(false);
   });
 });
+
+describe("a failed set (F19)", () => {
+  it("can be logged with 0 reps, which a made set cannot", () => {
+    expect(canComplete(set({ reps: 0 }))).toBe(false);
+    expect(canComplete(set({ reps: 0, failed: true }))).toBe(true);
+    expect(completionBlocker(set({ reps: 0, failed: true }))).toBeNull();
+  });
+
+  it("still needs a load and a whole, non-negative rep count", () => {
+    expect(canComplete(set({ reps: -1, failed: true }))).toBe(false);
+    expect(canComplete(set({ reps: null, failed: true }))).toBe(false);
+    expect(canComplete(set({ loadKg: 0, reps: 0, failed: true }))).toBe(false);
+  });
+
+  it("never counts toward a PR, whatever it shows", () => {
+    expect(countsTowardPrs(set({ reps: 3 }))).toBe(true);
+    expect(countsTowardPrs(set({ reps: 3, failed: true }))).toBe(false);
+  });
+});

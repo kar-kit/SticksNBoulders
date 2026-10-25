@@ -21,6 +21,11 @@ export interface RollupSet {
   loadKg: number;
   reps: number;
   isWarmup: boolean;
+  /**
+   * The athlete missed it (F19). Counted in set count, volume and tonnage
+   * with its stored reps, the ones completed; never a best. Absent is false.
+   */
+  failed?: boolean;
   /** Null where no honest estimate exists. See lib/strength/e1rm.ts. */
   e1rmKg: number | null;
   /** When the set was logged. Breaks a heaviest-set tie: the later one wins. */
@@ -119,6 +124,12 @@ const tenth = (value: number): number => Math.round(value * 10) / 10;
  * tonnage and every best -- the same rule the logger's session summary applies,
  * so the week's numbers and the session's numbers agree.
  *
+ * A failed set (F19) is work done: its completed reps count toward set
+ * count, volume and tonnage like any working set's. It is never a best --
+ * not the heaviest set, not the most reps, and it has no e1RM -- because
+ * those are what Lift Detail calls records and what the Log's PR badges are
+ * measured against. A miss at 200 must not become the weight to beat.
+ *
  * [SME to confirm] whether warm-up tonnage should count somewhere. It is real
  * work and some coaches track it; excluding it everywhere is the current rule
  * and the one Ruairi has not been asked about yet.
@@ -138,6 +149,9 @@ export function rollupFrom(sets: readonly RollupSet[]): Rollup {
   for (const set of working) {
     volumeReps += set.reps;
     tonnageKg += set.loadKg * set.reps;
+
+    // Volume and tonnage above; nothing below for a miss.
+    if (set.failed) continue;
 
     if (set.e1rmKg !== null && (bestE1rmKg === null || set.e1rmKg > bestE1rmKg)) {
       bestE1rmKg = set.e1rmKg;

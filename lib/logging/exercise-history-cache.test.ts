@@ -101,3 +101,28 @@ describe("exercise history, remembered for the session", () => {
     expect(recallExerciseHistory("ath", "ses", "squat")).toBeNull();
   });
 });
+
+describe("failed sets in the remembered history (F19)", () => {
+  it("keep their flag through a reload", () => {
+    const withMiss = { ...squat, previous: [...squat.previous, { loadKg: 160, reps: 0, isWarmup: false, failed: true }] };
+    rememberExerciseHistory("ath", "ses", "squat", withMiss);
+    expect(recallExerciseHistory("ath", "ses", "squat")).toEqual(withMiss);
+  });
+
+  it("still read an entry remembered before v19, which has no flag at all", () => {
+    rememberExerciseHistory("ath", "ses", "squat", squat);
+    expect(recallExerciseHistory("ath", "ses", "squat")?.previous.every((set) => !("failed" in set))).toBe(true);
+  });
+
+  it("refuse a flag that is not a boolean, rather than guess", () => {
+    localStorage.setItem(
+      "snb.exercise-history",
+      JSON.stringify({
+        athleteId: "ath",
+        sessionId: "ses",
+        exercises: { squat: { ...squat, previous: [{ loadKg: 160, reps: 0, isWarmup: false, failed: "yes" }] } },
+      }),
+    );
+    expect(recallExerciseHistory("ath", "ses", "squat")).toBeNull();
+  });
+});

@@ -7,7 +7,7 @@ function setup(overrides: Partial<EditSetSheetProps> = {}) {
   const props: EditSetSheetProps = {
     setLabel: "Set 2",
     exerciseName: "Squat",
-    draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, notes: "" },
+    draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: "" },
     field: "load",
     pad: beginEdit("load", 140, "kg"),
     unit: "kg",
@@ -16,6 +16,7 @@ function setup(overrides: Partial<EditSetSheetProps> = {}) {
     onPadChange: vi.fn(),
     onToggleWarmup: vi.fn(),
     onRpe: vi.fn(),
+    onToggleFailed: vi.fn(),
     onNote: vi.fn(),
     onSave: vi.fn(),
     onCancel: vi.fn(),
@@ -38,7 +39,7 @@ describe("EditSetSheet", () => {
   });
 
   it("titles a warm-up as one", () => {
-    setup({ setLabel: "Warm-up set", draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true, notes: "" } });
+    setup({ setLabel: "Warm-up set", draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true, failed: false, notes: "" } });
     expect(screen.getByRole("heading", { name: "Edit warm-up" })).toBeInTheDocument();
     // Never asked for RPE, so the field cannot be opened, and Next on reps saves.
     expect(screen.getByRole("button", { name: "Change RPE, now none, warm-up" })).toBeDisabled();
@@ -60,7 +61,7 @@ describe("EditSetSheet", () => {
   it("saves from the pad's Next on the last field of a warm-up", async () => {
     const { props, user } = setup({
       setLabel: "Warm-up set",
-      draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true, notes: "" },
+      draft: { loadKg: 60, reps: 5, rpe: null, isWarmup: true, failed: false, notes: "" },
       field: "reps",
       pad: beginEdit("reps", 5),
     });
@@ -76,7 +77,7 @@ describe("EditSetSheet", () => {
   });
 
   it("holds Save back for a draft that is not a set", () => {
-    setup({ canSave: false, draft: { loadKg: null, reps: 5, rpe: 8, isWarmup: false, notes: "" } });
+    setup({ canSave: false, draft: { loadKg: null, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: "" } });
     expect(screen.getByRole("button", { name: "Save Set 2" })).toBeDisabled();
   });
 
@@ -100,7 +101,7 @@ describe("EditSetSheet", () => {
     });
 
     it("shows the note as it stands on the cell", () => {
-      setup({ draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, notes: "Hip pinched" } });
+      setup({ draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: "Hip pinched" } });
       expect(screen.getByRole("button", { name: "Change note, now: Hip pinched" })).toHaveTextContent("Hip pinched");
     });
 
@@ -115,12 +116,12 @@ describe("EditSetSheet", () => {
     });
 
     it("counts down only near the 500-character limit", () => {
-      setup({ field: "note", pad: null, draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, notes: "x".repeat(460) } });
+      setup({ field: "note", pad: null, draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: "x".repeat(460) } });
       expect(screen.getByText("40 left")).toBeInTheDocument();
     });
 
     it("shows no counter on a short note", () => {
-      setup({ field: "note", pad: null, draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, notes: "felt slow" } });
+      setup({ field: "note", pad: null, draft: { loadKg: 140, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: "felt slow" } });
       expect(screen.queryByText(/left$/)).not.toBeInTheDocument();
     });
   });
@@ -142,5 +143,25 @@ describe("EditSetSheet", () => {
       setup({ deleteDisabled: true });
       expect(screen.getByRole("button", { name: "Delete Set 2" })).toBeDisabled();
     });
+  });
+});
+
+describe("EditSetSheet's Failed switch (F19)", () => {
+  it("is on the pad and reports a flip", async () => {
+    const { props, user } = setup({ field: "reps", pad: beginEdit("reps", 5) });
+    const toggle = screen.getByRole("switch", { name: "Failed" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await user.click(toggle);
+    expect(props.onToggleFailed).toHaveBeenCalledWith(true);
+  });
+
+  it("is under the RPE chips too, and on for a failed draft", () => {
+    setup({ field: "rpe", pad: null, draft: { loadKg: 200, reps: 0, rpe: 10, isWarmup: false, failed: true, notes: "" } });
+    expect(screen.getByRole("switch", { name: "Failed" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("says FAILED on the reps cell of a failed draft, aloud as well", () => {
+    setup({ draft: { loadKg: 200, reps: 0, rpe: 10, isWarmup: false, failed: true, notes: "" } });
+    expect(screen.getByRole("button", { name: "Change reps, now 0, failed set" })).toHaveTextContent("REPS · FAILED");
   });
 });

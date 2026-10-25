@@ -98,3 +98,25 @@ describe("RpeSheet inside the Log screen's sheet", () => {
     expect(sheet.className).not.toContain("border-t");
   });
 });
+
+describe("RpeSheet's Failed switch (F19)", () => {
+  it("sits under the chips as a labelled switch, described, and does not answer the RPE", async () => {
+    const onSelect = vi.fn();
+    const onToggleFailed = vi.fn();
+    render(<RpeSheet setIndex={2} value={null} onSelect={onSelect} failed={false} onToggleFailed={onToggleFailed} />);
+    const toggle = screen.getByRole("switch", { name: "Failed" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toHaveAccessibleDescription("Reps are the ones you completed");
+    await userEvent.click(toggle);
+    expect(onToggleFailed).toHaveBeenCalledWith(true);
+    // A switch, not an answer: the RPE is still the athlete's to give.
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("shows on for a failed row, and is absent without a handler", () => {
+    const { rerender } = render(<RpeSheet setIndex={1} value={9} onSelect={vi.fn()} failed onToggleFailed={vi.fn()} />);
+    expect(screen.getByRole("switch", { name: "Failed" })).toHaveAttribute("aria-checked", "true");
+    rerender(<RpeSheet setIndex={1} value={9} onSelect={vi.fn()} />);
+    expect(screen.queryByRole("switch", { name: "Failed" })).not.toBeInTheDocument();
+  });
+});

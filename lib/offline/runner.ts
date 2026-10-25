@@ -92,6 +92,9 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
         reps: asNumber(p.reps),
         rpe: typeof p.rpe === "number" ? p.rpe : null,
         isWarmup: p.isWarmup === true,
+        // F19. Absent on an op queued by a client from before v19, which could
+        // not have failed a set: false.
+        failed: p.failed === true,
         clientSetId: setId,
         loggedAt: asDate(p.loggedAt),
         prescriptionId: asString(p.prescriptionId) || null,
@@ -114,6 +117,9 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
         reps: asNumber(p.reps),
         rpe: typeof p.rpe === "number" ? p.rpe : null,
         isWarmup: p.isWarmup === true,
+        // F19. An update queued before v19 restated a set that could not have
+        // been failed, so absent is false.
+        failed: p.failed === true,
         // The athlete's note (F11), only when the edit carried one: a key
         // that is absent leaves the column alone, null clears it.
         ...("notes" in p && { notes: typeof p.notes === "string" ? p.notes : null }),

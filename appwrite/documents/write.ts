@@ -497,6 +497,12 @@ export interface CreateSetInput {
   reps: number;
   rpe?: number | null;
   isWarmup?: boolean;
+  /**
+   * The athlete missed the set (F19, schema v19). `reps` is what they
+   * completed. Absent is false: a seed or fixture that never failed a set.
+   * The logger always passes it (`NewSet.failed` is required).
+   */
+  failed?: boolean;
   /** Generated on the device. Unique-indexed, so a retry cannot duplicate. */
   clientSetId: string;
   loggedAt?: Date;
@@ -531,6 +537,7 @@ export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetI
       reps: input.reps,
       rpe: input.rpe ?? undefined,
       is_warmup: input.isWarmup ?? false,
+      failed: input.failed === true,
       // Computed here rather than by the caller, and deliberately not passable
       // as an argument. It is a derived field, and CLAUDE.md's rule is that
       // derived and denormalised fields are written in the same helper that
@@ -543,6 +550,7 @@ export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetI
           reps: input.reps,
           rpe: input.rpe ?? null,
           isWarmup: input.isWarmup,
+          failed: input.failed,
         }) ?? undefined,
       logged_at: iso(input.loggedAt ?? deps.now()),
       client_set_id: input.clientSetId,
@@ -560,9 +568,10 @@ export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetI
 export interface UpdateSetInput {
   rowId: string;
   /**
-   * All four together, always, even the ones the athlete did not touch.
+   * All five together, always, even the ones the athlete did not touch.
    *
-   * e1RM is a function of load, reps, RPE and the warm-up flag, so a partial
+   * e1RM is a function of load, reps, RPE, the warm-up flag and (v19) the
+   * failed flag, so a partial
    * update cannot recompute it -- and an edit that changes reps while leaving
    * last week's estimate sitting on the row is exactly the drift that computing
    * it inside createSet exists to prevent. Requiring the full set makes the
@@ -572,6 +581,8 @@ export interface UpdateSetInput {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19: the athlete missed it. A failed set stores no e1RM. */
+  failed: boolean;
   videoFileId?: string;
   /**
    * The athlete's own note on the set (F11). Undefined leaves the column
@@ -604,6 +615,7 @@ export async function updateSet(deps: WriteDeps, actor: Actor, input: UpdateSetI
       reps: input.reps,
       rpe: input.rpe ?? null,
       is_warmup: input.isWarmup,
+      failed: input.failed,
       // Recomputed from the corrected values by the same function createSet
       // uses. Null rather than undefined: an edit that removes the grounds for
       // an estimate -- an RPE cleared, a set flagged as a warm-up -- has to
@@ -613,6 +625,7 @@ export async function updateSet(deps: WriteDeps, actor: Actor, input: UpdateSetI
         reps: input.reps,
         rpe: input.rpe,
         isWarmup: input.isWarmup,
+        failed: input.failed,
       }),
       ...(input.videoFileId !== undefined && { video_file_id: input.videoFileId }),
       // Trimmed and capped here as well as on the device, the way session

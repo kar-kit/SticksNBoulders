@@ -24,6 +24,8 @@ export interface NewSet {
   reps: number;
   rpe: RpeValue | null;
   isWarmup: boolean;
+  /** The athlete missed it (F19): `reps` is what they completed, 0 allowed. */
+  failed: boolean;
   /** Generated when the row appears, and used as the Appwrite row id. */
   clientSetId: string;
   /** The prescription line this answers, when the session was prescribed (Order 22). */
@@ -51,6 +53,7 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
     reps: input.reps,
     rpe: input.rpe,
     isWarmup: input.isWarmup,
+    failed: input.failed,
     loggedAt: loggedAt.toISOString(),
     ...(input.prescriptionId ? { prescriptionId: input.prescriptionId, prescribed: input.prescribed ?? null } : {}),
   });
@@ -67,16 +70,23 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
     reps: input.reps,
     rpe: input.rpe,
     isWarmup: input.isWarmup,
+    ...(input.failed ? { failed: true } : {}),
     loggedAt,
   };
 }
 
-/** A correction from History. All four values, because e1RM depends on all four. */
+/** A correction from History. All five values, because e1RM depends on all five. */
 export interface SetEdit {
   loadKg: number;
   reps: number;
   rpe: RpeValue | null;
   isWarmup: boolean;
+  /**
+   * The athlete missed the set (F19). Required, like the other four: a failed
+   * set has no e1RM, so an update that left the flag out could not recompute
+   * it -- and a restated warm-up flip that dropped it would un-fail the set.
+   */
+  failed: boolean;
   /**
    * The athlete's note (F11). Absent leaves the stored note alone, which is
    * what the set number's warm-up flip wants: it restates the four values
@@ -105,6 +115,7 @@ export async function editSet(
     reps: edit.reps,
     rpe: edit.rpe,
     isWarmup: edit.isWarmup,
+    failed: edit.failed,
     // Only when the edit says something about the note, so a queued flip
     // replayed after a queued note does not wipe it on the server.
     ...(edit.notes !== undefined && { notes: noteOf(edit.notes) }),

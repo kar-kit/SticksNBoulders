@@ -6,6 +6,7 @@ import type { RecentSet } from "@/lib/review/queue-store";
 import { adjustProgramHref } from "@/lib/coach/adjust-program";
 import { formatWeight } from "@/lib/units";
 import { UserAvatar } from "@/components/profile/user-avatar";
+import { FailedMark } from "@/components/ui/failed-mark";
 
 /**
  * Everything to the right of the video.
@@ -68,6 +69,8 @@ export function ClipContext({ item, sessionSets, recent, previousBestKg }: ClipC
       <p className="m-0 text-display font-bold tabular-nums">
         {formatWeight(item.loadKg, "kg")} × {item.reps}{" "}
         <span className="text-title font-semibold text-muted">{rpeLabel(item.rpe)}</span>
+        {/* F19: the reps are what was completed; the set was missed. */}
+        {item.failed ? <FailedMark className="ml-3 align-middle" /> : null}
       </p>
 
       {item.prescribed ? (
@@ -123,6 +126,7 @@ export function ClipContext({ item, sessionSets, recent, previousBestKg }: ClipC
                   {formatWeight(set.loadKg, "kg")} × {set.reps}
                 </span>
                 <span className="text-muted">{rpeLabel(set.rpe)}</span>
+                {set.failed ? <FailedMark className="self-center" /> : null}
               </li>
             ))}
           </ul>

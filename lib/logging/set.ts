@@ -69,16 +69,29 @@ export interface LoggableSet {
   hasVideo?: boolean;
   /** Recorded when the athlete taps "Skip, no video" -- the coach can see it. */
   videoSkipped?: boolean;
+  /**
+   * The athlete missed the set (F19, schema v19). `reps` is what they
+   * actually completed, so 0 is a real answer here and nowhere else. Absent
+   * and null read as false: every set before v19.
+   */
+  failed?: boolean | null;
 }
 
 /**
  * Warm-ups are excluded from PRs and rollups. A 60kg warm-up single is not a
- * rep PR and must never appear as one.
+ * rep PR and must never appear as one. Neither is a failed set (F19), of any
+ * kind: a miss at 200 is not a weight record, and 3 reps of a failed 5 is not
+ * a rep record.
  */
 export function countsTowardPrs(set: LoggableSet): boolean {
-  return !set.isWarmup && isComplete(set);
+  return !set.isWarmup && !set.failed && isComplete(set);
 }
 
+/**
+ * Whether the set has a load and a rep count it can be logged with. Reps
+ * above zero, except on a failed set (F19): a missed single is logged as
+ * load x 0, which is the truth about it, and still counts as a set.
+ */
 function isComplete(set: LoggableSet): boolean {
   return (
     typeof set.loadKg === "number" &&
@@ -86,7 +99,7 @@ function isComplete(set: LoggableSet): boolean {
     set.loadKg > 0 &&
     typeof set.reps === "number" &&
     Number.isInteger(set.reps) &&
-    set.reps > 0
+    (set.reps > 0 || (set.failed === true && set.reps === 0))
   );
 }
 

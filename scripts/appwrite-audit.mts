@@ -976,7 +976,10 @@ try {
       exercises: { name: tag },
       "exercises:library": { name: tag },
       sessions: { notes: tag },
-      sets: { load_kg: 900 + n },
+      // v19: `failed` rides along, so the probe proves nobody but the athlete
+      // can mark their set missed (or made). Row permissions cover every
+      // column alike; this is the column F19 made worth hijacking.
+      sets: { load_kg: 900 + n, failed: true },
       bodyweight_entries: { weight_kg: 300 + n },
       // v18: re-pointing the review at another clip is what decides whether a
       // replaced clip comes back, so it is the column worth hijacking.
@@ -999,7 +1002,7 @@ try {
   const ownerUpdate: Record<string, (() => Promise<unknown>) | undefined> = {
     profiles: () => updateProfile(A.deps, { userId: A.id }, { units: "lb" }),
     sessions: () => finishSession(A.deps, { userId: A.id }, { sessionId: targets.sessions, setCount: 2, tonnageKg: 1425 }),
-    sets: () => updateSet(A.deps, { userId: A.id }, { rowId: targets.sets, loadKg: 142.5, reps: 5, rpe: 8, isWarmup: false }),
+    sets: () => updateSet(A.deps, { userId: A.id }, { rowId: targets.sets, loadKg: 142.5, reps: 5, rpe: 8, isWarmup: false, failed: false }),
     bodyweight_entries: () => reviseBodyweight(A.deps, { userId: A.id }, { weightKg: 82.1, measuredOn: "2026-01-05" }),
     // v18: clearing a replaced clip meets the review the old one left (same
     // derived id), so the helper answers the 409 by moving the row onto the

@@ -20,6 +20,8 @@ export interface FeedbackSet {
   reps: number;
   rpe: number | null;
   isWarmup: boolean;
+  /** F19: the athlete missed the set. Optional; absent reads as not failed. */
+  failed?: boolean;
   /** ISO 8601. */
   loggedAt: string;
   videoFileId: string | null;
