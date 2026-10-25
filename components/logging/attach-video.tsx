@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
+import { usePresence } from "@/components/ui/motion";
 import { attachClipToSet, type UploadResult } from "@/lib/video/upload";
 import type { VideoAsk } from "@/lib/logging/video-prompt";
 
@@ -16,6 +18,12 @@ import type { VideoAsk } from "@/lib/logging/video-prompt";
  * The set is already logged before this can be pressed, so nothing here blocks
  * logging. Upload progress is a thin line, never a spinner -- "the set is
  * already logged; the upload is incidental".
+ *
+ * The coach's ask (Order 30) is said once, as a small popup right after the
+ * athlete logs a set the coach wanted filmed (F18, `nudge`). The screen decides
+ * when; this owns the popup because it owns the file input and the upload, so
+ * "Attach now" is the same pick, the same upload and the same poster grab as
+ * the button.
  */
 
 type State =
@@ -33,11 +41,21 @@ export interface AttachVideoProps {
   /** Attaching again replaces what is there. */
   hasVideo?: boolean;
   /**
-   * The coach asked for a clip of this exercise (Order 30). "emphasise" makes
-   * the button stand out; "prompt" adds one line saying so. Neither blocks
-   * anything, and "Not now" is not recorded -- it only puts the line away.
+   * The coach asked for a clip of this exercise (Order 30). Either asking
+   * value makes the button stand out ("prompt", every flagged set logged, a
+   * little more). Neither blocks anything; the words are the popup's, below.
    */
   ask?: VideoAsk;
+  /**
+   * Show the coach's ask as a popup now (F18): the set this camera points at
+   * was just logged, the coach wanted it filmed and it has no clip. Ignored
+   * while an upload runs. The caller makes sure it is once per exercise.
+   */
+  nudge?: boolean;
+  /** The popup is up. The caller records it, so it is never shown again. */
+  onNudgeShown?: () => void;
+  /** The popup was answered, either way: Attach now, Later, Escape, the backdrop. */
+  onNudgeClose?: () => void;
   /**
    * A clip is on its way (queued counts, as it does everywhere else). Given
    * the result, so a caller replacing a clip knows whether the new one's
@@ -53,12 +71,28 @@ export function AttachVideo({
   athleteId,
   hasVideo = false,
   ask = "none",
+  nudge = false,
+  onNudgeShown,
+  onNudgeClose,
   onAttached,
   onUploadingChange,
 }: AttachVideoProps) {
   const input = useRef<HTMLInputElement>(null);
+  const root = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<State>({ status: "idle" });
-  const [putAway, setPutAway] = useState(false);
+  const heading = useId();
+  const popup = usePresence(nudge && state.status !== "uploading");
+  /** How the last popup was answered: Later hands the focus to the camera. */
+  const answered = useRef<"attach" | "later">("later");
+
+  const showing = popup.shown && !popup.leaving;
+  const onShownRef = useRef(onNudgeShown);
+  useEffect(() => {
+    onShownRef.current = onNudgeShown;
+  });
+  useEffect(() => {
+    if (showing) onShownRef.current?.();
+  }, [showing]);
 
   const pick = async (file: File | undefined) => {
     if (!file) return;
@@ -90,22 +124,47 @@ export function AttachVideo({
         ? "Replace video"
         : "Add video";
 
-  const prompting = ask === "prompt" && !putAway && state.status === "idle";
+  const asking = ask !== "none";
+
+  const later = () => {
+    answered.current = "later";
+    onNudgeClose?.();
+  };
+
+  /**
+   * Straight from the tap, nothing awaited first: iOS Safari only opens the
+   * file picker from inside a user gesture. The native dialog is closed
+   * before the click, because a modal makes the rest of the page inert and
+   * the input lives outside it -- the picker must not depend on whether a
+   * browser lets an inert input open one.
+   */
+  const attachNow = (event: MouseEvent<HTMLButtonElement>) => {
+    answered.current = "attach";
+    const dialog = event.currentTarget.closest("dialog");
+    if (typeof dialog?.close === "function") {
+      if (dialog.open) dialog.close();
+    } else {
+      dialog?.removeAttribute("open");
+    }
+    input.current?.click();
+    onNudgeClose?.();
+  };
+
+  const exited = () => {
+    popup.exited();
+    // The set's Log button, which had the focus when the popup opened, is
+    // gone by now -- the row is logged. After Later the focus lands on the
+    // camera, the thing the popup was about, rather than on nothing. Not
+    // after Attach now: the picker has it.
+    if (answered.current !== "later") return;
+    // Still on the leaving dialog counts as nowhere: it is about to go.
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected && !active.closest("dialog")) return;
+    root.current?.querySelector<HTMLButtonElement>("button[data-camera]")?.focus({ preventScroll: true });
+  };
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      {prompting ? (
-        <p role="status" className="m-0 flex items-center gap-2 text-right text-caption text-muted">
-          Your coach asked for a clip of this one.
-          <button
-            type="button"
-            onClick={() => setPutAway(true)}
-            className="min-h-11 whitespace-nowrap px-2 text-caption text-muted-2 underline"
-          >
-            Not now
-          </button>
-        </p>
-      ) : null}
+    <div ref={root} className="flex flex-col items-end gap-1">
       <input
         ref={input}
         type="file"
@@ -117,10 +176,11 @@ export function AttachVideo({
         onChange={(event) => void pick(event.target.files?.[0])}
       />
       <Button
-        variant={prompting ? "primary" : ask === "emphasise" ? "secondary" : "ghost"}
+        variant={asking ? "secondary" : "ghost"}
         size="sm"
-        className={ask === "emphasise" ? "border-accent-line text-foreground" : undefined}
-        data-video-ask={ask === "none" ? undefined : ask}
+        className={asking ? "border-accent-line text-foreground" : undefined}
+        data-camera=""
+        data-video-ask={asking ? ask : undefined}
         disabled={state.status === "uploading"}
         onClick={() => input.current?.click()}
       >
@@ -151,6 +211,33 @@ export function AttachVideo({
         >
           {state.message}
         </p>
+      ) : null}
+
+      {popup.shown ? (
+        <Dialog
+          labelledBy={heading}
+          onClose={later}
+          size="sm"
+          feel="athlete"
+          leaving={popup.leaving}
+          onExited={exited}
+        >
+          <h2 id={heading} className="m-0 text-title font-semibold">
+            Your coach asked for a clip of this set
+          </h2>
+          <p className="mt-2 mb-0 text-body text-muted">
+            Your set is logged either way. You can add the clip later from the exercise.
+          </p>
+          <div className="mt-6 flex flex-col gap-2">
+            {/* First, so the dialog's own focus lands on it. */}
+            <Button variant="primary" size="lg" block onClick={attachNow} data-nudge="attach">
+              Attach now
+            </Button>
+            <Button variant="ghost" size="lg" block onClick={later} data-nudge="later">
+              Later
+            </Button>
+          </div>
+        </Dialog>
       ) : null}
     </div>
   );

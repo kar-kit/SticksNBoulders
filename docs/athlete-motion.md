@@ -468,3 +468,14 @@ before, like the Strong app, and PRs."
   `/lift/[id]` for the exercise in hand (the swapped variant when swapped).
   `/log` is depth 0 and `/lift/x` depth 2, so F7 slides it in as a push with
   nothing set at the call site. The name itself still reopens the block.
+
+## The video ask popup (F18)
+
+_Added 25 Oct 2026._ `Dialog` takes `feel="athlete"`: it arrives on
+`ease-spring` / `duration-spring` (scale 0.98 and 4 px below to rest, behind
+`motion-safe:`, the fade always), its backdrop fades in on `ease-out` /
+`base`, and it leaves on `ease-in` / `base` like the coach's. It is still
+inside `.athlete-motion` in the DOM even in the top layer, so the reduced-motion
+floor (which covers `::backdrop`) makes it instant. Exit goes through
+`usePresence` + `afterExit`. See docs/video.md, "The coach's ask as a popup".
+

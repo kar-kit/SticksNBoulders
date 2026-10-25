@@ -18,6 +18,7 @@ import { useSession } from "@/lib/auth/session-context";
 import { AttachVideo } from "@/components/logging/attach-video";
 import { setForNewClip } from "@/lib/video/clip";
 import { videoAsk } from "@/lib/logging/video-prompt";
+import { rememberNudged, wasNudged } from "@/lib/logging/video-nudge";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { resolveOrCreateExercise } from "@/lib/exercises/library";
 import type { Exercise } from "@/lib/exercises/match";
@@ -343,6 +344,15 @@ export function LogScreen() {
   const plan = useMemo(() => (prescribed.status === "ready" ? planDay(prescribed.day.prescriptions) : []), [prescribed]);
   /** Sets a clip was attached to on this page; sets read from Appwrite carry their own flag. */
   const [filmed, setFilmed] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * The working set this page last logged, with its block, while its
+   * exercise has not had the coach's video popup this session (F18). The
+   * camera turns it into the popup only if the coach asked for that set and
+   * nothing of the exercise is filmed; otherwise it simply waits to be
+   * replaced by the next set. Never read back after a reload: the popup
+   * answers the moment of logging, not the state of the session.
+   */
+  const [nudgeCandidate, setNudgeCandidate] = useState<{ setId: string; blockId: string } | null>(null);
   const targetsOf = useCallback(
     (exerciseId: string, logged: readonly LoggedForTarget[]): SetTarget[] | null => {
       const planned = plan.find((p) => p.exerciseId === exerciseId);
@@ -1188,6 +1198,11 @@ export function LogScreen() {
     // Saved: the queued mark carries on until Appwrite has it, and any
     // earlier warning is out of date.
     setUnsaved(false);
+    // Only now, with the set on the phone and the clip's attach able to queue
+    // behind it: a set that failed to write never asks for a clip. Warm-ups
+    // never ask, and an exercise already asked this session is not asked again.
+    const blockId = blockOf(row.exerciseId);
+    if (!row.isWarmup && !wasNudged(active.id, blockId)) setNudgeCandidate({ setId: row.clientSetId, blockId });
   };
 
   const discardPlanned = (rowId: string) => {
@@ -1780,12 +1795,23 @@ export function LogScreen() {
                       loggedWorking: workingIds.length,
                       hasClip: mine.some(hasClip),
                     });
+                    // F18: right after logging a set the coach asked to see,
+                    // once per exercise per session, never over a clip.
+                    const nudge =
+                      ask !== "none" &&
+                      nudgeCandidate?.blockId === block.id &&
+                      nudgeCandidate.setId === target.clientSetId &&
+                      asked(target.clientSetId) &&
+                      !hasClip(target);
                     return (
                       <AttachVideo
                         key={target.clientSetId}
                         setId={target.clientSetId}
                         athleteId={athleteId}
                         ask={ask}
+                        nudge={nudge}
+                        onNudgeShown={() => rememberNudged(active.id, block.id)}
+                        onNudgeClose={() => setNudgeCandidate(null)}
                         onAttached={() => setFilmed((prev) => new Set(prev).add(target.clientSetId))}
                       />
                     );

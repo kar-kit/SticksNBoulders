@@ -378,3 +378,53 @@ Known edges, for Joey:
   describe a clip that is gone or a different take. The delete confirm says
   so.
 <!-- END: athlete clips gallery (F13) -->
+
+<!-- BEGIN: the coach's ask as a popup (F18) -->
+## The coach's ask as a popup (F18)
+
+_Added 25 Oct 2026. Approved by Joey._ The inline line under the camera ("Your
+coach asked for a clip of this one." with Not now) is gone. The ask is now
+a small modal (`components/ui/dialog.tsx`, `size="sm"`, `feel="athlete"`),
+"Your coach asked for a clip of this set", with **Attach now** and **Later**.
+
+**When.** Right after the athlete logs a set the coach asked to see, once the
+set's local write has succeeded (`confirmSet` in log-screen.tsx). It is shown
+once per exercise per session, whatever the answer. Later, Escape and the
+backdrop all count as an answer. It is never shown:
+
+- for a warm-up, even on a row the coach flagged;
+- when any set of the exercise already has a clip (the same rule as
+  `videoAsk`: one clip answers the exercise);
+- for a set the phone could not write down (the `logSet` catch path). The
+  clip's `set.attachVideo` queues behind the set's create, so a set in the
+  queue can always take a clip; a set that never reached it cannot;
+- while the camera is uploading;
+- on a reload. It answers the moment of logging, not the state of the
+  session, so sets read back never pop it.
+
+"Asked" is the camera's existing positional rule (`asked()`, the nth working
+set against the nth target), not the planned row's `videoRequired`, because a
+swapped row drops that stamp (`swapRows`). The exercise is the block, so a
+swapped variant counts as its prescribed exercise.
+
+**Persistence.** `lib/logging/video-nudge.ts` keeps the asked blocks of the
+running session in one localStorage key. A new session replaces it. It is
+written when the popup is shown, so a reload with the popup open does not
+bring it back either.
+
+**Attach now** is the camera's own pick: the same input, upload, progress
+line and F12 poster grab, on the same set. The handler closes the native
+dialog first and then clicks the input, all inside the tap, because iOS Safari
+only opens the file picker from a user gesture and the input sits outside the
+modal, where `showModal()` would make it inert.
+
+**Later** closes it. The set row's camera badge stays as the reminder, and the
+camera keeps its emphasis (`data-video-ask`; "prompt" and "emphasise" now look
+the same). Focus goes to the camera afterwards, because the set's Log button,
+which had it when the popup opened, is gone once the row is logged.
+
+[Unverified] On a real iPhone home-screen PWA and Android Chrome: the picker
+opening from Attach now, and the spring entry. jsdom has no `showModal`, so
+the tests check that the input is clicked with the dialog already closed, not
+that a picker appears.
+<!-- END: the coach's ask as a popup (F18) -->

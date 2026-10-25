@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { attachClipToSet } from "@/lib/video/upload";
 import { AttachVideo } from "./attach-video";
@@ -23,19 +23,12 @@ describe("the camera when the coach asked for a clip (Order 30)", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
-  it("nudges once the sets are logged, as a status line rather than an alert", () => {
+  it("stands out the same once every flagged set is logged, and says nothing inline", () => {
     render_("prompt");
-    expect(screen.getByRole("status")).toHaveTextContent("Your coach asked for a clip of this one.");
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add video" })).toHaveAttribute("data-video-ask", "prompt");
     expect(screen.getByRole("button", { name: "Add video" })).toBeEnabled();
-  });
-
-  it("puts the nudge away on Not now and leaves the camera usable", async () => {
-    render_("prompt");
-    await userEvent.setup().click(screen.getByRole("button", { name: "Not now" }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add video" })).toBeEnabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("reports an attached clip so the screen stops asking", async () => {
@@ -44,7 +37,73 @@ describe("the camera when the coach asked for a clip (Order 30)", () => {
     const file = new File(["x"], "squat.mp4", { type: "video/mp4" });
     await userEvent.setup().upload(container.querySelector("input[type=file]") as HTMLInputElement, file);
     await vi.waitFor(() => expect(onAttached).toHaveBeenCalledTimes(1));
-    expect(screen.queryByText("Your coach asked for a clip of this one.")).not.toBeInTheDocument();
+  });
+});
+
+describe("the coach's ask as a popup (F18)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const nudged = (extra: Record<string, unknown> = {}) => {
+    const onNudgeShown = vi.fn();
+    const onNudgeClose = vi.fn();
+    const utils = render(
+      <AttachVideo setId="s1" athleteId="a1" ask="emphasise" nudge onNudgeShown={onNudgeShown} onNudgeClose={onNudgeClose} {...extra} />,
+    );
+    return { ...utils, onNudgeShown, onNudgeClose };
+  };
+
+  it("asks in a dialog named by its heading, Attach now first, and says it was shown once", () => {
+    const { onNudgeShown } = nudged();
+    const dialog = screen.getByRole("dialog", { name: "Your coach asked for a clip of this set" });
+    const buttons = within(dialog).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["Attach now", "Later"]);
+    expect(onNudgeShown).toHaveBeenCalledTimes(1);
+  });
+
+  it("is not there without the nudge", () => {
+    render_("prompt");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens the picker straight from the Attach now tap, with the dialog already closed", async () => {
+    const opened: boolean[] = [];
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (this: HTMLInputElement) {
+      opened.push(this.closest("dialog") === null && document.querySelector("dialog")?.hasAttribute("open") !== true);
+    });
+    const { onNudgeClose, container } = nudged();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Attach now" }));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(click.mock.contexts[0]).toBe(container.querySelector("input[type=file]"));
+    // The input lives outside the modal, and the modal was closed before the click.
+    expect(opened).toEqual([true]);
+    expect(onNudgeClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("uploads what Attach now picked onto the same set", async () => {
+    vi.mocked(attachClipToSet).mockClear();
+    const { container, rerender } = nudged();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Attach now" }));
+    rerender(<AttachVideo setId="s1" athleteId="a1" ask="emphasise" />);
+    const file = new File(["x"], "squat.mp4", { type: "video/mp4" });
+    await userEvent.setup().upload(container.querySelector("input[type=file]") as HTMLInputElement, file);
+    await vi.waitFor(() => expect(attachClipToSet).toHaveBeenCalledWith("s1", "a1", file, expect.anything()));
+  });
+
+  it("closes on Later and hands the focus to the camera", async () => {
+    const { onNudgeClose, rerender } = nudged();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Later" }));
+    expect(onNudgeClose).toHaveBeenCalledTimes(1);
+    rerender(<AttachVideo setId="s1" athleteId="a1" ask="emphasise" />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add video" })).toHaveFocus();
+  });
+
+  it("closes on Escape like Later", async () => {
+    const { onNudgeClose } = nudged();
+    // jsdom has no showModal, so nothing moves the focus in for it.
+    screen.getByRole("button", { name: "Attach now" }).focus();
+    await userEvent.setup().keyboard("{Escape}");
+    expect(onNudgeClose).toHaveBeenCalledTimes(1);
   });
 });
 
