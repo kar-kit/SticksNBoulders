@@ -468,3 +468,46 @@ before, like the Strong app, and PRs."
   `/lift/[id]` for the exercise in hand (the swapped variant when swapped).
   `/log` is depth 0 and `/lift/x` depth 2, so F7 slides it in as a push with
   nothing set at the call site. The name itself still reopens the block.
+
+## The edit sheet over a dimmed page (F16)
+
+_25 Oct 2026. Source: Joey._ The plain logging keypad keeps **no backdrop**
+(F1, above): the rows stay live because tapping the next field is how an
+athlete moves on. "Edit set N" (F9) now does the opposite. It rewrites a set
+already done, so it is modal over a scrim, and a stray tap cannot abandon a
+draft without asking.
+
+- **`components/logging/modal-sheet.tsx`**, a native `<dialog>` opened with
+  `showModal()`, the same choice and mechanics as the coach's `Dialog`
+  (`components/ui/dialog.tsx`). The browser makes the page behind inert and
+  removes it from the accessibility tree, keeps focus in the sheet, puts the
+  sheet in the top layer above the tab bar, and turns Escape and Android's
+  back gesture into `cancel`. Focus goes back to the opener on close.
+  `LogSheet` is untouched. The `bottom` arbiter still picks "edit", but the
+  Log now hands that sheet to `ModalSheet` and gives `LogSheet` nothing.
+- **Dismissing.** A tap on the scrim or Escape is a request (`onDismiss`).
+  An untouched draft closes. A changed one opens "Discard changes?" (the
+  coach `Dialog`, rendered as a sibling so its Escape cannot reach the
+  sheet's), with Keep editing or Discard. A changed draft is the inverse of
+  Save's no-op: `editOf(draft) === null || changesSet(set, edit)`. Cancel and
+  Save in the sheet do not ask, because they already say what they do.
+- **Motion.** The scrim (`bg-black/70`, Dialog's dim) is a child of the
+  full-screen, transparent dialog, not `::backdrop`, so it can fade out while
+  leaving. It fades in on `animate-fade-in` and out on `animate-fade-out`. The
+  panel rises on `motion-safe:animate-sheet-in` and leaves on
+  `motion-safe:animate-sheet-out`. Opacity and translate only. Leaving
+  closes the modal at once (page live, focus back), then sets the `open`
+  attribute so the dialog stays painted, non-modal and inert, until
+  `afterExit` on the panel. The attribute is used rather than `show()`,
+  which would pull focus back in. Under reduced motion it all unmounts at
+  once.
+- **Geometry.** The panel now covers the tab bar, so it carries `pb-safe`
+  for the home indicator. It scrolls (`overflow-y-auto`, capped below the top
+  inset) when pad, note, video and Delete outgrow a small phone. The row being
+  edited is still scrolled clear of the panel by `revealAboveSheet`.
+
+[Unverified] on a real device: iOS standalone PWA. Three things to check: the
+scrim stops touches reaching `<main>`, the keyboard for the note field does
+not hide the panel, and during the 240 ms exit the tab bar may paint over the
+fading scrim. The dialog is no longer in the top layer by then, and the tab
+bar has its own `view-transition-name`. That last one is cosmetic.

@@ -12,9 +12,9 @@ import { noteOf } from "./set-note";
  * `editSet`, History's path.
  *
  * What is being typed lives in a draft, never on the set. The row in the list
- * keeps showing what was logged until Save, so Cancel -- or tapping anywhere
- * else that takes the sheet -- leaves the set exactly as it was, with nothing
- * to roll back. These are the rules for that draft; the screen holds it.
+ * keeps showing what was logged until Save, so Cancel -- or a tap on the
+ * dimmed page behind the sheet (F16), confirmed when the draft has changed --
+ * leaves the set exactly as it was, with nothing to roll back. These are the rules for that draft; the screen holds it.
  */
 
 /**

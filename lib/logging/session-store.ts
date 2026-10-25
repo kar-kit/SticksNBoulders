@@ -16,6 +16,11 @@ export type UnnamedSet = Omit<SessionSet, "exerciseName"> & {
   setIndex?: number | undefined;
   /** A clip is attached. Read at load; a clip attached on this page is tracked by the screen. */
   hasVideo?: boolean;
+  /**
+   * That clip's file id, so replacing it from the Log can retire the old file
+   * (F17). Read at load, like `hasVideo`.
+   */
+  videoFileId?: string | null;
   /** That clip's poster (F12), or null for none. Read at load, like `hasVideo`. */
   videoPosterId?: string | null;
   /**
@@ -147,6 +152,7 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
         isWarmup: row.is_warmup === true,
         loggedAt,
         hasVideo: typeof row.video_file_id === "string" && row.video_file_id !== "",
+        videoFileId: typeof row.video_file_id === "string" && row.video_file_id !== "" ? row.video_file_id : null,
         videoPosterId: posterOf(raw as unknown as Record<string, unknown>),
         ...(typeof row.notes === "string" && row.notes.trim() ? { notes: row.notes } : {}),
         ...(typeof row.prescription_id === "string" && row.prescription_id
