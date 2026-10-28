@@ -109,6 +109,51 @@ describe("the fill and line split", () => {
   });
 });
 
+describe("the record colour (F22)", () => {
+  /** --pr at 10% over --background: the finish screen's record card. */
+  const tint = () => {
+    const [pr, bg] = [token("pr"), token("background")].map((hex) =>
+      [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)),
+    );
+    return `#${pr!.map((c, i) => Math.round(c * 0.1 + bg![i]! * 0.9).toString(16).padStart(2, "0")).join("")}`;
+  };
+
+  it("clears AA for normal-size text on every surface, so it needs no line/fill split", () => {
+    for (const bg of SURFACES) {
+      expect(meetsAA(token("pr"), token(bg), 10)).toBe(true);
+    }
+    // The tightest of the three is --surface-2; the documented ratio is 7.24.
+    expect(contrastRatio(token("pr"), token("surface-2"))).toBeGreaterThanOrEqual(7);
+  });
+
+  it("carries its own label as a fill", () => {
+    expect(meetsAA(token("on-pr"), token("pr"), 10)).toBe(true);
+  });
+
+  it("keeps every text colour on the record card at AA", () => {
+    // The card is bg-pr/10 on the page. --muted-2 is the one that breaks
+    // first if anyone thickens the tint: 4.70 at 10%, 4.49 at 12%.
+    for (const fg of ["pr", "foreground", "muted", "muted-2"]) {
+      expect(meetsAA(token(fg), tint(), 10)).toBe(true);
+    }
+  });
+
+  it("is not the copper the rows' PR pill wears, nor success", () => {
+    // Contrast between the two is a crude stand-in for "looks different", but
+    // it does keep the gold from drifting back into the copper: 1.61 apart.
+    // Against --success the difference is hue, which contrast cannot see
+    // (1.51), so that one is only pinned as a different token.
+    expect(token("pr")).not.toBe(token("accent-fill"));
+    expect(contrastRatio(token("pr"), token("accent-fill"))).toBeGreaterThan(1.5);
+    expect(token("pr")).not.toBe(token("success"));
+  });
+
+  it("is mapped into the Tailwind theme", () => {
+    expect(css).toContain("--color-pr: var(--pr);");
+    expect(css).toContain("--color-on-pr: var(--on-pr);");
+  });
+});
+
 describe("stylesheet invariants", () => {
   it("is dark-only, with no light-mode escape hatch", () => {
     expect(css).toMatch(/color-scheme:\s*dark/);

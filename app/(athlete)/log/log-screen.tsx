@@ -27,7 +27,7 @@ import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { resolveOrCreateExercise } from "@/lib/exercises/library";
 import { bodyweightLookup } from "@/lib/exercises/bodyweight";
 import { cardioLookup, type ExerciseKind } from "@/lib/exercises/kind";
-import { formatCardioTotal, isCardioSet } from "@/lib/logging/cardio";
+import { isCardioSet } from "@/lib/logging/cardio";
 import type { Exercise } from "@/lib/exercises/match";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSessionSets, type UnnamedSet } from "@/lib/logging/session-store";
@@ -74,6 +74,7 @@ import { forgetRest, recallRest, rememberRest } from "@/lib/logging/rest-store";
 import { canComplete, ZERO_LOAD_HINT, type RpeValue } from "@/lib/logging/set";
 import { blockRemovalLabel, planBlockRemoval } from "@/lib/logging/block-removal";
 import { WeekSummaryCard } from "@/components/logging/week-summary-card";
+import { FinishedSummary } from "@/components/logging/finished-summary";
 import {
   elapsedMs,
   formatElapsed,
@@ -82,7 +83,6 @@ import {
   type SessionSet,
   type SessionSummary,
 } from "@/lib/logging/session";
-import { formatNumber } from "@/lib/logging/prefill";
 import { usePrescribedSession } from "@/lib/programming/use-prescribed";
 import {
   asVariant,
@@ -102,7 +102,7 @@ import { nextSetSuggestion } from "@/lib/logging/suggestion-gate";
 import { setTargetFor } from "@/lib/logging/set-targets";
 import { useSuggestionMode } from "@/lib/coach/use-suggestion-mode";
 import { useUnits } from "@/lib/profile/units-context";
-import { loadFromInput, loadIn, loadNumber, type UnitPreference } from "@/lib/units";
+import { loadFromInput, loadIn } from "@/lib/units";
 import { haptic } from "@/lib/ui/haptics";
 import { alignPrevious, fillFromLastSession, type PreviousSet } from "@/lib/logging/previous";
 import { useExerciseHistory } from "@/lib/logging/use-exercise-history";
@@ -2258,99 +2258,6 @@ export function LogScreen() {
           </div>
         </Dialog>
       ) : null}
-    </div>
-  );
-}
-
-const PR_KIND_LABEL: Record<PrKind, string> = {
-  e1rm: "Estimated 1RM",
-  weight: "Heaviest weight",
-  reps: "Rep PR",
-};
-
-/**
- * What the athlete sees on finishing.
- *
- * The records broken today, per the blueprint, one line per exercise per
- * kind (the best of the day, not every step up to it), except rep records,
- * one per load (sessionPrs in lib/strength/pr.ts). Measured against the
- * bests from before the session, so it agrees with the badges on the rows.
- * Queued videos still belong here too and are not built yet.
- */
-function FinishedSummary({
-  summary,
-  prs,
-  nameFor,
-  unit,
-  onDone,
-}: {
-  summary: SessionSummary;
-  prs: readonly SessionPr[];
-  nameFor: (id: string) => string | null;
-  unit: UnitPreference;
-  onDone: () => void;
-}) {
-  const kg = (value: number) => (unit === "kg" ? `${formatNumber(value)} kg` : `${loadNumber(value, unit)} ${unit}`);
-  return (
-    <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
-      <h1 className="m-0 text-display font-semibold">Session done</h1>
-      <dl className="m-0 grid grid-cols-2 gap-3">
-        <Stat label="Sets" value={String(summary.setCount)} />
-        <Stat label="Tonnage" value={kg(summary.tonnageKg)} />
-        <Stat label="Exercises" value={String(summary.exerciseCount)} />
-        <Stat label="Warm-ups" value={String(summary.warmupCount)} />
-      </dl>
-      {summary.cardioSeconds ? (
-        // F23: cardio is not in the sets or the tonnage above, so it gets a
-        // line of its own -- small, because the session's work is the lifting.
-        <p data-cardio-total="" className="m-0 -mt-2 font-mono text-label uppercase text-muted">
-          Cardio &middot; {formatCardioTotal(summary.cardioSeconds)}
-        </p>
-      ) : null}
-      {prs.length > 0 ? (
-        <section aria-label="Personal records" className="flex flex-col gap-2">
-          <h2 className="m-0 font-mono text-label uppercase text-muted-2">
-            {prs.length === 1 ? "Personal record" : `${prs.length} personal records`}
-          </h2>
-          <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
-            {prs.map((pr) => (
-              <li
-                key={`${pr.exerciseId}:${pr.kind}:${pr.clientSetId}`}
-                className="flex items-baseline justify-between gap-3 rounded-card border border-border bg-surface px-4 py-3"
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="text-body font-semibold">{nameFor(pr.exerciseId) ?? pr.exerciseId}</span>
-                  <span className="text-caption text-muted">
-                    {PR_KIND_LABEL[pr.kind]} &middot; {kg(pr.loadKg)} &times; {pr.reps}
-                    {pr.rpe !== null ? ` @ ${formatNumber(pr.rpe)}` : ""}
-                  </span>
-                </span>
-                <span className="flex-none text-title font-semibold tabular-nums">
-                  {pr.kind === "e1rm" && pr.e1rmKg !== null
-                    ? kg(pr.e1rmKg)
-                    : pr.kind === "reps"
-                      ? `${pr.reps} reps`
-                      : kg(pr.loadKg)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      <div className="mt-auto">
-        <Button size="xl" block onClick={onDone}>
-          Back to Today
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-1 rounded-card border border-border bg-surface p-4">
-      <dt className="m-0 font-mono text-label uppercase text-muted-2">{label}</dt>
-      <dd className="m-0 text-display font-semibold tabular-nums">{value}</dd>
     </div>
   );
 }
