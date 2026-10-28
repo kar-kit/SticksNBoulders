@@ -37,6 +37,17 @@ coach's laptop gets a plain download.
 | Session notes | `sessions.notes` | [Inference] not in the ticket; added so "full log" means full |
 | Session name | `sessions.name` | the athlete's own name for the session (v14), blank if never named. Appended last so no existing column moves. The program-day fallback History shows is not exported |
 | Failed | `sets.failed` | `Yes` / `No` (v19, F19). `Yes` means the athlete missed the set: Reps is what they completed (0 allowed) and e1RM is blank. Appended after Session name for the same reason. Selecting the column needs the v19 schema on the instance |
+| Duration (min) | `sets.duration_seconds` | (v21, F23) a cardio set's time in minutes, two decimals: 20:30 is `20.5`. Blank on every strength row. Appended last, after Failed, so no existing column moves |
+| Level | `sets.level` | (v21, F23) a cardio set's machine level, blank when none was given and on every strength row |
+
+**Cardio rows (F23).** A cardio set is stored with load 0 and reps 0
+(lib/logging/cardio.ts), and exporting those would put a treadmill into any
+pivot that sums Load × Reps, and into "Warm-up = No" filters for top sets. So
+on a cardio row Load, Reps, RPE, Warm-up, e1RM and Failed are **blank**, not
+`0` and `No`, and the time and level go in the two new columns. Date, Session,
+Exercise (the machine: Treadmill, Stairmaster ...), Set, Notes, Prescription
+and the session columns fill as on any row. Selecting the two columns needs
+the v21 schema on the instance, like `failed` before it.
 
 One row per set, not a pre-aggregated layout, because a set table is what a
 pivot table can do anything with. The Prescription column shipped empty before

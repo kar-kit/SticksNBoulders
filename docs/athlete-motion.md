@@ -597,3 +597,49 @@ set and its reps, 0 tonnage, a rep record, never a weight or e1RM record).
   number.
 - **Next rows.** Add set and the untouched rows behind a 0 kg set repeat 0 kg
   (prefill rule 3), and Previous shows `PREV 0 × 12`, copyable like any other.
+
+
+## Logging cardio (F23)
+
+_28 Oct 2026. Source: Joey, after a session. Schema v21 (`exercises.kind`,
+`sets.duration_seconds`, `sets.level`)._ A cardio exercise -- the six seeded
+machines (`CARDIO_EXERCISES` in `lib/exercises/seed.ts`: Treadmill, Treadmill
+Running, Incline Walk, Stairmaster, Bike, Rowing Machine) or one the athlete
+makes -- is logged as a time and an optional level. No distance, heart rate or
+calories in this version; the machine is the exercise's name, never a field.
+What a cardio set counts toward is in `lib/logging/cardio.ts`: nothing in the
+strength maths, ever.
+
+- **The row.** The set row's grid, unchanged: the time sits where the weight
+  was, the level where the reps were, the RPE column is empty and the confirm
+  is in its usual place, so a thumb that knows the row knows this one. The
+  header reads `MIN · LEVEL`. Confirm needs a time above zero; level is
+  optional (a flat walk has none). No warm-up number, Failed switch, RPE
+  sheet, PR badge, camera badge, video nudge, camera or Lift Detail link on a
+  cardio block. Logged rows go by the set's own `duration_seconds`, so a lift
+  logged before the exercise was made cardio still draws as a lift.
+- **The pad.** Time is typed in minutes: `20` is twenty minutes, which is
+  nearly every cardio entry, two taps. The decimal key reads `:` while the time
+  is open, so 20:30 is `2 0 : 3 0` with no keyboard; seconds cannot pass 59
+  (`20:7` refuses the 7 rather than becoming 21:10). − and + step a minute.
+  Level takes two digits and a decimal (treadmills step in halves). The pad's
+  bottom row is Done and Level on the time, Done alone on the level: neither
+  switch means anything for cardio.
+- **Next rows.** Add set repeats the time and level (three rounds of five
+  minutes is one tap each), Previous shows `PREV 20 min · level 8` and copies
+  it, and a fresh row with nothing better takes last time's (prefill rule 4).
+  No suggestion ever prices a cardio row.
+- **Correcting one.** The edit sheet shows two values, time and level, on the
+  same pad, with the note and Delete as on a lift and no video. History's
+  editor does the same in place.
+- **Adding one.** The typeahead tags cardio exercises (`cardio` beside
+  `yours`) and offers "Add as cardio" under "Add custom exercise", so a ski
+  erg is one tap from a time. My exercises has a Cardio exercise checkbox
+  beside Bodyweight (which steps aside while Cardio is ticked) and a New
+  cardio exercise field.
+- **Totals.** The finish screen keeps its four strength stats and adds one
+  small line under them, `Cardio · 20 min`; the PR block is untouched. History's
+  header and cards add `20 min cardio` after the strength figures, and a
+  session of only cardio reads as its time rather than "0 sets". The week
+  summary card on the Log landing is unchanged: it reads rollups, cardio has
+  none, and adding cardio minutes there would mean reading raw sets.
