@@ -11,6 +11,7 @@ import { RpeSheet } from "@/components/logging/rpe-sheet";
 import { SetNoteField } from "@/components/logging/set-note-field";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
+import { bodyweightLookup } from "@/lib/exercises/bodyweight";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSetsForSessions, setsBySession, type HistorySet } from "@/lib/logging/history-store";
 import { editSet, removeSet } from "@/lib/logging/set-store";
@@ -133,6 +134,8 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
     const names = new Map(library.exercises.map((e) => [e.id, e.name]));
     return (id: string) => names.get(id) ?? id;
   }, [library.exercises]);
+  /** Whether a correction may go to 0 kg (F20): only on a bodyweight exercise, as when it was logged. */
+  const bodyweightOf = useMemo(() => bodyweightLookup(library.exercises), [library.exercises]);
 
   const ordered = useMemo(
     () => withSetEdits(setsBySession(sets ?? []).get(sessionId) ?? [], queuedSetEdits(ops)),
@@ -288,7 +291,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
   };
 
   const save = async () => {
-    if (!editingSet || !draft || !canComplete(draft)) return;
+    if (!editingSet || !draft || !canComplete({ ...draft, isBodyweight: bodyweightOf(editingSet.exerciseId) })) return;
     setBusy(true);
     const corrected = {
       loadKg: draft.loadKg as number,
@@ -423,7 +426,9 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                     <div key={set.clientSetId} className="flex flex-col gap-2">
                       <SetRow
                         index={draft.isWarmup ? "W" : index}
-                        set={draft}
+                        // The confirm square here is Save: 0 kg only on a
+                        // bodyweight exercise (F20), and the row says why not.
+                        set={{ ...draft, isBodyweight: bodyweightOf(block.exerciseId) }}
                         state="active"
                         onPressLoad={() => focusField("load")}
                         onPressReps={() => focusField("reps")}

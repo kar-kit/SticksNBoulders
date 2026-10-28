@@ -523,3 +523,40 @@ describe("a failed set (F19)", () => {
     expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 140, reps: 2, rpe: 8, isWarmup: false, failed: true, notes: null });
   });
 });
+
+describe("correcting a bodyweight set (F20)", () => {
+  beforeEach(() => {
+    library.exercises = [
+      { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true },
+      { id: "pull-up", name: "Pull Up", normalisedName: "pull up", isGlobal: true, isBodyweight: true },
+    ];
+    loaded.sets = [
+      set({ clientSetId: "st-1" }),
+      set({ clientSetId: "pu-1", exerciseId: "pull-up", loadKg: 10, reps: 8, rpe: 9, e1rmKg: null }),
+    ];
+  });
+
+  it("saves a pull-up corrected to 0 kg", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Pull Up" }));
+    for (let i = 0; i < 2; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+    await user.click(screen.getByRole("button", { name: "0" }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(editSet.mock.calls[0][1]).toMatchObject({ loadKg: 0, reps: 8 });
+  });
+
+  it("will not save a squat corrected to 0 kg, even if its confirm fires, and says why", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    for (let i = 0; i < 3; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+    await user.click(screen.getByRole("button", { name: "0" }));
+
+    const confirm = screen.getByRole("button", { name: /^Log Set 1$/ });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
+    await act(async () => activeConfirm.current?.());
+    expect(editSet).not.toHaveBeenCalled();
+  });
+});

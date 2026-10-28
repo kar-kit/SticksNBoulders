@@ -75,28 +75,61 @@ export interface LoggableSet {
    * and null read as false: every set before v19.
    */
   failed?: boolean | null;
+  /**
+   * The exercise is a bodyweight movement (F20, `exercises.is_bodyweight`),
+   * so 0 kg is a load this set can be logged at. A fact about the exercise,
+   * never stored on the set: the screen copies it in from the library, the
+   * way it copies the coach's `videoRequired` in from the prescription.
+   * Absent and null read as false, so a 0 typed on a squat -- or on any lift
+   * the phone's cached library predates the flag for -- stays refused.
+   */
+  isBodyweight?: boolean | null;
 }
 
 /**
  * Warm-ups are excluded from PRs and rollups. A 60kg warm-up single is not a
  * rep PR and must never appear as one. Neither is a failed set (F19), of any
  * kind: a miss at 200 is not a weight record, and 3 reps of a failed 5 is not
- * a rep record.
+ * a rep record. A bodyweight set at 0 kg (F20) does count: it can be a rep
+ * record, never a weight or e1RM one (lib/strength/pr.ts decides which).
  */
 export function countsTowardPrs(set: LoggableSet): boolean {
   return !set.isWarmup && !set.failed && isComplete(set);
 }
 
 /**
+ * Whether the load is one this set can be logged at: above zero, or exactly
+ * zero on a bodyweight exercise (F20). A pull-up with nothing on the belt is
+ * 0 kg, which is the truth about it; a squat at 0 kg is a thumb that missed
+ * the 1, and refusing it is how the confirm square has always caught that.
+ * Added load on a bodyweight exercise (a +20 kg pull-up) is above zero and
+ * logs exactly as it did before the flag existed.
+ */
+function hasLoggableLoad(set: LoggableSet): boolean {
+  if (typeof set.loadKg !== "number" || !Number.isFinite(set.loadKg)) return false;
+  return set.loadKg > 0 || (set.loadKg === 0 && set.isBodyweight === true);
+}
+
+/**
+ * What the row (and the edit sheet's Save) says when the blocker is
+ * "zero-load". Short enough for the line under a set row at 390pt, and it
+ * names the fix: an athlete's own lift can be flagged in My exercises; a
+ * library lift that should be flagged is the seed list's job, not theirs.
+ */
+export const ZERO_LOAD_HINT = "0 kg logs only on a bodyweight exercise";
+
+/** 0 kg on an exercise that is not flagged bodyweight: the one refusal worth explaining. */
+const isZeroOffBodyweight = (set: LoggableSet): boolean => set.loadKg === 0 && set.isBodyweight !== true;
+
+/**
  * Whether the set has a load and a rep count it can be logged with. Reps
  * above zero, except on a failed set (F19): a missed single is logged as
- * load x 0, which is the truth about it, and still counts as a set.
+ * load x 0, which is the truth about it, and still counts as a set. The load
+ * is `hasLoggableLoad`'s: 0 kg only on a bodyweight exercise (F20).
  */
 function isComplete(set: LoggableSet): boolean {
   return (
-    typeof set.loadKg === "number" &&
-    Number.isFinite(set.loadKg) &&
-    set.loadKg > 0 &&
+    hasLoggableLoad(set) &&
     typeof set.reps === "number" &&
     Number.isInteger(set.reps) &&
     (set.reps > 0 || (set.failed === true && set.reps === 0))
@@ -119,8 +152,14 @@ export function canComplete(set: LoggableSet): boolean {
 /**
  * Why the confirm target is inactive, for the affordance beside it. Returns
  * null when nothing is blocking.
+ *
+ * "zero-load" is "incomplete" with a reason the athlete can act on (F20): 0 kg
+ * on a lift that is not flagged bodyweight. Named apart because, unlike an
+ * empty cell, it looks finished -- a row reading "0 × 12" with a dead confirm
+ * square is exactly what Joey hit on a pull-up -- so the row says why.
  */
-export function completionBlocker(set: LoggableSet): "incomplete" | "video-required" | null {
+export function completionBlocker(set: LoggableSet): "zero-load" | "incomplete" | "video-required" | null {
+  if (isZeroOffBodyweight(set)) return "zero-load";
   if (!isComplete(set)) return "incomplete";
   if (set.videoRequired && !set.hasVideo && !set.videoSkipped) return "video-required";
   return null;

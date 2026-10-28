@@ -765,3 +765,42 @@ describe("SetRow — a failed set (F19)", () => {
     );
   });
 });
+
+describe("SetRow — 0 kg (F20)", () => {
+  it("confirms a 0 kg set on a bodyweight exercise, with no hint", () => {
+    const onConfirm = vi.fn();
+    render(<SetRow index={1} set={set({ loadKg: 0, reps: 12, isBodyweight: true })} state="active" onConfirm={onConfirm} />);
+    const confirm = screen.getByRole("button", { name: "Log Set 1" });
+    expect(confirm).toBeEnabled();
+    expect(confirm).not.toHaveAccessibleDescription();
+    expect(document.querySelector('[data-blocker="zero-load"]')).toBeNull();
+    // 0 reads as 0, not as an empty cell.
+    expect(screen.getByRole("button", { name: "Set 1 weight in kilograms" })).toHaveTextContent("0");
+  });
+
+  it("blocks 0 kg on any other exercise and says why, under the row and on the confirm", () => {
+    render(<SetRow index={1} set={set({ loadKg: 0, reps: 12 })} state="active" onConfirm={() => {}} />);
+    const confirm = screen.getByRole("button", { name: "Log Set 1" });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
+    expect(document.querySelector('[data-blocker="zero-load"]')).toHaveTextContent(
+      "0 kg logs only on a bodyweight exercise",
+    );
+  });
+
+  it("puts the hint in place of a suggestion's note, and only on the row the confirm belongs to", () => {
+    const { rerender } = render(
+      <SetRow index={1} set={set({ loadKg: 0, reps: 5 })} state="active" note="suggested from RPE 7 @ 140" />,
+    );
+    expect(screen.queryByText("suggested from RPE 7 @ 140")).not.toBeInTheDocument();
+    rerender(<SetRow index={2} set={set({ loadKg: 0, reps: 5 })} state="planned" />);
+    expect(document.querySelector('[data-blocker="zero-load"]')).toBeNull();
+    rerender(<SetRow index={2} set={set({ loadKg: 0, reps: 5 })} state="logged" />);
+    expect(document.querySelector('[data-blocker="zero-load"]')).toBeNull();
+  });
+
+  it("shows last time's 0 kg in the Previous line", () => {
+    render(<SetRow index={1} set={set({ loadKg: null, reps: null })} state="active" previous={{ loadKg: 0, reps: 12 }} />);
+    expect(screen.getByText("PREV 0 × 12")).toBeInTheDocument();
+  });
+});

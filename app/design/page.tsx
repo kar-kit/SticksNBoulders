@@ -296,6 +296,16 @@ export default function DesignSystemPage() {
               state="active"
               onFilm={() => {}}
             />
+
+            <Caption>bodyweight exercise at 0 kg (F20) — confirm live</Caption>
+            <SetRow
+              index={1}
+              set={{ loadKg: 0, reps: 12, rpe: null, isWarmup: false, isBodyweight: true }}
+              state="active"
+              onConfirm={() => {}}
+            />
+            <Caption>0 kg on any other lift — confirm off, the row says why</Caption>
+            <SetRow index={1} set={{ loadKg: 0, reps: 5, rpe: null, isWarmup: false }} state="active" />
           </div>
 
           <Rule />

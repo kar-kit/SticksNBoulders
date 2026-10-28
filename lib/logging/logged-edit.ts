@@ -61,7 +61,10 @@ export function draftOf(set: SetValues, heldRpe: number | null = null): EditDraf
 /**
  * What Save writes, or null when the draft is not a set yet (no load, no
  * reps, or zero of either: the same rule as the confirm square -- except
- * that a failed set may be saved with 0 reps, F19).
+ * that a failed set may be saved with 0 reps, F19, and a set of a bodyweight
+ * exercise at 0 kg, F20). `isBodyweight` is the exercise's flag, which the
+ * draft does not carry: correcting a pull-up to 0 kg saves, correcting a
+ * squat to 0 kg does not, exactly as when they were logged.
  *
  * The note always goes with it, trimmed, and null when blank: a Save from
  * this sheet is a statement about the whole set, note included, so emptying
@@ -71,8 +74,8 @@ export function draftOf(set: SetValues, heldRpe: number | null = null): EditDraf
  * of PRs and rollups, and the stored e1RM is recomputed from these four
  * values, so an RPE left on a warm-up would be a number nothing reads.
  */
-export function editOf(draft: EditDraft): SetValues | null {
-  if (!canComplete(draft)) return null;
+export function editOf(draft: EditDraft, isBodyweight = false): SetValues | null {
+  if (!canComplete({ ...draft, isBodyweight })) return null;
   return {
     loadKg: draft.loadKg as number,
     reps: draft.reps as number,

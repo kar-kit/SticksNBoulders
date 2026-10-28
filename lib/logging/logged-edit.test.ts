@@ -113,3 +113,18 @@ describe("the failed flag (F19)", () => {
     expect(changesSet(set, { ...set, failed: false })).toBe(false);
   });
 });
+
+describe("correcting a bodyweight set (F20)", () => {
+  const draft = { loadKg: 0, reps: 12, rpe: 9 as const, isWarmup: false, failed: false, notes: "" };
+
+  it("saves 0 kg on a bodyweight exercise, and only there", () => {
+    expect(editOf(draft, true)).toEqual({ loadKg: 0, reps: 12, rpe: 9, isWarmup: false, failed: false, notes: null });
+    expect(editOf(draft, false)).toBeNull();
+    // The flag defaults to off: a caller that forgets it refuses 0, never allows it.
+    expect(editOf(draft)).toBeNull();
+  });
+
+  it("saves added load on a bodyweight exercise as before", () => {
+    expect(editOf({ ...draft, loadKg: 20, reps: 5 }, true)).toMatchObject({ loadKg: 20, reps: 5 });
+  });
+});

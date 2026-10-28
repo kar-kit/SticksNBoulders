@@ -131,6 +131,12 @@ export interface ExerciseBlockProps {
    * typed and not logged yet.
    */
   historyHref?: string | null;
+  /**
+   * The exercise is flagged bodyweight (F20): its rows may be logged at 0 kg.
+   * A fact about the exercise, so it is given once here and lent to every
+   * row, rather than carried on each set. Absent is false.
+   */
+  isBodyweight?: boolean;
 }
 
 /**
@@ -169,6 +175,7 @@ export function ExerciseBlock({
   prescribedAs = null,
   onCopyPrevious,
   historyHref = null,
+  isBodyweight = false,
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const open = planned.length > 0;
@@ -314,7 +321,7 @@ export function ExerciseBlock({
           <SetRow
             key={row.clientSetId}
             index={plannedIndex(working, planned, at)}
-            set={row}
+            set={isBodyweight ? { ...row, isBodyweight: true } : row}
             state={at === 0 ? "active" : "planned"}
             focused={focusedId === row.clientSetId}
             note={row.note ?? null}

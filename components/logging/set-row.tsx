@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { CameraIcon, TrashIcon } from "@/components/ui/icons";
@@ -11,7 +11,7 @@ import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
 import { FailedMark } from "@/components/ui/failed-mark";
 import { LoadCell } from "./load-cell";
 import { SetNoteLine } from "./set-note-field";
-import { canComplete, completionBlocker, type LoggableSet } from "@/lib/logging/set";
+import { canComplete, completionBlocker, ZERO_LOAD_HINT, type LoggableSet } from "@/lib/logging/set";
 import { formatNumber } from "@/lib/logging/prefill";
 import { loadIn, loadLabel, loadNumber, unitName, type UnitPreference } from "@/lib/units";
 import type { PrKind } from "@/lib/strength/pr";
@@ -207,6 +207,11 @@ export function SetRow({
   const blocker = completionBlocker(checked);
   const confirmable = canComplete(checked);
   const showCameraInRpeCell = active && blocker === "video-required";
+  // F20: a row reading "0 × 12" looks finished, so a dead confirm square
+  // beside it needs a reason. Only on the row the square belongs to; the
+  // screen sets `isBodyweight` from the exercise, so a pull-up never sees it.
+  const zeroLoadHint = active && blocker === "zero-load" ? ZERO_LOAD_HINT : null;
+  const hintId = useId();
   const selectable = state === "logged" && Boolean(onSelect);
 
   const size = warmup ? "warmup" : editing ? "active" : "logged";
@@ -380,6 +385,7 @@ export function SetRow({
               onClick={onConfirm}
               disabled={!confirmable}
               aria-label={`Log ${setLabel}`}
+              aria-describedby={zeroLoadHint ? hintId : undefined}
               className={cn(
                 "flex h-14 items-center justify-center rounded-chip text-value-lg font-bold",
                 confirmable
@@ -486,7 +492,7 @@ export function SetRow({
 
       {uploading ? <UploadBar percent={uploadPercent} flush /> : null}
 
-      {uploading || pendingSync || note || previousText ? (
+      {uploading || pendingSync || note || previousText || zeroLoadHint ? (
         <div className="flex justify-between gap-3 px-2.5 pt-[5px] font-mono text-label text-muted-2">
           <span className="flex min-w-0 items-center gap-3">
             {previousText ? (
@@ -512,7 +518,14 @@ export function SetRow({
                 </span>
               )
             ) : null}
-            {note ? <span className="min-w-0">{note}</span> : null}
+            {zeroLoadHint ? (
+              // In place of a suggestion's note: a 0 kg load is not one.
+              <span id={hintId} data-blocker="zero-load" className="min-w-0 text-muted">
+                {zeroLoadHint}
+              </span>
+            ) : note ? (
+              <span className="min-w-0">{note}</span>
+            ) : null}
             {!note && uploading ? <span>video uploading {Math.round(uploadPercent)}%</span> : null}
           </span>
           {pendingSync ? <span>queued · no signal</span> : null}
