@@ -3,6 +3,7 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 import { authenticRows, normaliseExerciseName, type Actor } from "@/appwrite/documents";
 import { enqueue } from "@/lib/offline/client";
 import { findByName, type Exercise } from "./match";
+import { parseKind, type ExerciseKind } from "./kind";
 
 /**
  * Loading the exercise library onto the device.
@@ -35,6 +36,8 @@ interface ExerciseRow {
   is_global?: unknown;
   owner_id?: unknown;
   video_default?: unknown;
+  is_bodyweight?: unknown;
+  kind?: unknown;
 }
 
 /** Skips a row rather than throwing: one malformed row must not empty the list. */
@@ -48,6 +51,12 @@ function toExercise(row: ExerciseRow): Exercise | null {
     isGlobal: row.is_global === true,
     ownerId: typeof row.owner_id === "string" ? row.owner_id : null,
     videoDefault: row.video_default === true,
+    // Null on a row from before v20, and absent on an instance not yet
+    // migrated: both read as not bodyweight, which is what every lift was.
+    isBodyweight: row.is_bodyweight === true,
+    // v21 (F23). Null before v21 and absent before the column exists: both
+    // strength, which is what every exercise was.
+    kind: parseKind(row.kind),
   };
 }
 
@@ -106,6 +115,13 @@ export async function resolveOrCreateExercise(
   name: string,
   library: readonly Exercise[],
   actor: Actor,
+  /**
+   * What a new row is (F23): "cardio" from the typeahead's "Add as cardio"
+   * and My exercises' New cardio exercise, strength everywhere else. Only a
+   * NEW row takes it -- a name the library already has resolves to that
+   * exercise as it is, so typing "Treadmill" never re-kinds anything.
+   */
+  kind: ExerciseKind = "strength",
 ): Promise<ResolvedExercise> {
   const existing = findByName(name, library);
   if (existing) return { exercise: existing, created: false };
@@ -121,8 +137,17 @@ export async function resolveOrCreateExercise(
     normalisedName: normaliseExerciseName(trimmed),
     isGlobal: false,
     ownerId: actor.userId,
+    ...(kind === "cardio" ? { kind } : {}),
   };
-  await enqueue("exercise.create", { exerciseId: exercise.id, name: trimmed });
+  // The kind rides in the create (F23) rather than following as its own op,
+  // so a cardio exercise is never on the server, even for a moment, as a
+  // strength one. Only when cardio: an op without it is what every client
+  // before v21 queued, and it still means strength.
+  await enqueue("exercise.create", {
+    exerciseId: exercise.id,
+    name: trimmed,
+    ...(kind === "cardio" ? { kind } : {}),
+  });
   return { exercise, created: true };
 }
 

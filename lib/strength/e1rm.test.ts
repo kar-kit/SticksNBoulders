@@ -128,3 +128,18 @@ describe("a failed set (F19)", () => {
     );
   });
 });
+
+describe("a bodyweight set at 0 kg (F20)", () => {
+  it("has no estimate: null, never 0 and never NaN, at any reps and RPE", () => {
+    for (const reps of [1, 5, 10]) {
+      for (const rpe of [6, 8, 10]) {
+        expect(set({ loadKg: 0, reps, rpe })).toBeNull();
+      }
+    }
+  });
+
+  it("leaves a weighted pull-up estimated on its added load, as before", () => {
+    // +20 x 5 @ 8: 20 x 36 / 30.
+    expect(set({ loadKg: 20, reps: 5, rpe: 8 })).toBe(24);
+  });
+});

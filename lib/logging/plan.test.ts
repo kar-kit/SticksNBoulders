@@ -42,6 +42,18 @@ describe("rowAfter", () => {
   });
 });
 
+describe("after a bodyweight set at 0 kg (F20)", () => {
+  it("Add set repeats it at 0 kg", () => {
+    expect(rowAfter("pull-up", { loadKg: 0, reps: 10 }, ids())).toMatchObject({ loadKg: 0, reps: 10 });
+  });
+
+  it("the untouched rows behind it follow it to 0 kg", () => {
+    const rows = [row({ exerciseId: "pull-up", clientSetId: "a", loadKg: null, reps: 8 })];
+    const out = refreshBehind(rows, { exerciseId: "pull-up", loadKg: 0, reps: 10, isWarmup: false });
+    expect(out.rows[0]).toMatchObject({ loadKg: 0, reps: 10 });
+  });
+});
+
 describe("addRow", () => {
   it("prefills from the last planned row, not the last logged set", () => {
     const rows = [row({ clientSetId: "head", loadKg: 180, reps: 2 })];
@@ -311,5 +323,38 @@ describe("refreshBehind after a failed set (F19)", () => {
     const out = refreshBehind(rows, { exerciseId: "squat", loadKg: 200, reps: 0, isWarmup: false, failed: true });
     expect(out.reprice.size).toBe(0);
     expect(out.rows[0]).toBe(rows[0]);
+  });
+});
+
+describe("after a cardio set (F23)", () => {
+  it("Add set repeats its duration and level, with no load or reps", () => {
+    expect(rowAfter("treadmill", { loadKg: 0, reps: 0, durationSeconds: 300, level: 8 }, ids(), true)).toEqual({
+      exerciseId: "treadmill",
+      clientSetId: "st-1",
+      loadKg: null,
+      reps: null,
+      rpe: null,
+      isWarmup: false,
+      planned: true,
+      durationSeconds: 300,
+      level: 8,
+    });
+  });
+
+  it("takes no suggestion, whatever is passed in", () => {
+    const next = rowAfter("treadmill", { loadKg: 0, reps: 0, durationSeconds: 300 }, ids(), true, {
+      loadKg: 100,
+      fromRpe: 8,
+      fromLoadKg: 100,
+    });
+    expect(next).not.toHaveProperty("suggested");
+    expect(next.loadKg).toBeNull();
+  });
+
+  it("leaves the rows behind it alone, with nothing to reprice", () => {
+    const rows = [row({ exerciseId: "treadmill", clientSetId: "a", loadKg: null, reps: null, durationSeconds: 300 })];
+    const out = refreshBehind(rows, { exerciseId: "treadmill", loadKg: 0, reps: 0, isWarmup: false, durationSeconds: 600 });
+    expect(out.rows).toEqual(rows);
+    expect(out.reprice.size).toBe(0);
   });
 });

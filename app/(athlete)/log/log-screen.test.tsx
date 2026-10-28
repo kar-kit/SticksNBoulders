@@ -4343,3 +4343,258 @@ describe("marking a set failed (F19)", () => {
     await waitFor(() => expect(screen.queryByRole("img", { name: "Set 1: failed" })).not.toBeInTheDocument());
   });
 });
+
+/* ------------------------------------------------------------------------ */
+
+describe("bodyweight exercises at 0 kg (F20)", () => {
+  const pullUp: Exercise = {
+    id: "pull-up",
+    name: "Pull Up",
+    normalisedName: "pull up",
+    isGlobal: true,
+    isBodyweight: true,
+  };
+  const add = async (user: ReturnType<typeof userEvent.setup>, query: string, name: string) => {
+    await user.type(screen.getByRole("combobox"), query);
+    await user.click(screen.getByRole("option", { name }));
+  };
+  const enter = async (user: ReturnType<typeof userEvent.setup>, kg: string, reps: string) => {
+    await user.click(screen.getByRole("button", { name: /weight in kilograms/ }));
+    for (const key of [...kg]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: "Reps" }));
+    for (const key of [...reps]) await user.click(screen.getByRole("button", { name: key }));
+  };
+  const sheet = () => screen.getByRole("region", { name: /^Edit / });
+  beforeEach(() => {
+    resetQueueForTests();
+    library.exercises = [squat, pullUp];
+  });
+
+  it("logs a pull-up at 0 kg, with no hint and the confirm live", async () => {
+    const { user } = setup({ active: session() });
+    await add(user, "pull", "Pull Up");
+    await enter(user, "0", "12");
+
+    expect(document.querySelector('[data-blocker="zero-load"]')).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ exerciseId: "pull-up", loadKg: 0, reps: 12 });
+  });
+
+  it("repeats 0 kg on Add set, so the next set at bodyweight is one tap", async () => {
+    const { user } = setup({ active: session() });
+    await add(user, "pull", "Pull Up");
+    await enter(user, "0", "10");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Add a set to Pull Up" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+    expect(logSet.mock.calls[1][0]).toMatchObject({ loadKg: 0, reps: 10, setIndex: 2 });
+  });
+
+  it("keeps added load on a pull-up logging as before", async () => {
+    const { user } = setup({ active: session() });
+    await add(user, "pull", "Pull Up");
+    await enter(user, "20", "5");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ loadKg: 20, reps: 5 });
+  });
+
+  it("still refuses 0 kg on a squat, and the row says why", async () => {
+    const { user } = setup({ active: session() });
+    await add(user, "squat", "Squat");
+    await enter(user, "0", "5");
+
+    const confirm = screen.getByRole("button", { name: "Log Set 1" });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
+    await user.click(confirm);
+    expect(logSet).not.toHaveBeenCalled();
+  });
+
+  it("refuses 0 kg on an exercise from a library cached before the flag existed", async () => {
+    // What a phone that has not fetched since v20 holds: no field at all.
+    library.exercises = [{ id: "pull-up", name: "Pull Up", normalisedName: "pull up", isGlobal: true }];
+    const { user } = setup({ active: session() });
+    await add(user, "pull", "Pull Up");
+    await enter(user, "0", "12");
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeDisabled();
+  });
+
+  it("saves a correction to 0 kg on a pull-up from the edit sheet", async () => {
+    storedSets.value = [logged("a", 10, 20, { exerciseId: "pull-up", setIndex: 1, reps: 8 })];
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    await user.click(within(sheet()).getByRole("button", { name: "0" }));
+
+    expect(within(sheet()).queryByText("0 kg logs only on a bodyweight exercise")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save Set 1" }));
+    expect(editSet).toHaveBeenCalledTimes(1);
+    expect(editSet.mock.calls[0][1]).toMatchObject({ loadKg: 0, reps: 8 });
+  });
+
+  it("will not save a squat corrected to 0 kg, and says why", async () => {
+    storedSets.value = [logged("a", 140, 20, { setIndex: 1 })];
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    await user.click(within(sheet()).getByRole("button", { name: "0" }));
+
+    const save = screen.getByRole("button", { name: "Save Set 1" });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+describe("cardio exercises (F23)", () => {
+  const stairs: Exercise = {
+    id: "stairs",
+    name: "Stairmaster",
+    normalisedName: "stairmaster",
+    isGlobal: true,
+    kind: "cardio",
+  };
+  const add = async (user: ReturnType<typeof userEvent.setup>, query: string, name: RegExp | string) => {
+    await user.type(screen.getByRole("combobox"), query);
+    await user.click(screen.getByRole("option", { name }));
+  };
+  const press = async (user: ReturnType<typeof userEvent.setup>, keys: string) => {
+    for (const key of [...keys]) {
+      await user.click(screen.getByRole("button", { name: key === "." ? "Seconds" : key }));
+    }
+  };
+  const sheet = () => screen.getByRole("region", { name: /^Edit / });
+  beforeEach(() => {
+    resetQueueForTests();
+    library.exercises = [squat, stairs];
+  });
+
+  it("are tagged cardio in the typeahead, before they are picked", async () => {
+    const { user } = setup({ active: session() });
+    await user.type(screen.getByRole("combobox"), "stair");
+    expect(screen.getByRole("option", { name: "Stairmaster, cardio" })).toHaveTextContent("cardio");
+  });
+
+  it("log a time and a level, with no weight, reps, RPE, warm-up or failed", async () => {
+    const { user } = setup({ active: session() });
+    await add(user, "stair", /Stairmaster/);
+    expect(screen.queryByRole("button", { name: /weight in kilograms/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set 1 RPE" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Set 1 time" }));
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    await press(user, "20.30");
+    await user.click(screen.getByRole("button", { name: "Level" }));
+    await press(user, "8");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({
+      exerciseId: "stairs",
+      loadKg: 0,
+      reps: 0,
+      rpe: null,
+      isWarmup: false,
+      failed: false,
+      durationSeconds: 1230,
+      level: 8,
+    });
+  });
+
+  it("will not log without a time, and logs one with no level", async () => {
+    const { user } = setup({ active: session() });
+    await add(user, "stair", /Stairmaster/);
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Set 1 time" }));
+    await press(user, "15");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(1));
+    expect(logSet.mock.calls[0][0]).toMatchObject({ durationSeconds: 900, level: null });
+  });
+
+  it("repeats the time and level on Add set", async () => {
+    const { user } = setup({ active: session() });
+    await add(user, "stair", /Stairmaster/);
+    await user.click(screen.getByRole("button", { name: "Set 1 time" }));
+    await press(user, "5");
+    await user.click(screen.getByRole("button", { name: "Level" }));
+    await press(user, "10");
+    await user.click(screen.getByRole("button", { name: "Log Set 1" }));
+    await user.click(screen.getByRole("button", { name: "Add a set to Stairmaster" }));
+    await user.click(screen.getByRole("button", { name: "Log Set 2" }));
+    await waitFor(() => expect(logSet).toHaveBeenCalledTimes(2));
+    expect(logSet.mock.calls[1][0]).toMatchObject({ durationSeconds: 300, level: 10, setIndex: 2 });
+  });
+
+  it("are left out of the finish's sets and tonnage, and get a cardio line of their own", async () => {
+    storedSets.value = [
+      { exerciseId: "squat", clientSetId: "a", loadKg: 142.5, reps: 5, rpe: 8, isWarmup: false, loggedAt: new Date() },
+      {
+        exerciseId: "stairs",
+        clientSetId: "c",
+        loadKg: 0,
+        reps: 0,
+        rpe: null,
+        isWarmup: false,
+        durationSeconds: 1200,
+        level: 8,
+        loggedAt: new Date(),
+      },
+    ];
+    const finish = vi.fn(async () => {
+      training.value = { ...training.value, active: null };
+    });
+    const { user } = setup({ active: session(), finish });
+    await screen.findByRole("region", { name: "Stairmaster" });
+    await user.click(screen.getByRole("button", { name: "Finish session" }));
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+
+    expect(finish).toHaveBeenCalledWith("s1", { setCount: 1, tonnageKg: 712.5 });
+    expect(await screen.findByText("Session done")).toBeInTheDocument();
+    expect(screen.getByText("Sets").nextElementSibling).toHaveTextContent("1");
+    expect(screen.getByText("Exercises").nextElementSibling).toHaveTextContent("2");
+    expect(document.querySelector("[data-cardio-total]")).toHaveTextContent("Cardio · 20 min");
+  });
+
+  it("show no cardio line on a finish with none", async () => {
+    const { user } = setup({ active: session() });
+    await user.click(screen.getByRole("button", { name: "Finish session" }));
+    await user.click(screen.getByRole("button", { name: "Finish" }));
+    expect(await screen.findByText("Session done")).toBeInTheDocument();
+    expect(document.querySelector("[data-cardio-total]")).toBeNull();
+  });
+
+  it("are corrected in the edit sheet: time and level, no video, saved as cardio", async () => {
+    storedSets.value = [
+      logged("c", 0, 20, { exerciseId: "stairs", setIndex: 1, reps: 0, durationSeconds: 1200, level: 8 }),
+    ];
+    const { user } = setup({ active: session() });
+    await user.click(await screen.findByRole("group", { name: "Set 1" }));
+    expect(within(sheet()).getByRole("button", { name: "Change time, now 20 minutes" })).toBeInTheDocument();
+    expect(within(sheet()).queryByRole("group", { name: "Video" })).not.toBeInTheDocument();
+    expect(within(sheet()).queryByText("0 kg logs only on a bodyweight exercise")).toBeNull();
+
+    await user.click(within(sheet()).getByRole("button", { name: "2" }));
+    await user.click(within(sheet()).getByRole("button", { name: "5" }));
+    await user.click(screen.getByRole("button", { name: "Save Set 1" }));
+    expect(editSet).toHaveBeenCalledTimes(1);
+    expect(editSet.mock.calls[0][1]).toMatchObject({ durationSeconds: 1500, level: 8, loadKg: 0, reps: 0, rpe: null });
+  });
+
+  it("can be made on the fly from the typeahead, as cardio", async () => {
+    const ski: Exercise = {
+      id: "ski", name: "Ski Erg", normalisedName: "ski erg", isGlobal: false, ownerId: "joey", kind: "cardio",
+    };
+    resolveOrCreateExercise.mockResolvedValue({ exercise: ski, created: true });
+    const { user } = setup({ active: session() });
+    await user.type(screen.getByRole("combobox"), "Ski Erg");
+    await user.click(screen.getByRole("option", { name: "Add custom cardio exercise: Ski Erg" }));
+    await waitFor(() => expect(resolveOrCreateExercise).toHaveBeenCalled());
+    expect(resolveOrCreateExercise.mock.calls[0][0]).toBe("Ski Erg");
+    expect(resolveOrCreateExercise.mock.calls[0][3]).toBe("cardio");
+    expect(await screen.findByRole("region", { name: "Ski Erg" })).toBeInTheDocument();
+  });
+});

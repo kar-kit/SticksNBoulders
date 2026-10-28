@@ -160,6 +160,8 @@ describe("fetchExerciseHistory", () => {
           "rpe",
           "is_warmup",
           "failed",
+          "duration_seconds",
+          "level",
           "e1rm_kg",
           "logged_at",
         ],

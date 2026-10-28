@@ -181,7 +181,9 @@ describe("detectPrs", () => {
   });
 
   it("never counts a warm-up or an incomplete set", () => {
-    expect(detectPrs([set("w", 200, 5, null, true), set("z", 200, 0), set("n", 0, 5)], bests).size).toBe(0);
+    // 0 kg is not incomplete any more (F20, a bodyweight set; see below), but
+    // a load that is not a number still is.
+    expect(detectPrs([set("w", 200, 5, null, true), set("z", 200, 0), set("n", Number.NaN, 5)], bests).size).toBe(0);
   });
 
   it("says nothing without prior bests, and nothing of a kind with no prior best", () => {
@@ -376,5 +378,86 @@ describe("failed sets (F19)", () => {
     expect(found.has("f1")).toBe(false);
     expect(found.get("ok")).toContain("weight");
     expect(found.get("reps")).toContain("reps");
+  });
+});
+
+describe("bodyweight sets at 0 kg (F20)", () => {
+  it("are history: a lift done only at bodyweight has prior bests, with no weight and no estimate", () => {
+    const before = [
+      raw("2026-10-20T18:00:00Z", { loadKg: 0, reps: 10, rpe: 9 }),
+      raw("2026-10-20T18:05:00Z", { loadKg: 0, reps: 8, rpe: 10 }),
+    ];
+    expect(priorBests([], before, sessionStart)).toEqual({ e1rmKg: null, heaviestKg: null });
+    expect(repBests(before, sessionStart)).toEqual([{ loadKg: 0, reps: 10 }]);
+  });
+
+  it("count as history from the rollups too, where a bodyweight week's only best is its reps", () => {
+    const weeks = [week("2026-10-12T00:00:00Z", { bestReps: 10, bestRepsLoadKg: 0 })];
+    expect(priorBests(weeks, [], sessionStart)).toEqual({ e1rmKg: null, heaviestKg: null });
+  });
+
+  it("are never the heaviest weight beside weighted sets, and never an e1RM, never 0 or NaN", () => {
+    const before = [
+      raw("2026-10-20T18:00:00Z", { loadKg: 0, reps: 15, rpe: 8 }),
+      raw("2026-10-20T18:10:00Z", { loadKg: 20, reps: 5, rpe: 8 }),
+    ];
+    const bests = priorBests([], before, sessionStart);
+    expect(bests?.heaviestKg).toBe(20);
+    // 20 x 5 @ 8: 20 x 36 / 30. The bodyweight set adds nothing to it.
+    expect(bests?.e1rmKg).toBe(24);
+    expect(Number.isNaN(bests?.e1rmKg)).toBe(false);
+    // One frontier for the lift: +20 for 5, bodyweight for 15.
+    expect(repBests(before, sessionStart)).toEqual([
+      { loadKg: 20, reps: 5 },
+      { loadKg: 0, reps: 15 },
+    ]);
+  });
+
+  it("are a rep record over more reps at bodyweight, and only a rep record", () => {
+    const bests = { e1rmKg: null, heaviestKg: null, repsAt: [{ loadKg: 0, reps: 10 }] };
+    const found = detectPrs([set("bw", 0, 12, 10), set("again", 0, 12, 10), set("more", 0, 13, 9)], bests);
+    expect(found.get("bw")).toEqual(["reps"]);
+    // The second 12 has 12 at bodyweight to beat now.
+    expect(found.has("again")).toBe(false);
+    expect(found.get("more")).toEqual(["reps"]);
+  });
+
+  it("are not a rep record over the same reps done with load on: that already said they were there", () => {
+    const bests = { e1rmKg: 30, heaviestKg: 20, repsAt: [{ loadKg: 20, reps: 12 }] };
+    expect(detectPrs([set("bw", 0, 12, 10)], bests).size).toBe(0);
+    expect(detectPrs([set("bw", 0, 13, 10)], bests)).toEqual(new Map([["bw", ["reps"]]]));
+  });
+
+  it("are never a weight record, even with nothing heavier on record", () => {
+    // heaviestKg 0 is not a state priorBests produces, but a 0 kg set must
+    // not beat it either way.
+    expect(detectPrs([set("bw", 0, 5, 10)], { e1rmKg: null, heaviestKg: null }).size).toBe(0);
+    expect(detectPrs([set("bw", 0, 5, 10)], { e1rmKg: null, heaviestKg: 0 }).size).toBe(0);
+  });
+
+  it("leave weighted sets on the same lift badged as before: +22.5 over a +20 best is a weight record", () => {
+    const bests = { e1rmKg: 24, heaviestKg: 20, repsAt: [{ loadKg: 20, reps: 5 }, { loadKg: 0, reps: 15 }] };
+    const found = detectPrs([set("bw", 0, 10, 8), set("heavy", 22.5, 3, 8)], bests);
+    expect(found.has("bw")).toBe(false);
+    // 22.5 x 3 @ 8 also estimates 25.3 over the 24 on record.
+    expect(found.get("heavy")).toEqual(["e1rm", "weight"]);
+  });
+
+  it("list as a rep record at 0 kg on the finish screen, with no estimate", () => {
+    const sets = [{ ...set("bw", 0, 12, 10), exerciseId: "pull-up" }];
+    const found = detectPrs(sets, { e1rmKg: null, heaviestKg: null, repsAt: [{ loadKg: 0, reps: 10 }] });
+    expect(sessionPrs(sets, found)).toEqual([
+      { exerciseId: "pull-up", kind: "reps", clientSetId: "bw", loadKg: 0, reps: 12, rpe: 10, e1rmKg: null },
+    ]);
+  });
+
+  it("still never count when they are not real loads: NaN and negatives are skipped", () => {
+    const before = [
+      raw("2026-10-20T18:00:00Z", { loadKg: Number.NaN, reps: 10 }),
+      raw("2026-10-20T18:00:00Z", { loadKg: -5, reps: 10 }),
+    ];
+    expect(priorBests([], before, sessionStart)).toBeNull();
+    expect(repBests(before, sessionStart)).toEqual([]);
+    expect(detectPrs([set("nan", Number.NaN, 20)], { e1rmKg: null, heaviestKg: null, repsAt: [] }).size).toBe(0);
   });
 });

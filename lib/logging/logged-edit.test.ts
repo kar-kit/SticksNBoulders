@@ -113,3 +113,53 @@ describe("the failed flag (F19)", () => {
     expect(changesSet(set, { ...set, failed: false })).toBe(false);
   });
 });
+
+describe("correcting a bodyweight set (F20)", () => {
+  const draft = { loadKg: 0, reps: 12, rpe: 9 as const, isWarmup: false, failed: false, notes: "" };
+
+  it("saves 0 kg on a bodyweight exercise, and only there", () => {
+    expect(editOf(draft, true)).toEqual({ loadKg: 0, reps: 12, rpe: 9, isWarmup: false, failed: false, notes: null });
+    expect(editOf(draft, false)).toBeNull();
+    // The flag defaults to off: a caller that forgets it refuses 0, never allows it.
+    expect(editOf(draft)).toBeNull();
+  });
+
+  it("saves added load on a bodyweight exercise as before", () => {
+    expect(editOf({ ...draft, loadKg: 20, reps: 5 }, true)).toMatchObject({ loadKg: 20, reps: 5 });
+  });
+});
+
+describe("correcting a cardio set (F23)", () => {
+  const set = { loadKg: 0, reps: 0, rpe: null, isWarmup: false, failed: false, durationSeconds: 1230, level: 8 };
+
+  it("opens as a cardio draft with its time and level", () => {
+    expect(draftOf(set)).toMatchObject({ cardio: true, durationSeconds: 1230, level: 8 });
+    expect(draftOf({ loadKg: 100, reps: 5, rpe: 8, isWarmup: false })).not.toHaveProperty("cardio");
+  });
+
+  it("saves a time and an optional level, with the strength values inert", () => {
+    const draft = { ...draftOf(set), durationSeconds: 1500, level: null, notes: " easy " };
+    expect(editOf(draft)).toEqual({
+      loadKg: 0,
+      reps: 0,
+      rpe: null,
+      isWarmup: false,
+      failed: false,
+      notes: "easy",
+      durationSeconds: 1500,
+      level: null,
+    });
+  });
+
+  it("will not save without a time, even once backspaced empty", () => {
+    expect(editOf({ ...draftOf(set), durationSeconds: null })).toBeNull();
+    expect(editOf({ ...draftOf(set), durationSeconds: 0 })).toBeNull();
+  });
+
+  it("counts a changed time or level as a change, and an untouched one as none", () => {
+    const untouched = editOf(draftOf(set))!;
+    expect(changesSet(set, untouched)).toBe(false);
+    expect(changesSet(set, { ...untouched, durationSeconds: 1200 })).toBe(true);
+    expect(changesSet(set, { ...untouched, level: null })).toBe(true);
+  });
+});

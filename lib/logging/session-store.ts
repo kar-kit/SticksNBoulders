@@ -3,6 +3,7 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 import { authenticRows, posterOf } from "@/appwrite/documents";
 import { enqueue } from "@/lib/offline/client";
 import type { SessionRecord, SessionSet } from "./session";
+import { cardioColumns } from "./cardio";
 
 /**
  * A set as stored. The exercise name is resolved by the caller.
@@ -120,6 +121,8 @@ interface SetRow {
   video_poster_id?: unknown;
   prescription_id?: unknown;
   notes?: unknown;
+  duration_seconds?: unknown;
+  level?: unknown;
 }
 
 /**
@@ -152,6 +155,8 @@ export async function fetchSessionSets(sessionId: string): Promise<UnnamedSet[]>
         rpe: typeof row.rpe === "number" ? row.rpe : null,
         isWarmup: row.is_warmup === true,
         ...(row.failed === true ? { failed: true } : {}),
+        // F23: no select here, so a cardio set always arrives with its columns.
+        ...cardioColumns(row),
         loggedAt,
         hasVideo: typeof row.video_file_id === "string" && row.video_file_id !== "",
         videoFileId: typeof row.video_file_id === "string" && row.video_file_id !== "" ? row.video_file_id : null,

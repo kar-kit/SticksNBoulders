@@ -3,7 +3,16 @@
 import { cn } from "@/lib/cn";
 import { FailedSwitch } from "./failed-switch";
 import { haptic } from "@/lib/ui/haptics";
-import { canStepDown, padDisplay, press, step, stepSize, type PadKey, type PadState } from "@/lib/logging/number-pad";
+import {
+  canStepDown,
+  DURATION_SEPARATOR,
+  padDisplay,
+  press,
+  step,
+  stepSize,
+  type PadKey,
+  type PadState,
+} from "@/lib/logging/number-pad";
 
 /**
  * The number pad. Every number in this product is typed here, because no
@@ -18,6 +27,14 @@ import { canStepDown, padDisplay, press, step, stepSize, type PadKey, type PadSt
  * The Failed switch (F19) sits beside it for the same reason, when the
  * screen offers one: a missed set is logged with the reps actually
  * completed -- typed on this pad, 0 included -- and the flag says the rest.
+ *
+ * A cardio row (F23) types its time and level here too, the same keys in
+ * the same places. Time is minutes, so "20" is the whole entry for twenty
+ * minutes, and the decimal key turns into ":" for the athlete who wants the
+ * seconds -- a sweaty thumb never has to find a colon on a keyboard. The −
+ * and + step a minute. Neither switch applies to cardio, so the screen
+ * passes no `onToggleWarmup` and no `onToggleFailed` and the row under the
+ * keys is Done and Next alone.
  */
 
 export interface NumberPadProps {
@@ -26,8 +43,9 @@ export interface NumberPadProps {
   /** Moves to the next field, or logs the set when there is no next field. */
   onNext: () => void;
   nextLabel: string;
-  isWarmup: boolean;
-  onToggleWarmup: (isWarmup: boolean) => void;
+  isWarmup?: boolean;
+  /** The Warm-up switch. Absent hides it: a cardio row (F23) is never a warm-up. */
+  onToggleWarmup?: (isWarmup: boolean) => void;
   /**
    * The set was missed (F19). With `onToggleFailed`, a Failed switch beside
    * Warm-up; without it, none (a screen that does not record failure).
@@ -56,12 +74,22 @@ const KEYS: PadKey[][] = [
 ];
 
 /** The load is labelled in the unit it is being typed in, which is the athlete's. */
-const fieldLabel = (state: PadState): string =>
-  state.field === "load" ? `Weight, ${state.unit ?? "kg"}` : "Reps";
+const FIELD_LABELS: Record<PadState["field"], (state: PadState) => string> = {
+  load: (state) => `Weight, ${state.unit ?? "kg"}`,
+  reps: () => "Reps",
+  duration: () => "Time, min",
+  level: () => "Level",
+};
+const fieldLabel = (state: PadState): string => FIELD_LABELS[state.field](state);
 
 /** "weight by 2.5 kg", "reps by 1": what a screen reader says a stepper does. */
-const stepLabel = (state: PadState): string =>
-  state.field === "load" ? `weight by ${stepSize(state)} ${state.unit ?? "kg"}` : "reps by 1";
+const STEP_LABELS: Record<PadState["field"], (state: PadState) => string> = {
+  load: (state) => `weight by ${stepSize(state)} ${state.unit ?? "kg"}`,
+  reps: () => "reps by 1",
+  duration: () => "time by 1 minute",
+  level: () => "level by 1",
+};
+const stepLabel = (state: PadState): string => STEP_LABELS[state.field](state);
 
 const STEPPER =
   "tap flex h-12 w-14 flex-none items-center justify-center rounded-control border border-border bg-surface-2 " +
@@ -74,7 +102,7 @@ export function NumberPad({
   onChange,
   onNext,
   nextLabel,
-  isWarmup,
+  isWarmup = false,
   onToggleWarmup,
   failed = false,
   onToggleFailed,
@@ -82,6 +110,8 @@ export function NumberPad({
   inSheet = false,
 }: NumberPadProps) {
   const disabled = (key: PadKey) => key === "." && state.field === "reps";
+  // On a duration the decimal key is the minutes-seconds separator (F23).
+  const separator = state.field === "duration";
   /**
    * Every key and stepper answers with the lightest tick, like a phone
    * keyboard. Android only; iOS has no API and the key's own press carries it
@@ -139,7 +169,9 @@ export function NumberPad({
             // "Backspace", not "Delete": History puts this pad on screen
             // beside a "Delete set" button, and a screen reader announcing two
             // adjacent controls as Delete is a genuinely destructive confusion.
-            aria-label={key === "back" ? "Backspace" : key === "." ? "Decimal point" : key}
+            aria-label={
+              key === "back" ? "Backspace" : key === "." ? (separator ? "Seconds" : "Decimal point") : key
+            }
             className={cn(
               "tap flex h-14 items-center justify-center rounded-control text-value-sm font-semibold",
               "bg-surface-2 text-foreground active:bg-accent-pressed active:text-on-accent-pressed",
@@ -147,27 +179,29 @@ export function NumberPad({
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
             )}
           >
-            {key === "back" ? "⌫" : key}
+            {key === "back" ? "⌫" : key === "." && separator ? DURATION_SEPARATOR : key}
           </button>
         ))}
       </div>
 
       <div className="flex items-center gap-2">
-        <button
-          type="button"
-          role="switch"
-          aria-checked={isWarmup}
-          onClick={() => onToggleWarmup(!isWarmup)}
-          className={cn(
-            "flex h-12 flex-1 items-center justify-center rounded-control text-ui font-semibold",
-            isWarmup
-              ? "bg-accent-fill text-on-accent"
-              : "border border-border bg-surface text-muted",
-            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
-          )}
-        >
-          Warm-up
-        </button>
+        {onToggleWarmup ? (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isWarmup}
+            onClick={() => onToggleWarmup(!isWarmup)}
+            className={cn(
+              "flex h-12 flex-1 items-center justify-center rounded-control text-ui font-semibold",
+              isWarmup
+                ? "bg-accent-fill text-on-accent"
+                : "border border-border bg-surface text-muted",
+              "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
+            )}
+          >
+            Warm-up
+          </button>
+        ) : null}
         {onToggleFailed ? <FailedSwitch failed={failed} onToggle={onToggleFailed} /> : null}
         {onDismiss ? (
           <button

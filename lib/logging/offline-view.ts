@@ -4,6 +4,13 @@ import { EXERCISE_IN_USE, SESSION_HAS_SETS, SET_HAS_COACH_COMMENTS } from "@/app
 import { posterIdFor } from "@/appwrite/documents/poster";
 import type { SessionRecord } from "./session";
 import type { UnnamedSet } from "./session-store";
+import type { CardioValues } from "./cardio";
+
+/** A queued op's cardio values (F23): both, when it has a duration; neither, when it is a strength set. */
+const cardioIn = (p: Record<string, unknown>): CardioValues =>
+  typeof p.durationSeconds === "number"
+    ? { durationSeconds: p.durationSeconds, level: typeof p.level === "number" ? p.level : null }
+    : {};
 
 /**
  * What the queue looks like as training.
@@ -117,6 +124,8 @@ export function queuedSets(ops: readonly QueuedOp[], sessionId: string): Unnamed
         rpe: typeof op.payload.rpe === "number" ? op.payload.rpe : null,
         isWarmup: op.payload.isWarmup === true,
         ...(op.payload.failed === true ? { failed: true } : {}),
+        // F23: a cardio set waiting to send is still a cardio set on screen.
+        ...cardioIn(op.payload),
         loggedAt,
         ...(str(op.payload.prescriptionId) ? { prescriptionId: str(op.payload.prescriptionId) } : {}),
         ...(str(op.payload.notes) ? { notes: str(op.payload.notes) } : {}),
@@ -125,8 +134,11 @@ export function queuedSets(ops: readonly QueuedOp[], sessionId: string): Unnamed
     .filter((set) => set !== null);
 }
 
-/** A logged set's values as an edit leaves them. The shape `editSet` queues. */
-export interface SetValues {
+/**
+ * A logged set's values as an edit leaves them. The shape `editSet` queues.
+ * A cardio edit (F23) carries its duration and level as well.
+ */
+export interface SetValues extends CardioValues {
   loadKg: number;
   reps: number;
   rpe: number | null;
@@ -185,6 +197,7 @@ export function queuedSetEdits(ops: readonly QueuedOp[]): Map<string, SetValues>
       isWarmup: op.payload.isWarmup === true,
       failed: op.payload.failed === true,
       ...("notes" in op.payload && { notes: str(op.payload.notes) || null }),
+      ...cardioIn(op.payload),
     });
   }
   return edits;

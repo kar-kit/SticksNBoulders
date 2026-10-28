@@ -1,3 +1,5 @@
+import { isCardioSet, type CardioValues } from "@/lib/logging/cardio";
+
 /**
  * Estimated one-rep max, from a set that was not a one-rep max.
  *
@@ -50,7 +52,7 @@
  * so the write helper and the client agree by construction.
  */
 
-export interface SetForEstimate {
+export interface SetForEstimate extends CardioValues {
   loadKg: number;
   reps: number;
   /** Null when the athlete answered "Not sure". */
@@ -126,8 +128,16 @@ export const repsToFailure = (reps: number, rpe: number): number => reps + repsI
  *   what the athlete set out to do. Brzycki on "3 of 5, then stuck" is not an
  *   estimate anyone should program off, so it gets none -- and with none, no
  *   e1RM record, no best e1RM in the rollup, no working max for the day.
+ * - **A bodyweight set at 0 kg** (F20). Brzycki on nothing is nothing: the
+ *   formula would return 0, and 0 is not an estimate of anyone's max. So
+ *   null, never 0 and never NaN -- the load guard below. A weighted pull-up
+ *   (+20 kg) is estimated on its added load, exactly as before F20.
+ * - **A cardio set** (F23): a duration and a level, not a lift. Refused by
+ *   its own rule rather than left to its stored 0 kg, so a caller that
+ *   passes a cardio set with any load at all still gets null.
  */
 export function estimateOneRepMax(set: SetForEstimate): number | null {
+  if (isCardioSet(set)) return null;
   if (set.isWarmup) return null;
   if (set.failed) return null;
   if (!isEstimableRpe(set.rpe)) return null;

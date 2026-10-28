@@ -765,3 +765,128 @@ describe("SetRow — a failed set (F19)", () => {
     );
   });
 });
+
+describe("SetRow — 0 kg (F20)", () => {
+  it("confirms a 0 kg set on a bodyweight exercise, with no hint", () => {
+    const onConfirm = vi.fn();
+    render(<SetRow index={1} set={set({ loadKg: 0, reps: 12, isBodyweight: true })} state="active" onConfirm={onConfirm} />);
+    const confirm = screen.getByRole("button", { name: "Log Set 1" });
+    expect(confirm).toBeEnabled();
+    expect(confirm).not.toHaveAccessibleDescription();
+    expect(document.querySelector('[data-blocker="zero-load"]')).toBeNull();
+    // 0 reads as 0, not as an empty cell.
+    expect(screen.getByRole("button", { name: "Set 1 weight in kilograms" })).toHaveTextContent("0");
+  });
+
+  it("blocks 0 kg on any other exercise and says why, under the row and on the confirm", () => {
+    render(<SetRow index={1} set={set({ loadKg: 0, reps: 12 })} state="active" onConfirm={() => {}} />);
+    const confirm = screen.getByRole("button", { name: "Log Set 1" });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
+    expect(document.querySelector('[data-blocker="zero-load"]')).toHaveTextContent(
+      "0 kg logs only on a bodyweight exercise",
+    );
+  });
+
+  it("puts the hint in place of a suggestion's note, and only on the row the confirm belongs to", () => {
+    const { rerender } = render(
+      <SetRow index={1} set={set({ loadKg: 0, reps: 5 })} state="active" note="suggested from RPE 7 @ 140" />,
+    );
+    expect(screen.queryByText("suggested from RPE 7 @ 140")).not.toBeInTheDocument();
+    rerender(<SetRow index={2} set={set({ loadKg: 0, reps: 5 })} state="planned" />);
+    expect(document.querySelector('[data-blocker="zero-load"]')).toBeNull();
+    rerender(<SetRow index={2} set={set({ loadKg: 0, reps: 5 })} state="logged" />);
+    expect(document.querySelector('[data-blocker="zero-load"]')).toBeNull();
+  });
+
+  it("shows last time's 0 kg in the Previous line", () => {
+    render(<SetRow index={1} set={set({ loadKg: null, reps: null })} state="active" previous={{ loadKg: 0, reps: 12 }} />);
+    expect(screen.getByText("PREV 0 × 12")).toBeInTheDocument();
+  });
+});
+
+describe("SetRow — a cardio row (F23)", () => {
+  const cardio = (over: Partial<LoggableSet> = {}): LoggableSet => ({
+    loadKg: 0,
+    reps: 0,
+    rpe: null,
+    isWarmup: false,
+    durationSeconds: 1230,
+    level: 8,
+    ...over,
+  });
+
+  it("shows the time and the level in place of weight and reps, and no RPE", () => {
+    render(<SetRow index={1} set={cardio()} state="logged" cardio />);
+    expect(screen.getByLabelText("Set 1 time, 20 minutes 30 seconds")).toHaveTextContent("20:30");
+    expect(screen.getByLabelText("Set 1 level")).toHaveTextContent("8");
+    expect(screen.queryByLabelText(/weight/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Set 1 RPE")).not.toBeInTheDocument();
+  });
+
+  it("never wears a PR, failed or camera badge, whatever it is handed", () => {
+    render(
+      <SetRow index={1} set={cardio({ failed: true, videoRequired: true })} state="logged" cardio pr={["reps"]} />,
+    );
+    expect(document.querySelector("[data-pr]")).toBeNull();
+    expect(document.querySelector("[data-video-badge]")).toBeNull();
+    expect(screen.queryByLabelText("Set 1: failed")).not.toBeInTheDocument();
+  });
+
+  it("logs on a time alone, and opens the pad on the time or the level", async () => {
+    const onPressDuration = vi.fn();
+    const onPressLevel = vi.fn();
+    const onConfirm = vi.fn();
+    render(
+      <SetRow
+        index={1}
+        set={{ loadKg: null, reps: null, rpe: null, isWarmup: false, durationSeconds: 1200, level: null }}
+        state="active"
+        cardio
+        onPressDuration={onPressDuration}
+        onPressLevel={onPressLevel}
+        onConfirm={onConfirm}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Set 1 level" })).toHaveTextContent("LVL");
+    await userEvent.click(screen.getByRole("button", { name: "Set 1 time, 20 minutes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Set 1 level" }));
+    expect(onPressDuration).toHaveBeenCalledTimes(1);
+    expect(onPressLevel).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Log Set 1" }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the confirm dead until there is a time", () => {
+    render(
+      <SetRow index={1} set={{ loadKg: null, reps: null, rpe: null, isWarmup: false, level: 8 }} state="active" cardio />,
+    );
+    expect(screen.getByRole("button", { name: "Set 1 time" })).toHaveTextContent("MIN");
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeDisabled();
+    // Its 0 kg is not the bodyweight refusal a lift would show.
+    expect(document.querySelector('[data-blocker="zero-load"]')).toBeNull();
+  });
+
+  it("shows last time's cardio on the Previous line, and never a strength set there", () => {
+    const { unmount } = render(
+      <SetRow
+        index={1}
+        set={cardio()}
+        state="logged"
+        cardio
+        previous={{ loadKg: 0, reps: 0, durationSeconds: 1200, level: 7 }}
+      />,
+    );
+    expect(screen.getByLabelText("Set 1 last time: 20 minutes, level 7")).toHaveTextContent("PREV 20 min · level 7");
+    unmount();
+    render(<SetRow index={1} set={cardio()} state="logged" cardio previous={{ loadKg: 100, reps: 5 }} />);
+    expect(document.querySelector("[data-previous]")).toBeNull();
+  });
+
+  it("heads its columns MIN and LEVEL", () => {
+    render(<SetRowHeader cardio />);
+    expect(screen.getByText("MIN")).toBeInTheDocument();
+    expect(screen.getByText("LEVEL")).toBeInTheDocument();
+    expect(screen.queryByText("RPE")).not.toBeInTheDocument();
+  });
+});

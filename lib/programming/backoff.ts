@@ -1,4 +1,5 @@
 import type { SetForEstimate } from "@/lib/strength/e1rm";
+import { isStrengthSet } from "@/lib/logging/cardio";
 import { roundToLoadable } from "@/lib/strength/plates";
 import { loadLabel, type UnitPreference } from "@/lib/units";
 import { isPrescribableRpe, type PrescribableRpe } from "@/lib/logging/set";
@@ -188,10 +189,20 @@ export interface TopSet {
  * failed attempt at 200 after a made 190 prices off 190, and a line whose
  * only sets failed leaves its backoff with no load -- the athlete reads the
  * rule and the row repeats, the same as before any top set existed.
+ *
+ * Nor is a bodyweight set at 0 kg (F20): a percentage of nothing is nothing,
+ * and "-10% of the top set" priced off a pull-up at bodyweight would hand the
+ * athlete a 0 kg target that says nothing. A weighted set of the same line
+ * (+20) is the top set as usual; a line done only at bodyweight has none.
+ *
+ * Nor, ever, a cardio set (F23): a coach's "90% of the top set" is about
+ * the bar, and `isStrengthSet` keeps a treadmill block out whatever its
+ * stored load says.
  */
 export function topSetOf(sets: readonly SetForEstimate[]): TopSet | null {
   let best: SetForEstimate | null = null;
   for (const set of sets) {
+    if (!isStrengthSet(set)) continue;
     if (set.isWarmup || set.failed || !(Number.isFinite(set.loadKg) && set.loadKg > 0)) continue;
     if (best === null || set.loadKg >= best.loadKg) best = set;
   }

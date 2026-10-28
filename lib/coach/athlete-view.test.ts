@@ -2,6 +2,7 @@ import {
   bestEstimates,
   blockNotes,
   decideAthleteAccess,
+  blockSetText,
   exerciseBlocks,
   liftTabs,
   maxGrid,
@@ -419,5 +420,23 @@ describe("short dates", () => {
   });
   it("is empty for nothing", () => {
     expect(shortDate(null, NOW)).toBe("");
+  });
+});
+
+describe("cardio in the coach's session view (F23)", () => {
+  it("carries a cardio set's time and level, and reads it as a time, never as 0 × 0", () => {
+    const [block] = exerciseBlocks(
+      [{ exerciseId: "tm", loadKg: 0, reps: 0, rpe: null, isWarmup: false, durationSeconds: 1200, level: 8 }],
+      () => "Treadmill",
+    );
+    expect(block.sets[0]).toMatchObject({ durationSeconds: 1200, level: 8 });
+    expect(blockSetText(block.sets[0])).toBe("20 min · level 8");
+  });
+
+  it("reads a lift as before, and adds no cardio keys to it", () => {
+    const [block] = exerciseBlocks([{ exerciseId: "sq", loadKg: 140, reps: 5, rpe: 8, isWarmup: false }], () => "Squat");
+    expect(block.sets[0]).not.toHaveProperty("durationSeconds");
+    expect(blockSetText(block.sets[0])).toBe("140 × 5 @8");
+    expect(blockSetText({ loadKg: 60, reps: 5, rpe: null, isWarmup: true })).toBe("60 × 5");
   });
 });

@@ -339,7 +339,7 @@ describe("session.delete", () => {
   });
 });
 
-describe("exercise.rename and exercise.delete", () => {
+describe("exercise.rename, exercise.bodyweight and exercise.delete", () => {
   beforeEach(() => {
     exerciseInUse.mockReset().mockResolvedValue(false);
   });
@@ -348,6 +348,15 @@ describe("exercise.rename and exercise.delete", () => {
     await runOp(ACTOR, op("exercise.rename", { exerciseId: "ex-1", name: "RDL" }));
     expect(rows).toEqual([
       { op: "update", tableId: "exercises", rowId: "ex-1", data: { name: "RDL", normalised_name: "rdl" } },
+    ]);
+  });
+
+  it("flags one bodyweight, and clears it, writing the one column (F20)", async () => {
+    await runOp(ACTOR, op("exercise.bodyweight", { exerciseId: "ex-1", isBodyweight: true }));
+    await runOp(ACTOR, op("exercise.bodyweight", { exerciseId: "ex-1", isBodyweight: false }));
+    expect(rows).toEqual([
+      { op: "update", tableId: "exercises", rowId: "ex-1", data: { is_bodyweight: true } },
+      { op: "update", tableId: "exercises", rowId: "ex-1", data: { is_bodyweight: false } },
     ]);
   });
 
@@ -388,5 +397,54 @@ describe("failed sets through the queue (F19)", () => {
   it("restates the flag on an update, and clears the estimate of a set corrected to failed", async () => {
     await runOp(ACTOR, op("set.update", { setId: "st-abc", loadKg: 150, reps: 3, rpe: 9, isWarmup: false, failed: true }));
     expect(rows[0].data).toMatchObject({ failed: true, e1rm_kg: null });
+  });
+});
+
+describe("cardio sets and exercise kinds (F23)", () => {
+  it("creates a cardio set with its duration and level, and the strength columns inert", async () => {
+    await runOp(
+      ACTOR,
+      op("set.create", { ...SET, loadKg: 0, reps: 0, rpe: null, isWarmup: false, durationSeconds: 1230, level: 8 }),
+    );
+    expect(rows[0].data).toMatchObject({
+      load_kg: 0,
+      reps: 0,
+      is_warmup: false,
+      failed: false,
+      duration_seconds: 1230,
+      level: 8,
+    });
+    expect(rows[0].data?.e1rm_kg).toBeUndefined();
+    expect(rows[0].data?.rpe).toBeUndefined();
+  });
+
+  it("creates a strength set from an op with no duration exactly as before v21", async () => {
+    await runOp(ACTOR, op("set.create", { ...SET, isWarmup: false }));
+    expect(rows[0].data).not.toHaveProperty("duration_seconds");
+    expect(rows[0].data).not.toHaveProperty("level");
+  });
+
+  it("corrects a cardio set as cardio, and leaves the columns of a strength correction alone", async () => {
+    await runOp(
+      ACTOR,
+      op("set.update", { setId: "st-1", loadKg: 0, reps: 0, rpe: null, isWarmup: false, durationSeconds: 900, level: null }),
+    );
+    expect(rows[0].data).toMatchObject({ duration_seconds: 900, level: null, load_kg: 0, reps: 0, e1rm_kg: null });
+    await runOp(ACTOR, op("set.update", { setId: "st-2", loadKg: 100, reps: 5, rpe: 8, isWarmup: false }));
+    expect(rows[1].data).not.toHaveProperty("duration_seconds");
+  });
+
+  it("creates a cardio exercise from the op's kind, and a strength one from an op without it", async () => {
+    await runOp(ACTOR, op("exercise.create", { exerciseId: "ex-1", name: "Ski Erg", kind: "cardio" }));
+    await runOp(ACTOR, op("exercise.create", { exerciseId: "ex-2", name: "Ring Dip" }));
+    expect(rows[0].data).toMatchObject({ name: "Ski Erg", kind: "cardio" });
+    expect(rows[1].data).not.toHaveProperty("kind");
+  });
+
+  it("sets an exercise's kind, writing the one column", async () => {
+    await runOp(ACTOR, op("exercise.kind", { exerciseId: "ex-1", kind: "cardio" }));
+    await runOp(ACTOR, op("exercise.kind", { exerciseId: "ex-1", kind: "strength" }));
+    await runOp(ACTOR, op("exercise.kind", { exerciseId: "ex-1", kind: "anything else" }));
+    expect(rows.map((row) => row.data)).toEqual([{ kind: "cardio" }, { kind: "strength" }, { kind: "strength" }]);
   });
 });

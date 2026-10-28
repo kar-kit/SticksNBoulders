@@ -12,6 +12,8 @@ import { SetNoteField } from "@/components/logging/set-note-field";
 import { AttachVideo } from "@/components/logging/attach-video";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
+import { bodyweightLookup } from "@/lib/exercises/bodyweight";
+import { cardioSeconds, canCompleteCardio, formatCardioTotal, isCardioSet } from "@/lib/logging/cardio";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSetsForSessions, setsBySession, type HistorySet } from "@/lib/logging/history-store";
 import { editSet, removeSet } from "@/lib/logging/set-store";
@@ -78,6 +80,12 @@ import { DeleteSessionConfirm, SessionFieldsForm } from "./session-fields";
  * Cancel does not take it back. A clip attached with no signal shows on its
  * row from the queue (`withQueuedClips`), as an edited note does.
  *
+ * A cardio set (F23) reads "20 min · level 8" in its row -- time in the
+ * weight column, level in the reps one -- and is corrected the same way, on
+ * the same pad: tap it, retype the time or the level, add a note, Save or
+ * Delete. The header counts cardio time apart from the sets and tonnage,
+ * which are strength figures.
+ *
  * Not here yet, and deliberately absent rather than faked: the prescription the
  * session ran against (Order 22) and the coach's comments threaded on the sets
  * they refer to (phase 3).
@@ -92,6 +100,10 @@ interface Draft {
   failed: boolean;
   /** The note as typed. Blank is none; `noteOf` decides what is stored. */
   notes: string;
+  /** F23: the set is cardio, fixed when editing starts; its time and level. */
+  cardio?: boolean;
+  durationSeconds?: number | null;
+  level?: number | null;
 }
 
 export function SessionDetail({ sessionId }: { sessionId: string }) {
@@ -161,6 +173,8 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
     const names = new Map(library.exercises.map((e) => [e.id, e.name]));
     return (id: string) => names.get(id) ?? id;
   }, [library.exercises]);
+  /** Whether a correction may go to 0 kg (F20): only on a bodyweight exercise, as when it was logged. */
+  const bodyweightOf = useMemo(() => bodyweightLookup(library.exercises), [library.exercises]);
 
   const ordered = useMemo(
     () =>
@@ -209,12 +223,15 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
    */
   const restateTotals = async (next: readonly HistorySet[]) => {
     if (!session) return;
+    // The failed flag and the cardio columns travel too: a missed 0-rep set
+    // (F19) still counts, and a cardio set (F23) never does -- totalsOf
+    // fails closed on a 0-rep set it cannot place, so both have to be said.
     const counted = mergeById(
-      next.map(({ clientSetId, exerciseId, loadKg, reps, rpe, isWarmup, loggedAt }) => ({
-        clientSetId, exerciseId, loadKg, reps, rpe, isWarmup, loggedAt,
+      next.map(({ clientSetId, exerciseId, loadKg, reps, rpe, isWarmup, failed, durationSeconds, level, loggedAt }) => ({
+        clientSetId, exerciseId, loadKg, reps, rpe, isWarmup, failed, durationSeconds, level, loggedAt,
       })),
-      unsynced.map(({ clientSetId, exerciseId, loadKg, reps, rpe, isWarmup, loggedAt }) => ({
-        clientSetId, exerciseId, loadKg, reps, rpe, isWarmup, loggedAt,
+      unsynced.map(({ clientSetId, exerciseId, loadKg, reps, rpe, isWarmup, failed, durationSeconds, level, loggedAt }) => ({
+        clientSetId, exerciseId, loadKg, reps, rpe, isWarmup, failed, durationSeconds, level, loggedAt,
       })),
       (set) => set.clientSetId,
     );
@@ -275,6 +292,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
 
   const startEditing = (set: HistorySet) => {
     setEditingId(set.clientSetId);
+    const cardio = isCardioSet(set);
     setDraft({
       loadKg: set.loadKg,
       reps: set.reps,
@@ -282,8 +300,10 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
       isWarmup: set.isWarmup,
       failed: set.failed === true,
       notes: set.notes ?? "",
+      ...(cardio ? { cardio, durationSeconds: set.durationSeconds ?? null, level: set.level ?? null } : {}),
     });
-    setPad(beginEdit("load", loadIn(set.loadKg, unit), unit));
+    // A cardio set opens on its time (F23), a lift on its weight.
+    setPad(cardio ? beginEdit("duration", set.durationSeconds ?? null) : beginEdit("load", loadIn(set.loadKg, unit), unit));
     setRpeOpen(false);
     setNoteOpen(Boolean(set.notes?.trim()));
   };
@@ -296,8 +316,13 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
     setNoteOpen(false);
   };
 
-  const focusField = (field: "load" | "reps" | "rpe") => {
+  const focusField = (field: "load" | "reps" | "rpe" | "duration" | "level") => {
     if (!draft) return;
+    if (field === "duration" || field === "level") {
+      setRpeOpen(false);
+      setPad(beginEdit(field, field === "duration" ? (draft.durationSeconds ?? null) : (draft.level ?? null)));
+      return;
+    }
     if (field === "rpe") {
       if (draft.isWarmup) return; // Warm-ups never ask.
       setPad(null);
@@ -316,20 +341,37 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
     setPad(next);
     const typed = padValue(next);
     const value = next.field === "load" && typed !== null ? loadFromInput(typed, next.unit ?? "kg") : typed;
-    setDraft((prev) => (prev ? { ...prev, [next.field === "load" ? "loadKg" : "reps"]: value } : prev));
+    const key = { load: "loadKg", reps: "reps", duration: "durationSeconds", level: "level" }[next.field];
+    setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
   };
 
   const save = async () => {
-    if (!editingSet || !draft || !canComplete(draft)) return;
+    if (!editingSet || !draft) return;
+    if (draft.cardio ? !canCompleteCardio(draft) : !canComplete({ ...draft, isBodyweight: bodyweightOf(editingSet.exerciseId) })) {
+      return;
+    }
     setBusy(true);
-    const corrected = {
-      loadKg: draft.loadKg as number,
-      reps: draft.reps as number,
-      rpe: draft.rpe,
-      isWarmup: draft.isWarmup,
-      failed: draft.failed,
-      notes: noteOf(draft.notes),
-    };
+    // A cardio correction (F23) is its time and level, with the inert
+    // strength values the write helper stores anyway.
+    const corrected = draft.cardio
+      ? {
+          loadKg: 0,
+          reps: 0,
+          rpe: null,
+          isWarmup: false,
+          failed: false,
+          notes: noteOf(draft.notes),
+          durationSeconds: draft.durationSeconds as number,
+          level: draft.level ?? null,
+        }
+      : {
+          loadKg: draft.loadKg as number,
+          reps: draft.reps as number,
+          rpe: draft.rpe,
+          isWarmup: draft.isWarmup,
+          failed: draft.failed,
+          notes: noteOf(draft.notes),
+        };
     // Shown corrected straight away. The write is queued, so waiting for it
     // would be waiting for the gym's wifi to agree.
     const next = (sets ?? []).map((set) =>
@@ -426,6 +468,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
             {session.finishedAt ? formatDuration(session.finishedAt.getTime() - session.startedAt.getTime()) : "running"}
             {` · ${summary.setCount} set${summary.setCount === 1 ? "" : "s"}`}
             {summary.tonnageKg > 0 ? ` · ${formatTonnage(loadIn(summary.tonnageKg, unit))} ${unit}` : ""}
+            {summary.cardioSeconds ? ` · ${formatCardioTotal(summary.cardioSeconds)} cardio` : ""}
           </p>
         ) : null}
         {session?.notes && !editingFields ? <p className="m-0 text-body text-muted">{session.notes}</p> : null}
@@ -454,114 +497,136 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
         <EmptyState title="Nothing in this session" body="No sets were logged against it." />
       ) : (
         <div className="flex flex-col gap-6">
-          {blocks.map((block) => (
-            <section key={block.exerciseId} aria-label={block.name} className="flex flex-col gap-2">
-              {/* Lift Detail is reached from here rather than from the tab bar:
-                  it answers a question you arrive with about one lift. */}
-              <h2 className="m-0 text-body font-semibold">
-                <Link
-                  href={`/lift/${block.exerciseId}`}
-                  className="text-foreground no-underline"
-                  aria-label={`${block.name} progression`}
-                >
-                  {block.name} <span aria-hidden className="text-muted-2">›</span>
-                </Link>
-              </h2>
-              <SetRowHeader unit={unit} />
-              <div className="flex flex-col gap-1.5">
-                {block.sets.map((set, at) => {
-                  const index = set.isWarmup
-                    ? ("W" as const)
-                    : block.sets.slice(0, at + 1).filter((s) => !s.isWarmup).length;
-                  const active = editingId === set.clientSetId;
-                  return active && draft ? (
-                    <div key={set.clientSetId} className="flex flex-col gap-2">
-                      <SetRow
-                        index={draft.isWarmup ? "W" : index}
-                        set={draft}
-                        state="active"
-                        onPressLoad={() => focusField("load")}
-                        onPressReps={() => focusField("reps")}
-                        onPressRpe={() => focusField("rpe")}
-                        onConfirm={save}
-                        unit={unit}
-                      />
-                      {/* Typing a note puts the keyboard up, so the pad and the
-                          chips step aside rather than stacking under it. */}
-                      {noteOpen ? (
-                        <div
-                          onFocusCapture={() => {
-                            setPad(null);
-                            setRpeOpen(false);
-                          }}
-                        >
-                          <SetNoteField
-                            value={draft.notes}
-                            onChange={(notes) => setDraft((prev) => (prev ? { ...prev, notes } : prev))}
-                            setLabel={index === "W" || draft.isWarmup ? "Warm-up set" : `Set ${index}`}
-                            autoFocus={!draft.notes}
-                          />
-                        </div>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="self-start"
-                          onClick={() => setNoteOpen(true)}
-                          aria-label={`Add a note to ${index === "W" || draft.isWarmup ? "warm-up set" : `set ${index}`}`}
-                        >
-                          + Add a note
-                        </Button>
-                      )}
-                      {athleteId ? (
-                        <div role="group" aria-label="Video" className="flex items-center justify-between gap-3">
-                          <p className="m-0 flex min-w-0 flex-col text-caption">
-                            <span className="font-mono text-label-xs text-muted-2">VIDEO</span>
-                            <span className="text-muted">Goes up straight away, not on Save.</span>
-                          </p>
-                          <AttachVideo
-                            key={set.clientSetId}
-                            setId={set.clientSetId}
-                            athleteId={athleteId}
-                            hasVideo={Boolean(set.videoFileId)}
-                            onAttached={clipAttached(set.clientSetId, set.videoFileId ?? null)}
-                            onUploadingChange={(uploading) => {
-                              const id = set.clientSetId;
-                              setUploadingFor((was) => (uploading ? id : was === id ? null : was));
-                            }}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
+          {blocks.map((block) => {
+            // A block of cardio (F23): every set in it has a duration. Its
+            // header is not a link -- Lift Detail is records and e1RM.
+            const cardioBlock = block.sets.every(isCardioSet);
+            return (
+              <section key={block.exerciseId} aria-label={block.name} className="flex flex-col gap-2">
+                {/* Lift Detail is reached from here rather than from the tab bar:
+                    it answers a question you arrive with about one lift. */}
+                <h2 className="m-0 text-body font-semibold">
+                  {cardioBlock ? (
+                    <span className="text-foreground">
+                      {block.name}{" "}
+                      <span className="font-mono text-label font-normal text-muted-2">
+                        CARDIO · {formatCardioTotal(cardioSeconds(block.sets))}
+                      </span>
+                    </span>
                   ) : (
-                    <button
-                      key={set.clientSetId}
-                      type="button"
-                      onClick={() => {
-                        setConfirmingDelete(false);
-                        setEditingFields(false);
-                        startEditing(set);
-                      }}
-                      // A button's content is not read inside its name, so the
-                      // Failed mark (F19) is said here as well.
-                      aria-label={`Edit ${index === "W" ? "warm-up set" : `set ${index}`} of ${block.name}${set.failed ? ", failed" : ""}`}
-                      className="w-full text-left"
+                    <Link
+                      href={`/lift/${block.exerciseId}`}
+                      className="text-foreground no-underline"
+                      aria-label={`${block.name} progression`}
                     >
-                      <SetRow
-                        index={index}
-                        set={{ ...set, rpe: (set.rpe as RpeValue | null) ?? null }}
-                        state="logged"
-                        unit={unit}
-                        athleteNote={set.notes ?? null}
-                        athleteNoteFull
-                        clip={set.videoFileId ? { posterId: set.videoPosterId ?? null } : null}
-                      />
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
+                      {block.name} <span aria-hidden className="text-muted-2">›</span>
+                    </Link>
+                  )}
+                </h2>
+                <SetRowHeader unit={unit} cardio={cardioBlock} />
+                <div className="flex flex-col gap-1.5">
+                  {block.sets.map((set, at) => {
+                    const index = set.isWarmup
+                      ? ("W" as const)
+                      : block.sets.slice(0, at + 1).filter((s) => !s.isWarmup).length;
+                    const active = editingId === set.clientSetId;
+                    return active && draft ? (
+                      <div key={set.clientSetId} className="flex flex-col gap-2">
+                        <SetRow
+                          index={draft.isWarmup ? "W" : index}
+                          // The confirm square here is Save: 0 kg only on a
+                          // bodyweight exercise (F20), and the row says why not.
+                          set={{ ...draft, isBodyweight: bodyweightOf(block.exerciseId), isCardio: draft.cardio === true }}
+                          cardio={draft.cardio === true}
+                          state="active"
+                          onPressLoad={() => focusField("load")}
+                          onPressReps={() => focusField("reps")}
+                          onPressRpe={() => focusField("rpe")}
+                          onPressDuration={() => focusField("duration")}
+                          onPressLevel={() => focusField("level")}
+                          onConfirm={save}
+                          unit={unit}
+                        />
+                        {/* Typing a note puts the keyboard up, so the pad and the
+                            chips step aside rather than stacking under it. */}
+                        {noteOpen ? (
+                          <div
+                            onFocusCapture={() => {
+                              setPad(null);
+                              setRpeOpen(false);
+                            }}
+                          >
+                            <SetNoteField
+                              value={draft.notes}
+                              onChange={(notes) => setDraft((prev) => (prev ? { ...prev, notes } : prev))}
+                              setLabel={index === "W" || draft.isWarmup ? "Warm-up set" : `Set ${index}`}
+                              autoFocus={!draft.notes}
+                            />
+                          </div>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="self-start"
+                            onClick={() => setNoteOpen(true)}
+                            aria-label={`Add a note to ${index === "W" || draft.isWarmup ? "warm-up set" : `set ${index}`}`}
+                          >
+                            + Add a note
+                          </Button>
+                        )}
+                        {athleteId && !draft.cardio ? (
+                          // Nothing films a cardio set in this version (F23),
+                          // so its row has no Video line to add one by.
+                          <div role="group" aria-label="Video" className="flex items-center justify-between gap-3">
+                            <p className="m-0 flex min-w-0 flex-col text-caption">
+                              <span className="font-mono text-label-xs text-muted-2">VIDEO</span>
+                              <span className="text-muted">Goes up straight away, not on Save.</span>
+                            </p>
+                            <AttachVideo
+                              key={set.clientSetId}
+                              setId={set.clientSetId}
+                              athleteId={athleteId}
+                              hasVideo={Boolean(set.videoFileId)}
+                              onAttached={clipAttached(set.clientSetId, set.videoFileId ?? null)}
+                              onUploadingChange={(uploading) => {
+                                const id = set.clientSetId;
+                                setUploadingFor((was) => (uploading ? id : was === id ? null : was));
+                              }}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <button
+                        key={set.clientSetId}
+                        type="button"
+                        onClick={() => {
+                          setConfirmingDelete(false);
+                          setEditingFields(false);
+                          startEditing(set);
+                        }}
+                        // A button's content is not read inside its name, so the
+                        // Failed mark (F19) is said here as well.
+                        aria-label={`Edit ${index === "W" ? "warm-up set" : `set ${index}`} of ${block.name}${set.failed ? ", failed" : ""}`}
+                        className="w-full text-left"
+                      >
+                        <SetRow
+                          index={index}
+                          set={{ ...set, rpe: (set.rpe as RpeValue | null) ?? null }}
+                          cardio={isCardioSet(set)}
+                          state="logged"
+                          unit={unit}
+                          athleteNote={set.notes ?? null}
+                          athleteNoteFull
+                          clip={set.videoFileId ? { posterId: set.videoPosterId ?? null } : null}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
 
@@ -602,7 +667,16 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
           </div>
         ) : null}
 
-        {pad !== null && draft ? (
+        {pad !== null && draft?.cardio ? (
+          // A cardio correction's pad (F23): time, then level, then done.
+          <NumberPad
+            state={pad}
+            onChange={applyPad}
+            onNext={() => (pad.field === "duration" ? focusField("level") : setPad(null))}
+            nextLabel={pad.field === "duration" ? "Level" : "Done"}
+            onDismiss={pad.field === "duration" ? () => setPad(null) : undefined}
+          />
+        ) : pad !== null && draft ? (
           <NumberPad
             state={pad}
             onChange={applyPad}

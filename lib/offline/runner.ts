@@ -11,6 +11,8 @@ import {
   deleteSet,
   finishSession,
   renameExercise,
+  setExerciseBodyweight,
+  setExerciseKind,
   updateSession,
   updateSet,
   posterIdFor,
@@ -38,6 +40,17 @@ const asString = (value: unknown): string => (typeof value === "string" ? value 
 const asNumber = (value: unknown): number => (typeof value === "number" ? value : 0);
 const asDate = (value: unknown): Date => new Date(asString(value));
 const isNotFound = (error: unknown): boolean => (error as { code?: unknown })?.code === 404;
+
+/**
+ * A set op's cardio values (F23), only when it carries them: a number
+ * duration makes it cardio, and the level rides with it (null for none). An
+ * op with neither key is a strength set and gets neither, so `createSet` and
+ * `updateSet` take their strength path exactly as before v21.
+ */
+function cardioOf(p: Record<string, unknown>): { durationSeconds?: number; level?: number | null } {
+  if (typeof p.durationSeconds !== "number") return {};
+  return { durationSeconds: p.durationSeconds, level: typeof p.level === "number" ? p.level : null };
+}
 
 /**
  * Runs one op. Throws whatever Appwrite threw, for `classify` to read.
@@ -99,6 +112,9 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
         loggedAt: asDate(p.loggedAt),
         prescriptionId: asString(p.prescriptionId) || null,
         prescribed: asString(p.prescribed) || null,
+        // F23: a cardio set. Absent on every strength op and on every op a
+        // client before v21 queued, so those stay strength sets.
+        ...cardioOf(p),
         // e1RM is computed and stored at write time from Order 11, and the
         // rebuild script backfills every set once the formula is verified.
       });
@@ -106,7 +122,11 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
     }
     case "exercise.create": {
       const exerciseId = asString(p.exerciseId);
-      await createExercise(browserWriteDeps(() => exerciseId), actor, { name: asString(p.name) });
+      await createExercise(browserWriteDeps(() => exerciseId), actor, {
+        name: asString(p.name),
+        // F23. Only "cardio" is ever queued; absent is strength.
+        ...(p.kind === "cardio" ? { kind: "cardio" as const } : {}),
+      });
       return;
     }
     case "set.update": {
@@ -123,6 +143,8 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
         // The athlete's note (F11), only when the edit carried one: a key
         // that is absent leaves the column alone, null clears it.
         ...("notes" in p && { notes: typeof p.notes === "string" ? p.notes : null }),
+        // F23: a cardio correction restates its duration and level.
+        ...cardioOf(p),
       });
       return;
     }
@@ -184,6 +206,28 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
     case "exercise.rename": {
       const exerciseId = asString(p.exerciseId);
       await renameExercise(browserWriteDeps(() => exerciseId), actor, { rowId: exerciseId, name: asString(p.name) });
+      return;
+    }
+    case "exercise.kind": {
+      // F23. Its own op, like the bodyweight flag, for the same reason: an
+      // op from before v21 never reads as a kind, and a rename never restates
+      // one. Anything but "cardio" writes strength.
+      const exerciseId = asString(p.exerciseId);
+      await setExerciseKind(browserWriteDeps(() => exerciseId), actor, {
+        rowId: exerciseId,
+        kind: p.kind === "cardio" ? "cardio" : "strength",
+      });
+      return;
+    }
+    case "exercise.bodyweight": {
+      // F20. Its own op rather than a field on the rename, so an op queued
+      // by a client from before v20 never reads as clearing the flag, and a
+      // rename never has to restate it.
+      const exerciseId = asString(p.exerciseId);
+      await setExerciseBodyweight(browserWriteDeps(() => exerciseId), actor, {
+        rowId: exerciseId,
+        isBodyweight: p.isBodyweight === true,
+      });
       return;
     }
     case "exercise.delete": {

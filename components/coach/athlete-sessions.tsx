@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchExerciseLibrary } from "@/lib/exercises/library";
 import { fetchRecentSessions } from "@/lib/logging/session-store";
 import { exerciseIdsOf, fetchSetsForSessions, setsBySession, type HistorySet } from "@/lib/logging/history-store";
-import { formatDuration, formatTonnage, groupByWeek, historyCards } from "@/lib/logging/history";
+import { cardStatsLine, formatDuration, formatTonnage, groupByWeek, historyCards } from "@/lib/logging/history";
+import { cardioSeconds } from "@/lib/logging/cardio";
 import { sessionDateLabel, type SessionRecord } from "@/lib/logging/session";
-import { blockNotes, exerciseBlocks } from "@/lib/coach/athlete-view";
-import { formatNumber } from "@/lib/logging/prefill";
+import { blockNotes, blockSetText, exerciseBlocks } from "@/lib/coach/athlete-view";
 import type { Exercise } from "@/lib/exercises/match";
 import { cn } from "@/lib/cn";
 import { FailedMark } from "@/components/ui/failed-mark";
@@ -72,7 +72,14 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
     const nameOf = (id: string) => names.get(id);
     const grouped = setsBySession(data.sets);
     const weeks = groupByWeek(
-      historyCards(data.sessions, (id) => exerciseIdsOf(grouped.get(id) ?? []).map((e) => nameOf(e) ?? "Unknown lift")),
+      historyCards(
+        data.sessions,
+        (id) => exerciseIdsOf(grouped.get(id) ?? []).map((e) => nameOf(e) ?? "Unknown lift"),
+        undefined,
+        undefined,
+        // F23: a session's cardio time, from the sets already read.
+        (id) => cardioSeconds(grouped.get(id) ?? []),
+      ),
     );
     const notes = new Map(data.sessions.map((session) => [session.id, session.notes?.trim() || null]));
     return { weeks, grouped, nameOf, notes };
@@ -122,8 +129,7 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                           {card.exerciseNames.join(", ")}
                         </span>
                         <span className="col-start-2 row-start-1 text-right font-mono text-meta text-muted tabular-nums md:col-start-auto md:row-start-auto md:text-left">
-                          {card.setCount} set{card.setCount === 1 ? "" : "s"}
-                          {card.tonnageKg > 0 ? ` · ${formatTonnage(card.tonnageKg)} kg` : ""}
+                          {cardStatsLine(card, card.tonnageKg > 0 ? `${formatTonnage(card.tonnageKg)} kg` : null)}
                           {" · "}
                           {card.finishedAt ? formatDuration(card.durationMs) : "running"}
                         </span>
@@ -144,8 +150,8 @@ export function AthleteSessions({ athleteId }: { athleteId: string }) {
                               <span className="flex flex-wrap gap-x-4 gap-y-0.5 text-ui tabular-nums">
                                 {block.sets.map((set, index) => (
                                   <span key={index} className={set.isWarmup ? "text-muted-2" : undefined}>
-                                    {formatNumber(set.loadKg)} × {set.reps}
-                                    {set.rpe === null ? "" : ` @${formatNumber(set.rpe)}`}
+                                    {/* "20 min · level 8" for cardio (F23), never its 0 × 0. */}
+                                    {blockSetText(set)}
                                     {set.isWarmup ? " (warm-up)" : ""}
                                     {set.failed ? <FailedMark className="ml-1.5 align-middle" /> : null}
                                   </span>
