@@ -7,9 +7,6 @@
  * ends on. Animating is the exception that has to earn its place.
  */
 
-/** The hero's counter runs to this. Three years of weeks; illustrative, not a claim. */
-export const TOTAL_WEEKS = 156;
-
 export type HeroMode = "animate" | "still";
 
 export interface HeroEnvironment {
@@ -47,58 +44,174 @@ export function tooSlow(frameGapsMs: readonly number[]): boolean {
   return median > SLOW_FRAME_MS;
 }
 
-/** A moment of the hero. lib/landing/hero-geometry.ts draws it. */
+/**
+ * A moment of the hero: everything lib/landing/hero-geometry.ts needs to draw
+ * one frame. Plain numbers, so any two poses can be blended.
+ */
 export interface Pose {
-  /** 0 = one twig on the platform, 1 = a loaded barbell. */
-  build: number;
-  /** 0 = plates on the floor, 1 = locked out. */
-  lift: number;
-  /** The camera's turn around the bar, in radians. */
+  /** 0 = the logo's stick leaning on its boulder, 1 = a level barbell with plates. */
+  form: number;
+  /** Plates per side. A fraction is a plate part way on or off the sleeve. */
+  plates: number;
+  /** The bar's height and depth (towards the camera). */
+  barY: number;
+  barZ: number;
+  /** How far the ends droop below the middle. */
+  bend: number;
+  /** Rack uprights: 0 sunk into the platform, 1 standing. */
+  rack: number;
+  /** J-hook height. Squat height, then bench height. */
+  hook: number;
+  /** The bench: 0 sunk, 1 standing. */
+  bench: number;
+  /** The platform: 0 absent (the logo stands on nothing), 1 there. */
+  deck: number;
+  /** Camera: turn, tilt down, what it looks at, and how far away. */
   yaw: number;
+  pitch: number;
+  camY: number;
+  camDist: number;
 }
 
-/** The poster's camera angle, and where every playback starts and ends. */
-export const REST_YAW = -0.7;
-/** How far the camera swings round over a playback. */
-const SWING = -0.35;
-/** Reps in the set. The build ends on the first; the rest follow. */
-export const REPS = 3;
+/** A plate's radius: also the bar's height when it rests on the platform. */
+export const PLATE_RADIUS = 0.72;
+const FLOOR = PLATE_RADIUS;
+const LOCKOUT = FLOOR + 0.8;
+const SQUAT_HOOK = 1.75;
+const BENCH_HOOK = 1.3;
 
-/** The poster: built, locked out on the last rep, at rest. */
-export const FINAL_POSE: Pose = { build: 1, lift: 1, yaw: REST_YAW };
-export const FINAL_LABEL = `Week ${TOTAL_WEEKS} \u00b7 Rep ${REPS}`;
-
-/*
- * The playback timeline, in milliseconds. The page opens on the loaded bar
- * at lockout (the poster), holds it, runs the years backwards to one twig,
- * then builds them forward: sticks, plates, the first pull. Two more reps
- * make it a triple, and it stops where it started. You see the end first,
- * because that is all anyone ever sees of a lifter.
- */
-export const HOLD_MS = 900;
-export const REWIND_MS = 1700;
-export const PAUSE_MS = 300;
-export const BUILD_MS = 7200;
-/** One rep after the first: down, a breath on the floor, up, hold. */
-export const LOWER_MS = 1100;
-export const FLOOR_MS = 700;
-export const PULL_MS = 1400;
-export const TOP_MS = 800;
-const REP_MS = LOWER_MS + FLOOR_MS + PULL_MS + TOP_MS;
-const STORY_MS = HOLD_MS + REWIND_MS + PAUSE_MS + BUILD_MS;
-export const TOTAL_MS = STORY_MS + (REPS - 1) * REP_MS;
-/** Share of the build spent making the barbell; the rest is the first pull. */
-const MAKE = 0.8;
+/** The logo. The first frame, the last frame and the poster. */
+export const FINAL_POSE: Pose = {
+  form: 0,
+  plates: 1,
+  barY: FLOOR,
+  barZ: 0,
+  bend: 0,
+  rack: 0,
+  hook: SQUAT_HOOK,
+  bench: 0,
+  deck: 0,
+  yaw: -0.32,
+  pitch: 0.12,
+  camY: 0.86,
+  camDist: 7.2,
+};
+export const FINAL_LABEL = "Sticks and boulders";
 
 const easeInOut = (x: number): number => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
 /** A heavy pull: slow off the floor, faster through the middle, eased into lockout. */
-const pull = (x: number): number => easeInOut(x) * 0.85 + x * x * 0.15;
+const grind = (x: number): number => easeInOut(x) * 0.85 + x * x * 0.15;
 const clamp = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
+/** A bar's whip: a bump early in the concentric, gone by `until`. */
+const whip = (k: number, size: number, until = 0.45): number => (k < until ? Math.sin((Math.PI * k) / until) * size : 0);
 
-/** The story from one twig (0) to the first lockout (1). */
-function story(s: number): { build: number; lift: number } {
-  return { build: clamp(s / MAKE), lift: pull(clamp((s - MAKE) / (1 - MAKE))) };
+interface Step {
+  ms: number;
+  /** The pose at the end of the step: whatever changes, on top of the step before. */
+  to: Partial<Pose>;
+  ease?: (x: number) => number;
+  /** The line under the hero, from this step on. */
+  label?: string;
+  /** Extra bend while the step runs, on top of the blend. */
+  whip?: (k: number) => number;
 }
+
+const plates = (n: number) => `${n} plate${n === 1 ? "" : "s"}`;
+
+/** One deadlift: the pull, a beat at lockout, down, a beat on the floor. Heavier is slower and bends more. */
+const deadlift = (n: number, pullMs: number): Step[] => [
+  { ms: pullMs, to: { barY: LOCKOUT, bend: 0.01 * n }, ease: grind, whip: (k) => whip(k, 0.03 + 0.025 * n) },
+  { ms: 380, to: {} },
+  { ms: 820, to: { barY: FLOOR, bend: 0 } },
+  { ms: 260, to: {} },
+];
+
+/** On to the next plate: one slides on each end, and the camera eases round a little. */
+const loadTo = (n: number, yaw: number): Step => ({
+  ms: 700,
+  to: { plates: n, yaw },
+  label: `Deadlift \u00b7 ${plates(n)}`,
+});
+
+/*
+ * The story. The logo; the stick becomes a bar and the boulder its first
+ * plates; a deadlift at one plate, then two, three, four; a rack grows out
+ * of the platform for a squat; the hooks come down and a bench comes up for
+ * a paused bench press; everything sinks away and the bar and plates fold
+ * back into the logo. Same picture first and last, so the poster, the
+ * canvas's first frame and its last are one.
+ */
+const STEPS: Step[] = [
+  { ms: 1000, to: {}, label: FINAL_LABEL },
+  {
+    ms: 2600,
+    to: { form: 1, deck: 1, barY: FLOOR, yaw: -0.74, pitch: 0.36, camY: 0.95, camDist: 7.6 },
+    label: `Deadlift \u00b7 ${plates(1)}`,
+  },
+  ...deadlift(1, 1100),
+  loadTo(2, -0.67),
+  ...deadlift(2, 1200),
+  loadTo(3, -0.6),
+  ...deadlift(3, 1350),
+  loadTo(4, -0.53),
+  ...deadlift(4, 1800),
+
+  // Squat. A plate comes off and the rack grows; the bar goes up in front of
+  // the hooks, back onto them, out, down, up, and back in.
+  {
+    ms: 1000,
+    to: { plates: 3, rack: 1, hook: SQUAT_HOOK, yaw: -0.45, pitch: 0.3, camY: 1.25, camDist: 8.2 },
+    label: `Squat \u00b7 ${plates(3)}`,
+  },
+  { ms: 1000, to: { barY: SQUAT_HOOK + 0.1, barZ: 0.36 } },
+  { ms: 500, to: { barY: SQUAT_HOOK, barZ: 0 } },
+  { ms: 450, to: {} },
+  { ms: 650, to: { barY: SQUAT_HOOK + 0.07, barZ: 0.36, bend: 0.03 } },
+  { ms: 1150, to: { barY: 1.05 } },
+  { ms: 1150, to: { barY: SQUAT_HOOK + 0.07 }, whip: (k) => whip(k, 0.05, 0.4) },
+  { ms: 600, to: { barY: SQUAT_HOOK, barZ: 0, bend: 0 } },
+
+  // Bench. Another plate off, the hooks drop to bench height carrying the
+  // bar, the bench rises. Unrack, down, a competition pause, press, rack.
+  {
+    ms: 1600,
+    to: { plates: 2, hook: BENCH_HOOK, barY: BENCH_HOOK, bench: 1, yaw: -0.55, pitch: 0.52, camY: 0.95, camDist: 7.8 },
+    label: `Bench \u00b7 ${plates(2)}`,
+  },
+  { ms: 600, to: { barY: BENCH_HOOK + 0.06, barZ: 0.3, bend: 0.02 } },
+  { ms: 1000, to: { barY: 0.84 } },
+  { ms: 480, to: {} },
+  { ms: 1000, to: { barY: BENCH_HOOK + 0.06 }, whip: (k) => whip(k, 0.035, 0.4) },
+  { ms: 600, to: { barY: BENCH_HOOK, barZ: 0, bend: 0 } },
+
+  // Home: the equipment sinks, the bar comes down to one plate a side, and
+  // folds back into the stick and the boulder.
+  {
+    ms: 1300,
+    to: { rack: 0, bench: 0, plates: 1, barY: FLOOR, yaw: -0.62, pitch: 0.34, camY: 0.95, camDist: 7.6 },
+    label: FINAL_LABEL,
+  },
+  { ms: 2200, to: FINAL_POSE },
+  { ms: 700, to: {} },
+];
+
+/** Each step's start pose, label and start time, worked out once. */
+const TRACK = (() => {
+  let pose = FINAL_POSE;
+  let label = FINAL_LABEL;
+  let start = 0;
+  return STEPS.map((step) => {
+    const from = pose;
+    const to = { ...pose, ...step.to };
+    label = step.label ?? label;
+    const entry = { step, from, to, label, start };
+    pose = to;
+    start += step.ms;
+    return entry;
+  });
+})();
+
+export const TOTAL_MS = TRACK[TRACK.length - 1].start + STEPS[STEPS.length - 1].ms;
 
 export interface Moment {
   pose: Pose;
@@ -106,33 +219,23 @@ export interface Moment {
   label: string;
 }
 
-/** Where playback is, `ms` in. Past the end it holds the poster. */
-export function momentAt(ms: number): Moment {
-  const at = Math.max(0, Math.min(ms, TOTAL_MS));
-  // Out and back: the swing starts and ends at the poster's angle.
-  const yaw = REST_YAW + SWING * Math.sin((Math.PI * at) / TOTAL_MS);
-  const weeks = (build: number) => `Week ${1 + Math.round(build * (TOTAL_WEEKS - 1))}`;
+const blend = (a: Pose, b: Pose, k: number): Pose => {
+  const out = { ...a };
+  for (const key of Object.keys(a) as (keyof Pose)[]) out[key] = a[key] + (b[key] - a[key]) * k;
+  return out;
+};
 
-  // Exactly the poster at both ends, not sin(π)'s 1e-16 away from it.
-  if (at <= 0 || at >= TOTAL_MS) return { pose: FINAL_POSE, label: FINAL_LABEL };
-  if (at <= HOLD_MS) return { pose: { ...FINAL_POSE, yaw }, label: FINAL_LABEL };
-  if (at <= HOLD_MS + REWIND_MS) {
-    const { build, lift } = story(1 - easeInOut((at - HOLD_MS) / REWIND_MS));
-    return { pose: { build, lift, yaw }, label: weeks(build) };
-  }
-  if (at <= STORY_MS) {
-    const s = clamp((at - HOLD_MS - REWIND_MS - PAUSE_MS) / BUILD_MS);
-    const { build, lift } = story(s);
-    return { pose: { build, lift, yaw }, label: s > MAKE ? `Week ${TOTAL_WEEKS} \u00b7 Rep 1` : weeks(build) };
-  }
-  const into = at - STORY_MS;
-  const rep = Math.min(REPS, 2 + Math.floor(into / REP_MS));
-  const r = into - (rep - 2) * REP_MS;
-  let lift = 1;
-  if (r < LOWER_MS) lift = 1 - easeInOut(r / LOWER_MS);
-  else if (r < LOWER_MS + FLOOR_MS) lift = 0;
-  else if (r < LOWER_MS + FLOOR_MS + PULL_MS) lift = pull((r - LOWER_MS - FLOOR_MS) / PULL_MS);
-  // The count changes as the bar leaves the floor, not as it comes down.
-  const shown = r < LOWER_MS + FLOOR_MS ? rep - 1 : rep;
-  return { pose: { build: 1, lift, yaw }, label: `Week ${TOTAL_WEEKS} \u00b7 Rep ${shown}` };
+/** Where playback is, `ms` in. Before the start and past the end it is the poster. */
+export function momentAt(ms: number): Moment {
+  if (ms <= 0 || ms >= TOTAL_MS) return { pose: FINAL_POSE, label: FINAL_LABEL };
+  let i = TRACK.length - 1;
+  while (i > 0 && TRACK[i].start > ms) i--;
+  const { step, from, to, label, start } = TRACK[i];
+  const k = clamp((ms - start) / step.ms);
+  const pose = blend(from, to, (step.ease ?? easeInOut)(k));
+  if (step.whip) pose.bend += step.whip(k);
+  return { pose, label };
 }
+
+/** Every label the story shows, in order. For tests and the doc. */
+export const LABELS = TRACK.map((t) => t.label).filter((l, i, all) => l !== all[i - 1]);

@@ -323,49 +323,62 @@ of compressed sticks; scrolling the page adds a layer per section. It says
 the same thing, but scroll-linked animation ties the hero's cost to the whole
 page's scroll, and it never resolves into the logo.
 
-**C. The bar (built, merged with A).** The first version of this concept was
-rejected for losing the stick-and-boulder identity. It does not have to: the
-stick is the bar and the boulders are the plates. The page opens on a loaded
-barbell locked out over a low-poly competition platform (rubber where the
-plates land, wood in the middle where a lifter stands). It runs back to one
-thin twig lying on the platform. Sticks gather round both ends of it, slowly
-at first and then faster, and the heaps lift the bar off the floor as they
-grow. Each heap packs into a faceted stone plate. Then the bar comes off the
-floor: it bends as the plates break from the platform, the way a loaded bar
-does on a heavy deadlift, and locks out. Two more reps make it a triple, and
-it stops where it started. The counter runs "Week 1" to "Week 156", then
-"Rep 1" to "Rep 3". The camera swings slowly round the bar and back over the
-whole ~18 seconds.
+**C. The bar (second build, replaced).** The stick as the bar, heaps of
+sticks packing into two stone plates, a triple deadlift on a low-poly
+platform. Joey's second review (28 Oct): start from the logo itself, go from a
+one-plate to a four-plate deadlift, then squat and bench with racks.
 
-**Why C now.** It keeps everything that made A right (the logo's materials
-and lighting, growth through time, a still last frame) and adds the sport. No
-lifter is shown, on purpose: you only see the bar move, which is the point
-about only seeing the result. Plates and bar whip are the most recognisable
-thing in powerlifting that is not a person.
+**D. The training block (built).** About 33 seconds, starting and ending on
+the logo:
+
+1. The logo in 3D: the stick leaning on the boulder.
+2. The stick swings level and becomes a barbell; the boulder splits into its
+   first pair of stone plates; a competition platform rises under them.
+3. Deadlift at one plate a side. Then a plate slides on each end before every
+   pull, up to four. Heavier pulls are slower and the bar bends more as the
+   plates break from the floor.
+4. A plate comes off, a rack grows out of the platform, the bar goes up onto
+   the J-hooks. Walk out, squat, stand, rerack.
+5. Another plate off, the hooks drop to bench height carrying the bar, a
+   bench rises. Unrack, down, a competition pause on the chest, press, rack.
+6. The rack and bench sink, the bar comes down to one plate a side, and it
+   all folds back into the stick and the boulder.
+
+The caption names each stage: "Deadlift · 1 plate" to "Deadlift · 4 plates",
+"Squat · 3 plates", "Bench · 2 plates", "Sticks and boulders". The camera
+moves between a framing for each lift. Plates only, no kilos: a "plate" is
+how lifters count, and a number in kilos would be a claim about somebody.
+
+**Why D.** It is the logo, so the poster and the brand are one picture, and
+it is the sport: all three competition lifts, the equipment for each, and
+progression you can count. No lifter is shown, on purpose: only the bar
+moves, which keeps the original idea that you only ever see the result.
 
 ### How it is built
 
 **Software 3D on a 2D canvas, no dependency.** `lib/landing/hero-geometry.ts`
-builds the scene once from a seeded random generator (a 6-sided bar with
-thicker sleeves, 52 four-sided sticks, two 80-face stone plates, a three-strip
-platform), lights each face from the upper left like the logo with a weak fill
-from the camera's side, culls back faces, and depth-sorts, returning flat
-polygons. The bar is cut into five pieces where it passes through the plates so
-the depth sort can hide the part inside each plate. About 150 faces at rest
-and a few hundred mid-build. The bend is a parabola along the bar, largest as
-the plates leave the floor (`bendAt`).
+builds the parts once from a seeded random generator (the logo's boulder and
+eight stone plates as 80-face rocks, the fork, a fixed wobble for the bar's
+rings) and poses them per frame: the bar morphs from the leaning stick to a
+level barbell, the rack, bench and platform are boxes that grow out of the
+floor. Each face is lit from the upper left like the logo, with a weak fill
+from the camera's side; back faces are culled and the rest depth-sorted. The
+bar is cut at every plate slot and upright so each piece sorts against the
+thing it passes. At most 483 polygons in a frame; about 0.1 ms of geometry per
+frame on Joey's Mac.
 
-**What happens when** is `momentAt(ms)` in `lib/landing/hero-mode.ts`, pure
-and tested: hold the poster 0.9 s, rewind 1.7 s, build 7.2 s (the last fifth
-of it is the first pull), then two reps of lower 1.1 s, floor 0.7 s, pull
-1.4 s, hold 0.8 s. About 18 s in all.
+**What happens when** is `momentAt(ms)` in `lib/landing/hero-mode.ts`: a list
+of steps, each a partial pose to ease towards, plus the bar's whip on each
+concentric. Pure and tested: every frame of the story, sampled every 50 ms,
+stays inside the box; nothing jumps between two 60 Hz frames; the labels come
+in order; each deadlift goes floor to lockout with the plates it names.
 
 | Option | Cost on the wire | Why not / why |
 | --- | --- | --- |
 | three.js | ~150 KB gzip for the core [Inference: typical tree-shaken three r16x builds], more than the rest of the page's JavaScript | Built for textures, depth buffers and thousands of faces; this has none |
 | react-three-fiber | three.js plus ~40 KB [Inference] | Same, plus a second React reconciler |
 | Raw WebGL | Small | Needs a GPU path and a separate no-WebGL fallback |
-| **Canvas 2D, hand-rolled** | **3.5 KB gzip [Fact, build output, barbell version]** | Flat-shaded low poly needs exactly a depth sort and a fill. Runs on every browser, GPU or not |
+| **Canvas 2D, hand-rolled** | **4.1 KB gzip [Fact, build output, training-block version]** | Flat-shaded low poly needs exactly a depth sort and a fill. Runs on every browser, GPU or not |
 
 `docs/athlete-motion.md`'s no-animation-library rule is for the athlete's
 screens; this page adds no library either, so the question did not arise.
@@ -389,7 +402,7 @@ box, so the swap moves nothing.
 
 **Cost while running:** device pixel ratio capped at 2; pauses when the tab is
 hidden or the hero is scrolled away; stops requesting frames entirely once the
-triple ends; a Stop button while it plays (WCAG 2.2.2, anything moving for over five
+story ends; a Stop button while it plays (WCAG 2.2.2, anything moving for over five
 seconds can be stopped).
 
 ### Measured, 28 Oct 2026
@@ -397,7 +410,12 @@ seconds can be stopped).
 - **Hero chunk:** 7.3 KB raw, **3.5 KB gzipped** for the barbell version
   (the first, stick-and-boulder version was 3.0 KB) [Fact, `.next/static/chunks`
   after `next build`]. Loaded after hydration, not in the page's first script.
-- **Barbell version, Lighthouse mobile, three runs:** performance 95 / 92 / 92,
+- **Training-block version (D):** lazy chunk 8.8 KB raw, **4.1 KB gzipped**.
+  Lighthouse mobile, three runs: performance 92 / 92 / 92, LCP 3.3 s, TBT
+  10 / 0 / 0 ms, CLS 0. With Chromium's CPU throttled 4x at phone size the
+  animation held a 16.7 ms median frame (60 fps), p95 16.8 ms [Fact, measured
+  on Joey's Mac; a real mid-range phone is still Unverified].
+- **Barbell version (C), Lighthouse mobile, three runs:** performance 95 / 92 / 92,
   LCP 3.0 / 3.3 / 3.3 s, TBT 10 / 0 / 0 ms, CLS 0. No cost over the first version.
 - **`/` is prerendered static** [Fact, build output `○ /`].
 - **Layout shift: 0.** Lighthouse CLS 0 on every run, and the H1 sits at the

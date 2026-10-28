@@ -134,9 +134,10 @@ export function Hero({ children }: { children: ReactNode }) {
           {FINAL_LABEL}
         </span>
         <span className="sr-only">
-          A thin stick on a lifting platform. Sticks gather round both ends of it one at a time, slowly at
-          first, and pack into two stone plates. The stick, now a barbell, is pulled from the floor for three
-          reps.
+          The Sticks N Boulders logo, a stick leaning on a boulder. The stick straightens into a barbell and the
+          boulder splits into its plates. The bar is deadlifted with one plate a side, then two, three and four.
+          A rack rises for a squat, then a bench rises for a paused bench press, and it all folds back into the
+          stick and the boulder.
         </span>
         {canPlay && (
           <button

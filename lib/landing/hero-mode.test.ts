@@ -1,18 +1,13 @@
 import {
-  BUILD_MS,
   chooseHero,
   FINAL_LABEL,
   FINAL_POSE,
-  HOLD_MS,
+  LABELS,
   momentAt,
-  PAUSE_MS,
-  REPS,
-  REST_YAW,
-  REWIND_MS,
+  PLATE_RADIUS,
   SAMPLE_FRAMES,
   tooSlow,
   TOTAL_MS,
-  TOTAL_WEEKS,
   type HeroEnvironment,
 } from "./hero-mode";
 
@@ -60,51 +55,69 @@ describe("tooSlow", () => {
 });
 
 describe("momentAt", () => {
-  it("opens and ends on the poster, the last rep locked out", () => {
+  it("starts and ends on the poster, the logo", () => {
     for (const ms of [0, TOTAL_MS, TOTAL_MS * 3]) {
       expect(momentAt(ms)).toEqual({ pose: FINAL_POSE, label: FINAL_LABEL });
     }
   });
 
-  it("rewinds to one twig on the floor", () => {
-    const { pose, label } = momentAt(HOLD_MS + REWIND_MS + PAUSE_MS / 2);
-    expect(pose.build).toBe(0);
-    expect(pose.lift).toBe(0);
-    expect(label).toBe("Week 1");
+  it("tells the story in order: logo, deadlift 1 to 4 plates, squat, bench, logo", () => {
+    expect(LABELS).toEqual([
+      "Sticks and boulders",
+      "Deadlift \u00b7 1 plate",
+      "Deadlift \u00b7 2 plates",
+      "Deadlift \u00b7 3 plates",
+      "Deadlift \u00b7 4 plates",
+      "Squat \u00b7 3 plates",
+      "Bench \u00b7 2 plates",
+      "Sticks and boulders",
+    ]);
   });
 
-  it("counts weeks while the bar is being made, then reps", () => {
-    const building = momentAt(HOLD_MS + REWIND_MS + PAUSE_MS + BUILD_MS * 0.4);
-    expect(building.pose.lift).toBe(0);
-    expect(building.label).toMatch(/^Week \d+$/);
-    const firstPull = momentAt(HOLD_MS + REWIND_MS + PAUSE_MS + BUILD_MS * 0.95);
-    expect(firstPull.pose.build).toBe(1);
-    expect(firstPull.pose.lift).toBeGreaterThan(0);
-    expect(firstPull.label).toBe(`Week ${TOTAL_WEEKS} \u00b7 Rep 1`);
+  it("pulls each deadlift from the floor to lockout, with the plates it says", () => {
+    for (const n of [1, 2, 3, 4]) {
+      const label = `Deadlift \u00b7 ${n} plate${n === 1 ? "" : "s"}`;
+      let low = Infinity;
+      let high = -Infinity;
+      for (let ms = 0; ms < TOTAL_MS; ms += 20) {
+        const { pose, label: shown } = momentAt(ms);
+        if (shown !== label || Math.abs(pose.plates - n) > 1e-9) continue;
+        low = Math.min(low, pose.barY);
+        high = Math.max(high, pose.barY);
+      }
+      expect(low).toBeCloseTo(PLATE_RADIUS, 5);
+      expect(high - low).toBeGreaterThan(0.75);
+    }
   });
 
-  it("does a triple: the bar touches the floor twice after the first pull", () => {
-    const labels = new Set<string>();
-    let touches = 0;
-    let down = false;
-    const storyEnd = HOLD_MS + REWIND_MS + PAUSE_MS + BUILD_MS;
-    for (let ms = storyEnd; ms <= TOTAL_MS; ms += 20) {
+  it("bends the bar as it leaves the floor, more with more plates", () => {
+    const peakBend = (n: number) => {
+      let peak = 0;
+      for (let ms = 0; ms < TOTAL_MS; ms += 10) {
+        const { pose, label } = momentAt(ms);
+        if (label.startsWith("Deadlift") && Math.abs(pose.plates - n) < 1e-9) peak = Math.max(peak, pose.bend);
+      }
+      return peak;
+    };
+    expect(peakBend(4)).toBeGreaterThan(peakBend(1));
+  });
+
+  it("only stands the rack up for the squat and the bench, and the bench only for the bench", () => {
+    for (let ms = 0; ms < TOTAL_MS; ms += 50) {
       const { pose, label } = momentAt(ms);
-      labels.add(label);
-      if (pose.lift === 0 && !down) touches++;
-      down = pose.lift === 0;
+      if (label.startsWith("Deadlift")) expect(pose.rack).toBe(0);
+      if (pose.bench > 0) expect(["Bench \u00b7 2 plates", "Sticks and boulders"]).toContain(label);
     }
-    expect(touches).toBe(REPS - 1);
-    expect([...labels]).toEqual([1, 2, 3].map((n) => `Week ${TOTAL_WEEKS} \u00b7 Rep ${n}`));
   });
 
-  it("swings the camera away and back without a jump", () => {
-    let last = momentAt(0).pose.yaw;
+  it("never jumps: no value moves far between two 60 Hz frames", () => {
+    let last = momentAt(0).pose;
     for (let ms = 16; ms <= TOTAL_MS; ms += 16) {
-      const { yaw } = momentAt(ms).pose;
-      expect(Math.abs(yaw - last)).toBeLessThan(0.01);
-      last = yaw;
+      const { pose } = momentAt(ms);
+      for (const key of Object.keys(pose) as (keyof typeof pose)[]) {
+        expect(Math.abs(pose[key] - last[key])).toBeLessThan(0.12);
+      }
+      last = pose;
     }
-    expect(momentAt(TOTAL_MS / 2).pose.yaw).not.toBeCloseTo(REST_YAW);
   });
 });
