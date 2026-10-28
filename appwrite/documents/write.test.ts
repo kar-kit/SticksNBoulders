@@ -24,7 +24,9 @@ import {
   normaliseExerciseName,
   revokeCoachLink,
   setExerciseBodyweight,
+  setExerciseKind,
   setGlobalExerciseBodyweight,
+  setGlobalExerciseKind,
   setGlobalExerciseVideoDefault,
   setLinkSuggestionMode,
   updateSet,
@@ -781,5 +783,128 @@ describe("bodyweight exercises (F20, schema v20)", () => {
     expect(h.last().data.e1rm_kg).toBeGreaterThan(20);
     await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 0, reps: 12, rpe: 9, isWarmup: false, failed: false });
     expect(h.last().data).toMatchObject({ load_kg: 0, e1rm_kg: null });
+  });
+});
+
+describe("cardio (F23, schema v21)", () => {
+  const cardio = {
+    sessionId: "s1",
+    exerciseId: "treadmill",
+    setIndex: 1,
+    loadKg: 0,
+    reps: 0,
+    clientSetId: "cs-cardio",
+    durationSeconds: 1200,
+    level: 8,
+  };
+
+  it("stores a cardio set with its duration and level and the strength columns inert", async () => {
+    const h = harness();
+    await createSet(h.deps, h.actor, cardio);
+    expect(h.last().data).toMatchObject({
+      athlete_id: ATHLETE,
+      load_kg: 0,
+      reps: 0,
+      is_warmup: false,
+      failed: false,
+      duration_seconds: 1200,
+      level: 8,
+    });
+    expect(h.last().data.e1rm_kg).toBeUndefined();
+    expect(h.last().data.rpe).toBeUndefined();
+    expect(h.last().data.video_file_id).toBeUndefined();
+    expect(h.last().permissions).toEqual(setPermissions({ athleteId: ATHLETE }));
+  });
+
+  it("ignores strength numbers a caller passes with a duration: no load, no reps, no e1RM, no warm-up", async () => {
+    const h = harness();
+    await createSet(h.deps, h.actor, { ...cardio, loadKg: 200, reps: 5, rpe: 9, isWarmup: true, failed: true, videoFileId: "f1" });
+    expect(h.last().data).toMatchObject({ load_kg: 0, reps: 0, is_warmup: false, failed: false });
+    expect(h.last().data.e1rm_kg).toBeUndefined();
+    expect(h.last().data.video_file_id).toBeUndefined();
+  });
+
+  it("stores no level as null, and refuses a duration or level the columns would refuse", async () => {
+    const h = harness();
+    await createSet(h.deps, h.actor, { ...cardio, level: null });
+    expect(h.last().data.level).toBeNull();
+    for (const durationSeconds of [0, -60, 1.5, 86_401]) {
+      await expect(createSet(h.deps, h.actor, { ...cardio, durationSeconds })).rejects.toThrow("duration");
+    }
+    await expect(createSet(h.deps, h.actor, { ...cardio, level: 150 })).rejects.toThrow("level");
+    // A level with no duration was meant as cardio: refused, never a strength set.
+    await expect(createSet(h.deps, h.actor, { ...cardio, durationSeconds: null })).rejects.toThrow("duration");
+  });
+
+  it("writes a strength set with no cardio columns at all, as before v21", async () => {
+    const h = harness();
+    await createSet(h.deps, h.actor, { ...cardio, loadKg: 100, reps: 5, rpe: 8, durationSeconds: undefined, level: undefined });
+    expect(h.last().data).not.toHaveProperty("duration_seconds");
+    expect(h.last().data).not.toHaveProperty("level");
+  });
+
+  it("corrects a cardio set as cardio, clearing anything strength", async () => {
+    const h = harness();
+    await updateSet(h.deps, h.actor, {
+      rowId: "r1", loadKg: 100, reps: 5, rpe: 8, isWarmup: false, failed: false, durationSeconds: 900, level: null, notes: " easy ",
+    });
+    expect(h.last().data).toEqual({
+      load_kg: 0,
+      reps: 0,
+      rpe: null,
+      is_warmup: false,
+      failed: false,
+      e1rm_kg: null,
+      duration_seconds: 900,
+      level: null,
+      notes: "easy",
+    });
+  });
+
+  it("leaves the cardio columns alone on a strength correction, so a cardio row stays out of totals", async () => {
+    const h = harness();
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 100, reps: 5, rpe: 8, isWarmup: false, failed: false });
+    expect(h.last().data).not.toHaveProperty("duration_seconds");
+    expect(h.last().data).not.toHaveProperty("level");
+  });
+
+  it("creates an exercise as cardio only when asked, and never as an explicit strength", async () => {
+    const h = harness();
+    await createExercise(h.deps, h.actor, { name: "Ski Erg", kind: "cardio" });
+    expect(h.last().data).toMatchObject({ kind: "cardio", is_global: false, owner_id: ATHLETE });
+    await createExercise(h.deps, h.actor, { name: "Ring Dip", kind: "strength" });
+    expect(h.last().data).not.toHaveProperty("kind");
+    await createExercise(h.deps, h.actor, { name: "Ring Row" });
+    expect(h.last().data).not.toHaveProperty("kind");
+  });
+
+  it("seeds a library cardio row, and refuses one that is also bodyweight", async () => {
+    const h = harness();
+    await createGlobalExercise(h.deps, { name: "Stairmaster", kind: "cardio" });
+    expect(h.last().data).toMatchObject({ is_global: true, kind: "cardio" });
+    await createGlobalExercise(h.deps, { name: "Squat", videoDefault: true });
+    expect(h.last().data).not.toHaveProperty("kind");
+    await expect(createGlobalExercise(h.deps, { name: "Odd", kind: "cardio", isBodyweight: true })).rejects.toThrow(
+      "bodyweight",
+    );
+  });
+
+  it("sets a kind as one column, with the owner's stamp or the library's", async () => {
+    const h = harness();
+    await setExerciseKind(h.deps, h.actor, { rowId: "ex-1", kind: "cardio" });
+    expect(h.last()).toEqual({
+      op: "update",
+      tableId: "exercises",
+      rowId: "ex-1",
+      data: { kind: "cardio" },
+      permissions: exercisePermissions({ athleteId: ATHLETE, isGlobal: false }),
+    });
+    await setExerciseKind(h.deps, h.actor, { rowId: "ex-1", kind: "strength" });
+    expect(h.last().data).toEqual({ kind: "strength" });
+    await expect(setExerciseKind(h.deps, h.actor, { rowId: "", kind: "cardio" })).rejects.toThrow("rowId is required");
+
+    await setGlobalExerciseKind(h.deps, { rowId: "ex-bike", kind: "cardio" });
+    expect(h.last()).toMatchObject({ rowId: "ex-bike", data: { kind: "cardio" } });
+    expect(h.last().permissions).toEqual(exercisePermissions({ athleteId: "library", isGlobal: true }));
   });
 });

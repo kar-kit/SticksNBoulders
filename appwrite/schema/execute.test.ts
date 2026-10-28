@@ -418,3 +418,50 @@ describe("v19 -> v20 on a live instance", () => {
     expect((await applySchema(driver, schema)).noop).toBe(true);
   });
 });
+
+describe("v20 -> v21 on a live instance", () => {
+  /** A v20 instance is this schema minus the three v21 columns. */
+  const atV20 = (state: ReturnType<typeof fakeDriver>["state"]) => {
+    const exercises = state.tables.find((t) => t.id === "exercises")!;
+    exercises.columns = exercises.columns.filter((c) => c.key !== "kind");
+    const sets = state.tables.find((t) => t.id === "sets")!;
+    sets.columns = sets.columns.filter((c) => c.key !== "duration_seconds" && c.key !== "level");
+  };
+
+  it("plans exactly three new columns, none of which rewrites a row", async () => {
+    // These lines are what `npm run appwrite:setup -- --dry-run` prints.
+    const { driver, state } = fakeDriver();
+    await applySchema(driver, schema);
+    atV20(state);
+
+    const lines: string[] = [];
+    const result = await applySchema(driver, schema, { dryRun: true, log: (m) => lines.push(m) });
+
+    expect(lines).toEqual([
+      "  would create column exercises.kind (enum)",
+      "  would create column sets.duration_seconds (integer)",
+      "  would create column sets.level (float)",
+    ]);
+    expect(result.reported).toEqual([]);
+    expect(result.noop).toBe(false);
+  });
+
+  it("writes nothing on the dry run, then creates the three columns and settles", async () => {
+    const { driver, state, calls } = fakeDriver();
+    await applySchema(driver, schema);
+    atV20(state);
+    calls.length = 0;
+
+    expect((await applySchema(driver, schema, { dryRun: true })).applied).toEqual([]);
+    expect(calls).toEqual([]);
+
+    const applied = await applySchema(driver, schema);
+    expect(calls).toEqual([
+      "createColumn:exercises.kind",
+      "createColumn:sets.duration_seconds",
+      "createColumn:sets.level",
+    ]);
+    expect(applied.reported).toEqual([]);
+    expect((await applySchema(driver, schema)).noop).toBe(true);
+  });
+});
