@@ -1,5 +1,6 @@
 import { WEEK_TIME_ZONE } from "@/lib/strength/rollup";
 import type { CsvValue } from "./csv";
+import { isCardioSet, type CardioValues } from "@/lib/logging/cardio";
 
 /**
  * The training log as a table: one row per set.
@@ -22,7 +23,8 @@ export interface ExportSession {
   name?: string | null;
 }
 
-export interface ExportSet {
+/** A set as exported. A cardio set (F23) carries its duration and level; its strength fields are the stored 0 x 0. */
+export interface ExportSet extends CardioValues {
   id: string;
   sessionId: string;
   exerciseId: string;
@@ -75,6 +77,15 @@ export const LOG_COLUMNS = [
   // v19 (F19), appended last for the same reason. `Yes` on a missed set,
   // whose Reps are the ones completed and whose e1RM is blank.
   "Failed",
+  // v21 (F23), appended last again. Filled on a cardio row only, blank on
+  // every strength row. Minutes rather than seconds because that is how
+  // cardio is read and summed, to two decimals (20:30 is 20.5); the stored
+  // seconds are exact if anyone needs them. On a cardio row the strength
+  // columns -- Load, Reps, RPE, Warm-up, e1RM, Failed -- are blank, not 0
+  // and No: a pivot summing Load x Reps or filtering on Warm-up = No for top
+  // sets must not pick up a treadmill.
+  "Duration (min)",
+  "Level",
 ] as const;
 
 /**
@@ -159,26 +170,33 @@ export function buildLogRows(
     const session = sessionById.get(sessionId);
 
     for (const set of orderWithinSession(group)) {
+      const cardio = isCardioSet(set);
       rows.push([
         isoDay(session?.startedAt ?? set.loggedAt),
         sessionNumber.get(sessionId) ?? null,
         exerciseNames.get(set.exerciseId) ?? set.exerciseId,
         set.setIndex,
-        set.loadKg,
-        set.reps,
-        set.rpe,
-        set.isWarmup,
-        oneDecimal(set.e1rmKg),
+        cardio ? null : set.loadKg,
+        cardio ? null : set.reps,
+        cardio ? null : set.rpe,
+        cardio ? null : set.isWarmup,
+        cardio ? null : oneDecimal(set.e1rmKg),
         set.notes,
         prescriptionFor(set),
         session?.notes ?? null,
         session?.name ?? null,
-        set.failed,
+        cardio ? null : set.failed,
+        cardio ? minutesOf(set.durationSeconds) : null,
+        cardio ? oneDecimal(set.level ?? null) : null,
       ]);
     }
   }
   return rows;
 }
+
+/** Seconds as minutes to two decimals: 1230 is 20.5. Blank when there is no duration. */
+const minutesOf = (seconds: number | null | undefined): number | null =>
+  typeof seconds === "number" && Number.isFinite(seconds) ? Math.round((seconds / 60) * 100) / 100 : null;
 
 const earliest = (sets: readonly ExportSet[]): number =>
   Math.min(...sets.map((set) => set.loggedAt.getTime()));

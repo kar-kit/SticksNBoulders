@@ -200,3 +200,41 @@ describe("failed sets (F19)", () => {
     expect(update?.payload).toEqual({ setId: "st-1", loadKg: 140, reps: 2, rpe: null, isWarmup: false, failed: true });
   });
 });
+
+describe("cardio sets (F23)", () => {
+  it("queue their duration and level beside the inert strength values", async () => {
+    const logged = await logSet({
+      sessionId: "cs-1",
+      exerciseId: "treadmill",
+      setIndex: 1,
+      loadKg: 0,
+      reps: 0,
+      rpe: null,
+      isWarmup: false,
+      failed: false,
+      clientSetId: "st-c",
+      durationSeconds: 1200,
+      level: 8,
+    });
+    const create = (await store.all()).find((op) => op.kind === "set.create")!;
+    expect(create.payload).toMatchObject({ loadKg: 0, reps: 0, durationSeconds: 1200, level: 8 });
+    expect(logged).toMatchObject({ clientSetId: "st-c", durationSeconds: 1200, level: 8 });
+  });
+
+  it("queue a strength set with no cardio keys at all", async () => {
+    await log("st-1");
+    const create = (await store.all()).find((op) => op.kind === "set.create")!;
+    expect(create.payload).not.toHaveProperty("durationSeconds");
+    expect(create.payload).not.toHaveProperty("level");
+  });
+
+  it("queue a cardio correction with its duration and a cleared level as null", async () => {
+    await editSet(
+      "st-c",
+      { loadKg: 0, reps: 0, rpe: null, isWarmup: false, failed: false, durationSeconds: 900, level: null },
+      { exerciseId: "treadmill", loggedAt: LOGGED_AT },
+    );
+    const update = (await store.all()).find((op) => op.kind === "set.update")!;
+    expect(update.payload).toMatchObject({ durationSeconds: 900, level: null });
+  });
+});

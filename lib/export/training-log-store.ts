@@ -53,6 +53,10 @@ const SET_COLUMNS = [
   "logged_at",
   "notes",
   "prescribed",
+  // v21 (F23), the same deploy rule: a cardio set exports its duration and
+  // level, and without them it would export as a 0 x 0 strength set.
+  "duration_seconds",
+  "level",
 ];
 // `name` needs schema v14 on the instance: Appwrite refuses a select of a
 // column it does not have, so run `npm run appwrite:setup` before deploying.
@@ -90,6 +94,9 @@ const SetRow = z.object({
   logged_at: date,
   notes: optionalText,
   prescribed: optionalText,
+  // Null on every strength set and every set before v21.
+  duration_seconds: optionalNumber,
+  level: optionalNumber,
 });
 
 export interface TrainingLog {
@@ -172,6 +179,9 @@ export async function fetchTrainingLog(
       loggedAt: row.logged_at,
       notes: row.notes,
       prescribed: row.prescribed,
+      ...(row.duration_seconds !== null || row.level !== null
+        ? { durationSeconds: row.duration_seconds, level: row.level }
+        : {}),
     });
   }
 
