@@ -1,9 +1,8 @@
 import type { QueuedOp } from "@/lib/offline/queue";
 import { pendingOps } from "@/lib/offline/queue";
-import { deletedIds, queuedSetEdits } from "@/lib/logging/offline-view";
+import { deletedIds, queuedClipChanges, queuedSetEdits } from "@/lib/logging/offline-view";
 import { threadComments, type Comment } from "@/lib/review/comments";
 import type { ClipSet } from "@/lib/review/queue";
-import { posterIdFor } from "@/appwrite/documents/poster";
 import { formatWeight, type UnitPreference } from "@/lib/units";
 
 /**
@@ -23,27 +22,8 @@ export function readHistoryView(value: string | null | undefined): HistoryView {
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
-/**
- * The clip each set will carry once the queue drains, for sets with a
- * `set.attachVideo` still waiting. Latest op wins. Null is a clip deleted.
- *
- * Only pending ops: one that failed for good never reached the server, so
- * the server's copy is what is true.
- */
-export function queuedClipChanges(ops: readonly QueuedOp[]): Map<string, { videoFileId: string | null; videoPosterId: string | null }> {
-  const changes = new Map<string, { videoFileId: string | null; videoPosterId: string | null }>();
-  for (const op of pendingOps(ops)) {
-    if (op.kind !== "set.attachVideo") continue;
-    const setId = str(op.payload.setId);
-    if (!setId) continue;
-    const videoFileId = str(op.payload.videoFileId) || null;
-    // The poster is only believed when it is this clip's own (posterOf's rule).
-    const poster = str(op.payload.videoPosterId);
-    const videoPosterId = videoFileId && poster && poster === posterIdFor(videoFileId) ? poster : null;
-    changes.set(setId, { videoFileId, videoPosterId });
-  }
-  return changes;
-}
+/** Moved to offline-view (F21) so History's session screen lays it over its rows too. */
+export { queuedClipChanges };
 
 /**
  * Clips as the athlete will see them once the queue drains: a clip deleted

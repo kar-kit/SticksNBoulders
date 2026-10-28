@@ -56,6 +56,26 @@ const sessionEdits = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/logging/session-edit-store", () => sessionEdits);
 
+// The queue, as the screen subscribes to it. Empty unless a test hands it ops.
+const queue = vi.hoisted(() => ({ ops: [] as unknown[], listeners: new Set<(ops: unknown[]) => void>() }));
+vi.mock("@/lib/offline/client", () => ({
+  subscribeToQueue: (listener: (ops: unknown[]) => void) => {
+    queue.listeners.add(listener);
+    listener(queue.ops);
+    return () => queue.listeners.delete(listener);
+  },
+}));
+
+// The Log's own upload (F21): mocked at the boundary the camera calls.
+const upload = vi.hoisted(() => ({
+  attachClipToSet: vi.fn<(...args: unknown[]) => Promise<import("@/lib/video/upload").UploadResult>>(),
+}));
+vi.mock("@/lib/video/upload", () => upload);
+const retireReplacedClip = vi.hoisted(() => vi.fn<(setId: string, fileId: string) => Promise<void>>(async () => {}));
+vi.mock("@/lib/video/my-clips-store", () => ({ retireReplacedClip }));
+// No poster fetch in jsdom; the thumbnail's placeholder is what is asserted.
+vi.mock("@/lib/video/poster-cache", () => ({ usePosterUrl: () => null }));
+
 const patch = vi.fn();
 const drop = vi.fn();
 
@@ -124,6 +144,9 @@ beforeEach(() => {
   loaded.fail = false;
   activeConfirm.current = undefined;
   units.unit = "kg";
+  queue.ops = [];
+  queue.listeners.clear();
+  upload.attachClipToSet.mockResolvedValue({ ok: true, fileId: "f-new" });
   editSet.mockResolvedValue(undefined);
   removeSet.mockResolvedValue(undefined);
   library.exercises = [{ id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true }];
@@ -524,6 +547,101 @@ describe("a failed set (F19)", () => {
   });
 });
 
+describe("a clip added after the session (F21)", () => {
+  const clip = () => new File(["x"], "squat.mov", { type: "video/quicktime" });
+  const fileInput = () => document.querySelector<HTMLInputElement>('[aria-label="Video"] input[type=file]')!;
+
+  it("offers Add video on the set being corrected, however old the session, through the Log's upload", async () => {
+    // Logged over a year ago: nothing about attaching a clip is time-limited.
+    const longAgo = new Date("2025-06-02T09:30:00Z");
+    loaded.sets = [set({ clientSetId: "st-1", loggedAt: longAgo })];
+    const { user } = setup({ startedAt: new Date("2025-06-02T09:00:00Z"), finishedAt: new Date("2025-06-02T10:00:00Z") });
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+
+    const video = screen.getByRole("group", { name: "Video" });
+    expect(video).toHaveTextContent("Goes up straight away, not on Save.");
+    expect(screen.getByRole("button", { name: "Add video" })).toBeEnabled();
+
+    const file = clip();
+    await user.upload(fileInput(), file);
+    await waitFor(() => expect(upload.attachClipToSet).toHaveBeenCalledWith("st-1", "joey", file, expect.anything()));
+    // Not a set edit: the numbers were not touched, so nothing was saved.
+    expect(editSet).not.toHaveBeenCalled();
+    // Nothing to replace, so nothing retired.
+    expect(retireReplacedClip).not.toHaveBeenCalled();
+
+    // Back on the list, the row carries the clip, before any queue or reload.
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("img", { name: "Set 1: video attached" })).toBeInTheDocument();
+  });
+
+  it("offers Replace on a set with a clip, and retires the old file once the new one's attach is queued", async () => {
+    loaded.sets = [set({ clientSetId: "st-1", videoFileId: "f-old", videoPosterId: null })];
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    expect(screen.getByRole("button", { name: "Replace video" })).toBeInTheDocument();
+
+    await user.upload(fileInput(), clip());
+    await waitFor(() => expect(retireReplacedClip).toHaveBeenCalledWith("st-1", "f-old"));
+
+    // Deleting the set now takes the new file with it, not the retired one.
+    await user.click(screen.getByRole("button", { name: "Delete set" }));
+    await waitFor(() => expect(removeSet).toHaveBeenCalledTimes(1));
+    expect(removeSet.mock.calls[0][1]).toMatchObject({ videoFileId: "f-new" });
+  });
+
+  it("leaves the old file alone when the replacement is only kept on the phone", async () => {
+    upload.attachClipToSet.mockResolvedValueOnce({
+      ok: false,
+      reason: "pending",
+      message: "That clip didn't finish uploading. Your set is saved — it will carry on by itself.",
+    });
+    loaded.sets = [set({ clientSetId: "st-1", videoFileId: "f-old", videoPosterId: null })];
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    await user.upload(fileInput(), clip());
+    expect(await screen.findByText(/it will carry on by itself/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Video pending" })).toBeInTheDocument();
+    expect(retireReplacedClip).not.toHaveBeenCalled();
+  });
+
+  it("holds Delete set while the clip uploads, even after the row was closed and opened again", async () => {
+    let finish: (result: import("@/lib/video/upload").UploadResult) => void = () => {};
+    upload.attachClipToSet.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    await user.upload(fileInput(), clip());
+    expect(await screen.findByRole("button", { name: "Delete set" })).toBeDisabled();
+
+    // Cancel mid-upload: the camera goes, the upload does not.
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    expect(screen.getByRole("button", { name: "Delete set" })).toBeDisabled();
+
+    await act(async () => finish({ ok: true, fileId: "f-new" }));
+    expect(screen.getByRole("button", { name: "Delete set" })).toBeEnabled();
+  });
+
+  it("shows a clip attached with no signal on its row, from the queue, after a reload", async () => {
+    const { newOp } = await import("@/lib/offline/queue");
+    queue.ops = [
+      newOp("set.attachVideo", { setId: "st-2", videoFileId: "f-q", videoPosterId: "f-q_poster" }, 1, "op-1"),
+    ];
+    setup();
+    expect(await screen.findByRole("img", { name: "Set 2: video attached" })).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Set 1: video attached" })).not.toBeInTheDocument();
+  });
+
+  it("takes a clip off its row when its removal is still queued", async () => {
+    const { newOp } = await import("@/lib/offline/queue");
+    loaded.sets = [set({ clientSetId: "st-1", videoFileId: "f-old", videoPosterId: null })];
+    queue.ops = [newOp("set.attachVideo", { setId: "st-1", videoFileId: null, videoPosterId: null }, 1, "op-1")];
+    setup();
+    await screen.findByRole("button", { name: "Edit set 1 of Squat" });
+    expect(screen.queryByRole("img", { name: "Set 1: video attached" })).not.toBeInTheDocument();
+  });
+});
+
 describe("correcting a bodyweight set (F20)", () => {
   beforeEach(() => {
     library.exercises = [
@@ -558,6 +676,14 @@ describe("correcting a bodyweight set (F20)", () => {
     expect(confirm).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
     await act(async () => activeConfirm.current?.());
     expect(editSet).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Video line (F21) on a set logged at 0 kg", async () => {
+    loaded.sets = [set({ clientSetId: "pu-0", exerciseId: "pull-up", loadKg: 0, reps: 8, rpe: 9, e1rmKg: null })];
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Pull Up" }));
+    expect(screen.getByRole("group", { name: "Video" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add video" })).toBeEnabled();
   });
 });
 
@@ -636,6 +762,17 @@ describe("a cardio set in History (F23)", () => {
     await user.click(await screen.findByRole("button", { name: "Edit set 1 of Treadmill" }));
     await user.click(screen.getByRole("button", { name: "Delete set" }));
     await waitFor(() => expect(removeSet).toHaveBeenCalledWith("st-c", expect.objectContaining({ exerciseId: "tm" })));
+  });
+
+  it("has no Video line (F21): nothing films a cardio set in this version", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Treadmill" }));
+    expect(screen.queryByRole("group", { name: "Video" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add video" })).not.toBeInTheDocument();
+    // The squat's row still offers it.
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    expect(screen.getByRole("group", { name: "Video" })).toBeInTheDocument();
   });
 });
 

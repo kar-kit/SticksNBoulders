@@ -117,6 +117,14 @@ export function ModalSheet({ children, label, onDismiss, anchor, revealKey = nul
       inert={leaving || undefined}
       data-modal-sheet=""
       onCancel={(event) => {
+        // Only the dialog's own close request. A file input's `cancel` (the
+        // athlete backing out of the picker) bubbles, and the edit sheet holds
+        // one: the set's camera (F17). Taken as a dismiss, it closed the
+        // sheet, and with it the camera -- so a pick that arrived after it
+        // (iOS fires the input's `cancel` from its own picker plumbing, see
+        // the note in docs/video.md under F21) landed on an input that was no
+        // longer on the page, and nothing uploaded.
+        if (event.target !== event.currentTarget) return;
         // Kept open until the screen says otherwise: a changed draft asks first.
         event.preventDefault();
         onDismiss();

@@ -132,6 +132,10 @@ export function Dialog({ labelledBy, onClose, children, size = "lg", feel = "coa
       aria-hidden={leaving || undefined}
       inert={leaving || undefined}
       onCancel={(event) => {
+        // The dialog's own close request only: an `<input type="file">`
+        // inside fires a bubbling `cancel` when its picker is dismissed, and
+        // that is not the coach asking to leave (see ModalSheet).
+        if (event.target !== event.currentTarget) return;
         // Kept open until the caller unmounts it, so the URL and the screen
         // change together.
         event.preventDefault();

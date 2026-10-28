@@ -50,6 +50,22 @@ describe("Dialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("does not take a file picker's cancel, bubbling up from inside, as a close request", () => {
+    // `<input type="file">` fires a bubbling `cancel` when its picker is
+    // dismissed. That is the picker closing, not the dialog.
+    const onClose = vi.fn();
+    render(
+      <Dialog labelledBy="t" onClose={onClose}>
+        <h2 id="t">Clip</h2>
+        <input type="file" aria-label="Clip file" />
+      </Dialog>,
+    );
+    fireEvent(screen.getByLabelText("Clip file"), new Event("cancel", { bubbles: true }));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent(screen.getByRole("dialog", { name: "Clip" }), new Event("cancel", { cancelable: true }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("closes on a click on the backdrop, not on its contents", async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
