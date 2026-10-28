@@ -1,5 +1,6 @@
 import { resolvePrefill } from "./prefill";
 import type { PlannedRow } from "./plan";
+import { isCardioSet, type CardioValues } from "./cardio";
 
 /**
  * "Previous": what the athlete did on this exercise last time, set by set,
@@ -11,8 +12,8 @@ import type { PlannedRow } from "./plan";
  * (rule 4 of the prefill order).
  */
 
-/** One set as read back from Appwrite for this purpose. */
-export interface HistorySet {
+/** One set as read back from Appwrite for this purpose. A cardio set (F23) carries its duration and level. */
+export interface HistorySet extends CardioValues {
   sessionId: string;
   clientSetId: string;
   /** The stored ordinal. Null when the row had none worth trusting. */
@@ -36,12 +37,14 @@ export interface HistorySet {
  * "you missed this last week" is exactly what an athlete loading the bar
  * wants to see. The row shows it as `PREV 200 × 0 · failed`.
  */
-export interface PreviousSet {
+export interface PreviousSet extends CardioValues {
   loadKg: number;
   reps: number;
   isWarmup: boolean;
   /** Absent reads as false: every set before v19, and the device cache's older entries. */
   failed?: boolean;
+  // A cardio set last time (F23) keeps its duration and level here, so the
+  // row shows `PREV 20 min · level 8` rather than a 0 x 0 that never happened.
 }
 
 /**
@@ -69,7 +72,13 @@ export function previousSessionSets(
       if (byTime !== 0) return byTime;
       return (a.setIndex ?? Number.MAX_SAFE_INTEGER) - (b.setIndex ?? Number.MAX_SAFE_INTEGER);
     })
-    .map(({ loadKg, reps, isWarmup, failed }) => ({ loadKg, reps, isWarmup, ...(failed ? { failed: true } : {}) }));
+    .map(({ loadKg, reps, isWarmup, failed, durationSeconds, level }) => ({
+      loadKg,
+      reps,
+      isWarmup,
+      ...(failed ? { failed: true } : {}),
+      ...(isCardioSet({ durationSeconds, level }) ? { durationSeconds: durationSeconds ?? null, level: level ?? null } : {}),
+    }));
 }
 
 /**
@@ -141,6 +150,13 @@ export function fillFromLastSession(
     const at = position++;
     if (row.touched || row.prescriptionId || row.loadKg !== null || row.reps !== null) return row;
     const last = working[at] ?? working[working.length - 1];
+    // F23: last time was cardio, so the row takes its duration and level --
+    // the same one-tap repeat a strength row gets -- and never its 0 x 0.
+    if (isCardioSet(last)) {
+      if (row.durationSeconds != null || row.level != null) return row;
+      changed = true;
+      return { ...row, durationSeconds: last.durationSeconds ?? null, level: last.level ?? null };
+    }
     const prefill = resolvePrefill({ sameExerciseLastSession: { loadKg: last.loadKg, reps: last.reps } });
     if (prefill.source !== "last-session") return row;
     changed = true;

@@ -224,3 +224,50 @@ describe("bodyweight sets in Previous (F20)", () => {
     expect(filled).toMatchObject({ loadKg: 0, reps: 12 });
   });
 });
+
+describe("cardio sets in Previous (F23)", () => {
+  it("keep last time's duration and level, so the row can say 20 min · level 8", () => {
+    const sets = previousSessionSets([
+      history({ sessionId: "a", loggedAt: at("2026-10-20T18:00:00Z"), loadKg: 0, reps: 0, durationSeconds: 1200, level: 8 }),
+      history({ sessionId: "a", loggedAt: at("2026-10-20T18:30:00Z"), loadKg: 0, reps: 0, durationSeconds: 600, level: null }),
+    ]);
+    expect(sets).toEqual([
+      { loadKg: 0, reps: 0, isWarmup: false, durationSeconds: 1200, level: 8 },
+      { loadKg: 0, reps: 0, isWarmup: false, durationSeconds: 600, level: null },
+    ]);
+  });
+
+  it("add no cardio keys to a strength set", () => {
+    const [set] = previousSessionSets([history({ sessionId: "a", loggedAt: at("2026-10-20T18:00:00Z") })]);
+    expect(set).not.toHaveProperty("durationSeconds");
+  });
+
+  it("fill a blank row with last time's duration and level, never its 0 x 0", () => {
+    const row: PlannedRow = {
+      exerciseId: "treadmill",
+      clientSetId: "r1",
+      loadKg: null,
+      reps: null,
+      rpe: null,
+      isWarmup: false,
+      planned: false,
+    };
+    const [filled] = fillFromLastSession([row], "treadmill", [{ loadKg: 0, reps: 0, isWarmup: false, durationSeconds: 1200, level: 8 }], 0);
+    expect(filled).toMatchObject({ durationSeconds: 1200, level: 8, loadKg: null, reps: null });
+  });
+
+  it("leave a cardio row the athlete already typed into alone", () => {
+    const row: PlannedRow = {
+      exerciseId: "treadmill",
+      clientSetId: "r1",
+      loadKg: null,
+      reps: null,
+      rpe: null,
+      isWarmup: false,
+      planned: false,
+      durationSeconds: 300,
+    };
+    const rows = [row];
+    expect(fillFromLastSession(rows, "treadmill", [{ loadKg: 0, reps: 0, isWarmup: false, durationSeconds: 1200 }], 0)).toBe(rows);
+  });
+});

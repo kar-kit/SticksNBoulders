@@ -279,3 +279,33 @@ describe("a library longer than the list", () => {
     }
   });
 });
+
+describe("cardio (F23)", () => {
+  const withBike = [...LIBRARY, make("Bike", { kind: "cardio" }), make("Ski Erg", { kind: "cardio", isGlobal: false, ownerId: "joey" })];
+
+  it("tags a cardio exercise in the list, and says so to a screen reader", async () => {
+    const { user, input } = setup({ exercises: withBike });
+    await user.type(input, "bike");
+    expect(screen.getByRole("option", { name: "Bike, cardio" })).toHaveTextContent("cardio");
+    await user.clear(input);
+    await user.type(input, "ski");
+    expect(screen.getByRole("option", { name: "Ski Erg, cardio" })).toHaveTextContent("cardio · yours");
+  });
+
+  it("offers Add as cardio under the plain create, only where the screen asks for it", async () => {
+    const onCreateCardio = vi.fn();
+    const { user, input, onCreate } = setup({ onCreateCardio });
+    await user.type(input, "Assault Bike");
+    const names = screen.getAllByRole("option").map((el) => el.getAttribute("aria-label"));
+    expect(names.slice(-2)).toEqual(["Add custom exercise: Assault Bike", "Add custom cardio exercise: Assault Bike"]);
+    await user.click(screen.getByRole("option", { name: "Add custom cardio exercise: Assault Bike" }));
+    expect(onCreateCardio).toHaveBeenCalledWith("Assault Bike");
+    expect(onCreate).not.toHaveBeenCalled();
+  });
+
+  it("offers no cardio create without the handler, as in the Program Editor", async () => {
+    const { user, input } = setup();
+    await user.type(input, "Assault Bike");
+    expect(screen.queryByRole("option", { name: /cardio/ })).not.toBeInTheDocument();
+  });
+});

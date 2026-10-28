@@ -1,4 +1,5 @@
 import { estimateOneRepMax } from "@/lib/strength/e1rm";
+import { isLoggableDuration, isLoggableLevel } from "@/lib/logging/cardio";
 import { isSuggestionMode, type SuggestionMode } from "@/lib/coach/suggestion-mode";
 import { isOwnAvatarFileId } from "./avatar";
 import { circleTeamId } from "./circle";
@@ -146,7 +147,17 @@ export function normaliseExerciseName(name: string): string {
 
 export interface CreateExerciseInput {
   name: string;
+  /**
+   * What a set of it records (F23, schema v21). Written only when "cardio":
+   * a strength row writes exactly what it did before the column existed, so
+   * creating one never depends on the v21 schema being applied.
+   */
+  kind?: "strength" | "cardio";
 }
+
+/** The `kind` column's value for a new row: cardio only, never an explicit strength. */
+const kindColumn = (kind: CreateExerciseInput["kind"]): { kind?: "cardio" } =>
+  kind === "cardio" ? { kind: "cardio" } : {};
 
 export async function createExercise(deps: WriteDeps, actor: Actor, input: CreateExerciseInput) {
   const name = input.name.trim();
@@ -163,8 +174,37 @@ export async function createExercise(deps: WriteDeps, actor: Actor, input: Creat
       // into the shared library is a deliberate, separate act.
       is_global: false,
       owner_id: actor.userId,
+      // F23: a cardio exercise made from the typeahead or My exercises.
+      ...kindColumn(input.kind),
       created_at: iso(deps.now()),
     },
+    permissions: exercisePermissions({ athleteId: actor.userId, isGlobal: false }),
+  });
+}
+
+/**
+ * Sets what one of the athlete's own exercises records (F23): strength, or
+ * cardio's duration and level. From My exercises.
+ *
+ * Owner-stamped like `setExerciseBodyweight`, for the same reason, and like
+ * it writes the one column and touches nothing logged: every set says for
+ * itself whether it is cardio (`sets.duration_seconds`), so a strength set
+ * logged before the flip stays a strength set in every total, and a cardio
+ * set logged before a flip back stays out of them. Strength is written as
+ * "strength" rather than null -- explicit beats a null that means it.
+ */
+export async function setExerciseKind(
+  deps: WriteDeps,
+  actor: Actor,
+  input: { rowId: string; kind: "strength" | "cardio" },
+) {
+  if (!input.rowId) throw new Error("setExerciseKind: rowId is required");
+
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: input.rowId,
+    data: { kind: input.kind === "cardio" ? "cardio" : "strength" },
     permissions: exercisePermissions({ athleteId: actor.userId, isGlobal: false }),
   });
 }
@@ -274,6 +314,10 @@ export async function createGlobalExercise(
 ) {
   const name = input.name.trim();
   if (!name) throw new Error("createGlobalExercise: name is required");
+  // A cardio machine with a bodyweight flag is two answers to one question.
+  if (input.kind === "cardio" && input.isBodyweight) {
+    throw new Error("createGlobalExercise: a cardio exercise is not a bodyweight one");
+  }
 
   return deps.writer.createRow({
     databaseId: deps.databaseId,
@@ -291,6 +335,8 @@ export async function createGlobalExercise(
       ...(input.videoDefault ? { video_default: true } : {}),
       // The same rule for the bodyweight flag (v20, F20).
       ...(input.isBodyweight ? { is_bodyweight: true } : {}),
+      // And for the kind (v21, F23): only a cardio row writes it.
+      ...kindColumn(input.kind),
       created_at: iso(deps.now()),
     },
     // athleteId is required by the policy's signature but unused for a global
@@ -347,6 +393,24 @@ export async function setGlobalExerciseBodyweight(
     tableId: "exercises",
     rowId: input.rowId,
     data: { is_bodyweight: input.isBodyweight },
+    permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
+  });
+}
+
+/**
+ * Sets what a library row records (F23): the seed script's path for the
+ * cardio machines. Only the seed script calls it. Null reads as strength, and
+ * clearing writes "strength" explicitly, like `setExerciseKind`.
+ */
+export async function setGlobalExerciseKind(
+  deps: WriteDeps,
+  input: { rowId: string; kind: "strength" | "cardio" },
+) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: input.rowId,
+    data: { kind: input.kind === "cardio" ? "cardio" : "strength" },
     permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
   });
 }
@@ -562,12 +626,82 @@ export interface CreateSetInput {
    * editing the line afterwards cannot change what this set was an answer to.
    */
   prescribed?: string | null;
+  /**
+   * A cardio set (F23, schema v21): how long, in whole seconds. Present makes
+   * this a cardio set, and then the strength values passed are ignored --
+   * see `cardioRow`. Absent on every strength set and every op queued before
+   * v21.
+   */
+  durationSeconds?: number | null;
+  /** The machine's level on a cardio set, or null for none. Ignored without a duration. */
+  level?: number | null;
 }
+
+/**
+ * What a cardio set stores in the strength columns, whatever the caller
+ * passed for them (F23).
+ *
+ * Forced here, in the helper that stamps permissions, for the reason e1RM is
+ * computed here: a derived value a caller can supply is a value a caller can
+ * get wrong. load 0 and reps 0 are the pair every strength reader already
+ * treats as nothing (lib/logging/cardio.ts), and a cardio set is never a
+ * warm-up, never failed, has no RPE and so no e1RM. Null rather than
+ * undefined for the nullable ones, so an update that turns a row cardio
+ * clears whatever it held.
+ */
+function cardioRow(durationSeconds: number, level: number | null | undefined, where: string) {
+  if (!isLoggableDuration(durationSeconds)) {
+    throw new Error(`${where}: a cardio set needs a duration of 1 second to 24 hours`);
+  }
+  if (!isLoggableLevel(level)) throw new Error(`${where}: a cardio level is 0 to 99.9`);
+  return {
+    load_kg: 0,
+    reps: 0,
+    rpe: null,
+    is_warmup: false,
+    failed: false,
+    e1rm_kg: null,
+    duration_seconds: durationSeconds,
+    level: level ?? null,
+  };
+}
+
+const isCardioInput = (input: { durationSeconds?: number | null; level?: number | null }): boolean =>
+  (input.durationSeconds !== undefined && input.durationSeconds !== null) ||
+  (input.level !== undefined && input.level !== null);
 
 export async function createSet(deps: WriteDeps, actor: Actor, input: CreateSetInput) {
   if (!input.clientSetId) throw new Error("createSet: clientSetId is required");
   if (!input.sessionId) throw new Error("createSet: sessionId is required");
   if (!input.exerciseId) throw new Error("createSet: exerciseId is required");
+
+  // F23. A level with no duration is refused by `cardioRow` rather than
+  // quietly written as a strength set: it was meant as cardio.
+  if (isCardioInput(input)) {
+    return deps.writer.createRow({
+      databaseId: deps.databaseId,
+      tableId: "sets",
+      rowId: deps.newId(),
+      data: {
+        session_id: input.sessionId,
+        athlete_id: actor.userId,
+        exercise_id: input.exerciseId,
+        set_index: input.setIndex,
+        ...cardioRow(input.durationSeconds as number, input.level, "createSet"),
+        // Unset rather than null on a create, like a strength set's.
+        rpe: undefined,
+        e1rm_kg: undefined,
+        logged_at: iso(input.loggedAt ?? deps.now()),
+        client_set_id: input.clientSetId,
+        // No clip on a cardio set in this version: nothing films it, and the
+        // coach's Review Queue is for lifts.
+        notes: input.notes,
+        prescription_id: input.prescriptionId ?? undefined,
+        prescribed: input.prescribed ? input.prescribed.slice(0, 160) : undefined,
+      },
+      permissions: setPermissions({ athleteId: actor.userId }),
+    });
+  }
 
   return deps.writer.createRow({
     databaseId: deps.databaseId,
@@ -637,6 +771,19 @@ export interface UpdateSetInput {
    * leave the old note in place, the same trap as `video_file_id`.
    */
   notes?: string | null;
+  /**
+   * A cardio correction (F23): the duration, and the level beside it (null
+   * clears it). Present makes this a cardio update and the five strength
+   * values are ignored for the inert ones (`cardioRow`).
+   *
+   * Absent leaves both columns alone, and that is deliberate: a strength
+   * update that reaches a cardio row -- nothing in the app sends one, but a
+   * stale client might -- keeps its duration, so the row stays cardio and
+   * stays out of every strength total. It never turns a treadmill block into
+   * a 0 x 0 strength set.
+   */
+  durationSeconds?: number | null;
+  level?: number | null;
 }
 
 /**
@@ -653,6 +800,21 @@ export interface UpdateSetInput {
  * write far more cheaply.
  */
 export async function updateSet(deps: WriteDeps, actor: Actor, input: UpdateSetInput) {
+  if (isCardioInput(input)) {
+    return deps.writer.updateRow({
+      databaseId: deps.databaseId,
+      tableId: "sets",
+      rowId: input.rowId,
+      data: {
+        ...cardioRow(input.durationSeconds as number, input.level, "updateSet"),
+        ...(input.notes !== undefined && {
+          notes: input.notes?.trim() ? input.notes.trim().slice(0, SET_NOTES_MAX) : null,
+        }),
+      },
+      permissions: setPermissions({ athleteId: actor.userId }),
+    });
+  }
+
   return deps.writer.updateRow({
     databaseId: deps.databaseId,
     tableId: "sets",

@@ -19,8 +19,8 @@ Ops carry their own Appwrite row id: `session.create`, `session.finish`,
 `set.create`, `set.update`, `set.delete`, `set.attachVideo`, `exercise.create`
 for a lift typed on the spot, and `rollup.refresh` behind every set write.
 History and My exercises add `session.update`, `session.delete`,
-`exercise.rename`, `exercise.bodyweight`, `exercise.delete` and `clip.delete`
-(see the last sections).
+`exercise.rename`, `exercise.bodyweight`, `exercise.kind`, `exercise.delete`
+and `clip.delete` (see the last sections).
 
 ## One id, not two
 
@@ -289,6 +289,26 @@ so the Log accepts 0 kg on that lift from the next tap with no signal. Like
 `exercise.rename`, it is withdrawn with an exercise whose create never left
 the phone. The library's cached copy from before v20 has no flag, which reads
 as not bodyweight: the Log refuses 0 kg until the next fetch, never allows it.
+
+The **Cardio exercise** checkbox (F23, schema v21) is `exercise.kind` through
+`setExerciseKind`, the same shape as the bodyweight flag for the same reasons:
+one column, owner-stamped, its own op, withdrawn with an unsent exercise,
+applied to the library first (`setKind`, cached copy included). A cardio
+exercise made from scratch -- My exercises' New cardio exercise, or the Log
+typeahead's Add as cardio -- carries `kind: "cardio"` in its `exercise.create`,
+so it is never on the server as strength even for a moment; a create without
+the key is strength, which is what every pre-v21 client queued. A library
+cached before v21 has no kind and reads as strength.
+
+**Cardio sets (F23)** ride the existing set ops rather than new ones: a cardio
+`set.create` or `set.update` carries `durationSeconds` and `level` (null for
+none) beside the inert `loadKg: 0`, `reps: 0`. An op without `durationSeconds`
+is a strength set, byte-for-byte what it was before v21, and the runner passes
+neither key on. Everything that already handles a set -- withdrawing an unsent
+create, the delete and its rollup refresh, a session delete's cascade, the
+queued-set projection after a reload with no signal -- handles a cardio set
+with no change. `queuedSets` and `queuedSetEdits` carry the two values, so a
+cardio set logged in a basement reads as cardio after a reload.
 
 **Delete is blocked, not archived, for an exercise anything points at**: this
 athlete's sets (on the server or still queued), a reference max, or a

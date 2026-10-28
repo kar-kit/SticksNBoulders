@@ -51,6 +51,8 @@ interface SetRow {
   $id: string;
   athlete_id?: unknown;
   load_kg?: unknown;
+  duration_seconds?: unknown;
+  level?: unknown;
   reps?: unknown;
   rpe?: unknown;
   is_warmup?: unknown;
@@ -102,8 +104,12 @@ for (const row of rows) {
   const reps = num(row.reps);
   const stored = num(row.e1rm_kg);
 
+  // F23: a cardio set is owed no estimate, ever -- whatever its strength
+  // columns hold. Its 0 kg already gives none; this says why.
+  const cardio = num(row.duration_seconds) !== null || num(row.level) !== null;
+
   const to =
-    loadKg === null || reps === null
+    cardio || loadKg === null || reps === null
       ? null
       : estimateOneRepMax({
           loadKg,

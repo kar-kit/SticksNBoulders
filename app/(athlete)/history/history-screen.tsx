@@ -12,6 +12,7 @@ import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { exerciseIdsOf, fetchSetsForSessions, setsBySession, type HistorySet } from "@/lib/logging/history-store";
 import {
+  cardStatsLine,
   filterByExercise,
   formatDuration,
   formatTonnage,
@@ -19,6 +20,7 @@ import {
   historyCards,
 } from "@/lib/logging/history";
 import { sessionDateLabel } from "@/lib/logging/session";
+import { cardioSeconds } from "@/lib/logging/cardio";
 import { useUnits } from "@/lib/profile/units-context";
 import { loadIn } from "@/lib/units";
 import { refusedRowDeletes, unsyncedIds } from "@/lib/logging/offline-view";
@@ -162,6 +164,8 @@ function SessionsView() {
       (sessionId) => exerciseIdsOf(grouped.get(sessionId) ?? []).map(nameOf),
       (sessionId) => unsynced.has(sessionId),
       (dayId) => dayLabels.get(dayId) ?? null,
+      // F23: cardio time, from the same sets.
+      (sessionId) => cardioSeconds(grouped.get(sessionId) ?? []),
     );
     return groupByWeek(cards);
   }, [sessions, sets, ops, nameOf, dayLabels]);
@@ -240,8 +244,10 @@ function SessionsView() {
                       <span className="text-sm text-muted">{card.exerciseNames.join(", ")}</span>
                     ) : null}
                     <CardMeta>
-                      {card.setCount} set{card.setCount === 1 ? "" : "s"}
-                      {card.tonnageKg > 0 ? ` · ${formatTonnage(loadIn(card.tonnageKg, unit))} ${unit}` : ""}
+                      {cardStatsLine(
+                        card,
+                        card.tonnageKg > 0 ? `${formatTonnage(loadIn(card.tonnageKg, unit))} ${unit}` : null,
+                      )}
                     </CardMeta>
                   </Card>
                 </Link>

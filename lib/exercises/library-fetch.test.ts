@@ -59,6 +59,25 @@ beforeEach(() => {
 });
 
 describe("loading the library", () => {
+  it("reads a kind as cardio only when it says cardio, and strength otherwise (F23)", async () => {
+    db.rows = [
+      row("Treadmill", { kind: "cardio" }),
+      row("Squat", { kind: "strength" }),
+      // Every row written before v21.
+      row("Bench"),
+      row("Odd", { kind: null }),
+      row("Future", { kind: "mobility" }),
+    ];
+    const library = await fetchExerciseLibrary("joey");
+    expect(library.map((e) => [e.name, e.kind]).sort()).toEqual([
+      ["Bench", "strength"],
+      ["Future", "strength"],
+      ["Odd", "strength"],
+      ["Squat", "strength"],
+      ["Treadmill", "cardio"],
+    ]);
+  });
+
   it("reads a null or missing bodyweight flag as false, and only true as true (F20)", async () => {
     // Every row written before v20 has no is_bodyweight at all.
     db.rows = [

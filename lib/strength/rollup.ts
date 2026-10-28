@@ -1,3 +1,5 @@
+import { isStrengthSet, type CardioValues } from "@/lib/logging/cardio";
+
 /**
  * Weekly rollups: one row per athlete per exercise per week.
  *
@@ -17,7 +19,7 @@
  * one query of at most a few dozen rows.
  */
 
-export interface RollupSet {
+export interface RollupSet extends CardioValues {
   loadKg: number;
   reps: number;
   isWarmup: boolean;
@@ -138,12 +140,19 @@ const tenth = (value: number): number => Math.round(value * 10) / 10;
  * show as a record and the Log's weight badge would be measured against. It
  * has no e1RM (lib/strength/e1rm.ts), so it is never the best estimate.
  *
+ * A cardio set (F23) counts toward nothing at all: not a set, not volume,
+ * not tonnage, never a best. It is filtered out before anything else is
+ * looked at, by `isStrengthSet`, which fails closed (lib/logging/cardio.ts).
+ * A week of one cardio exercise is therefore a week with no working sets,
+ * and the rebuild removes its row rather than storing zeroes -- cardio has
+ * no rollup, so no chart, PR, DOTS or roster figure ever meets one.
+ *
  * [SME to confirm] whether warm-up tonnage should count somewhere. It is real
  * work and some coaches track it; excluding it everywhere is the current rule
  * and the one Ruairi has not been asked about yet.
  */
 export function rollupFrom(sets: readonly RollupSet[]): Rollup {
-  const working = sets.filter((set) => !set.isWarmup);
+  const working = sets.filter(isStrengthSet).filter((set) => !set.isWarmup);
 
   let volumeReps = 0;
   let tonnageKg = 0;

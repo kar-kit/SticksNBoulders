@@ -135,6 +135,10 @@ for (const row of setRows) {
     failed: row.failed === true,
     e1rmKg: num(row.e1rm_kg),
     loggedAt,
+    // F23: a cardio set is bucketed like any set and left out by rollupFrom,
+    // so a week of nothing but cardio comes out as a rollup to remove.
+    durationSeconds: num(row.duration_seconds),
+    level: num(row.level),
   });
   buckets.set(key, bucket);
 }

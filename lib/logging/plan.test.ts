@@ -325,3 +325,36 @@ describe("refreshBehind after a failed set (F19)", () => {
     expect(out.rows[0]).toBe(rows[0]);
   });
 });
+
+describe("after a cardio set (F23)", () => {
+  it("Add set repeats its duration and level, with no load or reps", () => {
+    expect(rowAfter("treadmill", { loadKg: 0, reps: 0, durationSeconds: 300, level: 8 }, ids(), true)).toEqual({
+      exerciseId: "treadmill",
+      clientSetId: "st-1",
+      loadKg: null,
+      reps: null,
+      rpe: null,
+      isWarmup: false,
+      planned: true,
+      durationSeconds: 300,
+      level: 8,
+    });
+  });
+
+  it("takes no suggestion, whatever is passed in", () => {
+    const next = rowAfter("treadmill", { loadKg: 0, reps: 0, durationSeconds: 300 }, ids(), true, {
+      loadKg: 100,
+      fromRpe: 8,
+      fromLoadKg: 100,
+    });
+    expect(next).not.toHaveProperty("suggested");
+    expect(next.loadKg).toBeNull();
+  });
+
+  it("leaves the rows behind it alone, with nothing to reprice", () => {
+    const rows = [row({ exerciseId: "treadmill", clientSetId: "a", loadKg: null, reps: null, durationSeconds: 300 })];
+    const out = refreshBehind(rows, { exerciseId: "treadmill", loadKg: 0, reps: 0, isWarmup: false, durationSeconds: 600 });
+    expect(out.rows).toEqual(rows);
+    expect(out.reprice.size).toBe(0);
+  });
+});

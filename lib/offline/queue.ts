@@ -37,6 +37,7 @@ export type OpKind =
   | "exercise.create"
   | "exercise.rename"
   | "exercise.bodyweight"
+  | "exercise.kind"
   | "exercise.delete"
   | "clip.delete"
   | "rollup.refresh";
@@ -272,7 +273,7 @@ export function opsDroppedByDelete(
  */
 const ROW_OPS = {
   session: { key: "sessionId", create: "session.create", edits: ["session.finish", "session.update"] },
-  exercise: { key: "exerciseId", create: "exercise.create", edits: ["exercise.rename", "exercise.bodyweight"] },
+  exercise: { key: "exerciseId", create: "exercise.create", edits: ["exercise.rename", "exercise.bodyweight", "exercise.kind"] },
 } as const satisfies Record<string, { key: string; create: OpKind; edits: readonly OpKind[] }>;
 
 export type DeletableRow = keyof typeof ROW_OPS;

@@ -2,6 +2,7 @@ import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { authenticRows, posterOf } from "@/appwrite/documents";
 import type { UnnamedSet } from "./session-store";
+import { cardioColumns } from "./cardio";
 
 /**
  * Reading History.
@@ -38,6 +39,8 @@ interface SetRow {
   e1rm_kg?: unknown;
   video_file_id?: unknown;
   notes?: unknown;
+  duration_seconds?: unknown;
+  level?: unknown;
 }
 
 /** A set with the session it belongs to, and where it sat in its exercise. */
@@ -70,6 +73,9 @@ function toSet(raw: SetRow): HistorySet | null {
     rpe: typeof raw.rpe === "number" ? raw.rpe : null,
     isWarmup: raw.is_warmup === true,
     ...(raw.failed === true ? { failed: true } : {}),
+    // F23: History draws a cardio set as "20 min · level 8", and so does the
+    // coach's session view, which reads through this function.
+    ...cardioColumns(raw),
     e1rmKg: typeof raw.e1rm_kg === "number" ? raw.e1rm_kg : null,
     loggedAt,
     videoFileId: typeof raw.video_file_id === "string" && raw.video_file_id ? raw.video_file_id : null,

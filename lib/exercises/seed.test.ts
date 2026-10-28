@@ -1,4 +1,4 @@
-import { BODYWEIGHT_EXERCISES, SEED_EXERCISES, VIDEO_DEFAULT_EXERCISES } from "./seed";
+import { BODYWEIGHT_EXERCISES, CARDIO_EXERCISES, SEED_EXERCISES, VIDEO_DEFAULT_EXERCISES } from "./seed";
 import { rankExercises, type Exercise } from "./match";
 import { normaliseExerciseName } from "@/appwrite/documents";
 
@@ -109,6 +109,31 @@ describe("the bodyweight flag (F20)", () => {
     const flagged = new Set(BODYWEIGHT_EXERCISES.map(normaliseExerciseName));
     for (const lift of [...VIDEO_DEFAULT_EXERCISES, "Overhead Press", "Barbell Row", "Romanian Deadlift"]) {
       expect(flagged.has(normaliseExerciseName(lift))).toBe(false);
+    }
+  });
+});
+
+describe("the cardio machines (F23)", () => {
+  it("are Joey's six, by name: the machine is the exercise", () => {
+    expect([...CARDIO_EXERCISES].sort()).toEqual([
+      "Bike",
+      "Incline Walk",
+      "Rowing Machine",
+      "Stairmaster",
+      "Treadmill",
+      "Treadmill Running",
+    ]);
+  });
+
+  it("names only exercises the seed actually holds, so the seed script creates them", () => {
+    const seeded = new Set(SEED_EXERCISES.map(normaliseExerciseName));
+    expect(CARDIO_EXERCISES.filter((n) => !seeded.has(normaliseExerciseName(n)))).toEqual([]);
+  });
+
+  it("never overlaps the bodyweight list or the lifts filmed by default", () => {
+    const cardio = new Set(CARDIO_EXERCISES.map(normaliseExerciseName));
+    for (const name of [...BODYWEIGHT_EXERCISES, ...VIDEO_DEFAULT_EXERCISES]) {
+      expect(cardio.has(normaliseExerciseName(name))).toBe(false);
     }
   });
 });

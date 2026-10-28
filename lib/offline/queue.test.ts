@@ -247,6 +247,16 @@ describe("opsDroppedByRowDelete", () => {
     expect(drop.map((o) => o.id)).toEqual(["c1", "b2"]);
   });
 
+  it("withdraws a queued kind with an unsent exercise (F23)", () => {
+    const ops = [
+      op("c1", "exercise.create", { exerciseId: "ex-1", name: "Ski Erg" }),
+      op("k2", "exercise.kind", { exerciseId: "ex-1", kind: "cardio" }),
+    ];
+    const { drop, landed } = opsDroppedByRowDelete(ops, "exercise", "ex-1");
+    expect(landed).toBe(false);
+    expect(drop.map((o) => o.id)).toEqual(["c1", "k2"]);
+  });
+
   it("withdraws a queued rename with an unsent exercise", () => {
     const ops = [
       op("c1", "exercise.create", { exerciseId: "ex-1", name: "rdl" }),

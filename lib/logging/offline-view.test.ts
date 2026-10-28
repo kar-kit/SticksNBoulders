@@ -67,6 +67,37 @@ describe("queuedSets", () => {
     const sets = queuedSets([created("st-1"), op("set.delete", { setId: "st-1" })], "cs-1");
     expect(sets).toEqual([]);
   });
+
+  it("shows a cardio set waiting to send as a cardio set, and a strength one with no cardio keys (F23)", () => {
+    const cardio = op("set.create", {
+      setId: "st-c",
+      sessionId: "cs-1",
+      exerciseId: "treadmill",
+      loadKg: 0,
+      reps: 0,
+      rpe: null,
+      isWarmup: false,
+      loggedAt: STARTED,
+      durationSeconds: 1200,
+      level: 8,
+    });
+    const sets = queuedSets([created("st-1"), cardio], "cs-1");
+    const treadmill = sets.find((s) => s.clientSetId === "st-c");
+    const strength = sets.find((s) => s.clientSetId === "st-1");
+    expect(treadmill).toMatchObject({ clientSetId: "st-c", durationSeconds: 1200, level: 8 });
+    expect(strength).not.toHaveProperty("durationSeconds");
+  });
+});
+
+describe("queued cardio corrections (F23)", () => {
+  it("restate the duration and level over the set, and a strength edit carries neither", () => {
+    const edits = queuedSetEdits([
+      op("set.update", { setId: "st-c", loadKg: 0, reps: 0, rpe: null, isWarmup: false, durationSeconds: 900, level: null }),
+      op("set.update", { setId: "st-s", loadKg: 100, reps: 5, rpe: 8, isWarmup: false }),
+    ]);
+    expect(edits.get("st-c")).toMatchObject({ durationSeconds: 900, level: null });
+    expect(edits.get("st-s")).not.toHaveProperty("durationSeconds");
+  });
 });
 
 describe("mergeById", () => {

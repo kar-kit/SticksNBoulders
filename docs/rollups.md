@@ -67,6 +67,18 @@ Lift Detail would show as a record and the Log would measure a weight badge
 against. They carry no e1RM. Nothing here reads the flag: a 0 kg set means the
 same on any exercise, so `rollups:rebuild` needs no new input.
 
+**Cardio sets (F23, schema v21)** count toward nothing: not a set, not
+volume, not tonnage, never a best. `rollupFrom` filters them out first, with
+`isStrengthSet` (lib/logging/cardio.ts), before warm-ups. A set is cardio by its
+own columns -- `duration_seconds` or `level` present -- never by its exercise's
+kind, so flipping an exercise to cardio or back re-reads nothing. The rule fails
+closed: a 0-rep set that is not failed is left out too, because the only way one
+reaches here is a cardio set read without its columns. So a week of one cardio
+exercise has no working sets, and the rule below removes its row: cardio has no
+rollup, which is what keeps it out of DOTS, Lift Detail, the roster, the week
+card and the estimated max. `rollup-admin.ts` and `rollups:rebuild` read the two
+columns straight off the row (neither selects columns, so they always arrive).
+
 A week with no working sets produces **no row**, rather than a row of zeroes. A
 row of zeroes is a different statement — it says the week happened and was
 empty.

@@ -125,6 +125,15 @@ export const SEED_EXERCISES: readonly string[] = [
   "Hanging Leg Raise",
   "Ab Wheel Rollout",
   "Pallof Press",
+
+  // Cardio (F23): logged as a duration and a level, never load and reps.
+  // See CARDIO_EXERCISES below.
+  "Treadmill",
+  "Treadmill Running",
+  "Incline Walk",
+  "Stairmaster",
+  "Bike",
+  "Rowing Machine",
 ] as const;
 
 /**
@@ -165,4 +174,29 @@ export const BODYWEIGHT_EXERCISES: readonly string[] = [
   "Plank",
   "Hanging Leg Raise",
   "Ab Wheel Rollout",
+] as const;
+
+/**
+ * Library rows that are cardio (F23, schema v21): a set of them is a
+ * duration and an optional level (lib/exercises/kind.ts). Joey's list, after
+ * the session that asked for it. The machine is the exercise -- there is no
+ * machine-type field -- so "Treadmill" and "Treadmill Running" are two rows
+ * on purpose: a walk and a run on the same belt are different work, and an
+ * athlete looking back wants them apart. "Incline Walk" is the treadmill walk
+ * at an incline that powerlifters use as conditioning; its level is the
+ * incline or the speed, whichever the athlete types, which is theirs to keep
+ * consistent.
+ *
+ * None of them is bodyweight (F20), and the seed test says so: the two flags
+ * answer different questions, and a cardio row asks for no load at all.
+ * Anything not here is typed in mid-session and made cardio from the
+ * typeahead or My exercises.
+ */
+export const CARDIO_EXERCISES: readonly string[] = [
+  "Treadmill",
+  "Treadmill Running",
+  "Incline Walk",
+  "Stairmaster",
+  "Bike",
+  "Rowing Machine",
 ] as const;

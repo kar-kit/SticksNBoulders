@@ -4,6 +4,7 @@ import { authenticRows } from "@/appwrite/documents";
 import { fetchLiftWeeks } from "@/lib/strength/lift-store";
 import { priorBests, repBests, type PriorBests } from "@/lib/strength/pr";
 import { previousSessionSets, type HistorySet, type PreviousSet } from "./previous";
+import { cardioColumns } from "./cardio";
 
 /**
  * What the Log needs to know about one exercise's past: last time's sets
@@ -53,6 +54,12 @@ const COLUMNS = [
   // v19 (F19): a failed set lines up in Previous with its marker, and is
   // never a best. Selecting it needs the v19 schema on the instance.
   "failed",
+  // v21 (F23): Previous shows last time's duration and level on a cardio
+  // row, and `priorBests` keeps a cardio set out of every best. Left out of
+  // this list, a cardio set would arrive as a bare 0 x 0 -- still kept out
+  // by `isStrengthSet`, but shown as a strength set. Needs the v21 schema.
+  "duration_seconds",
+  "level",
   "e1rm_kg",
   "logged_at",
 ];
@@ -80,6 +87,7 @@ function toHistorySet(row: Record<string, unknown> & { $id: string }): HistorySe
     rpe: num(row.rpe),
     isWarmup: row.is_warmup === true,
     ...(row.failed === true ? { failed: true } : {}),
+    ...cardioColumns(row),
     loggedAt,
     e1rmKg: num(row.e1rm_kg),
   };

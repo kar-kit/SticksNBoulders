@@ -17,6 +17,10 @@ in memory, in `lib/review/queue.ts`.
   the coach's athletes. Verified against the instance before designing around
   it; had it not worked, the queue would have needed a denormalised `has_video`
   column and a backfill.
+- **Never a cardio set (F23).** Nothing films cardio in this version -- the
+  Log has no camera on a cardio block and the write helper stores no clip on a
+  cardio set -- and `toClip` drops a cardio row with a file anyway, so the
+  queue and the athlete's Clips gallery only ever hold lifts.
 - **Oldest first.** A clip filmed on Tuesday is the one the athlete is still
   wondering about. Ties break on id, so a queue does not reshuffle between
   renders and lose the coach's place.

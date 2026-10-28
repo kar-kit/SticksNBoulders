@@ -2,6 +2,7 @@ import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { authenticRows } from "@/appwrite/documents";
 import type { WeekPoint } from "./lift";
+import { cardioColumns, isStrengthSet } from "@/lib/logging/cardio";
 
 /**
  * Reading one lift.
@@ -96,6 +97,12 @@ export async function fetchRecentSetsFor(athleteId: string, exerciseId: string):
     .map((row): LiftSet | null => {
       const loggedAt = new Date(String(row.logged_at));
       if (Number.isNaN(loggedAt.getTime())) return null;
+      // F23: Lift Detail is a strength screen. A cardio set of this exercise
+      // -- one logged before its kind was flipped, or after -- is not a set
+      // of the lift's history, and its 0 x 0 would only read as one.
+      if (!isStrengthSet({ ...cardioColumns(row), reps: num(row.reps) ?? 0, failed: row.failed === true })) {
+        return null;
+      }
       return {
         clientSetId: typeof row.client_set_id === "string" ? row.client_set_id : row.$id,
         loadKg: num(row.load_kg) ?? 0,

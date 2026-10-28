@@ -1,6 +1,7 @@
 import { estimateOneRepMax } from "./e1rm";
 import type { WeekPoint } from "./lift";
 import { weekStart } from "./rollup";
+import { isStrengthSet, type CardioValues } from "@/lib/logging/cardio";
 
 /**
  * Personal records, as the Log sees them: did the set just logged beat
@@ -43,6 +44,16 @@ import { weekStart } from "./rollup";
  * frontier or heaviest weight, so a failed 150 does not make a made 150
  * after it look like a non-record. The rollups agree: `rollupFrom` keeps
  * failed sets out of its bests (lib/strength/rollup.ts).
+ *
+ * ## Cardio sets (F23)
+ *
+ * Never a record of any kind, never history, never a best to beat. Every
+ * function here lets a set in only through `isStrengthSet`
+ * (lib/logging/cardio.ts), which fails closed: a set with a duration or a
+ * level is out, and so is a 0-rep set that is not a miss -- a cardio set read
+ * without its columns. `sessionPrs` checks again rather than trusting the
+ * map it is given, so no finish screen can list one whatever produced the
+ * map. A treadmill done for 20 minutes is not a rep max at 0 kg.
  *
  * ## Bodyweight sets (F20)
  *
@@ -113,7 +124,7 @@ export interface PriorBests {
   repsAt?: readonly RepBest[] | null;
 }
 
-export interface PriorSet {
+export interface PriorSet extends CardioValues {
   loadKg: number;
   reps: number;
   rpe: number | null;
@@ -125,7 +136,7 @@ export interface PriorSet {
   e1rmKg?: number | null;
 }
 
-export interface SessionSetForPr {
+export interface SessionSetForPr extends CardioValues {
   clientSetId: string;
   loadKg: number;
   reps: number;
@@ -185,6 +196,8 @@ export function priorBests(
   }
 
   for (const set of before) {
+    // F23: cardio is not history for a lift's records.
+    if (!isStrengthSet(set)) continue;
     if (set.isWarmup || set.failed || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
     // 0 kg counts as history (F20) -- a bodyweight set -- and is skipped by
     // `higher` below, so it is never the heaviest weight.
@@ -210,6 +223,7 @@ export function priorBests(
 export function repBests(before: readonly PriorSet[], sessionStart: Date): RepBest[] {
   const mostAt = new Map<number, number>();
   for (const set of before) {
+    if (!isStrengthSet(set)) continue;
     if (set.isWarmup || set.failed || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
     if (!loadable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
     const load = tenth(set.loadKg);
@@ -264,6 +278,8 @@ export function detectPrs(
   let frontier = bests.repsAt ? frontierOf(bests.repsAt.map((p) => ({ loadKg: tenth(p.loadKg), reps: p.reps }))) : null;
 
   for (const set of sets) {
+    // F23: a cardio set is never measured, and never joins the running bests.
+    if (!isStrengthSet(set)) continue;
     if (set.isWarmup || set.failed || !loadable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
     const kinds: PrKind[] = [];
 
@@ -323,6 +339,9 @@ export function sessionPrs(
   const latest = new Map<string, SessionPr>();
   const reps: SessionPr[] = [];
   for (const set of sets) {
+    // Checked here too (F23): the map is the caller's, and a cardio set on
+    // the finish screen's records would be the one place a mistake shows.
+    if (!isStrengthSet(set)) continue;
     for (const kind of found.get(set.clientSetId) ?? []) {
       const record: SessionPr = {
         exerciseId: set.exerciseId,

@@ -13,8 +13,11 @@ import {
   deleteMyExercise,
   renameMyExercise,
   setMyExerciseBodyweight,
+  setMyExerciseKind,
 } from "@/lib/exercises/my-exercises-store";
 import { isBodyweight } from "@/lib/exercises/bodyweight";
+import { isCardioExercise } from "@/lib/exercises/kind";
+import { resolveOrCreateExercise } from "@/lib/exercises/library";
 import type { Exercise } from "@/lib/exercises/match";
 import { refusedRowDeletes } from "@/lib/logging/offline-view";
 import { dismissFailed, subscribeToQueue } from "@/lib/offline/client";
@@ -37,16 +40,29 @@ import type { QueuedOp } from "@/lib/offline/queue";
  * same form as the name, saved by the same Save, because it is the same kind
  * of correction -- the athlete telling the library what this lift is. The
  * library's own bodyweight rows are flagged by the seed script.
+ *
+ * Cardio (F23) sits beside it, the same way: a checkbox in the same form,
+ * saved by the same Save, queued as its own op. A cardio exercise is logged
+ * as a time and a level; sets already logged keep what they were, because
+ * each set says for itself whether it is cardio. While it is ticked the
+ * bodyweight box steps aside -- a cardio row asks for no load at all.
+ * New cardio exercise, above the list, makes one from scratch for the
+ * machine the library lacks (a ski erg, an assault bike) without a trip
+ * through the Log.
  */
 export function MyExercisesScreen() {
   const router = useRouter();
   const { state: sessionState } = useSession();
-  const { state: library, rename, flagBodyweight, forget, reload } = useExerciseLibrary();
+  const { state: library, rename, flagBodyweight, setKind, remember, forget, reload } = useExerciseLibrary();
 
   const [ops, setOps] = useState<QueuedOp[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [bodyweightDraft, setBodyweightDraft] = useState(false);
+  const [cardioDraft, setCardioDraft] = useState(false);
+  /** New cardio exercise (F23): the name as typed, and why it was refused. */
+  const [newCardio, setNewCardio] = useState("");
+  const [newCardioError, setNewCardioError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -62,6 +78,7 @@ export function MyExercisesScreen() {
     setEditingId(exercise.id);
     setDraft(exercise.name);
     setBodyweightDraft(isBodyweight(exercise));
+    setCardioDraft(isCardioExercise(exercise));
     setError(null);
   };
   const close = () => {
@@ -77,11 +94,14 @@ export function MyExercisesScreen() {
     }
     close();
     const flagChanged = bodyweightDraft !== isBodyweight(exercise);
-    if (check.unchanged && !flagChanged) return;
+    const kindChanged = cardioDraft !== isCardioExercise(exercise);
+    const kind = cardioDraft ? "cardio" : "strength";
+    if (check.unchanged && !flagChanged && !kindChanged) return;
     // Applied locally first, like the rename: the Log takes (or refuses) 0 kg
     // on this lift from the next tap, signal or not.
     if (!check.unchanged) rename(exercise.id, check.name);
     if (flagChanged) flagBodyweight(exercise.id, bodyweightDraft);
+    if (kindChanged) setKind(exercise.id, kind);
     // Two queued writes, each put back on its own if the phone cannot store
     // it: a rename that was queued stays renamed.
     let lost = false;
@@ -101,9 +121,44 @@ export function MyExercisesScreen() {
         lost = true;
       }
     }
+    if (kindChanged) {
+      try {
+        await setMyExerciseKind(exercise.id, kind);
+      } catch {
+        setKind(exercise.id, isCardioExercise(exercise) ? "cardio" : "strength");
+        lost = true;
+      }
+    }
     if (lost) {
       setEditingId(exercise.id);
       setError("That change wasn't saved — this phone couldn't store it. Try again.");
+    }
+  };
+
+  /**
+   * New cardio exercise (F23). The same create the Log's typeahead makes,
+   * queued, with the kind in it. A name the library already has is refused
+   * with where it is, rather than quietly reused: the athlete asked for a
+   * new one, and an existing lift turning up here as cardio would be a
+   * surprise.
+   */
+  const addCardio = async () => {
+    const check = checkRename({ id: "", name: "", normalisedName: "", isGlobal: false }, newCardio, library.exercises);
+    if (!check.ok) {
+      setNewCardioError(check.message);
+      return;
+    }
+    try {
+      const { exercise, created } = await resolveOrCreateExercise(check.name, library.exercises, { userId }, "cardio");
+      if (!created) {
+        setNewCardioError(`${exercise.name} is already there.`);
+        return;
+      }
+      remember(exercise);
+      setNewCardio("");
+      setNewCardioError(null);
+    } catch {
+      setNewCardioError("That exercise wasn't added — this phone couldn't store it. Try again.");
     }
   };
 
@@ -156,10 +211,45 @@ export function MyExercisesScreen() {
         </div>
       ) : null}
 
+      <form
+        aria-label="New cardio exercise"
+        className="flex flex-col gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void addCardio();
+        }}
+      >
+        <div className="flex items-start gap-2">
+          <TextField
+            value={newCardio}
+            onChange={(event) => {
+              setNewCardio(event.target.value);
+              setNewCardioError(null);
+            }}
+            aria-label="New cardio exercise"
+            placeholder="New cardio exercise, e.g. Ski Erg"
+            maxLength={EXERCISE_NAME_MAX}
+            autoComplete="off"
+            enterKeyHint="done"
+            invalid={Boolean(newCardioError)}
+          />
+          <Button type="submit" variant="secondary" disabled={!newCardio.trim()}>
+            Add
+          </Button>
+        </div>
+        {newCardioError ? (
+          <p role="alert" className="m-0 text-caption text-foreground">
+            {newCardioError}
+          </p>
+        ) : (
+          <p className="m-0 text-caption text-muted">Logged as a time and a level, not weight and reps.</p>
+        )}
+      </form>
+
       {library.status === "loading" && mine.length === 0 ? null : mine.length === 0 ? (
         <EmptyState
           title="No exercises of your own yet"
-          body="Type a lift the library doesn't have while logging, and it lands here so you can rename or remove it."
+          body="Type a lift the library doesn't have while logging, or add a cardio machine above, and it lands here so you can rename or remove it."
         />
       ) : (
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0" aria-label="My exercises">
@@ -190,18 +280,35 @@ export function MyExercisesScreen() {
                   <label className="flex min-h-12 items-start gap-3 text-body">
                     <input
                       type="checkbox"
-                      checked={bodyweightDraft}
-                      onChange={(event) => setBodyweightDraft(event.target.checked)}
-                      aria-describedby={`bodyweight-hint-${exercise.id}`}
+                      checked={cardioDraft}
+                      onChange={(event) => setCardioDraft(event.target.checked)}
+                      aria-describedby={`cardio-hint-${exercise.id}`}
                       className="mt-0.5 size-6 flex-none accent-accent-fill focus:outline-2 focus:outline-accent-line"
                     />
                     <span className="flex flex-col gap-0.5">
-                      Bodyweight exercise
-                      <span id={`bodyweight-hint-${exercise.id}`} className="text-caption text-muted">
-                        Lets you log it at 0 kg. Added weight still logs as usual.
+                      Cardio exercise
+                      <span id={`cardio-hint-${exercise.id}`} className="text-caption text-muted">
+                        Logs a time and a level instead of weight and reps. Sets already logged stay as they are.
                       </span>
                     </span>
                   </label>
+                  {cardioDraft ? null : (
+                    <label className="flex min-h-12 items-start gap-3 text-body">
+                      <input
+                        type="checkbox"
+                        checked={bodyweightDraft}
+                        onChange={(event) => setBodyweightDraft(event.target.checked)}
+                        aria-describedby={`bodyweight-hint-${exercise.id}`}
+                        className="mt-0.5 size-6 flex-none accent-accent-fill focus:outline-2 focus:outline-accent-line"
+                      />
+                      <span className="flex flex-col gap-0.5">
+                        Bodyweight exercise
+                        <span id={`bodyweight-hint-${exercise.id}`} className="text-caption text-muted">
+                          Lets you log it at 0 kg. Added weight still logs as usual.
+                        </span>
+                      </span>
+                    </label>
+                  )}
                   {error ? (
                     <p role="alert" className="m-0 text-caption text-foreground">
                       {error}
@@ -225,12 +332,14 @@ export function MyExercisesScreen() {
                 <button
                   type="button"
                   onClick={() => open(exercise)}
-                  aria-label={`Edit ${exercise.name}${isBodyweight(exercise) ? ", bodyweight" : ""}`}
+                  aria-label={`Edit ${exercise.name}${isCardioExercise(exercise) ? ", cardio" : isBodyweight(exercise) ? ", bodyweight" : ""}`}
                   className="flex min-h-12 w-full items-center justify-between rounded-control border border-border px-3 py-2.5 text-left"
                 >
                   <span className="flex min-w-0 items-baseline gap-2">
                     <span className="truncate text-body">{exercise.name}</span>
-                    {isBodyweight(exercise) ? (
+                    {isCardioExercise(exercise) ? (
+                      <span className="flex-none font-mono text-label text-muted-2">CARDIO</span>
+                    ) : isBodyweight(exercise) ? (
                       <span className="flex-none font-mono text-label text-muted-2">BODYWEIGHT</span>
                     ) : null}
                   </span>

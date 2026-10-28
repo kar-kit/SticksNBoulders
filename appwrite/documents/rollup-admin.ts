@@ -124,6 +124,11 @@ export async function rebuildRollup(
       failed: row.failed === true,
       e1rmKg: typeof row.e1rm_kg === "number" ? row.e1rm_kg : null,
       loggedAt: new Date(String(row.logged_at)),
+      // F23: a cardio set says so, and rollupFrom leaves it out. Read
+      // straight off the row -- no select here, so they always arrive -- and
+      // any value at all, not only a valid one, keeps the set out.
+      durationSeconds: typeof row.duration_seconds === "number" ? row.duration_seconds : null,
+      level: typeof row.level === "number" ? row.level : null,
     }));
 
   const computed = rollupFrom(sets);

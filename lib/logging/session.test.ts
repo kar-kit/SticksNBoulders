@@ -176,6 +176,7 @@ describe("what finishing writes", () => {
       tonnageKg: 0,
       exerciseCount: 0,
       warmupCount: 0,
+      cardioSeconds: 0,
     });
   });
 });

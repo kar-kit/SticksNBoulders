@@ -2,6 +2,7 @@ import { toCsv } from "./csv";
 import { buildLogRows, exportFileName, isoDay, LOG_COLUMNS, type ExportSet } from "./training-log";
 
 const names = new Map([
+  ["tm", "Treadmill"],
   ["sq", "Squat"],
   ["bp", "Bench Press"],
   ["pu", "Pull Up"],
@@ -33,7 +34,7 @@ describe("buildLogRows", () => {
       names,
     );
     expect(rows).toEqual([
-      ["2026-09-14", 1, "Squat", 1, 140, 5, 8, false, 168, "fast", null, "Good day", "Heavy singles", false],
+      ["2026-09-14", 1, "Squat", 1, 140, 5, 8, false, 168, "fast", null, "Good day", "Heavy singles", false, null, null],
     ]);
     expect(rows[0]).toHaveLength(LOG_COLUMNS.length);
   });
@@ -58,20 +59,20 @@ describe("buildLogRows", () => {
     expect(rows[0][12]).toBeNull();
   });
 
-  it("appends Failed as the last column (F19, v19): Yes on a missed set, its completed reps, no e1RM", () => {
-    expect(LOG_COLUMNS.at(-1)).toBe("Failed");
-    expect(LOG_COLUMNS).toHaveLength(14);
+  it("appends Failed after Session name (F19, v19): Yes on a missed set, its completed reps, no e1RM", () => {
+    expect(LOG_COLUMNS.indexOf("Failed")).toBe(13);
     const rows = buildLogRows(
       [{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: null }],
       [set({ loadKg: 200, reps: 0, rpe: 10, failed: true, e1rmKg: null }), set({ loadKg: 180, reps: 1, rpe: 9 })],
       names,
     );
-    expect(rows.map((row) => row.at(-1))).toEqual([true, false]);
+    expect(rows.map((row) => row[13])).toEqual([true, false]);
     const csv = toCsv(LOG_COLUMNS, rows);
     expect(csv).toContain(",200,0,10,No,,");
-    expect(csv.split("\r\n")[0].endsWith(",Session name,Failed")).toBe(true);
-    expect(csv.split("\r\n")[1].endsWith(",Yes")).toBe(true);
-    expect(csv.split("\r\n")[2].endsWith(",No")).toBe(true);
+    expect(csv.split("\r\n")[0]).toContain(",Session name,Failed,");
+    // The two cardio cells (F23) after it are blank on a strength row.
+    expect(csv.split("\r\n")[1].endsWith(",Yes,,")).toBe(true);
+    expect(csv.split("\r\n")[2].endsWith(",No,,")).toBe(true);
   });
 
   it("numbers sessions oldest first and orders rows by session", () => {
@@ -186,5 +187,34 @@ describe("bodyweight sets (F20)", () => {
     const csv = toCsv(LOG_COLUMNS, rows);
     expect(csv).toContain("Pull Up,1,0,12,9,No,,");
     expect(csv).not.toContain("NaN");
+  });
+});
+
+describe("cardio sets (F23)", () => {
+  it("export their duration in minutes and their level, with every strength column blank rather than 0 or No", () => {
+    const rows = buildLogRows(
+      [{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: null }],
+      [set({ exerciseId: "tm", loadKg: 0, reps: 0, durationSeconds: 1230, level: 8, notes: "steady" })],
+      names,
+    );
+    const cell = (column: (typeof LOG_COLUMNS)[number]) => rows[0][LOG_COLUMNS.indexOf(column)];
+    expect(cell("Exercise")).toBe("Treadmill");
+    expect(cell("Duration (min)")).toBe(20.5);
+    expect(cell("Level")).toBe(8);
+    for (const column of ["Load (kg)", "Reps", "RPE", "Warm-up", "e1RM (kg)", "Failed"] as const) {
+      expect(cell(column)).toBeNull();
+    }
+    expect(cell("Notes")).toBe("steady");
+    expect(toCsv(LOG_COLUMNS, rows).split("\r\n")[1]).toBe("2026-09-14,1,Treadmill,1,,,,,,steady,,,,,20.5,8");
+  });
+
+  it("leave Level blank when none was given", () => {
+    const rows = buildLogRows([], [set({ exerciseId: "tm", loadKg: 0, reps: 0, durationSeconds: 900, level: null })], names);
+    expect(rows[0].slice(-2)).toEqual([15, null]);
+  });
+
+  it("append the two columns last, so no existing column moves", () => {
+    expect(LOG_COLUMNS.slice(-3)).toEqual(["Failed", "Duration (min)", "Level"]);
+    expect(LOG_COLUMNS.indexOf("Session name")).toBe(12);
   });
 });
