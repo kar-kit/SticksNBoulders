@@ -59,6 +59,25 @@ beforeEach(() => {
 });
 
 describe("loading the library", () => {
+  it("reads a null or missing bodyweight flag as false, and only true as true (F20)", async () => {
+    // Every row written before v20 has no is_bodyweight at all.
+    db.rows = [
+      row("Pull Up", { is_bodyweight: true }),
+      row("Dip", { is_bodyweight: null }),
+      row("Squat"),
+      row("Plank", { is_bodyweight: false }),
+    ];
+
+    const library = await fetchExerciseLibrary("joey");
+
+    expect(library.map((e) => [e.name, e.isBodyweight]).sort()).toEqual([
+      ["Dip", false],
+      ["Plank", false],
+      ["Pull Up", true],
+      ["Squat", false],
+    ]);
+  });
+
   it("reads a null or missing video default as false, and only true as true", async () => {
     db.rows = [
       row("Squat", { video_default: true }),

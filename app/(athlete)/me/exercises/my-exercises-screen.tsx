@@ -8,7 +8,13 @@ import { TextField } from "@/components/ui/input";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { checkRename, EXERCISE_NAME_MAX, myExercises } from "@/lib/exercises/my-exercises";
-import { checkExerciseDeletable, deleteMyExercise, renameMyExercise } from "@/lib/exercises/my-exercises-store";
+import {
+  checkExerciseDeletable,
+  deleteMyExercise,
+  renameMyExercise,
+  setMyExerciseBodyweight,
+} from "@/lib/exercises/my-exercises-store";
+import { isBodyweight } from "@/lib/exercises/bodyweight";
 import type { Exercise } from "@/lib/exercises/match";
 import { refusedRowDeletes } from "@/lib/logging/offline-view";
 import { dismissFailed, subscribeToQueue } from "@/lib/offline/client";
@@ -24,15 +30,23 @@ import type { QueuedOp } from "@/lib/offline/queue";
  * and is refused, with the reason, for one that has been logged, programmed or
  * given a max. The shared library is not listed: nobody can edit it from the
  * app (exercisePermissions).
+ *
+ * Bodyweight (F20) is set here too: a lift typed mid-session ("Ring Dip")
+ * starts unflagged, like every new row, so the Log refuses 0 kg on it until
+ * the athlete says it is done with the body as the load. One checkbox in the
+ * same form as the name, saved by the same Save, because it is the same kind
+ * of correction -- the athlete telling the library what this lift is. The
+ * library's own bodyweight rows are flagged by the seed script.
  */
 export function MyExercisesScreen() {
   const router = useRouter();
   const { state: sessionState } = useSession();
-  const { state: library, rename, forget, reload } = useExerciseLibrary();
+  const { state: library, rename, flagBodyweight, forget, reload } = useExerciseLibrary();
 
   const [ops, setOps] = useState<QueuedOp[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [bodyweightDraft, setBodyweightDraft] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -47,6 +61,7 @@ export function MyExercisesScreen() {
   const open = (exercise: Exercise) => {
     setEditingId(exercise.id);
     setDraft(exercise.name);
+    setBodyweightDraft(isBodyweight(exercise));
     setError(null);
   };
   const close = () => {
@@ -61,14 +76,34 @@ export function MyExercisesScreen() {
       return;
     }
     close();
-    if (check.unchanged) return;
-    rename(exercise.id, check.name);
-    try {
-      await renameMyExercise(exercise.id, check.name);
-    } catch {
-      rename(exercise.id, exercise.name);
+    const flagChanged = bodyweightDraft !== isBodyweight(exercise);
+    if (check.unchanged && !flagChanged) return;
+    // Applied locally first, like the rename: the Log takes (or refuses) 0 kg
+    // on this lift from the next tap, signal or not.
+    if (!check.unchanged) rename(exercise.id, check.name);
+    if (flagChanged) flagBodyweight(exercise.id, bodyweightDraft);
+    // Two queued writes, each put back on its own if the phone cannot store
+    // it: a rename that was queued stays renamed.
+    let lost = false;
+    if (!check.unchanged) {
+      try {
+        await renameMyExercise(exercise.id, check.name);
+      } catch {
+        rename(exercise.id, exercise.name);
+        lost = true;
+      }
+    }
+    if (flagChanged) {
+      try {
+        await setMyExerciseBodyweight(exercise.id, bodyweightDraft);
+      } catch {
+        flagBodyweight(exercise.id, isBodyweight(exercise));
+        lost = true;
+      }
+    }
+    if (lost) {
       setEditingId(exercise.id);
-      setError("That rename wasn't saved — this phone couldn't store it. Try again.");
+      setError("That change wasn't saved — this phone couldn't store it. Try again.");
     }
   };
 
@@ -152,6 +187,21 @@ export function MyExercisesScreen() {
                     invalid={Boolean(error)}
                     autoFocus
                   />
+                  <label className="flex min-h-12 items-start gap-3 text-body">
+                    <input
+                      type="checkbox"
+                      checked={bodyweightDraft}
+                      onChange={(event) => setBodyweightDraft(event.target.checked)}
+                      aria-describedby={`bodyweight-hint-${exercise.id}`}
+                      className="mt-0.5 size-6 flex-none accent-accent-fill focus:outline-2 focus:outline-accent-line"
+                    />
+                    <span className="flex flex-col gap-0.5">
+                      Bodyweight exercise
+                      <span id={`bodyweight-hint-${exercise.id}`} className="text-caption text-muted">
+                        Lets you log it at 0 kg. Added weight still logs as usual.
+                      </span>
+                    </span>
+                  </label>
                   {error ? (
                     <p role="alert" className="m-0 text-caption text-foreground">
                       {error}
@@ -175,10 +225,15 @@ export function MyExercisesScreen() {
                 <button
                   type="button"
                   onClick={() => open(exercise)}
-                  aria-label={`Edit ${exercise.name}`}
+                  aria-label={`Edit ${exercise.name}${isBodyweight(exercise) ? ", bodyweight" : ""}`}
                   className="flex min-h-12 w-full items-center justify-between rounded-control border border-border px-3 py-2.5 text-left"
                 >
-                  <span className="truncate text-body">{exercise.name}</span>
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <span className="truncate text-body">{exercise.name}</span>
+                    {isBodyweight(exercise) ? (
+                      <span className="flex-none font-mono text-label text-muted-2">BODYWEIGHT</span>
+                    ) : null}
+                  </span>
                   <span aria-hidden className="text-ui text-muted">
                     Edit ›
                   </span>

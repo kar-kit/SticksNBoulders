@@ -4,6 +4,7 @@ import { buildLogRows, exportFileName, isoDay, LOG_COLUMNS, type ExportSet } fro
 const names = new Map([
   ["sq", "Squat"],
   ["bp", "Bench Press"],
+  ["pu", "Pull Up"],
 ]);
 
 let n = 0;
@@ -168,5 +169,22 @@ describe("exportFileName", () => {
   it("has a sensible name when there is no name", () => {
     expect(exportFileName(null, today)).toBe("sticksnboulders-training-log-2026-09-27.csv");
     expect(exportFileName("💪", today)).toBe("sticksnboulders-training-log-2026-09-27.csv");
+  });
+});
+
+describe("bodyweight sets (F20)", () => {
+  it("export a 0 kg set as a load of 0 with its reps and a blank e1RM, never NaN", () => {
+    const rows = buildLogRows(
+      [{ id: "a", startedAt: new Date("2026-09-14T17:30:00Z"), notes: null }],
+      [set({ exerciseId: "pu", loadKg: 0, reps: 12, rpe: 9, e1rmKg: null })],
+      names,
+    );
+    const load = LOG_COLUMNS.indexOf("Load (kg)");
+    expect(rows[0][load]).toBe(0);
+    expect(rows[0][load + 1]).toBe(12);
+    expect(rows[0][LOG_COLUMNS.indexOf("e1RM (kg)")]).toBeNull();
+    const csv = toCsv(LOG_COLUMNS, rows);
+    expect(csv).toContain("Pull Up,1,0,12,9,No,,");
+    expect(csv).not.toContain("NaN");
   });
 });

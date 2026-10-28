@@ -148,3 +148,37 @@ describe("the suggestion note for an athlete who reads pounds", () => {
     expect(resolvePrefill({ suggestion }).note).toBe("suggested from RPE 7 @ 142.5");
   });
 });
+
+describe("a bodyweight set at 0 kg (F20)", () => {
+  it("is repeated by rule 3, so the next pull-up at bodyweight is one tap", () => {
+    expect(resolvePrefill({ previousSetThisSession: { loadKg: 0, reps: 10 } })).toEqual({
+      loadKg: 0,
+      reps: 10,
+      source: "repeated",
+      note: null,
+    });
+  });
+
+  it("is carried from last session by rule 4", () => {
+    expect(resolvePrefill({ sameExerciseLastSession: { loadKg: 0, reps: 8 } })).toMatchObject({
+      loadKg: 0,
+      reps: 8,
+      source: "last-session",
+    });
+  });
+
+  it("is never taken from a prescription or a suggestion, which mean nothing at 0 kg", () => {
+    const fromRules = resolvePrefill({
+      prescription: { loadKg: 0, reps: 5 },
+      suggestion: { loadKg: 0, fromRpe: 7, fromLoadKg: 0 },
+      sameExerciseLastSession: { loadKg: 20, reps: 5 },
+    });
+    expect(fromRules).toMatchObject({ loadKg: 20, source: "last-session" });
+  });
+
+  it("still skips loads that are not loads", () => {
+    for (const loadKg of [-5, Number.NaN]) {
+      expect(resolvePrefill({ previousSetThisSession: { loadKg, reps: 10 } }).source).toBe("empty");
+    }
+  });
+});

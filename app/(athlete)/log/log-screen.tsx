@@ -25,6 +25,7 @@ import { videoAsk } from "@/lib/logging/video-prompt";
 import { rememberNudged, wasNudged } from "@/lib/logging/video-nudge";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { resolveOrCreateExercise } from "@/lib/exercises/library";
+import { bodyweightLookup } from "@/lib/exercises/bodyweight";
 import type { Exercise } from "@/lib/exercises/match";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSessionSets, type UnnamedSet } from "@/lib/logging/session-store";
@@ -68,7 +69,7 @@ import {
   type RestTimer,
 } from "@/lib/logging/rest-timer";
 import { forgetRest, recallRest, rememberRest } from "@/lib/logging/rest-store";
-import { canComplete, type RpeValue } from "@/lib/logging/set";
+import { canComplete, ZERO_LOAD_HINT, type RpeValue } from "@/lib/logging/set";
 import { blockRemovalLabel, planBlockRemoval } from "@/lib/logging/block-removal";
 import { WeekSummaryCard } from "@/components/logging/week-summary-card";
 import {
@@ -334,6 +335,13 @@ export function LogScreen() {
     const names = new Map(library.exercises.map((e) => [e.id, e.name]));
     return (id: string) => names.get(id) ?? null;
   }, [library.exercises]);
+
+  /**
+   * Whether an exercise takes a 0 kg set (F20). Read from the library like
+   * the name, so it is there offline from the cached copy; a lift the phone
+   * cannot place, or a cache from before the flag, reads as not bodyweight.
+   */
+  const bodyweightOf = useMemo(() => bodyweightLookup(library.exercises), [library.exercises]);
 
   const sessionId = active?.id ?? null;
 
@@ -1121,10 +1129,11 @@ export function LogScreen() {
   const saveEdit = () => {
     if (!editing) return;
     const id = editing.clientSetId;
-    const edit = editOf(editing.draft);
+    const set = all.find((s) => s.clientSetId === id);
+    // The exercise's flag, not the draft's (F20): 0 kg saves on a pull-up only.
+    const edit = editOf(editing.draft, set ? bodyweightOf(set.exerciseId) : false);
     if (!edit) return;
     setEditing(null);
-    const set = all.find((s) => s.clientSetId === id);
     if (!set || saving.has(id) || !changesSet(set, edit)) return;
     if (edit.isWarmup && !set.isWarmup) heldRpe.current.set(id, editing.draft.rpe);
     if (!edit.isWarmup) heldRpe.current.delete(id);
@@ -1160,7 +1169,16 @@ export function LogScreen() {
     const row = plans.find((each) => each.clientSetId === rowId);
     // The coach's video ask is a nudge, never a gate (Order 30): the badge
     // asks, the camera under the block takes the clip once the set exists.
-    if (!row || !active || !athleteId || !canComplete({ ...row, videoRequired: false })) return;
+    // 0 kg only on a bodyweight exercise (F20), the same rule the row's
+    // confirm square showed.
+    if (
+      !row ||
+      !active ||
+      !athleteId ||
+      !canComplete({ ...row, videoRequired: false, isBodyweight: bodyweightOf(row.exerciseId) })
+    ) {
+      return;
+    }
     // Only the head of an exercise's plan is ever offered a confirm square;
     // this makes the rule hold even if a stale handler fires.
     if (headOf(plans, row.exerciseId)?.clientSetId !== rowId) return;
@@ -1667,7 +1685,7 @@ export function LogScreen() {
    */
   const editDirty = (() => {
     if (!editing || !editingSet) return false;
-    const edit = editOf(editing.draft);
+    const edit = editOf(editing.draft, bodyweightOf(editingSet.exerciseId));
     return edit === null || changesSet(editingSet, edit);
   })();
 
@@ -1686,7 +1704,8 @@ export function LogScreen() {
         field={editing.field}
         pad={editing.pad}
         unit={unit}
-        canSave={editOf(editing.draft) !== null}
+        canSave={editOf(editing.draft, bodyweightOf(editingSet.exerciseId)) !== null}
+        saveBlocked={editing.draft.loadKg === 0 && !bodyweightOf(editingSet.exerciseId) ? ZERO_LOAD_HINT : null}
         onField={editField}
         onPadChange={applyEditPad}
         onToggleWarmup={(isWarmup) => {
@@ -1850,6 +1869,7 @@ export function LogScreen() {
                   }))}
                   onCopyPrevious={copyPrevious}
                   historyHref={`/lift/${encodeURIComponent(exerciseId)}`}
+                  isBodyweight={bodyweightOf(exerciseId)}
                   focusedId={editingSet ? editingSet.clientSetId : pad !== null || rpeOpen ? focusId : null}
                   target={targetFor(block.id)}
                   unit={unit}

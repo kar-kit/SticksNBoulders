@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { formatNumber } from "@/lib/logging/prefill";
@@ -72,8 +72,18 @@ export interface EditSetSheetProps {
   /** The pad for the load or reps field; ignored while `field` is "rpe". */
   pad: PadState | null;
   unit: UnitPreference;
-  /** Save is offered only for a draft that is a set: a load and reps above zero. */
+  /**
+   * Save is offered only for a draft that is a set: a load and reps above
+   * zero, 0 reps on a failed set (F19), and 0 kg on a bodyweight exercise
+   * (F20). The screen decides, from `editOf` and the exercise's flag.
+   */
   canSave: boolean;
+  /**
+   * Why Save is off, when the draft looks finished but is not one -- 0 kg on
+   * a lift that is not flagged bodyweight (F20). A line under the values;
+   * null when there is nothing to say.
+   */
+  saveBlocked?: string | null;
   onField: (field: EditField) => void;
   onPadChange: (next: PadState) => void;
   onToggleWarmup: (isWarmup: boolean) => void;
@@ -101,6 +111,7 @@ export function EditSetSheet({
   pad,
   unit,
   canSave,
+  saveBlocked = null,
   onField,
   onPadChange,
   onToggleWarmup,
@@ -114,6 +125,7 @@ export function EditSetSheet({
   deleteDisabled = false,
   video = null,
 }: EditSetSheetProps) {
+  const blockedId = useId();
   const title = setLabel === "Warm-up set" ? "Edit warm-up" : `Edit ${setLabel.toLowerCase()}`;
   const showPad = (field === "load" || field === "reps") && pad !== null;
   const note = draft.notes.trim();
@@ -157,7 +169,12 @@ export function EditSetSheet({
             {exerciseName} · logged
           </span>
         </div>
-        <Button onClick={onSave} disabled={!canSave} aria-label={`Save ${setLabel}`}>
+        <Button
+          onClick={onSave}
+          disabled={!canSave}
+          aria-label={`Save ${setLabel}`}
+          aria-describedby={saveBlocked ? blockedId : undefined}
+        >
           Save
         </Button>
       </header>
@@ -190,6 +207,12 @@ export function EditSetSheet({
           </button>
         ))}
       </div>
+
+      {saveBlocked ? (
+        <p id={blockedId} data-blocker="" className="m-0 px-3 pt-2 font-mono text-label text-muted">
+          {saveBlocked}
+        </p>
+      ) : null}
 
       <div className="px-3 pt-2">
         <button

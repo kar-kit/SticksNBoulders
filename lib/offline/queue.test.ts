@@ -237,6 +237,16 @@ describe("opsDroppedByRowDelete", () => {
     expect(opsDroppedByRowDelete([], "exercise", "ex-1")).toEqual({ drop: [], landed: true });
   });
 
+  it("withdraws a queued bodyweight flag with an unsent exercise (F20)", () => {
+    const ops = [
+      op("c1", "exercise.create", { exerciseId: "ex-1", name: "Ring Dip" }),
+      op("b2", "exercise.bodyweight", { exerciseId: "ex-1", isBodyweight: true }),
+    ];
+    const { drop, landed } = opsDroppedByRowDelete(ops, "exercise", "ex-1");
+    expect(landed).toBe(false);
+    expect(drop.map((o) => o.id)).toEqual(["c1", "b2"]);
+  });
+
   it("withdraws a queued rename with an unsent exercise", () => {
     const ops = [
       op("c1", "exercise.create", { exerciseId: "ex-1", name: "rdl" }),

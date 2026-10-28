@@ -11,11 +11,20 @@ const squat: Exercise = {
 };
 
 function Probe() {
-  const { state, remember } = useExerciseLibrary();
+  const { state, remember, flagBodyweight } = useExerciseLibrary();
   return (
     <div>
       <span data-testid="status">{state.status}</span>
       <span data-testid="names">{state.exercises.map((e) => e.name).join(",")}</span>
+      <span data-testid="bodyweight">
+        {state.exercises
+          .filter((e) => e.isBodyweight)
+          .map((e) => e.name)
+          .join(",")}
+      </span>
+      <button type="button" onClick={() => flagBodyweight("squat", true)}>
+        flag
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -106,6 +115,19 @@ describe("the library, fetched once per app load", () => {
 
     await userEvent.setup().click(screen.getByRole("button", { name: "remember" }));
     expect(screen.getByTestId("names")).toHaveTextContent("Squat,Zercher Squat");
+  });
+
+  it("takes a bodyweight flag locally and caches it, so the Log has it with no signal (F20)", async () => {
+    const { unmount } = renderWith(async () => [squat]);
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent("ready"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "flag" }));
+    expect(screen.getByTestId("bodyweight")).toHaveTextContent("Squat");
+    unmount();
+
+    renderWith(async () => {
+      throw new Error("no signal");
+    });
+    await waitFor(() => expect(screen.getByTestId("bodyweight")).toHaveTextContent("Squat"));
   });
 
   it("refuses to be used outside its provider rather than returning an empty library", () => {

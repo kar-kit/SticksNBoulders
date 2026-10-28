@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 19,
+  version: 20,
   tables: [
     {
       id: "profiles",
@@ -74,6 +74,16 @@ export const schema: DatabaseSpec = {
         // adds a line for this exercise. Null on every row written before, and
         // null reads as false: no default, so applying it rewrites nothing.
         { key: "video_default", type: "boolean", required: false },
+        // v20 (F20): the movement is done with the body as the load -- pull-up,
+        // dip, push-up -- so a set of it may be logged at 0 kg. The only thing
+        // it changes is which loads the Log accepts (lib/exercises/bodyweight.ts):
+        // 0 kg on a lift without it is still a fat-fingered set, and added load
+        // on one with it (a +20 pull-up) is logged exactly as before. No
+        // default, like `video_default`: null on every row written before v20
+        // reads as false, so applying it rewrites nothing. The seed script
+        // flags the library's bodyweight rows; an athlete flags their own from
+        // My exercises. No index: nothing filters by it.
+        { key: "is_bodyweight", type: "boolean", required: false },
         { key: "created_at", type: "datetime", required: true },
       ],
       indexes: [

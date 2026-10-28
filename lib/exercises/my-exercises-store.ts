@@ -13,6 +13,15 @@ export async function renameMyExercise(exerciseId: string, name: string): Promis
   await enqueue("exercise.rename", { exerciseId, name });
 }
 
+/**
+ * Flags one of the athlete's own exercises as bodyweight, or clears it (F20).
+ * Queued like the rename beside it, so it works with no signal; the Log reads
+ * the flag from the library, which the caller updates first.
+ */
+export async function setMyExerciseBodyweight(exerciseId: string, isBodyweight: boolean): Promise<void> {
+  await enqueue("exercise.bodyweight", { exerciseId, isBodyweight });
+}
+
 export type ExerciseDeleteCheck = { ok: true } | { ok: false; message: string };
 
 /**

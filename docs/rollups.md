@@ -58,6 +58,15 @@ records and what the Log's PR badges are measured against. A missed 200 must
 not become the weight to beat. `rollup-admin.ts` and `rollups:rebuild` both
 read `failed` off the row (null on every set before v19 reads as made).
 
+**Bodyweight sets at 0 kg (F20, schema v20)** -- logged on an exercise flagged
+`is_bodyweight` -- count toward set count and volume, add 0 to tonnage, and can
+be the week's `best_reps` (with `best_reps_load_kg` 0). They are never
+`best_single`: the heaviest set is the most added load, and 0 is none, so a
+week done only at bodyweight stores `best_single_kg` null rather than a 0 that
+Lift Detail would show as a record and the Log would measure a weight badge
+against. They carry no e1RM. Nothing here reads the flag: a 0 kg set means the
+same on any exercise, so `rollups:rebuild` needs no new input.
+
 A week with no working sets produces **no row**, rather than a row of zeroes. A
 row of zeroes is a different statement — it says the week happened and was
 empty.

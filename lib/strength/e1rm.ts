@@ -126,6 +126,10 @@ export const repsToFailure = (reps: number, rpe: number): number => reps + repsI
  *   what the athlete set out to do. Brzycki on "3 of 5, then stuck" is not an
  *   estimate anyone should program off, so it gets none -- and with none, no
  *   e1RM record, no best e1RM in the rollup, no working max for the day.
+ * - **A bodyweight set at 0 kg** (F20). Brzycki on nothing is nothing: the
+ *   formula would return 0, and 0 is not an estimate of anyone's max. So
+ *   null, never 0 and never NaN -- the load guard below. A weighted pull-up
+ *   (+20 kg) is estimated on its added load, exactly as before F20.
  */
 export function estimateOneRepMax(set: SetForEstimate): number | null {
   if (set.isWarmup) return null;

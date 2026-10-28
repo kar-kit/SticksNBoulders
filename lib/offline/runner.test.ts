@@ -339,7 +339,7 @@ describe("session.delete", () => {
   });
 });
 
-describe("exercise.rename and exercise.delete", () => {
+describe("exercise.rename, exercise.bodyweight and exercise.delete", () => {
   beforeEach(() => {
     exerciseInUse.mockReset().mockResolvedValue(false);
   });
@@ -348,6 +348,15 @@ describe("exercise.rename and exercise.delete", () => {
     await runOp(ACTOR, op("exercise.rename", { exerciseId: "ex-1", name: "RDL" }));
     expect(rows).toEqual([
       { op: "update", tableId: "exercises", rowId: "ex-1", data: { name: "RDL", normalised_name: "rdl" } },
+    ]);
+  });
+
+  it("flags one bodyweight, and clears it, writing the one column (F20)", async () => {
+    await runOp(ACTOR, op("exercise.bodyweight", { exerciseId: "ex-1", isBodyweight: true }));
+    await runOp(ACTOR, op("exercise.bodyweight", { exerciseId: "ex-1", isBodyweight: false }));
+    expect(rows).toEqual([
+      { op: "update", tableId: "exercises", rowId: "ex-1", data: { is_bodyweight: true } },
+      { op: "update", tableId: "exercises", rowId: "ex-1", data: { is_bodyweight: false } },
     ]);
   });
 

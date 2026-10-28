@@ -165,3 +165,22 @@ describe("EditSetSheet's Failed switch (F19)", () => {
     expect(screen.getByRole("button", { name: "Change reps, now 0, failed set" })).toHaveTextContent("REPS · FAILED");
   });
 });
+
+describe("EditSetSheet — Save blocked at 0 kg (F20)", () => {
+  it("says why Save is off, and describes the button with it", () => {
+    setup({
+      canSave: false,
+      saveBlocked: "0 kg logs only on a bodyweight exercise",
+      draft: { loadKg: 0, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: "" },
+    });
+    const save = screen.getByRole("button", { name: "Save Set 2" });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
+  });
+
+  it("says nothing when nothing is blocking", () => {
+    setup({ draft: { loadKg: 0, reps: 12, rpe: 8, isWarmup: false, failed: false, notes: "" } });
+    expect(screen.getByRole("button", { name: "Save Set 2" })).not.toHaveAccessibleDescription();
+    expect(document.querySelector("[data-blocker]")).toBeNull();
+  });
+});

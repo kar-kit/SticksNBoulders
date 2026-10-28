@@ -226,3 +226,15 @@ describe("ExerciseBlock — last time, records and history (F6)", () => {
     expect(screen.queryAllByRole("button", { name: /use last time/ })).toHaveLength(1);
   });
 });
+
+describe("ExerciseBlock — a bodyweight exercise (F20)", () => {
+  it("lends the flag to its rows, so the head confirms at 0 kg", () => {
+    render(<ExerciseBlock name="Pull Up" sets={[]} planned={[row("p1", { loadKg: 0, reps: 10 })]} isBodyweight />);
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+  });
+
+  it("leaves 0 kg refused on an exercise without it", () => {
+    render(<ExerciseBlock name="Squat" sets={[]} planned={[row("p1", { loadKg: 0, reps: 10 })]} />);
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeDisabled();
+  });
+});

@@ -27,7 +27,7 @@ coach's laptop gets a plain download.
 | Session | derived | 1 = the athlete's first session, oldest first |
 | Exercise | `exercises.name` | resolved by id, so a coach-created exercise still gets its name |
 | Set | `set_index` | 1-based, counts warm-ups, as the logger numbers them |
-| Load (kg) | `load_kg` | always kg; units live in the header so cells stay numeric |
+| Load (kg) | `load_kg` | always kg; units live in the header so cells stay numeric. `0` on a bodyweight set (F20): the added load, so a weighted pull-up is its plate, not body mass plus plate; its e1RM cell is blank |
 | Reps | `reps` | |
 | RPE | `rpe` | blank means the athlete tapped "not sure" |
 | Warm-up | `is_warmup` | `Yes` / `No` |

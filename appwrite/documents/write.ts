@@ -200,6 +200,33 @@ export async function renameExercise(
 }
 
 /**
+ * Flags or unflags one of the athlete's own exercises as bodyweight (F20),
+ * from My exercises.
+ *
+ * Owner-stamped, like `renameExercise` and for the same reason: only a
+ * non-global row is the athlete's to change, and the library's rows are
+ * write-to-nobody anyway (`setGlobalExerciseBodyweight` is the seed script's
+ * path for those). Writes the column alone. Nothing logged is touched: the
+ * flag only decides whether the Log accepts a 0 kg set from here on, so a
+ * 0 kg set logged while it was on stays exactly as it was if it goes off.
+ */
+export async function setExerciseBodyweight(
+  deps: WriteDeps,
+  actor: Actor,
+  input: { rowId: string; isBodyweight: boolean },
+) {
+  if (!input.rowId) throw new Error("setExerciseBodyweight: rowId is required");
+
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: input.rowId,
+    data: { is_bodyweight: input.isBodyweight === true },
+    permissions: exercisePermissions({ athleteId: actor.userId, isGlobal: false }),
+  });
+}
+
+/**
  * The refusal an exercise delete gets while anything still points at it.
  */
 export const EXERCISE_IN_USE = "exercise-in-use";
@@ -243,7 +270,7 @@ export async function deleteExercise(
  */
 export async function createGlobalExercise(
   deps: WriteDeps,
-  input: CreateExerciseInput & { videoDefault?: boolean },
+  input: CreateExerciseInput & { videoDefault?: boolean; isBodyweight?: boolean },
 ) {
   const name = input.name.trim();
   if (!name) throw new Error("createGlobalExercise: name is required");
@@ -262,6 +289,8 @@ export async function createGlobalExercise(
       // Only when true: a row with no default writes exactly what it did
       // before `video_default` existed, so seeding never depends on the column.
       ...(input.videoDefault ? { video_default: true } : {}),
+      // The same rule for the bodyweight flag (v20, F20).
+      ...(input.isBodyweight ? { is_bodyweight: true } : {}),
       created_at: iso(deps.now()),
     },
     // athleteId is required by the policy's signature but unused for a global
@@ -300,6 +329,24 @@ export async function setGlobalExerciseVideoDefault(
     tableId: "exercises",
     rowId: input.rowId,
     data: { video_default: input.videoDefault },
+    permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
+  });
+}
+
+/**
+ * Sets whether a library row is a bodyweight movement (F20), which is what
+ * lets the Log accept a 0 kg set of it. Only the seed script calls it. Null
+ * reads as false, so clearing writes false.
+ */
+export async function setGlobalExerciseBodyweight(
+  deps: WriteDeps,
+  input: { rowId: string; isBodyweight: boolean },
+) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "exercises",
+    rowId: input.rowId,
+    data: { is_bodyweight: input.isBodyweight },
     permissions: exercisePermissions({ athleteId: "library", isGlobal: true }),
   });
 }

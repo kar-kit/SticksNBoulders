@@ -105,6 +105,18 @@ describe("parsing a backoff cell", () => {
 });
 
 describe("the top set", () => {
+  it("is never a bodyweight set at 0 kg, and a line done only at bodyweight has none (F20)", () => {
+    expect(topSetOf([set(0, 12, 8), set(0, 10, 9)])).toBeNull();
+    // A weighted set of the line is the top set, whenever it was logged.
+    expect(topSetOf([set(20, 5, 8), set(0, 12, 9)])).toEqual({ loadKg: 20, reps: 5, rpe: 8 });
+  });
+
+  it("gives no backoff load off 0 kg, never a 0 kg target or NaN (F20)", () => {
+    for (const text of ["3 x 90%", "-10% until @9", "repeat until @9"]) {
+      expect(backoffLoad(rule(text), 0)).toBeNull();
+    }
+  });
+
   it("is the heaviest working set actually logged", () => {
     expect(topSetOf([set(170, 3, 7), set(180, 3, 8), set(175, 3, 8.5)])).toEqual({ loadKg: 180, reps: 3, rpe: 8 });
   });
