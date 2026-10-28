@@ -112,9 +112,10 @@ function hasLoggableLoad(set: LoggableSet): boolean {
 
 /**
  * What the row (and the edit sheet's Save) says when the blocker is
- * "zero-load". Short enough for the line under a set row at 390pt, and it
- * names the fix: an athlete's own lift can be flagged in My exercises; a
- * library lift that should be flagged is the seed list's job, not theirs.
+ * "zero-load". Short enough for the line under a set row at 390pt, so it
+ * states the rule and stops there. The fix for an athlete's own lift is the
+ * checkbox in My exercises; a library lift that should be flagged is the seed
+ * list's job (lib/exercises/seed.ts), not theirs.
  */
 export const ZERO_LOAD_HINT = "0 kg logs only on a bodyweight exercise";
 
