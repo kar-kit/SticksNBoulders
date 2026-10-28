@@ -28,6 +28,12 @@ interface LibraryValue {
   remember: (exercise: Exercise) => void;
   /** Applies a rename from My exercises locally; the write itself is queued by the caller. */
   rename: (exerciseId: string, name: string) => void;
+  /**
+   * Applies a bodyweight flag from My exercises locally (F20), and to the
+   * device's cached copy, so the Log takes 0 kg on that lift at once -- with
+   * no signal too. The write itself is queued by the caller.
+   */
+  flagBodyweight: (exerciseId: string, isBodyweight: boolean) => void;
   /** Takes a deleted exercise out of the typeahead. */
   forget: (exerciseId: string) => void;
   reload: () => Promise<void>;
@@ -116,6 +122,12 @@ export function ExerciseLibraryProvider({
           const exercises = prev.exercises.map((e) =>
             e.id === exerciseId ? { ...e, name, normalisedName: normaliseExerciseName(name) } : e,
           );
+          if (userId) cacheLibrary(userId, exercises);
+          return { ...prev, exercises };
+        }),
+      flagBodyweight: (exerciseId, isBodyweight) =>
+        setState((prev) => {
+          const exercises = prev.exercises.map((e) => (e.id === exerciseId ? { ...e, isBodyweight } : e));
           if (userId) cacheLibrary(userId, exercises);
           return { ...prev, exercises };
         }),
