@@ -57,6 +57,26 @@
   --danger-fill: #b24c42; /* destructive fills, with --on-danger-fill */
   --on-danger-fill: #f2f1ef;
 
+  /* --- Personal record ------------------------------------------------ */
+  /*
+   * F22. The finish screen's records, and nothing else. A gold, not the
+   * copper: the copper already means "do this" (the confirm, the selected
+   * tab) and is the in-log PR pill, and a record at the end of a session
+   * should read as a different, rarer thing. Lab hue 84 against the copper's
+   * 68, at about twice its chroma (deltaE76 33 from --accent-fill, 39 from
+   * --accent-line, 60 from --success).
+   *
+   * Unlike the accent and danger pairs it needs no fill/line split, because
+   * it clears AA outright both ways round:
+   *   as text   9.17:1 on --background, 8.23 on --surface, 7.24 on --surface-2
+   *   as a fill 9.17:1 behind its --on-pr label
+   * The hero card sits on --pr at 10% over --background (#312c26 composited).
+   * On that tint: --pr 7.50, --foreground 12.25, --muted 5.59, --muted-2 4.70.
+   * Going past 12% puts --muted-2 under 4.5 (4.49 at 12%).
+   */
+  --pr: #e8b84a; /* figures, borders and the 10% tint on the finish screen */
+  --on-pr: #1d1c22; /* label on a --pr fill */
+
   /* --- Type ----------------------------------------------------------- */
   --font-sans: var(--font-archivo), "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", Menlo, monospace;
@@ -106,6 +126,10 @@
   --color-danger-line: var(--danger-line);
   --color-danger-fill: var(--danger-fill);
   --color-on-danger-fill: var(--on-danger-fill);
+
+  /* --- Personal record (F22) --- */
+  --color-pr: var(--pr);
+  --color-on-pr: var(--on-pr);
 
   /*
    * Kept because Google and Apple mandate their own button colours. Nothing

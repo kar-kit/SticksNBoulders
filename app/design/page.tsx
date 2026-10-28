@@ -35,6 +35,7 @@ const INK = [
   ["muted", "#a5a4a9"],
   ["muted-2", "#96969b"],
   ["success", "#6fa787"],
+  ["pr", "#e8b84a"],
 ] as const;
 
 /** The real seed, plus one an athlete typed in mid-session. */
@@ -58,6 +59,7 @@ const FILLS = [
   ["accent-fill", "#bc8c5e", "#1d1c22"],
   ["accent-pressed", "#92603f", "#f2f1ef"],
   ["danger-fill", "#b24c42", "#f2f1ef"],
+  ["pr", "#e8b84a", "#1d1c22"],
 ] as const;
 
 const LINES = [
@@ -146,7 +148,9 @@ export default function DesignSystemPage() {
             The line tokens are 4.22:1 and 4.24:1. They carry no small text anywhere — borders, icon
             strokes, chart lines and 24px+ figures only. Fills carry their own labels and are the
             only members of the pair allowed behind one. muted-2 is #96969b, not the canvas
-            #8a898f, which failed AA on both raised surfaces.
+            #8a898f, which failed AA on both raised surfaces. pr (F22) is the finish screen&apos;s
+            gold, kept apart from the copper: it clears AA as text on every surface and as a fill
+            behind on-pr, so it needs no line/fill split.
           </p>
 
           <Rule />
