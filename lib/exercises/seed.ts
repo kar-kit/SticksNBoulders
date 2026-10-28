@@ -139,3 +139,30 @@ export const SEED_EXERCISES: readonly string[] = [
  * hand, which the editor has always allowed on any line.
  */
 export const VIDEO_DEFAULT_EXERCISES: readonly string[] = ["Squat", "Bench Press", "Deadlift"] as const;
+
+/**
+ * Library rows flagged bodyweight (F20, schema v20): a set of them may be
+ * logged at 0 kg (lib/exercises/bodyweight.ts). Added load still logs as
+ * before -- a +20 kg dip is 20 -- so flagging a lift only ever lets in a 0
+ * that would otherwise have been refused.
+ *
+ * [Inference] The movements a powerlifting gym does unloaded more often than
+ * not. Each one is a row the athlete would otherwise be stuck on, because a
+ * library row cannot be edited from the app. Plank is in because its sets are
+ * logged as holds with nothing on the back.
+ *
+ * Deliberately left out, [SME to confirm] with Ruairi: Walking Lunge,
+ * Bulgarian Split Squat and Hip Thrust, which are done unloaded but in this
+ * domain are usually programmed with dumbbells or a bar, so a 0 on them is as
+ * likely a slip as a fact. Adding one later is a line here and a seed re-run.
+ */
+export const BODYWEIGHT_EXERCISES: readonly string[] = [
+  "Dip",
+  "Push Up",
+  "Pull Up",
+  "Chin Up",
+  "Back Extension",
+  "Plank",
+  "Hanging Leg Raise",
+  "Ab Wheel Rollout",
+] as const;

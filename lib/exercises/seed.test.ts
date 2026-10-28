@@ -1,4 +1,4 @@
-import { SEED_EXERCISES, VIDEO_DEFAULT_EXERCISES } from "./seed";
+import { BODYWEIGHT_EXERCISES, SEED_EXERCISES, VIDEO_DEFAULT_EXERCISES } from "./seed";
 import { rankExercises, type Exercise } from "./match";
 import { normaliseExerciseName } from "@/appwrite/documents";
 
@@ -81,5 +81,34 @@ describe("the video default", () => {
   it("names only exercises the seed actually holds", () => {
     const seeded = new Set(SEED_EXERCISES.map(normaliseExerciseName));
     expect(VIDEO_DEFAULT_EXERCISES.filter((n) => !seeded.has(normaliseExerciseName(n)))).toEqual([]);
+  });
+});
+
+describe("the bodyweight flag (F20)", () => {
+  it("covers the unloaded movements the library holds", () => {
+    expect([...BODYWEIGHT_EXERCISES].sort()).toEqual([
+      "Ab Wheel Rollout",
+      "Back Extension",
+      "Chin Up",
+      "Dip",
+      "Hanging Leg Raise",
+      "Plank",
+      "Pull Up",
+      "Push Up",
+    ]);
+  });
+
+  it("names only exercises the seed actually holds", () => {
+    const seeded = new Set(SEED_EXERCISES.map(normaliseExerciseName));
+    expect(BODYWEIGHT_EXERCISES.filter((n) => !seeded.has(normaliseExerciseName(n)))).toEqual([]);
+  });
+
+  it("never flags a barbell lift, so a 0 typed on one is still refused", () => {
+    // The whole point of a per-exercise flag: a fat-fingered 0 on a squat is
+    // a mistake the Log keeps catching.
+    const flagged = new Set(BODYWEIGHT_EXERCISES.map(normaliseExerciseName));
+    for (const lift of [...VIDEO_DEFAULT_EXERCISES, "Overhead Press", "Barbell Row", "Romanian Deadlift"]) {
+      expect(flagged.has(normaliseExerciseName(lift))).toBe(false);
+    }
   });
 });

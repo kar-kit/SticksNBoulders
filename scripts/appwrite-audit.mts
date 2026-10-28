@@ -973,8 +973,11 @@ try {
     const tag = `Hijacked by ${actor}`;
     const values: Record<string, Record<string, unknown>> = {
       profiles: { display_name: tag },
-      exercises: { name: tag },
-      "exercises:library": { name: tag },
+      // v20: `is_bodyweight` rides along, so the probe proves nobody but the
+      // owner can open an exercise to 0 kg sets -- and nobody at all can on a
+      // library row, whose flag only the seed script writes.
+      exercises: { name: tag, is_bodyweight: n % 2 === 1 },
+      "exercises:library": { name: tag, is_bodyweight: n % 2 === 1 },
       sessions: { notes: tag },
       // v19: `failed` rides along, so the probe proves nobody but the athlete
       // can mark their set missed (or made). Row permissions cover every

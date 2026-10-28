@@ -23,6 +23,8 @@ import {
   SET_HAS_COACH_COMMENTS,
   normaliseExerciseName,
   revokeCoachLink,
+  setExerciseBodyweight,
+  setGlobalExerciseBodyweight,
   setGlobalExerciseVideoDefault,
   setLinkSuggestionMode,
   updateSet,
@@ -720,5 +722,64 @@ describe("failed sets (F19, schema v19)", () => {
     expect(h.last().data.e1rm_kg).toBeGreaterThan(150);
     // Stamped by the same helper as every other set write: the athlete alone.
     expect(h.last().permissions).toEqual(setPermissions({ athleteId: ATHLETE }));
+  });
+});
+
+describe("bodyweight exercises (F20, schema v20)", () => {
+  it("writes the library's flag only when true, so a row without one is the row it was before", async () => {
+    const h = harness();
+    await createGlobalExercise(h.deps, { name: "Pull Up", isBodyweight: true });
+    expect(h.last().data).toMatchObject({ is_global: true, is_bodyweight: true });
+    await createGlobalExercise(h.deps, { name: "Squat", videoDefault: true });
+    expect(h.last().data).not.toHaveProperty("is_bodyweight");
+    await createGlobalExercise(h.deps, { name: "Leg Press", isBodyweight: false });
+    expect(h.last().data).not.toHaveProperty("is_bodyweight");
+  });
+
+  it("sets it on a library row as that one field, keeping the library's stamp", async () => {
+    const h = harness();
+    await setGlobalExerciseBodyweight(h.deps, { rowId: "ex-dip", isBodyweight: true });
+    expect(h.last()).toMatchObject({ op: "update", tableId: "exercises", rowId: "ex-dip", data: { is_bodyweight: true } });
+    expect(h.last().permissions).toEqual(exercisePermissions({ athleteId: "library", isGlobal: true }));
+    await setGlobalExerciseBodyweight(h.deps, { rowId: "ex-dip", isBodyweight: false });
+    expect(h.last().data).toEqual({ is_bodyweight: false });
+  });
+
+  it("flags the athlete's own exercise with the owner's stamp, writing nothing else", async () => {
+    const h = harness();
+    await setExerciseBodyweight(h.deps, h.actor, { rowId: "ex-1", isBodyweight: true });
+    expect(h.last()).toEqual({
+      op: "update",
+      tableId: "exercises",
+      rowId: "ex-1",
+      data: { is_bodyweight: true },
+      permissions: exercisePermissions({ athleteId: ATHLETE, isGlobal: false }),
+    });
+    await setExerciseBodyweight(h.deps, h.actor, { rowId: "ex-1", isBodyweight: false });
+    expect(h.last().data).toEqual({ is_bodyweight: false });
+    await expect(setExerciseBodyweight(h.deps, h.actor, { rowId: "", isBodyweight: true })).rejects.toThrow(
+      "rowId is required",
+    );
+  });
+
+  it("never flags an exercise typed during a session", async () => {
+    const h = harness();
+    await createExercise(h.deps, h.actor, { name: "Ring Dip" });
+    expect(h.last().data).not.toHaveProperty("is_bodyweight");
+  });
+
+  it("stores a 0 kg set as 0 with no e1RM, never 0 and never NaN", async () => {
+    const h = harness();
+    await createSet(h.deps, h.actor, {
+      sessionId: "s1", exerciseId: "pull-up", setIndex: 1, loadKg: 0, reps: 12, rpe: 9, clientSetId: "cs-bw",
+    });
+    expect(h.last().data).toMatchObject({ load_kg: 0, reps: 12 });
+    expect(h.last().data.e1rm_kg).toBeUndefined();
+
+    // A correction down to bodyweight clears the estimate the weighted set had.
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 20, reps: 5, rpe: 9, isWarmup: false, failed: false });
+    expect(h.last().data.e1rm_kg).toBeGreaterThan(20);
+    await updateSet(h.deps, h.actor, { rowId: "r1", loadKg: 0, reps: 12, rpe: 9, isWarmup: false, failed: false });
+    expect(h.last().data).toMatchObject({ load_kg: 0, e1rm_kg: null });
   });
 });

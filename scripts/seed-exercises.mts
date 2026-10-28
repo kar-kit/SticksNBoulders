@@ -23,12 +23,13 @@ import {
   normaliseExerciseName,
   renameGlobalExercise,
   restampGlobalExercise,
+  setGlobalExerciseBodyweight,
   setGlobalExerciseVideoDefault,
   writtenByServer,
   type RowWriter,
   type WriteDeps,
 } from "../appwrite/documents";
-import { SEED_EXERCISES, VIDEO_DEFAULT_EXERCISES } from "../lib/exercises/seed";
+import { BODYWEIGHT_EXERCISES, SEED_EXERCISES, VIDEO_DEFAULT_EXERCISES } from "../lib/exercises/seed";
 
 dedupeSdkWarnings();
 
@@ -60,6 +61,7 @@ const existing: Array<{
   normalised_name: string;
   $permissions: string[];
   video_default: boolean;
+  is_bodyweight: boolean;
 }> = [];
 let cursor: string | null = null;
 for (;;) {
@@ -75,6 +77,9 @@ for (;;) {
       $permissions: row.$permissions,
       // Null (every row seeded before the column existed) reads as false.
       video_default: row.video_default === true,
+      // The same for the bodyweight flag (v20): null, or absent on an
+      // instance that has not had appwrite:setup yet, reads as false.
+      is_bodyweight: row.is_bodyweight === true,
     });
   }
   cursor = page.rows[page.rows.length - 1].$id;
@@ -83,6 +88,7 @@ for (;;) {
 const byNormalised = new Map(existing.map((row) => [row.normalised_name, row]));
 const seedKeys = new Set(SEED_EXERCISES.map(normaliseExerciseName));
 const videoDefaultKeys = new Set(VIDEO_DEFAULT_EXERCISES.map(normaliseExerciseName));
+const bodyweightKeys = new Set(BODYWEIGHT_EXERCISES.map(normaliseExerciseName));
 
 const toCreate = SEED_EXERCISES.filter((name) => !byNormalised.has(normaliseExerciseName(name)));
 const toRename = SEED_EXERCISES.map((name) => ({ name, row: byNormalised.get(normaliseExerciseName(name)) }))
@@ -104,6 +110,13 @@ const toVideoDefault = existing.filter(
   (row) => seedKeys.has(row.normalised_name) && row.video_default !== videoDefaultKeys.has(row.normalised_name),
 );
 
+// Rows whose bodyweight flag differs from the seed (F20), by the same rule:
+// seeded rows only, null and false alike. Writing the flag needs the v20
+// column, so `npm run appwrite:setup` goes first.
+const toBodyweight = existing.filter(
+  (row) => seedKeys.has(row.normalised_name) && row.is_bodyweight !== bodyweightKeys.has(row.normalised_name),
+);
+
 // A duplicate here means two library rows an athlete must choose between
 // mid-set, with one lift's history split across both.
 const duplicates = existing.filter(
@@ -117,16 +130,25 @@ for (const row of toRestamp) console.log(`  restamp  ${row.name} (lacks the serv
 for (const row of toVideoDefault) {
   console.log(`  video    ${row.name} (video default -> ${videoDefaultKeys.has(row.normalised_name)})`);
 }
+for (const row of toBodyweight) {
+  console.log(`  bodyweight ${row.name} (bodyweight -> ${bodyweightKeys.has(row.normalised_name)})`);
+}
 for (const row of duplicates) console.log(`  DUPLICATE ${row.name} (${row.$id}) shares a normalised name`);
 
-if (toCreate.length === 0 && toRename.length === 0 && toRestamp.length === 0 && toVideoDefault.length === 0) {
+if (
+  toCreate.length === 0 &&
+  toRename.length === 0 &&
+  toRestamp.length === 0 &&
+  toVideoDefault.length === 0 &&
+  toBodyweight.length === 0
+) {
   console.log(`  nothing to do: all ${SEED_EXERCISES.length} seed entries are present and correct`);
 }
 
 if (!confirmed) {
   console.log(
     `\n${toCreate.length} to create, ${toRename.length} to rename, ${toRestamp.length} to restamp, ` +
-      `${toVideoDefault.length} to set a video default, ` +
+      `${toVideoDefault.length} to set a video default, ${toBodyweight.length} to set the bodyweight flag, ` +
       `${orphans.length} orphan(s), ${existing.length} global row(s) now.`,
   );
   console.log("Nothing written. Re-run with --yes to apply.");
@@ -135,7 +157,11 @@ if (!confirmed) {
 
 console.log("");
 for (const name of toCreate) {
-  await createGlobalExercise(deps, { name, videoDefault: videoDefaultKeys.has(normaliseExerciseName(name)) });
+  await createGlobalExercise(deps, {
+    name,
+    videoDefault: videoDefaultKeys.has(normaliseExerciseName(name)),
+    isBodyweight: bodyweightKeys.has(normaliseExerciseName(name)),
+  });
   console.log(`  created  ${name}`);
 }
 for (const { name, row } of toRename) {
@@ -153,6 +179,14 @@ for (const row of toVideoDefault) {
     videoDefault: videoDefaultKeys.has(row.normalised_name),
   });
   console.log(`  video default set on ${row.name}`);
+}
+
+for (const row of toBodyweight) {
+  await setGlobalExerciseBodyweight(deps, {
+    rowId: row.$id,
+    isBodyweight: bodyweightKeys.has(row.normalised_name),
+  });
+  console.log(`  bodyweight flag set on ${row.name}`);
 }
 
 console.log(`\nDone. ${existing.length + toCreate.length} global exercise(s).`);

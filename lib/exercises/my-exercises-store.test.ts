@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStore } from "@/lib/offline/memory-store";
 import { enqueue, queuedOps, resetQueueForTests } from "@/lib/offline/client";
 import { newOp, type QueueStore } from "@/lib/offline/queue";
-import { checkExerciseDeletable, deleteMyExercise, renameMyExercise } from "./my-exercises-store";
+import { checkExerciseDeletable, deleteMyExercise, renameMyExercise, setMyExerciseBodyweight } from "./my-exercises-store";
 import type { Exercise } from "./match";
 
 const fetchExerciseUsage = vi.hoisted(() =>
@@ -24,6 +24,17 @@ describe("renameMyExercise", () => {
     await renameMyExercise("ex-1", "Pin Press (low)");
     expect((await store.all()).map((op) => [op.kind, op.payload])).toEqual([
       ["exercise.rename", { exerciseId: "ex-1", name: "Pin Press (low)" }],
+    ]);
+  });
+});
+
+describe("setMyExerciseBodyweight (F20)", () => {
+  it("queues the flag, on and off, as its own op", async () => {
+    await setMyExerciseBodyweight("ex-1", true);
+    await setMyExerciseBodyweight("ex-1", false);
+    expect((await store.all()).map((op) => [op.kind, op.payload])).toEqual([
+      ["exercise.bodyweight", { exerciseId: "ex-1", isBodyweight: true }],
+      ["exercise.bodyweight", { exerciseId: "ex-1", isBodyweight: false }],
     ]);
   });
 });
@@ -62,6 +73,13 @@ describe("deleteMyExercise", () => {
     await enqueue("exercise.rename", { exerciseId: "ex-1", name: "Pin" });
     expect(await deleteMyExercise("ex-1")).toEqual({ queued: false });
     expect(queuedOps()).toEqual([]);
+    expect(await store.all()).toEqual([]);
+  });
+
+  it("withdraws a queued bodyweight flag with an exercise that never left the phone", async () => {
+    await enqueue("exercise.create", { exerciseId: "ex-1", name: "Ring Dip" });
+    await enqueue("exercise.bodyweight", { exerciseId: "ex-1", isBodyweight: true });
+    expect(await deleteMyExercise("ex-1")).toEqual({ queued: false });
     expect(await store.all()).toEqual([]);
   });
 

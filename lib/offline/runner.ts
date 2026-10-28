@@ -11,6 +11,7 @@ import {
   deleteSet,
   finishSession,
   renameExercise,
+  setExerciseBodyweight,
   updateSession,
   updateSet,
   posterIdFor,
@@ -184,6 +185,17 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
     case "exercise.rename": {
       const exerciseId = asString(p.exerciseId);
       await renameExercise(browserWriteDeps(() => exerciseId), actor, { rowId: exerciseId, name: asString(p.name) });
+      return;
+    }
+    case "exercise.bodyweight": {
+      // F20. Its own op rather than a field on the rename, so an op queued
+      // by a client from before v20 never reads as clearing the flag, and a
+      // rename never has to restate it.
+      const exerciseId = asString(p.exerciseId);
+      await setExerciseBodyweight(browserWriteDeps(() => exerciseId), actor, {
+        rowId: exerciseId,
+        isBodyweight: p.isBodyweight === true,
+      });
       return;
     }
     case "exercise.delete": {

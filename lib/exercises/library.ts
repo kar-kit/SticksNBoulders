@@ -35,6 +35,7 @@ interface ExerciseRow {
   is_global?: unknown;
   owner_id?: unknown;
   video_default?: unknown;
+  is_bodyweight?: unknown;
 }
 
 /** Skips a row rather than throwing: one malformed row must not empty the list. */
@@ -48,6 +49,9 @@ function toExercise(row: ExerciseRow): Exercise | null {
     isGlobal: row.is_global === true,
     ownerId: typeof row.owner_id === "string" ? row.owner_id : null,
     videoDefault: row.video_default === true,
+    // Null on a row from before v20, and absent on an instance not yet
+    // migrated: both read as not bodyweight, which is what every lift was.
+    isBodyweight: row.is_bodyweight === true,
   };
 }
 
