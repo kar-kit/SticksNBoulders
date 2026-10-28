@@ -44,6 +44,26 @@ import { weekStart } from "./rollup";
  * after it look like a non-record. The rollups agree: `rollupFrom` keeps
  * failed sets out of its bests (lib/strength/rollup.ts).
  *
+ * ## Bodyweight sets (F20)
+ *
+ * A set at 0 kg -- a pull-up with nothing on the belt, which the Log only
+ * accepts on an exercise flagged bodyweight -- is a working set like any
+ * other here, and the load it records is the added load:
+ *
+ * - **Reps**: yes. Reps at 0 kg go on the frontier at 0, so "at this load or
+ *   heavier" reads every set of the lift: 12 at bodyweight is a record over a
+ *   prior 10 at bodyweight, and not over a prior 12 at +10 kg, which already
+ *   said twelve was in there. Weighted and unweighted sets of one exercise
+ *   share one frontier, as they should.
+ * - **Weight**: never. 0 is not a weight lifted, so it is never the heaviest
+ *   and never a weight to beat -- `higher` skips it, as the rollups' heaviest
+ *   set does. A lift only ever done at bodyweight has no heaviest weight, so
+ *   its first weighted set is not badged, the same as any first.
+ * - **e1RM**: never. `estimateOneRepMax` has nothing to estimate from 0 kg.
+ *
+ * The weekly rollups agree (lib/strength/rollup.ts), and nothing here reads
+ * the exercise's flag: a 0 kg set means the same whichever lift it is on.
+ *
  * ## Why the rep record reads raw sets
  *
  * The rollups keep the week's heaviest set and the week's most reps, each
@@ -123,8 +143,18 @@ export interface SessionSetForPr {
  */
 const tenth = (kg: number): number => Math.round(kg * 10) / 10;
 
+/** A weight, an estimate: a real number above zero. What the weight and e1RM records compare. */
 const usable = (value: number | null | undefined): value is number =>
   typeof value === "number" && Number.isFinite(value) && value > 0;
+
+/**
+ * A load a working set can be logged at: zero allowed (F20, a bodyweight set),
+ * NaN and negatives not. What decides whether a set counts at all, and where
+ * it sits on the rep frontier. Never what decides a weight record: that stays
+ * `usable`, so 0 kg is never "the heaviest".
+ */
+const loadable = (value: number | null | undefined): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 const higher = (a: number | null, b: number | null | undefined): number | null =>
   usable(b) && (a === null || b > a) ? b : a;
@@ -147,14 +177,18 @@ export function priorBests(
 
   for (const week of weeks) {
     if (week.weekStart.getTime() >= thisWeek) continue;
-    if (usable(week.bestSingleKg) || usable(week.bestE1rmKg)) any = true;
+    // A week of bodyweight sets alone has no heaviest set and no estimate,
+    // but it is history: its rep best is what says so.
+    if (usable(week.bestSingleKg) || usable(week.bestE1rmKg) || (week.bestReps ?? 0) > 0) any = true;
     e1rmKg = higher(e1rmKg, week.bestE1rmKg);
     heaviestKg = higher(heaviestKg, week.bestSingleKg);
   }
 
   for (const set of before) {
     if (set.isWarmup || set.failed || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
-    if (!usable(set.loadKg) || !(set.reps > 0)) continue;
+    // 0 kg counts as history (F20) -- a bodyweight set -- and is skipped by
+    // `higher` below, so it is never the heaviest weight.
+    if (!loadable(set.loadKg) || !(set.reps > 0)) continue;
     any = true;
     const estimate = usable(set.e1rmKg) ? set.e1rmKg : estimateOneRepMax({ ...set, isWarmup: false });
     e1rmKg = higher(e1rmKg, estimate);
@@ -177,7 +211,7 @@ export function repBests(before: readonly PriorSet[], sessionStart: Date): RepBe
   const mostAt = new Map<number, number>();
   for (const set of before) {
     if (set.isWarmup || set.failed || set.loggedAt.getTime() >= sessionStart.getTime()) continue;
-    if (!usable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
+    if (!loadable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
     const load = tenth(set.loadKg);
     mostAt.set(load, Math.max(mostAt.get(load) ?? 0, set.reps));
   }
@@ -230,7 +264,7 @@ export function detectPrs(
   let frontier = bests.repsAt ? frontierOf(bests.repsAt.map((p) => ({ loadKg: tenth(p.loadKg), reps: p.reps }))) : null;
 
   for (const set of sets) {
-    if (set.isWarmup || set.failed || !usable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
+    if (set.isWarmup || set.failed || !loadable(set.loadKg) || !Number.isInteger(set.reps) || set.reps < 1) continue;
     const kinds: PrKind[] = [];
 
     const estimate = estimateOneRepMax({ loadKg: set.loadKg, reps: set.reps, rpe: set.rpe, isWarmup: false });
@@ -240,6 +274,7 @@ export function detectPrs(
     }
 
     const load = tenth(set.loadKg);
+    // A 0 kg set is never above a heaviest, which is always a real weight.
     if (heaviest !== null && load > heaviest) {
       kinds.push("weight");
       heaviest = load;

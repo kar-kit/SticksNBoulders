@@ -130,6 +130,14 @@ const tenth = (value: number): number => Math.round(value * 10) / 10;
  * those are what Lift Detail calls records and what the Log's PR badges are
  * measured against. A miss at 200 must not become the weight to beat.
  *
+ * A bodyweight set (F20) -- 0 kg, logged on an exercise flagged bodyweight --
+ * counts toward set count and volume, adds 0 to tonnage, and can be the
+ * week's most reps (at 0 kg). It is never the heaviest set: the heaviest is
+ * the most added load, and 0 is none, so a week done entirely at bodyweight
+ * has no `bestSingleKg` rather than a "best" of 0 that Lift Detail would
+ * show as a record and the Log's weight badge would be measured against. It
+ * has no e1RM (lib/strength/e1rm.ts), so it is never the best estimate.
+ *
  * [SME to confirm] whether warm-up tonnage should count somewhere. It is real
  * work and some coaches track it; excluding it everywhere is the current rule
  * and the one Ruairi has not been asked about yet.
@@ -162,11 +170,14 @@ export function rollupFrom(sets: readonly RollupSet[]): Rollup {
     // same rule personalRecords applies across weeks. Sets logged at the same
     // instant fall back to input order, later wins, so the result never
     // depends on a sort the caller may not have done.
+    // Only a set with a load on the bar (F20): 0 kg is a bodyweight set,
+    // never the week's heaviest.
     const at = set.loggedAt.getTime();
     if (
-      bestSingleKg === null ||
-      set.loadKg > bestSingleKg ||
-      (set.loadKg === bestSingleKg && at >= bestSingleAt)
+      set.loadKg > 0 &&
+      (bestSingleKg === null ||
+        set.loadKg > bestSingleKg ||
+        (set.loadKg === bestSingleKg && at >= bestSingleAt))
     ) {
       bestSingleKg = set.loadKg;
       bestSingleReps = set.reps;

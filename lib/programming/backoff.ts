@@ -188,6 +188,11 @@ export interface TopSet {
  * failed attempt at 200 after a made 190 prices off 190, and a line whose
  * only sets failed leaves its backoff with no load -- the athlete reads the
  * rule and the row repeats, the same as before any top set existed.
+ *
+ * Nor is a bodyweight set at 0 kg (F20): a percentage of nothing is nothing,
+ * and "-10% of the top set" priced off a pull-up at bodyweight would hand the
+ * athlete a 0 kg target that says nothing. A weighted set of the same line
+ * (+20) is the top set as usual; a line done only at bodyweight has none.
  */
 export function topSetOf(sets: readonly SetForEstimate[]): TopSet | null {
   let best: SetForEstimate | null = null;

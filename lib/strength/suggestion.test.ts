@@ -161,3 +161,17 @@ describe("a failed set (F19)", () => {
     expect(suggestLoad({ ...logged({ rpe: 9 }), failed: true }, { reps: 5, rpe: 8 })).toBeNull();
   });
 });
+
+describe("a bodyweight set at 0 kg (F20)", () => {
+  it("anchors no suggestion: a ratio of nothing is nothing", () => {
+    // Same reps one step harder would otherwise be well inside the span.
+    expect(suggestLoad(logged({ loadKg: 0, reps: 8, rpe: 7 }), { reps: 8, rpe: 8 })).toBeNull();
+    expect(suggestLoad(logged({ loadKg: 0, reps: 8, rpe: 8 }), { reps: 8, rpe: 8 })).toBeNull();
+  });
+
+  it("leaves a weighted set of the same lift anchoring one as before", () => {
+    const next = suggestLoad(logged({ loadKg: 20, reps: 5, rpe: 7 }), { reps: 5, rpe: 8 });
+    expect(next?.loadKg).toBeGreaterThan(0);
+    expect(Number.isNaN(next?.loadKg)).toBe(false);
+  });
+});

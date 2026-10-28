@@ -99,6 +99,9 @@ const NEAR_MAXIMAL_REPS_FROM_FAILURE = 3;
  *   set "going well at RPE x" -- whatever RPE was tapped -- and stepping the
  *   load up or down from it would be a ratio off a set that did not happen
  *   as recorded. `estimateOneRepMax` refuses it for the same reason.
+ * - **A bodyweight set at 0 kg** (F20). The ratio of nothing is nothing: a
+ *   suggestion off it would be 0 kg whatever the target. Prefill repeats the
+ *   set instead (rule 3), which at bodyweight is the right next pull-up.
  * - **Either end outside the chart's range**, per `MAX_REPS_TO_FAILURE`.
  * - **A target further than `MAX_SUGGESTION_SPAN`** from what was just done.
  *

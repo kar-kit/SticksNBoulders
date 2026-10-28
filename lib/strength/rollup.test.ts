@@ -334,3 +334,51 @@ describe("a failed set (F19)", () => {
     });
   });
 });
+
+describe("bodyweight sets at 0 kg (F20)", () => {
+  it("count as sets and reps, add nothing to tonnage, and are the week's most reps", () => {
+    const rollup = rollupFrom([
+      set({ loadKg: 0, reps: 12, e1rmKg: null }),
+      set({ loadKg: 0, reps: 10, e1rmKg: null }),
+    ]);
+    expect(rollup).toEqual({
+      setCount: 2,
+      volumeReps: 22,
+      tonnageKg: 0,
+      bestE1rmKg: null,
+      // No heaviest set: 0 kg is not a weight, and a "best" of 0 would be a
+      // record on Lift Detail and a weight to beat in the Log.
+      bestSingleKg: null,
+      bestSingleReps: null,
+      bestReps: 12,
+      bestRepsLoadKg: 0,
+    });
+  });
+
+  it("leave a weighted set the week's heaviest, whichever was logged last", () => {
+    const rollup = rollupFrom([
+      set({ loadKg: 20, reps: 5, e1rmKg: 24, loggedAt: new Date("2026-09-14T10:00:00Z") }),
+      set({ loadKg: 0, reps: 15, e1rmKg: null, loggedAt: new Date("2026-09-14T10:10:00Z") }),
+    ]);
+    expect(rollup).toMatchObject({
+      setCount: 2,
+      volumeReps: 20,
+      tonnageKg: 100,
+      bestE1rmKg: 24,
+      bestSingleKg: 20,
+      bestSingleReps: 5,
+      bestReps: 15,
+      bestRepsLoadKg: 0,
+    });
+  });
+
+  it("lose a most-reps tie to a weighted set, the heavier one", () => {
+    const rollup = rollupFrom([set({ loadKg: 0, reps: 10, e1rmKg: null }), set({ loadKg: 10, reps: 10, e1rmKg: null })]);
+    expect(rollup).toMatchObject({ bestReps: 10, bestRepsLoadKg: 10 });
+  });
+
+  it("compute the same answer the stored row says, so a rebuild finds nothing to fix", () => {
+    const computed = rollupFrom([set({ loadKg: 0, reps: 12, e1rmKg: null })]);
+    expect(rollupMatches({ ...computed, bestSingleKg: undefined, bestSingleReps: undefined }, computed)).toBe(true);
+  });
+});
