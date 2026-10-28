@@ -1,3 +1,5 @@
+import { canCompleteCardio, isCardioSet, type CardioValues } from "./cardio";
+
 /**
  * Rules about a set that are shared between the logger, the rollup function and
  * the coach's views. They live here, not in a component, because a rollup
@@ -58,7 +60,7 @@ export const isLoggedRpe = (value: number): value is RpeValue =>
 export const isPrescribableRpe = (value: number): value is PrescribableRpe =>
   (PRESCRIBABLE_RPE_VALUES as readonly number[]).includes(value);
 
-export interface LoggableSet {
+export interface LoggableSet extends CardioValues {
   loadKg: number | null;
   reps: number | null;
   /** Null is a real answer: "not sure". A forced guess pollutes the curve worse. */
@@ -84,7 +86,18 @@ export interface LoggableSet {
    * the phone's cached library predates the flag for -- stays refused.
    */
   isBodyweight?: boolean | null;
+  /**
+   * The exercise is cardio (F23, `exercises.kind`): the row is a duration
+   * and an optional level, and those are what it needs to log -- load, reps,
+   * RPE, warm-up and failed do not apply. Lent by the screen from the
+   * library like `isBodyweight`, for a row not logged yet; a logged set is
+   * cardio by its own `durationSeconds` whatever this says.
+   */
+  isCardio?: boolean | null;
 }
+
+/** Whether these rules treat the set as cardio: the exercise says so, or the set itself does. */
+const cardio = (set: LoggableSet): boolean => set.isCardio === true || isCardioSet(set);
 
 /**
  * Warm-ups are excluded from PRs and rollups. A 60kg warm-up single is not a
@@ -94,7 +107,8 @@ export interface LoggableSet {
  * record, never a weight or e1RM one (lib/strength/pr.ts decides which).
  */
 export function countsTowardPrs(set: LoggableSet): boolean {
-  return !set.isWarmup && !set.failed && isComplete(set);
+  // A cardio set (F23) is never a record of anything.
+  return !cardio(set) && !set.isWarmup && !set.failed && isComplete(set);
 }
 
 /**
@@ -145,6 +159,9 @@ function isComplete(set: LoggableSet): boolean {
  * hard, so the block sits at the moment of the set.
  */
 export function canComplete(set: LoggableSet): boolean {
+  // F23: a duration above zero and a level that is blank or real. No video
+  // gate: nothing films a cardio set in this version.
+  if (cardio(set)) return canCompleteCardio(set);
   if (!isComplete(set)) return false;
   if (!set.videoRequired) return true;
   return Boolean(set.hasVideo || set.videoSkipped);
@@ -160,13 +177,14 @@ export function canComplete(set: LoggableSet): boolean {
  * square is exactly what Joey hit on a pull-up -- so the row says why.
  */
 export function completionBlocker(set: LoggableSet): "zero-load" | "incomplete" | "video-required" | null {
+  if (cardio(set)) return canCompleteCardio(set) ? null : "incomplete";
   if (isZeroOffBodyweight(set)) return "zero-load";
   if (!isComplete(set)) return "incomplete";
   if (set.videoRequired && !set.hasVideo && !set.videoSkipped) return "video-required";
   return null;
 }
 
-/** RPE is optional on every set, and warm-ups are never asked. */
+/** RPE is optional on every set, and warm-ups are never asked. Nor is cardio (F23): it has no RPE. */
 export function asksForRpe(set: LoggableSet): boolean {
-  return !set.isWarmup;
+  return !set.isWarmup && !cardio(set);
 }

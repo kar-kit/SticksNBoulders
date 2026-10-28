@@ -1,5 +1,6 @@
 import { isEstimableRpe, MAX_REPS_TO_FAILURE, repsToFailure, type SetForEstimate } from "./e1rm";
 import { roundToLoadable } from "./plates";
+import { isCardioSet } from "@/lib/logging/cardio";
 import type { PrescribableRpe } from "@/lib/logging/set";
 import type { UnitPreference } from "@/lib/units";
 
@@ -102,6 +103,8 @@ const NEAR_MAXIMAL_REPS_FROM_FAILURE = 3;
  * - **A bodyweight set at 0 kg** (F20). The ratio of nothing is nothing: a
  *   suggestion off it would be 0 kg whatever the target. Prefill repeats the
  *   set instead (rule 3), which at bodyweight is the right next pull-up.
+ * - **A cardio set** (F23). A duration says nothing about the next lift's
+ *   load, and its stored 0 kg is not a weight to step from.
  * - **Either end outside the chart's range**, per `MAX_REPS_TO_FAILURE`.
  * - **A target further than `MAX_SUGGESTION_SPAN`** from what was just done.
  *
@@ -115,6 +118,7 @@ export function suggestLoad(
   target: SetTarget,
   unit: UnitPreference = "kg",
 ): LoadSuggestion | null {
+  if (isCardioSet(logged)) return null;
   if (logged.isWarmup) return null;
   if (logged.failed) return null;
   if (!isEstimableRpe(logged.rpe)) return null;
