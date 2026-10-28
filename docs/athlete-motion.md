@@ -570,3 +570,83 @@ lib/strength/pr.ts).
   op queued by a pre-v19 client reads as made. Every correction restates it, so
   the set number's warm-up flip or a note edit from the Clips gallery cannot
   un-fail a set.
+
+## The finish screen's records (F22)
+
+_28 Oct 2026. Source: Joey, after a session: "Make the PRs at the end of a log
+more animated and important, maybe a different colour."_
+
+- **Hierarchy.** With at least one record, `FinishedSummary`
+  (`components/logging/finished-summary.tsx`, moved out of `log-screen.tsx`)
+  puts `PrCelebration` (`components/logging/pr-celebration.tsx`) between the
+  "Session done" heading and the totals. The first record is the headline:
+  exercise name at `heading`, figure at `hero` (46px) in the record colour,
+  the kind and the set under it. The rest are rows with `value-lg` (24px)
+  figures. The totals stay, but step back (`value-sm` figures, a tighter
+  tile). **With no records the screen is the old one class for class**: no
+  empty hero, totals at `display`, no motion, no buzz.
+- **Colour.** A new `--pr` token, `#e8b84a`, with `--on-pr` (`#1d1c22`) for a
+  label on it, mapped as `pr` / `on-pr` in `@theme inline`. A gold, kept apart
+  from the copper (`--accent-fill`), which already means "do this" and is the
+  in-log PR pill; that pill is unchanged. It clears AA outright as text (9.17:1
+  on `--background`, 8.23 on `--surface`, 7.24 on `--surface-2`) and as a fill
+  (9.17 behind `--on-pr`), so it needs no fill/line split. The card is
+  `bg-pr/10` over the page: on that tint `--pr` is 7.50, `--foreground`
+  12.25, `--muted` 5.59, `--muted-2` 4.70 (4.49 at 12%, so do not thicken it).
+  `lib/design/tokens.test.ts` checks all of these against the real stylesheet.
+- **Accessibility.** The section keeps its label, "Personal records". Its
+  first child that is read is the count ("New PR" / "3 new PRs"), so that is
+  the first thing a screen reader meets in it. Every figure is final text from
+  the first render: there is no count-up to be read half-way.
+
+### Motion
+
+| Piece | Utility | Curve, duration |
+| --- | --- | --- |
+| Count pill | `motion-safe:animate-spring-pop` | bounce, `bounce` |
+| Each card | `motion-safe:pr-card-in`: `row-in`, delayed `--pr-index` × 70ms, index capped at 5 | spring, `spring` |
+| Headline figure | `motion-safe:animate-spring-pop` (`origin-left`) | bounce, `bounce` |
+| Sweep | `motion-safe:animate-pr-sweep` on an `aria-hidden` `pr-sweep-band` layer | `ease-in-out`, 900ms, after `panel` (240ms) |
+| Haptic | `haptic("success")`, once per mount, only with a record | |
+
+- **Transform and opacity only.** `pr-sweep` is `translate` and `opacity`;
+  `pr-card-in` is `row-in`. The band itself is static paint.
+- **Highlight, not count-up.** The brief allowed either. A count-up is JS
+  timing that the CSS reduced-motion floor cannot reach, changes the figure's
+  width as it runs, and a screen reader could read it mid-count. The pop plus
+  the sweep crossing the figure is all CSS and lands in its end state at once
+  under reduced motion.
+- **`pr-card-in` is one utility, not `animate-row-in` plus a delay class**:
+  the `animation` shorthand resets the delay, and which class wins would hang
+  on Tailwind's output order.
+- **Plays once.** Every animated element mounts with the screen and keeps its
+  key, so a re-render (the queue, the library resolving a name) replays
+  nothing. The buzz is guarded by a ref, the Log's `judged` idiom, so neither a
+  re-render nor React's development double-run of effects buzzes twice. The
+  Finish tap is the user activation Android Chrome needs; iPhone stays silent.
+- **Back to Today is never held.** It carries no animation and is live from
+  the first frame.
+- **Reduced motion.** Everything is behind `motion-safe:`, so the classes are
+  absent. The floor (`.athlete-motion *`, `animation-delay: 0s !important`)
+  covers anything that slipped. The sweep ends at `opacity: 0` and rests at
+  `opacity-0`, so it never shows.
+
+### Demo and tests
+
+- `/design`, panel "Finish screen — PRs" (`app/design/finish-panel.tsx`): the
+  real `FinishedSummary` in a 390 × 852 `athlete-motion` frame, with No PRs,
+  1 PR and 4 PRs, and Replay (a remount). The Colour panel gains `pr` as ink
+  and as a fill.
+- `components/logging/finished-summary.test.tsx`: 0, 1 and many records;
+  order, count heading first; stagger indices and cap; every animation behind
+  `motion-safe:`; figures final on first render; Back to Today outside any
+  animation; nodes kept through a re-render; one `success` buzz under
+  `StrictMode` and across a re-render; `pr-sweep` and `row-in` keyframes
+  transform/opacity only; the floor's delay reset.
+- `lib/design/tokens.test.ts`: the ratios above. `app/design/finish-panel.test.tsx`.
+- `app/(athlete)/log/log-screen.test.tsx`: the existing finish-screen record
+  tests pass unchanged.
+
+[Unverified] On a device: the sweep's strength on an OLED iPhone at full
+brightness, and whether the `success` buzz at finish reads as distinct from
+the in-log PR buzz. Both are tuning, `/design` first.
