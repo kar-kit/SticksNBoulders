@@ -407,6 +407,37 @@ normal path. No `ask`: the coach's nudge stays on the block's camera, and
   not re-attach a clip to a set just deleted, for the same reason the Clips
   screen holds back Delete clip.
 
+### The sheet's camera that never uploaded (F21)
+
+_28 Oct 2026. Source: Joey, on his iPhone 15 Pro._ Add or Replace video in
+the edit sheet stalled or never started uploading; the camera under the block
+worked.
+
+**Diagnosis, [Inference].** Not reproduced on a device. The two cameras are
+the same `AttachVideo`, the same input and the same upload; the one
+difference is what sits above the edit sheet's input: `ModalSheet`'s
+`<dialog>`, whose `onCancel` read *any* `cancel` as "close the sheet". An
+`<input type="file">` fires a **bubbling** `cancel` when its picker is
+dismissed without a new pick (Safari 16.4+, Chrome 113+), and React hands a
+bubbled `cancel` to the dialog's `onCancel` (proved in jsdom:
+`modal-sheet.test.tsx`). So the input's cancel dismissed the sheet,
+`setEditing(null)` on an untouched draft, and the camera unmounted with it. A
+`change` that arrived after that went to an input no longer on the page, and
+nothing uploaded. iOS's picker is a menu (Photo Library / Take Video / Choose
+File) that hands over to a second picker, and WebKit cancels the first from
+the menu's animation completion unless it knows another picker is coming
+(WebKit bug 208846, "File upload cancels before files can be uploaded"); a
+cancel fired in that hand-over is the [Unverified] link that would make a
+successful pick lose the race. At minimum, backing out of the picker closed
+the sheet, which was wrong on every browser.
+
+**Fix.** `ModalSheet` and the shared `Dialog` act on `cancel` only when it is
+the dialog's own (`event.target === event.currentTarget`); Escape and the
+platform's back still arrive that way. Nothing about the upload changed:
+`attachClipToSet` was never tied to the component, so a clip picked in the
+sheet still finishes, queues its attach and releases Delete set after the
+sheet closes, which `edit-sheet-video.test.tsx` now pins.
+
 
 <!-- BEGIN: the coach's ask as a popup (F18) -->
 ## The coach's ask as a popup (F18)
