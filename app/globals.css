@@ -300,6 +300,13 @@
   --animate-spring-pop: spring-pop var(--transition-duration-bounce) var(--ease-bounce) both;
   /* The logged-set tick. A pop with a quarter turn of settle. */
   --animate-tick-in: tick-in var(--transition-duration-bounce) var(--ease-bounce) both;
+  /*
+   * F22. One pass of light across the finish screen's records, starting as
+   * the first record lands (`panel` after mount). Translate and opacity only,
+   * once, never looped: a loop would be the athlete side's only one, and a
+   * record does not need to keep shouting after it has been read.
+   */
+  --animate-pr-sweep: pr-sweep 900ms var(--ease-in-out) var(--transition-duration-panel) both;
 
   @keyframes rise-in {
     from {
@@ -390,6 +397,20 @@
       translate: -100% 0;
     }
     to {
+      translate: 100% 0;
+    }
+  }
+  /* Ends invisible, so under reduced motion (0.01ms, fill `both`) it is never seen. */
+  @keyframes pr-sweep {
+    from {
+      opacity: 0;
+      translate: -100% 0;
+    }
+    35% {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
       translate: 100% 0;
     }
   }
@@ -498,6 +519,35 @@
       scale: 0.97;
     }
   }
+}
+
+/*
+ * F22, the finish screen's records (components/logging/pr-celebration.tsx).
+ *
+ * `pr-card-in` is `row-in`, delayed by the card's place in the list:
+ * `--pr-index`, set inline at the call site (capped there, so a big day does
+ * not trail on). One utility rather than `animate-row-in` plus a delay class,
+ * because the `animation` shorthand resets the delay and which of two classes
+ * wins would then hang on Tailwind's output order. The step lives here rather
+ * than in the component so that every millisecond the athlete side plays is
+ * in this file. Use it behind `motion-safe:`. The reduced-motion floor also
+ * sets `animation-delay: 0s !important`, so every card is there at once.
+ *
+ * `pr-sweep-band` is the paint for the one-off sweep (`animate-pr-sweep`): a
+ * soft diagonal band of the record colour. Static paint; only its translate
+ * and opacity move.
+ */
+@utility pr-card-in {
+  animation: var(--animate-row-in);
+  animation-delay: calc(var(--pr-index, 0) * 70ms);
+}
+@utility pr-sweep-band {
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    color-mix(in srgb, var(--pr) 16%, transparent) 50%,
+    transparent 70%
+  );
 }
 
 /*
