@@ -195,3 +195,12 @@ describe("the row: RPE sheet, Failed switch and the video ask", () => {
     expect(completionBlocker(row)).toBeNull();
   });
 });
+
+describe("the row's kind decides its rules when the screen gives one", () => {
+  it("keeps a strength row a lift even if it picked up a duration from a cardio past", () => {
+    const row = { loadKg: null, reps: null, rpe: null, isWarmup: false, durationSeconds: 1200, isCardio: false };
+    expect(canComplete(row)).toBe(false);
+    expect(canComplete({ ...row, loadKg: 100, reps: 5 })).toBe(true);
+    expect(asksForRpe(row)).toBe(true);
+  });
+});

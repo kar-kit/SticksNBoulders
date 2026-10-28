@@ -306,6 +306,39 @@ export default function DesignSystemPage() {
             />
             <Caption>0 kg on any other lift — confirm off, the row says why</Caption>
             <SetRow index={1} set={{ loadKg: 0, reps: 5, rpe: null, isWarmup: false }} state="active" />
+
+            <Caption>cardio (F23) — time and level in the weight and reps columns, no RPE</Caption>
+            <SetRowHeader cardio />
+            <SetRow
+              index={1}
+              set={{ loadKg: 0, reps: 0, rpe: null, isWarmup: false, durationSeconds: 1200, level: 8 }}
+              state="logged"
+              cardio
+            />
+            <SetRow
+              index={2}
+              set={{ loadKg: 0, reps: 0, rpe: null, isWarmup: false, durationSeconds: 630, level: null }}
+              state="logged"
+              cardio
+              pendingSync
+            />
+            <Caption>cardio, being entered — confirm live on a time alone, last time underneath</Caption>
+            <SetRow
+              index={3}
+              set={{ loadKg: null, reps: null, rpe: null, isWarmup: false, durationSeconds: 300, level: null }}
+              state="active"
+              cardio
+              previous={{ loadKg: 0, reps: 0, durationSeconds: 300, level: 10 }}
+              onConfirm={() => {}}
+              onCopyPrevious={() => {}}
+            />
+            <Caption>cardio with no time yet — confirm off</Caption>
+            <SetRow
+              index={1}
+              set={{ loadKg: null, reps: null, rpe: null, isWarmup: false, level: 8 }}
+              state="active"
+              cardio
+            />
           </div>
 
           <Rule />

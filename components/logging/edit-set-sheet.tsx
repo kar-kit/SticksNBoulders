@@ -8,6 +8,7 @@ import type { EditDraft } from "@/lib/logging/logged-edit";
 import type { PadState } from "@/lib/logging/number-pad";
 import type { RpeValue } from "@/lib/logging/set";
 import { loadNumber, unitName, type UnitPreference } from "@/lib/units";
+import { durationCell, formatLevel, spokenDuration } from "@/lib/logging/cardio";
 import { NoteIcon } from "@/components/ui/icons";
 import { NumberPad } from "./number-pad";
 import { RpeSheet } from "./rpe-sheet";
@@ -58,10 +59,15 @@ import { SetNoteField } from "./set-note-field";
  * the draft: it goes up the moment it is picked, and Cancel does not take it
  * back, which the line beside it says.
  *
+ * A cardio set (F23, `draft.cardio`) opens the same sheet with two values
+ * instead of three -- time and level -- and the pad types them the way the
+ * row did. No RPE, no Warm-up or Failed switch and no video: none applies
+ * to cardio in this version. The note and Delete work exactly as on a lift.
+ *
  * Presentational: the screen owns the draft and every write.
  */
 
-export type EditField = "load" | "reps" | "rpe" | "note";
+export type EditField = "load" | "reps" | "rpe" | "note" | "duration" | "level";
 
 export interface EditSetSheetProps {
   /** "Set 2", or "Warm-up set": the row's own label, as the list numbers it. */
@@ -127,12 +133,29 @@ export function EditSetSheet({
 }: EditSetSheetProps) {
   const blockedId = useId();
   const title = setLabel === "Warm-up set" ? "Edit warm-up" : `Edit ${setLabel.toLowerCase()}`;
-  const showPad = (field === "load" || field === "reps") && pad !== null;
+  const cardio = draft.cardio === true;
+  const showPad = (field === "load" || field === "reps" || field === "duration" || field === "level") && pad !== null;
   const note = draft.notes.trim();
   // The RPE sheet titles itself by number; a warm-up never reaches it.
   const rpeNumber = Number(setLabel.replace(/\D+/g, "")) || 1;
 
-  const cells: { field: EditField; label: string; value: string; spoken: string; disabled?: boolean }[] = [
+  const duration = draft.durationSeconds ?? null;
+  const level = draft.level ?? null;
+  const cardioCells: { field: EditField; label: string; value: string; spoken: string; disabled?: boolean }[] = [
+    {
+      field: "duration",
+      label: "MIN",
+      value: duration === null ? "—" : durationCell(duration),
+      spoken: duration === null ? "empty" : spokenDuration(duration),
+    },
+    {
+      field: "level",
+      label: "LEVEL",
+      value: level === null ? "—" : formatNumber(level),
+      spoken: level === null ? "none" : formatLevel(level),
+    },
+  ];
+  const strengthCells: { field: EditField; label: string; value: string; spoken: string; disabled?: boolean }[] = [
     {
       field: "load",
       label: unit.toUpperCase(),
@@ -155,7 +178,15 @@ export function EditSetSheet({
       disabled: draft.isWarmup,
     },
   ];
-  const fieldWord: Record<EditField, string> = { load: "weight", reps: "reps", rpe: "RPE", note: "note" };
+  const cells = cardio ? cardioCells : strengthCells;
+  const fieldWord: Record<EditField, string> = {
+    load: "weight",
+    reps: "reps",
+    rpe: "RPE",
+    note: "note",
+    duration: "time",
+    level: "level",
+  };
 
   return (
     <section aria-label={`Edit ${setLabel}`} data-edit-sheet="" className="flex flex-none flex-col">
@@ -179,7 +210,11 @@ export function EditSetSheet({
         </Button>
       </header>
 
-      <div role="group" aria-label="Values being saved" className="grid grid-cols-3 gap-2 px-3 pt-3">
+      <div
+        role="group"
+        aria-label="Values being saved"
+        className={cn("grid gap-2 px-3 pt-3", cardio ? "grid-cols-2" : "grid-cols-3")}
+      >
         {cells.map((cell) => (
           <button
             key={cell.field}
@@ -240,6 +275,14 @@ export function EditSetSheet({
           setLabel={setLabel}
           autoFocus
         />
+      ) : showPad && cardio ? (
+        <NumberPad
+          inSheet
+          state={pad}
+          onChange={onPadChange}
+          onNext={() => (pad.field === "duration" ? onField("level") : onSave())}
+          nextLabel={pad.field === "duration" ? "Level" : "Save"}
+        />
       ) : showPad ? (
         <NumberPad
           inSheet
@@ -252,7 +295,7 @@ export function EditSetSheet({
           failed={draft.failed}
           onToggleFailed={onToggleFailed}
         />
-      ) : (
+      ) : cardio ? null : (
         <RpeSheet
           inSheet
           setIndex={rpeNumber}

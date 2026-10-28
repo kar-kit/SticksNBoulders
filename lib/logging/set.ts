@@ -96,8 +96,14 @@ export interface LoggableSet extends CardioValues {
   isCardio?: boolean | null;
 }
 
-/** Whether these rules treat the set as cardio: the exercise says so, or the set itself does. */
-const cardio = (set: LoggableSet): boolean => set.isCardio === true || isCardioSet(set);
+/**
+ * Whether these rules treat the set as cardio. The screen's word wins when
+ * it gives one -- a row is what its exercise is now, so a strength row that
+ * picked up last time's duration from a cardio past is still a lift -- and
+ * without one, the set's own columns decide.
+ */
+const cardio = (set: LoggableSet): boolean =>
+  set.isCardio === true || ((set.isCardio === undefined || set.isCardio === null) && isCardioSet(set));
 
 /**
  * Warm-ups are excluded from PRs and rollups. A 60kg warm-up single is not a

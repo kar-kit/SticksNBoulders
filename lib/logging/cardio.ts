@@ -135,6 +135,16 @@ export function formatDuration(seconds: number): string {
   return rest === 0 ? `${minutes} min` : `${minutes}:${pad2(rest)}`;
 }
 
+/**
+ * A duration in a set row's cell, under a MIN header (F23): "20", or
+ * "20:30" with seconds. The unit is the column's, as KG is the load's.
+ */
+export function durationCell(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const rest = total % 60;
+  return rest === 0 ? String(Math.floor(total / 60)) : `${Math.floor(total / 60)}:${pad2(rest)}`;
+}
+
 /** The same, for a screen reader: "20 minutes", "20 minutes 30 seconds". */
 export function spokenDuration(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));

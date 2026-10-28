@@ -171,3 +171,69 @@ describe("the − / + steppers", () => {
     expect(padValue(step(load(9999), 1))).toBe(9999);
   });
 });
+
+describe("a cardio row's time (F23)", () => {
+  const duration = (value: number | null = null) => beginEdit("duration", value);
+
+  it("is minutes on their own: 20 is twenty minutes", () => {
+    const typed = type(duration(), "20");
+    expect(typed.text).toBe("20");
+    expect(padValue(typed)).toBe(1200);
+  });
+
+  it("takes seconds after the decimal key, shown as a colon", () => {
+    const typed = type(duration(), "20.30");
+    expect(typed.text).toBe("20:30");
+    expect(padValue(typed)).toBe(1230);
+    // A separator first means 0 minutes.
+    expect(padValue(type(duration(), ".45"))).toBe(45);
+  });
+
+  it("never lets seconds reach 60 or run past two digits, and takes one separator", () => {
+    expect(type(duration(), "20.7").text).toBe("20:");
+    expect(type(duration(), "20.599").text).toBe("20:59");
+    expect(type(duration(), "20..3").text).toBe("20:3");
+  });
+
+  it("stops minutes at three digits and drops a leading zero", () => {
+    expect(type(duration(), "12345").text).toBe("123");
+    expect(type(duration(), "05").text).toBe("5");
+  });
+
+  it("opens on a stored time as minutes, or minutes and seconds, and the first key replaces it", () => {
+    expect(duration(1200).text).toBe("20");
+    expect(duration(1230).text).toBe("20:30");
+    expect(type(duration(1200), "3").text).toBe("3");
+  });
+
+  it("steps a minute at a time, never below zero", () => {
+    expect(stepSize(duration(1200))).toBe(60);
+    expect(padValue(step(duration(1230), 1))).toBe(1290);
+    expect(step(duration(1230), 1).text).toBe("21:30");
+    expect(padValue(step(duration(30), -1))).toBe(0);
+    expect(canStepDown(duration(0))).toBe(false);
+  });
+
+  it("backspaces a character at a time, through the separator", () => {
+    const typed = press(press(type(duration(), "20.30"), "back"), "back");
+    expect(typed.text).toBe("20:");
+    expect(padValue(press(typed, "back"))).toBe(1200);
+    expect(padValue(duration())).toBeNull();
+  });
+});
+
+describe("a cardio row's level (F23)", () => {
+  const level = (value: number | null = null) => beginEdit("level", value);
+
+  it("takes two digits and one decimal", () => {
+    expect(padValue(type(level(), "8"))).toBe(8);
+    expect(padValue(type(level(), "2.5"))).toBe(2.5);
+    expect(type(level(), "123").text).toBe("12");
+    expect(type(level(), "2.55").text).toBe("2.5");
+  });
+
+  it("steps by one", () => {
+    expect(stepSize(level(8))).toBe(1);
+    expect(padValue(step(level(8), 1))).toBe(9);
+  });
+});
