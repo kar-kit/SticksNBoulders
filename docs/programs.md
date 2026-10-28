@@ -305,6 +305,9 @@ fallback: a rule that does not parse is refused on the cell and by the route.
   set" off a miss would treat the miss as the day's top set, which is the
   reading of "not a successful set" the product wants; [SME to confirm] with
   Ruairi whether he would rather back off from the attempted weight.
+- **Bodyweight sets at 0 kg (F20)** are never the top set: a percentage of
+  nothing is nothing. A weighted set of the same line (+20) is the top set as
+  usual; a line done only at bodyweight has none, so its backoff has no load.
 - **Run length**: a percent rule is N slots. A drop rule grows one slot at a
   time; the set that reaches the stop RPE ends it; a set logged without RPE
   cannot end it; the cap ends it regardless. A failed set (F19) ends it too,

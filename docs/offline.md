@@ -19,7 +19,8 @@ Ops carry their own Appwrite row id: `session.create`, `session.finish`,
 `set.create`, `set.update`, `set.delete`, `set.attachVideo`, `exercise.create`
 for a lift typed on the spot, and `rollup.refresh` behind every set write.
 History and My exercises add `session.update`, `session.delete`,
-`exercise.rename`, `exercise.delete` and `clip.delete` (see the last sections).
+`exercise.rename`, `exercise.bodyweight`, `exercise.delete` and `clip.delete`
+(see the last sections).
 
 ## One id, not two
 
@@ -278,6 +279,16 @@ Me → My exercises lists the athlete's own `exercises` rows (`is_global: false`
 on screen if another library row normalises to the same name (the same reason
 `resolveOrCreateExercise` refuses a duplicate). Sets reference the id, so every
 logged set follows.
+
+The **Bodyweight exercise** checkbox (F20, schema v20) is `exercise.bodyweight`
+through `setExerciseBodyweight`, one column, owner-stamped. Its own op rather
+than a field on the rename, so a rename never has to restate it and an op
+queued before v20 never reads as clearing it. The screen applies it to the
+library first (`flagBodyweight`, which writes the device's cached copy too),
+so the Log accepts 0 kg on that lift from the next tap with no signal. Like
+`exercise.rename`, it is withdrawn with an exercise whose create never left
+the phone. The library's cached copy from before v20 has no flag, which reads
+as not bodyweight: the Log refuses 0 kg until the next fetch, never allows it.
 
 **Delete is blocked, not archived, for an exercise anything points at**: this
 athlete's sets (on the server or still queued), a reference max, or a

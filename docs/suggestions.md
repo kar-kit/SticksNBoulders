@@ -71,6 +71,9 @@ Null rather than a guess, and each refusal is a real case:
   from a set that did not happen as recorded. The row repeats instead, and Add
   set after a miss repeats its load but not its reps (the reps stored on a miss
   are what was managed, so the row's reps start blank).
+- **A bodyweight set at 0 kg (F20)** — a ratio of nothing is nothing. Add set
+  repeats it at 0 kg (prefill rule 3), which is the right next set at
+  bodyweight.
 - **Either end past `MAX_REPS_TO_FAILURE`.**
 - **A target further than the span above.**
 
