@@ -57,6 +57,26 @@
   --danger-fill: #b24c42; /* destructive fills, with --on-danger-fill */
   --on-danger-fill: #f2f1ef;
 
+  /* --- Personal record ------------------------------------------------ */
+  /*
+   * F22. The finish screen's records, and nothing else. A gold, not the
+   * copper: the copper already means "do this" (the confirm, the selected
+   * tab) and is the in-log PR pill, and a record at the end of a session
+   * should read as a different, rarer thing. Lab hue 84 against the copper's
+   * 68, at about twice its chroma (deltaE76 33 from --accent-fill, 39 from
+   * --accent-line, 60 from --success).
+   *
+   * Unlike the accent and danger pairs it needs no fill/line split, because
+   * it clears AA outright both ways round:
+   *   as text   9.17:1 on --background, 8.23 on --surface, 7.24 on --surface-2
+   *   as a fill 9.17:1 behind its --on-pr label
+   * The hero card sits on --pr at 10% over --background (#312c26 composited).
+   * On that tint: --pr 7.50, --foreground 12.25, --muted 5.59, --muted-2 4.70.
+   * Going past 12% puts --muted-2 under 4.5 (4.49 at 12%).
+   */
+  --pr: #e8b84a; /* figures, borders and the 10% tint on the finish screen */
+  --on-pr: #1d1c22; /* label on a --pr fill */
+
   /* --- Type ----------------------------------------------------------- */
   --font-sans: var(--font-archivo), "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", Menlo, monospace;
@@ -106,6 +126,10 @@
   --color-danger-line: var(--danger-line);
   --color-danger-fill: var(--danger-fill);
   --color-on-danger-fill: var(--on-danger-fill);
+
+  /* --- Personal record (F22) --- */
+  --color-pr: var(--pr);
+  --color-on-pr: var(--on-pr);
 
   /*
    * Kept because Google and Apple mandate their own button colours. Nothing
@@ -276,6 +300,13 @@
   --animate-spring-pop: spring-pop var(--transition-duration-bounce) var(--ease-bounce) both;
   /* The logged-set tick. A pop with a quarter turn of settle. */
   --animate-tick-in: tick-in var(--transition-duration-bounce) var(--ease-bounce) both;
+  /*
+   * F22. One pass of light across the finish screen's records, starting as
+   * the first record lands (`panel` after mount). Translate and opacity only,
+   * once, never looped: a loop would be the athlete side's only one, and a
+   * record does not need to keep shouting after it has been read.
+   */
+  --animate-pr-sweep: pr-sweep 900ms var(--ease-in-out) var(--transition-duration-panel) both;
 
   @keyframes rise-in {
     from {
@@ -366,6 +397,20 @@
       translate: -100% 0;
     }
     to {
+      translate: 100% 0;
+    }
+  }
+  /* Ends invisible, so under reduced motion (0.01ms, fill `both`) it is never seen. */
+  @keyframes pr-sweep {
+    from {
+      opacity: 0;
+      translate: -100% 0;
+    }
+    35% {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
       translate: 100% 0;
     }
   }
@@ -474,6 +519,35 @@
       scale: 0.97;
     }
   }
+}
+
+/*
+ * F22, the finish screen's records (components/logging/pr-celebration.tsx).
+ *
+ * `pr-card-in` is `row-in`, delayed by the card's place in the list:
+ * `--pr-index`, set inline at the call site (capped there, so a big day does
+ * not trail on). One utility rather than `animate-row-in` plus a delay class,
+ * because the `animation` shorthand resets the delay and which of two classes
+ * wins would then hang on Tailwind's output order. The step lives here rather
+ * than in the component so that every millisecond the athlete side plays is
+ * in this file. Use it behind `motion-safe:`. The reduced-motion floor also
+ * sets `animation-delay: 0s !important`, so every card is there at once.
+ *
+ * `pr-sweep-band` is the paint for the one-off sweep (`animate-pr-sweep`): a
+ * soft diagonal band of the record colour. Static paint; only its translate
+ * and opacity move.
+ */
+@utility pr-card-in {
+  animation: var(--animate-row-in);
+  animation-delay: calc(var(--pr-index, 0) * 70ms);
+}
+@utility pr-sweep-band {
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    color-mix(in srgb, var(--pr) 16%, transparent) 50%,
+    transparent 70%
+  );
 }
 
 /*
