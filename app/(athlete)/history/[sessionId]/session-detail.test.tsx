@@ -523,3 +523,133 @@ describe("a failed set (F19)", () => {
     expect(editSet.mock.calls[0][1]).toEqual({ loadKg: 140, reps: 2, rpe: 8, isWarmup: false, failed: true, notes: null });
   });
 });
+
+describe("correcting a bodyweight set (F20)", () => {
+  beforeEach(() => {
+    library.exercises = [
+      { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true },
+      { id: "pull-up", name: "Pull Up", normalisedName: "pull up", isGlobal: true, isBodyweight: true },
+    ];
+    loaded.sets = [
+      set({ clientSetId: "st-1" }),
+      set({ clientSetId: "pu-1", exerciseId: "pull-up", loadKg: 10, reps: 8, rpe: 9, e1rmKg: null }),
+    ];
+  });
+
+  it("saves a pull-up corrected to 0 kg", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Pull Up" }));
+    for (let i = 0; i < 2; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+    await user.click(screen.getByRole("button", { name: "0" }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(editSet.mock.calls[0][1]).toMatchObject({ loadKg: 0, reps: 8 });
+  });
+
+  it("will not save a squat corrected to 0 kg, even if its confirm fires, and says why", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    for (let i = 0; i < 3; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+    await user.click(screen.getByRole("button", { name: "0" }));
+
+    const confirm = screen.getByRole("button", { name: /^Log Set 1$/ });
+    expect(confirm).toBeDisabled();
+    expect(confirm).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
+    await act(async () => activeConfirm.current?.());
+    expect(editSet).not.toHaveBeenCalled();
+  });
+});
+
+describe("a cardio set in History (F23)", () => {
+  const cardio = (over: Partial<HistorySet> = {}) =>
+    set({
+      exerciseId: "tm",
+      clientSetId: "st-c",
+      loadKg: 0,
+      reps: 0,
+      rpe: null,
+      e1rmKg: null,
+      durationSeconds: 1230,
+      level: 8,
+      loggedAt: new Date("2026-09-14T10:00:00Z"),
+      ...over,
+    });
+
+  beforeEach(() => {
+    library.exercises = [
+      { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true },
+      { id: "tm", name: "Treadmill", normalisedName: "treadmill", isGlobal: true, kind: "cardio" },
+    ];
+    loaded.sets = [set({ clientSetId: "st-1" }), cardio()];
+  });
+
+  it("reads as a time and a level under its exercise, and the header counts it apart", async () => {
+    setup({ setCount: 1, tonnageKg: 700 });
+    const block = await screen.findByRole("region", { name: "Treadmill" });
+    expect(block).toHaveTextContent("CARDIO · 21 min");
+    expect(screen.getByLabelText("Set 1 time, 20 minutes 30 seconds")).toHaveTextContent("20:30");
+    expect(screen.getByLabelText("Set 1 level")).toHaveTextContent("8");
+    // Strength totals are the squat's alone; cardio has its own figure.
+    expect(screen.getByText(/1 set · 700 kg · 21 min cardio/)).toBeInTheDocument();
+    // No Lift Detail link for a cardio block.
+    expect(screen.queryByRole("link", { name: "Treadmill progression" })).not.toBeInTheDocument();
+  });
+
+  it("corrects the time on the pad and saves it as cardio, with the strength values inert", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Treadmill" }));
+    expect(screen.getByRole("region", { name: "Time, min keypad" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Warm-up" })).not.toBeInTheDocument();
+    for (const key of ["2", "5"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(editSet.mock.calls[0][0]).toBe("st-c");
+    expect(editSet.mock.calls[0][1]).toEqual({
+      loadKg: 0,
+      reps: 0,
+      rpe: null,
+      isWarmup: false,
+      failed: false,
+      notes: null,
+      durationSeconds: 1500,
+      level: 8,
+    });
+    // The stored totals are restated from the squat alone: the cardio set
+    // is never counted, however it was corrected.
+    await waitFor(() => expect(sessionEdits.reviseSessionTotals).toHaveBeenCalledWith("s1", { setCount: 1, tonnageKg: 700 }));
+  });
+
+  it("clears the level and keeps the time", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Treadmill" }));
+    await user.click(screen.getByRole("button", { name: "Set 1 level" }));
+    await user.click(screen.getByRole("button", { name: "Backspace" }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+    await waitFor(() => expect(editSet).toHaveBeenCalledTimes(1));
+    expect(editSet.mock.calls[0][1]).toMatchObject({ durationSeconds: 1230, level: null });
+  });
+
+  it("deletes a cardio set like any set", async () => {
+    const { user } = setup();
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Treadmill" }));
+    await user.click(screen.getByRole("button", { name: "Delete set" }));
+    await waitFor(() => expect(removeSet).toHaveBeenCalledWith("st-c", expect.objectContaining({ exerciseId: "tm" })));
+  });
+});
+
+describe("restating totals keeps a missed 0-rep set counted (F19 beside F23)", () => {
+  it("passes the failed flag through, so the fail-closed rule for 0 reps does not drop a real miss", async () => {
+    loaded.sets = [
+      set({ clientSetId: "st-1" }),
+      set({ clientSetId: "st-f", setIndex: 2, loadKg: 200, reps: 0, rpe: 10, failed: true, e1rmKg: null }),
+    ];
+    const { user } = setup({ setCount: 2, tonnageKg: 700 });
+    await user.click(await screen.findByRole("button", { name: "Edit set 1 of Squat" }));
+    for (let i = 0; i < 3; i++) await user.click(screen.getByRole("button", { name: "Backspace" }));
+    for (const key of ["1", "5", "0"]) await user.click(screen.getByRole("button", { name: key }));
+    await user.click(screen.getByRole("button", { name: /^Log Set 1$/ }));
+    await waitFor(() => expect(sessionEdits.reviseSessionTotals).toHaveBeenCalledWith("s1", { setCount: 2, tonnageKg: 750 }));
+  });
+});

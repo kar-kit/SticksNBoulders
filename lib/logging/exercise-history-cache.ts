@@ -40,7 +40,10 @@ function parsePrevious(value: unknown): PreviousSet[] | null {
       finite(s.reps) &&
       typeof s.isWarmup === "boolean" &&
       // F19. Optional, so an entry remembered before v19 still parses.
-      (s.failed === undefined || typeof s.failed === "boolean"),
+      (s.failed === undefined || typeof s.failed === "boolean") &&
+      // F23. Optional too: an entry from before v21 is a strength set.
+      (s.durationSeconds === undefined || nullableFinite(s.durationSeconds)) &&
+      (s.level === undefined || nullableFinite(s.level)),
   );
   return sets.length === value.length ? sets : null;
 }

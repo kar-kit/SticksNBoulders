@@ -11,8 +11,13 @@
 
 import { LOAD_DECIMALS, type UnitPreference } from "@/lib/units";
 import { LOADABLE_INCREMENT_KG, LOADABLE_INCREMENT_LB } from "@/lib/strength/plates";
+import { MAX_DURATION_SECONDS } from "./cardio";
 
-export type PadField = "load" | "reps";
+/**
+ * The fields the pad types into. "duration" and "level" are a cardio row's
+ * (F23): a time in minutes, and the machine's level.
+ */
+export type PadField = "load" | "reps" | "duration" | "level";
 export type PadKey = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "." | "back";
 
 export interface PadState {
@@ -34,13 +39,75 @@ const LIMITS: Record<PadField, { integerDigits: number; decimals: number }> = {
   // 9999.99 kg is past any human lift and past any plate maths.
   load: { integerDigits: 4, decimals: 2 },
   reps: { integerDigits: 3, decimals: 0 },
+  // F23. Whole minutes, up to 999; the seconds after the separator are
+  // typed by their own rules (`pressDuration`), never as a decimal.
+  duration: { integerDigits: 3, decimals: 0 },
+  // A machine level: stairmaster 8, treadmill 2.5. 99.9 is past any dial.
+  level: { integerDigits: 2, decimals: 1 },
 };
+
+/**
+ * The duration field's separator (F23). The pad's "." key types it, and the
+ * key shows ":" while a duration is open, so "20", "." , "3", "0" reads
+ * 20:30 as it is typed. Minutes on their own are the common case -- "20" is
+ * twenty minutes, one tap more than the number -- and seconds are there for
+ * the athlete who wants them, never asked for.
+ */
+export const DURATION_SEPARATOR = ":";
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/** Seconds as the pad shows them: "20" for whole minutes, "20:30" otherwise. */
+function durationText(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest === 0 ? String(minutes) : `${minutes}${DURATION_SEPARATOR}${pad2(rest)}`;
+}
+
+/**
+ * A key on the duration field (F23).
+ *
+ * Minutes take up to three digits. The separator comes once; after it, two
+ * digits of seconds, the first 0-5, so 20:75 cannot be typed rather than
+ * being typed and then silently becoming 21:15. A leading separator means
+ * "0:", for the athlete logging 0:45 of something.
+ */
+function pressDuration(state: PadState, key: PadKey): PadState {
+  const base = state.replacing ? "" : state.text;
+  if (key === ".") {
+    if (base.includes(DURATION_SEPARATOR)) return { ...state, text: base, replacing: false };
+    return { ...state, text: `${base === "" ? "0" : base}${DURATION_SEPARATOR}`, replacing: false };
+  }
+  const [minutes = "", seconds] = base.split(DURATION_SEPARATOR);
+  if (seconds !== undefined) {
+    if (seconds.length >= 2) return { ...state, text: base, replacing: false };
+    if (seconds.length === 0 && Number(key) > 5) return { ...state, text: base, replacing: false };
+    return { ...state, text: base + key, replacing: false };
+  }
+  if (minutes.length >= LIMITS.duration.integerDigits) return { ...state, text: base, replacing: false };
+  if (minutes === "0") return { ...state, text: key, replacing: false };
+  return { ...state, text: base + key, replacing: false };
+}
+
+/**
+ * What a duration's text is in seconds. Seconds are read as written, so
+ * "20:3" mid-typing is 20:03, and the "0" that follows makes it 20:30.
+ */
+function durationValue(text: string): number | null {
+  if (text === "" || text === DURATION_SEPARATOR) return null;
+  const [minutes = "", seconds = ""] = text.split(DURATION_SEPARATOR);
+  const total = Number(minutes || "0") * 60 + Number(seconds || "0");
+  return Number.isFinite(total) ? total : null;
+}
 
 /** `value` is in the athlete's unit, already converted from the stored kilos. */
 export function beginEdit(field: PadField, value: number | null, unit?: UnitPreference): PadState {
+  const empty = value === null || !Number.isFinite(value);
   return {
     field,
-    text: value === null || !Number.isFinite(value) ? "" : stripTrailingZeroes(String(value)),
+    // A duration arrives in seconds and is shown as minutes (F23).
+    text: empty ? "" : field === "duration" ? durationText(value) : stripTrailingZeroes(String(value)),
     // True even when empty, so the first keypress behaves the same either way.
     replacing: true,
     ...(field === "load" && unit ? { unit } : {}),
@@ -62,6 +129,7 @@ function stripTrailingZeroes(text: string): string {
 }
 
 export function press(state: PadState, key: PadKey): PadState {
+  if (state.field === "duration" && key !== "back") return pressDuration(state, key);
   const limits = limitsOf(state);
 
   if (key === "back") {
@@ -93,8 +161,12 @@ export function press(state: PadState, key: PadKey): PadState {
   return { ...state, text: base + key, replacing: false };
 }
 
-/** Null when nothing usable has been typed. "142." reads as 142. */
+/**
+ * Null when nothing usable has been typed. "142." reads as 142. A duration
+ * (F23) reads as whole seconds: "20" is 1200, "20:30" is 1230.
+ */
 export function padValue(state: PadState): number | null {
+  if (state.field === "duration") return durationValue(state.text);
   if (state.text === "" || state.text === ".") return null;
   const parsed = Number(state.text);
   return Number.isFinite(parsed) ? parsed : null;
@@ -107,7 +179,9 @@ export function padValue(state: PadState): number | null {
  * 5 lb in a pound gym (lib/strength/plates.ts). Reps move by one.
  */
 export function stepSize(state: PadState): number {
-  if (state.field === "reps") return 1;
+  if (state.field === "reps" || state.field === "level") return 1;
+  // A minute, in seconds (F23): the unit cardio is done in.
+  if (state.field === "duration") return 60;
   return state.unit === "lb" ? LOADABLE_INCREMENT_LB : LOADABLE_INCREMENT_KG;
 }
 
@@ -125,6 +199,11 @@ export function stepSize(state: PadState): number {
  * replaces it rather than appending to it.
  */
 export function step(state: PadState, direction: 1 | -1): PadState {
+  if (state.field === "duration") {
+    const next = Math.max(0, (padValue(state) ?? 0) + direction * stepSize(state));
+    if (next > Math.min(MAX_DURATION_SECONDS, 999 * 60 + 59)) return state;
+    return { ...state, text: durationText(next), replacing: true };
+  }
   const limits = limitsOf(state);
   const scale = 10 ** limits.decimals;
   const current = padValue(state) ?? 0;

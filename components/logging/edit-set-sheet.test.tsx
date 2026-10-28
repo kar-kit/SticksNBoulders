@@ -165,3 +165,73 @@ describe("EditSetSheet's Failed switch (F19)", () => {
     expect(screen.getByRole("button", { name: "Change reps, now 0, failed set" })).toHaveTextContent("REPS · FAILED");
   });
 });
+
+describe("EditSetSheet — Save blocked at 0 kg (F20)", () => {
+  it("says why Save is off, and describes the button with it", () => {
+    setup({
+      canSave: false,
+      saveBlocked: "0 kg logs only on a bodyweight exercise",
+      draft: { loadKg: 0, reps: 5, rpe: 8, isWarmup: false, failed: false, notes: "" },
+    });
+    const save = screen.getByRole("button", { name: "Save Set 2" });
+    expect(save).toBeDisabled();
+    expect(save).toHaveAccessibleDescription("0 kg logs only on a bodyweight exercise");
+  });
+
+  it("says nothing when nothing is blocking", () => {
+    setup({ draft: { loadKg: 0, reps: 12, rpe: 8, isWarmup: false, failed: false, notes: "" } });
+    expect(screen.getByRole("button", { name: "Save Set 2" })).not.toHaveAccessibleDescription();
+    expect(document.querySelector("[data-blocker]")).toBeNull();
+  });
+});
+
+describe("EditSetSheet — a cardio set (F23)", () => {
+  const draft = {
+    loadKg: 0,
+    reps: 0,
+    rpe: null,
+    isWarmup: false,
+    failed: false,
+    notes: "",
+    cardio: true,
+    durationSeconds: 1230,
+    level: 8,
+  };
+
+  it("edits the time and the level, with no weight, reps or RPE", () => {
+    setup({ draft, field: "duration", pad: beginEdit("duration", 1230) });
+    const values = screen.getByRole("group", { name: "Values being saved" });
+    expect(within(values).getAllByRole("button")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Change time, now 20 minutes 30 seconds" })).toHaveTextContent("20:30");
+    expect(screen.getByRole("button", { name: "Change level, now level 8" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Change weight/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Change RPE/ })).not.toBeInTheDocument();
+  });
+
+  it("types the time on the pad, walks on to the level, and saves from there", async () => {
+    const { props, user } = setup({ draft, field: "duration", pad: beginEdit("duration", 1230) });
+    expect(screen.getByRole("region", { name: "Time, min keypad" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Level" }));
+    expect(props.onField).toHaveBeenCalledWith("level");
+  });
+
+  it("saves from the level's Next, and keeps the note and Delete", async () => {
+    const { props, user } = setup({ draft, field: "level", pad: beginEdit("level", 8) });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(props.onSave).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Add a note to Set 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete Set 2" })).toBeInTheDocument();
+  });
+
+  it("shows no RPE chips even if asked for the RPE field", () => {
+    setup({ draft, field: "rpe", pad: null });
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Not sure/ })).not.toBeInTheDocument();
+  });
+
+  it("reads a set with no level as none", () => {
+    setup({ draft: { ...draft, level: null }, field: "duration", pad: beginEdit("duration", 1230) });
+    expect(screen.getByRole("button", { name: "Change level, now none" })).toHaveTextContent("—");
+  });
+});

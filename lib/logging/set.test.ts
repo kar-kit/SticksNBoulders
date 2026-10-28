@@ -126,3 +126,51 @@ describe("a failed set (F19)", () => {
     expect(countsTowardPrs(set({ reps: 3, failed: true }))).toBe(false);
   });
 });
+
+describe("a bodyweight exercise (F20)", () => {
+  it("logs at 0 kg, which any other lift refuses", () => {
+    expect(canComplete(set({ loadKg: 0, reps: 12, isBodyweight: true }))).toBe(true);
+    expect(completionBlocker(set({ loadKg: 0, reps: 12, isBodyweight: true }))).toBeNull();
+    expect(canComplete(set({ loadKg: 0, reps: 12 }))).toBe(false);
+    expect(canComplete(set({ loadKg: 0, reps: 12, isBodyweight: false }))).toBe(false);
+    // Null is what a set built from a library cached before v20 carries.
+    expect(canComplete(set({ loadKg: 0, reps: 12, isBodyweight: null }))).toBe(false);
+  });
+
+  it("says why a 0 kg set on any other lift will not log, ahead of everything else", () => {
+    expect(completionBlocker(set({ loadKg: 0, reps: 12 }))).toBe("zero-load");
+    expect(completionBlocker(set({ loadKg: 0, reps: null }))).toBe("zero-load");
+    expect(completionBlocker(set({ loadKg: 0, reps: 5, videoRequired: true }))).toBe("zero-load");
+    // An empty load is not a 0: that is just a row not filled in yet.
+    expect(completionBlocker(set({ loadKg: null, reps: 12 }))).toBe("incomplete");
+  });
+
+  it("keeps added load working as before: a +20 kg pull-up logs, flagged or not", () => {
+    expect(canComplete(set({ loadKg: 20, reps: 5, isBodyweight: true }))).toBe(true);
+    expect(canComplete(set({ loadKg: 20, reps: 5 }))).toBe(true);
+  });
+
+  it("still needs reps, and refuses a load below zero or not a number", () => {
+    expect(canComplete(set({ loadKg: 0, reps: 0, isBodyweight: true }))).toBe(false);
+    expect(canComplete(set({ loadKg: 0, reps: null, isBodyweight: true }))).toBe(false);
+    expect(canComplete(set({ loadKg: -5, reps: 10, isBodyweight: true }))).toBe(false);
+    expect(canComplete(set({ loadKg: Number.NaN, reps: 10, isBodyweight: true }))).toBe(false);
+  });
+
+  it("lets a missed rep at bodyweight be logged as failed, 0 x 0", () => {
+    expect(canComplete(set({ loadKg: 0, reps: 0, failed: true, isBodyweight: true }))).toBe(true);
+    expect(canComplete(set({ loadKg: 0, reps: 0, failed: true }))).toBe(false);
+  });
+
+  it("counts toward PRs as a working set, and as a warm-up does not", () => {
+    expect(countsTowardPrs(set({ loadKg: 0, reps: 12, isBodyweight: true }))).toBe(true);
+    expect(countsTowardPrs(set({ loadKg: 0, reps: 12, isBodyweight: true, isWarmup: true }))).toBe(false);
+    expect(countsTowardPrs(set({ loadKg: 0, reps: 12 }))).toBe(false);
+  });
+
+  it("is still gated by the coach's video ask like any set", () => {
+    expect(completionBlocker(set({ loadKg: 0, reps: 12, isBodyweight: true, videoRequired: true }))).toBe(
+      "video-required",
+    );
+  });
+});

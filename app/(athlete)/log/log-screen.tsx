@@ -25,6 +25,9 @@ import { videoAsk } from "@/lib/logging/video-prompt";
 import { rememberNudged, wasNudged } from "@/lib/logging/video-nudge";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { resolveOrCreateExercise } from "@/lib/exercises/library";
+import { bodyweightLookup } from "@/lib/exercises/bodyweight";
+import { cardioLookup, type ExerciseKind } from "@/lib/exercises/kind";
+import { isCardioSet } from "@/lib/logging/cardio";
 import type { Exercise } from "@/lib/exercises/match";
 import { useTrainingSessions } from "@/lib/logging/session-context";
 import { fetchSessionSets, type UnnamedSet } from "@/lib/logging/session-store";
@@ -68,7 +71,7 @@ import {
   type RestTimer,
 } from "@/lib/logging/rest-timer";
 import { forgetRest, recallRest, rememberRest } from "@/lib/logging/rest-store";
-import { canComplete, type RpeValue } from "@/lib/logging/set";
+import { canComplete, ZERO_LOAD_HINT, type RpeValue } from "@/lib/logging/set";
 import { blockRemovalLabel, planBlockRemoval } from "@/lib/logging/block-removal";
 import { WeekSummaryCard } from "@/components/logging/week-summary-card";
 import { FinishedSummary } from "@/components/logging/finished-summary";
@@ -142,6 +145,12 @@ interface PendingDelete {
 }
 
 const NO_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * Which value of a row (or an edit draft) each pad field types into. A load
+ * arrives in kilos already; a duration (F23) in seconds.
+ */
+const ROW_KEY = { load: "loadKg", reps: "reps", duration: "durationSeconds", level: "level" } as const;
 
 const COACH_COMMENTED = "Your coach has commented on this set, so it stays. You can still correct its numbers above.";
 
@@ -335,6 +344,22 @@ export function LogScreen() {
     return (id: string) => names.get(id) ?? null;
   }, [library.exercises]);
 
+  /**
+   * Whether an exercise takes a 0 kg set (F20). Read from the library like
+   * the name, so it is there offline from the cached copy; a lift the phone
+   * cannot place, or a cache from before the flag, reads as not bodyweight.
+   */
+  const bodyweightOf = useMemo(() => bodyweightLookup(library.exercises), [library.exercises]);
+
+  /**
+   * Whether an exercise is cardio (F23): its rows ask for a time and a
+   * level. From the library like the bodyweight flag, cached copy included;
+   * a lift the phone cannot place, or a cache from before v21, is strength.
+   * Only what a row asks for reads this -- a logged set is cardio by its own
+   * duration, whatever its exercise says now.
+   */
+  const cardioOf = useMemo(() => cardioLookup(library.exercises), [library.exercises]);
+
   const sessionId = active?.id ?? null;
 
   /**
@@ -508,10 +533,15 @@ export function LogScreen() {
   const lastLoggedOf = useCallback(
     (exerciseId: string) => {
       const last = setsOf(exerciseId).at(-1);
+      if (!last) return null;
+      // After a cardio set (F23), Add set repeats its time and level.
+      if (isCardioSet(last)) {
+        return { loadKg: 0, reps: 0, durationSeconds: last.durationSeconds ?? null, level: last.level ?? null };
+      }
       // After a miss (F19), Add set repeats the load and not the reps: the
       // stored reps are what was managed, not what is being attempted. Zero
       // is never a usable prefill, so the row's reps start blank.
-      return last ? { loadKg: last.loadKg, reps: last.failed ? 0 : last.reps } : null;
+      return { loadKg: last.loadKg, reps: last.failed ? 0 : last.reps };
     },
     [setsOf],
   );
@@ -602,6 +632,9 @@ export function LogScreen() {
           isWarmup: s.isWarmup,
           // F19: a missed set is never a record, nor a best a later set must beat.
           failed: s.failed === true,
+          // F23: nor is a cardio set, which detectPrs reads off these.
+          durationSeconds: s.durationSeconds ?? null,
+          level: s.level ?? null,
         })),
         history.bests,
       );
@@ -813,11 +846,19 @@ export function LogScreen() {
     [activate],
   );
 
-  const createExercise = async (name: string) => {
+  /**
+   * A name the library does not have, as a new exercise of the athlete's own.
+   * "cardio" from the typeahead's Add as cardio (F23): the row is created as
+   * cardio in the same queued write, so its first set is already a time.
+   */
+  const createExercise = async (name: string, kind: ExerciseKind = "strength") => {
     if (!athleteId) return;
-    const { exercise, created } = await resolveOrCreateExercise(name, library.exercises, {
-      userId: athleteId,
-    });
+    const { exercise, created } = await resolveOrCreateExercise(
+      name,
+      library.exercises,
+      { userId: athleteId },
+      kind,
+    );
     if (created) remember(exercise);
     addExercise(exercise);
   };
@@ -835,6 +876,8 @@ export function LogScreen() {
     // A swapped variant gets none: the engine would be pricing a dumbbell set
     // off a barbell one.
     if (currentOf(blockId) !== blockId) return null;
+    // Nor a cardio block (F23): nothing prices a time.
+    if (cardioOf(blockId)) return null;
     const logged = setsOfBlock(blockId);
     const last = logged.at(-1);
     if (!last) return null;
@@ -843,7 +886,15 @@ export function LogScreen() {
     return nextSetSuggestion(
       suggestionMode,
       // A failed set anchors no suggestion (F19, lib/strength/suggestion.ts).
-      { loadKg: last.loadKg, reps: last.reps, rpe: last.rpe ?? null, isWarmup: last.isWarmup, failed: last.failed === true },
+      {
+        loadKg: last.loadKg,
+        reps: last.reps,
+        rpe: last.rpe ?? null,
+        isWarmup: last.isWarmup,
+        failed: last.failed === true,
+        durationSeconds: last.durationSeconds ?? null,
+        level: last.level ?? null,
+      },
       setTargetFor(prescribedNext),
       unit,
     );
@@ -897,12 +948,18 @@ export function LogScreen() {
     });
   };
 
-  const focusField = (rowId: string | null, field: "load" | "reps" | "rpe") => {
+  const focusField = (rowId: string | null, field: "load" | "reps" | "rpe" | "duration" | "level") => {
     const row = plans.find((each) => each.clientSetId === rowId);
     if (!row) return;
     setFocusId(row.clientSetId);
     setEditing(null);
     setSwapFor(null);
+    // A cardio row's two fields (F23): time in minutes, then level.
+    if (field === "duration" || field === "level") {
+      setRpeOpen(false);
+      setPad(beginEdit(field, field === "duration" ? (row.durationSeconds ?? null) : (row.level ?? null)));
+      return;
+    }
     if (field === "rpe") {
       if (row.isWarmup) return; // Warm-ups never ask.
       setPad(null);
@@ -929,7 +986,7 @@ export function LogScreen() {
     const value = next.field === "load" && typed !== null ? loadFromInput(typed, next.unit ?? "kg") : typed;
     updateFocused((row) => ({
       ...row,
-      [next.field === "load" ? "loadKg" : "reps"]: value,
+      [ROW_KEY[next.field]]: value,
       // Once the athlete types a load it is theirs, not the suggestion's.
       ...(next.field === "load" ? { note: null, suggested: false } : {}),
     }));
@@ -942,7 +999,21 @@ export function LogScreen() {
    */
   const copyPrevious = (rowId: string) => {
     const previous = previousByRow.get(rowId);
-    if (!previous || !plans.some((row) => row.clientSetId === rowId)) return;
+    const target = plans.find((row) => row.clientSetId === rowId);
+    if (!previous || !target) return;
+    // A cardio row takes last time's time and level (F23), as typed.
+    if (cardioOf(target.exerciseId)) {
+      if (!isCardioSet(previous)) return;
+      const durationSeconds = previous.durationSeconds ?? null;
+      const level = previous.level ?? null;
+      setPlans((prev) =>
+        prev.map((row) => (row.clientSetId === rowId ? { ...row, durationSeconds, level, touched: true } : row)),
+      );
+      if (focusId === rowId && pad) {
+        setPad(beginEdit(pad.field, pad.field === "level" ? level : durationSeconds));
+      }
+      return;
+    }
     setPlans((prev) =>
       prev.map((row) =>
         row.clientSetId === rowId
@@ -1057,25 +1128,39 @@ export function LogScreen() {
     setAddingInline(false);
     setEditUnsaved(false);
     setConfirmDiscard(false);
-    setEditing({
-      clientSetId,
-      draft: draftOf(set, rpeToRestore(clientSetId)),
-      field: "load",
-      pad: beginEdit("load", loadIn(set.loadKg, unit), unit),
-    });
+    // A cardio set (F23) opens on its time, the number it is logged by.
+    setEditing(
+      isCardioSet(set)
+        ? {
+            clientSetId,
+            draft: draftOf(set),
+            field: "duration",
+            pad: beginEdit("duration", set.durationSeconds ?? null),
+          }
+        : {
+            clientSetId,
+            draft: draftOf(set, rpeToRestore(clientSetId)),
+            field: "load",
+            pad: beginEdit("load", loadIn(set.loadKg, unit), unit),
+          },
+    );
   };
 
   /** Moves the edit sheet to another field; the keypad starts from the draft's number. */
   const editField = (field: EditField) => {
     setEditing((prev) => {
       if (!prev || (field === "rpe" && prev.draft.isWarmup)) return prev;
-      const { loadKg, reps } = prev.draft;
+      const { loadKg, reps, durationSeconds, level } = prev.draft;
       const pad =
         field === "rpe" || field === "note"
           ? null
-          : field === "load"
-            ? beginEdit("load", loadKg === null ? null : loadIn(loadKg, unit), unit)
-            : beginEdit("reps", reps);
+          : field === "duration"
+            ? beginEdit("duration", durationSeconds ?? null)
+            : field === "level"
+              ? beginEdit("level", level ?? null)
+              : field === "load"
+                ? beginEdit("load", loadKg === null ? null : loadIn(loadKg, unit), unit)
+                : beginEdit("reps", reps);
       return { ...prev, field, pad };
     });
   };
@@ -1090,7 +1175,7 @@ export function LogScreen() {
       if (!prev) return prev;
       const typed = padValue(next);
       const value = next.field === "load" && typed !== null ? loadFromInput(typed, next.unit ?? "kg") : typed;
-      const draft = { ...prev.draft, [next.field === "load" ? "loadKg" : "reps"]: value };
+      const draft = { ...prev.draft, [ROW_KEY[next.field]]: value };
       return { ...prev, pad: next, draft };
     });
   };
@@ -1121,10 +1206,11 @@ export function LogScreen() {
   const saveEdit = () => {
     if (!editing) return;
     const id = editing.clientSetId;
-    const edit = editOf(editing.draft);
+    const set = all.find((s) => s.clientSetId === id);
+    // The exercise's flag, not the draft's (F20): 0 kg saves on a pull-up only.
+    const edit = editOf(editing.draft, set ? bodyweightOf(set.exerciseId) : false);
     if (!edit) return;
     setEditing(null);
-    const set = all.find((s) => s.clientSetId === id);
     if (!set || saving.has(id) || !changesSet(set, edit)) return;
     if (edit.isWarmup && !set.isWarmup) heldRpe.current.set(id, editing.draft.rpe);
     if (!edit.isWarmup) heldRpe.current.delete(id);
@@ -1160,7 +1246,18 @@ export function LogScreen() {
     const row = plans.find((each) => each.clientSetId === rowId);
     // The coach's video ask is a nudge, never a gate (Order 30): the badge
     // asks, the camera under the block takes the clip once the set exists.
-    if (!row || !active || !athleteId || !canComplete({ ...row, videoRequired: false })) return;
+    // 0 kg only on a bodyweight exercise (F20), the same rule the row's
+    // confirm square showed.
+    // A cardio row (F23) needs a time and nothing else.
+    const cardio = row ? cardioOf(row.exerciseId) : false;
+    if (
+      !row ||
+      !active ||
+      !athleteId ||
+      !canComplete({ ...row, videoRequired: false, isBodyweight: bodyweightOf(row.exerciseId), isCardio: cardio })
+    ) {
+      return;
+    }
     // Only the head of an exercise's plan is ever offered a confirm square;
     // this makes the rule hold even if a stale handler fires.
     if (headOf(plans, row.exerciseId)?.clientSetId !== rowId) return;
@@ -1174,11 +1271,17 @@ export function LogScreen() {
       exerciseId: row.exerciseId,
       clientSetId: row.clientSetId,
       setIndex: nextSetIndex(everything.filter((s) => s.exerciseId === row.exerciseId)),
-      loadKg: row.loadKg as number,
-      reps: row.reps as number,
-      rpe: row.rpe,
-      isWarmup: row.isWarmup,
-      ...(row.failed ? { failed: true } : {}),
+      // A cardio set (F23) is the inert 0 x 0 the helper stores, with its
+      // time and level; whatever strength numbers the row held do not go.
+      ...(cardio
+        ? { loadKg: 0, reps: 0, rpe: null, isWarmup: false, durationSeconds: row.durationSeconds, level: row.level ?? null }
+        : {
+            loadKg: row.loadKg as number,
+            reps: row.reps as number,
+            rpe: row.rpe,
+            isWarmup: row.isWarmup,
+            ...(row.failed ? { failed: true } : {}),
+          }),
       loggedAt: new Date(),
       // What a reload reads back from the queue too: it keeps a swapped
       // variant's set in its line's block.
@@ -1214,10 +1317,11 @@ export function LogScreen() {
         setIndex: optimistic.setIndex as number,
         loadKg: optimistic.loadKg,
         reps: optimistic.reps,
-        rpe: row.rpe,
-        isWarmup: row.isWarmup,
-        failed: row.failed === true,
+        rpe: (optimistic.rpe as RpeValue | null) ?? null,
+        isWarmup: optimistic.isWarmup,
+        failed: optimistic.failed === true,
         clientSetId: row.clientSetId,
+        ...(cardio ? { durationSeconds: optimistic.durationSeconds, level: optimistic.level ?? null } : {}),
         // Warm-ups answer no prescription: targets count working sets only.
         ...(row.prescriptionId && !row.isWarmup
           ? { prescriptionId: row.prescriptionId, prescribed: row.prescribed }
@@ -1251,7 +1355,10 @@ export function LogScreen() {
     // behind it: a set that failed to write never asks for a clip. Warm-ups
     // never ask, and an exercise already asked this session is not asked again.
     const blockId = blockOf(row.exerciseId);
-    if (!row.isWarmup && !wasNudged(active.id, blockId)) setNudgeCandidate({ setId: row.clientSetId, blockId });
+    // Never for cardio (F23): nothing films it in this version.
+    if (!cardio && !row.isWarmup && !wasNudged(active.id, blockId)) {
+      setNudgeCandidate({ setId: row.clientSetId, blockId });
+    }
   };
 
   const discardPlanned = (rowId: string) => {
@@ -1667,7 +1774,7 @@ export function LogScreen() {
    */
   const editDirty = (() => {
     if (!editing || !editingSet) return false;
-    const edit = editOf(editing.draft);
+    const edit = editOf(editing.draft, bodyweightOf(editingSet.exerciseId));
     return edit === null || changesSet(editingSet, edit);
   })();
 
@@ -1686,7 +1793,13 @@ export function LogScreen() {
         field={editing.field}
         pad={editing.pad}
         unit={unit}
-        canSave={editOf(editing.draft) !== null}
+        canSave={editOf(editing.draft, bodyweightOf(editingSet.exerciseId)) !== null}
+        saveBlocked={
+          // A cardio draft's 0 kg is the stored inert one (F23), not a slip.
+          !editing.draft.cardio && editing.draft.loadKg === 0 && !bodyweightOf(editingSet.exerciseId)
+            ? ZERO_LOAD_HINT
+            : null
+        }
         onField={editField}
         onPadChange={applyEditPad}
         onToggleWarmup={(isWarmup) => {
@@ -1704,7 +1817,8 @@ export function LogScreen() {
         // A finished upload must not re-attach a clip to a set just deleted.
         deleteDisabled={uploadingFor === editingSet.clientSetId}
         video={
-          athleteId ? (
+          // No clip on a cardio set in this version (F23).
+          athleteId && !editing.draft.cardio ? (
             <AttachVideo
               key={editingSet.clientSetId}
               setId={editingSet.clientSetId}
@@ -1740,6 +1854,18 @@ export function LogScreen() {
         now={now}
         onExtend={() => changeRest(extendRest(rest))}
         onSkip={() => changeRest(null)}
+      />
+    ) : bottom === "pad" && pad !== null && focused && cardioOf(focused.exerciseId) ? (
+      // A cardio row's pad (F23): time, then level, then done. No Warm-up
+      // and no Failed switch: neither is a thing a cardio set can be.
+      <NumberPad
+        inSheet
+        state={pad}
+        onChange={applyPad}
+        onNext={() => (pad.field === "duration" ? focusField(focusId, "level") : setPad(null))}
+        nextLabel={pad.field === "duration" ? "Level" : "Done"}
+        // On the level, Next is already Done: one way out, not two.
+        onDismiss={pad.field === "duration" ? () => setPad(null) : undefined}
       />
     ) : bottom === "pad" && pad !== null && focused ? (
       <NumberPad
@@ -1832,6 +1958,8 @@ export function LogScreen() {
                     rpe: (s.rpe as RpeValue | null) ?? null,
                     isWarmup: s.isWarmup,
                     ...(s.failed ? { failed: true } : {}),
+                    // F23: the row reads a cardio set off these.
+                    ...(isCardioSet(s) ? { durationSeconds: s.durationSeconds ?? null, level: s.level ?? null } : {}),
                     ...(asked(s.clientSetId) ? { videoRequired: true, hasVideo: hasClip(s) } : {}),
                     deleteBlocked:
                       commented.has(s.clientSetId) || refused.has(s.clientSetId) ? COACH_COMMENTED : null,
@@ -1850,6 +1978,8 @@ export function LogScreen() {
                   }))}
                   onCopyPrevious={copyPrevious}
                   historyHref={`/lift/${encodeURIComponent(exerciseId)}`}
+                  isBodyweight={bodyweightOf(exerciseId)}
+                  isCardio={cardioOf(exerciseId)}
                   focusedId={editingSet ? editingSet.clientSetId : pad !== null || rpeOpen ? focusId : null}
                   target={targetFor(block.id)}
                   unit={unit}
@@ -1950,7 +2080,8 @@ export function LogScreen() {
               clearOnSelect
               autoFocus
               onSelect={addExercise}
-              onCreate={createExercise}
+              onCreate={(name) => void createExercise(name)}
+              onCreateCardio={(name) => void createExercise(name, "cardio")}
               hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
             />
             <Button variant="ghost" size="sm" onClick={() => setAddingInline(false)}>
@@ -2085,7 +2216,8 @@ export function LogScreen() {
               placeholder="Add an exercise"
               clearOnSelect
               onSelect={addExercise}
-              onCreate={createExercise}
+              onCreate={(name) => void createExercise(name)}
+              onCreateCardio={(name) => void createExercise(name, "cardio")}
               hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
             />
           ) : null}

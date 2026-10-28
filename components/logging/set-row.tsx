@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { CameraIcon, TrashIcon } from "@/components/ui/icons";
@@ -11,7 +11,8 @@ import { PendingDot, UploadBar } from "@/components/ui/sync-mark";
 import { FailedMark } from "@/components/ui/failed-mark";
 import { LoadCell } from "./load-cell";
 import { SetNoteLine } from "./set-note-field";
-import { canComplete, completionBlocker, type LoggableSet } from "@/lib/logging/set";
+import { canComplete, completionBlocker, ZERO_LOAD_HINT, type LoggableSet } from "@/lib/logging/set";
+import { cardioLine, durationCell, spokenCardioLine, spokenDuration, type CardioValues } from "@/lib/logging/cardio";
 import { formatNumber } from "@/lib/logging/prefill";
 import { loadIn, loadLabel, loadNumber, unitName, type UnitPreference } from "@/lib/units";
 import type { PrKind } from "@/lib/strength/pr";
@@ -32,6 +33,13 @@ import type { PrKind } from "@/lib/strength/pr";
  *
  * Confirm is 56px, larger than its 48px neighbours, because it is the one
  * target that must be hit first time without looking.
+ *
+ * A cardio row (F23, `cardio`) keeps the grid and swaps what is in it: the
+ * time where the weight was, the level where the reps were, and nothing in
+ * the RPE column. Same cells, same 48px boxes, same confirm in the same
+ * place, so a thumb that knows the row knows this one. It has no warm-up
+ * number to flip, no Failed mark, no PR badge and no camera badge: none of
+ * them means anything for a stairmaster in this version.
  */
 
 const GRID = "26px 1fr 58px 58px var(--set-row-last)";
@@ -126,7 +134,7 @@ export interface SetRowProps {
    * squeezing the load. Absent when there is no last time or it could not
    * be read: nothing is shown, never an error.
    */
-  previous?: { loadKg: number; reps: number; failed?: boolean } | null;
+  previous?: ({ loadKg: number; reps: number; failed?: boolean } & CardioValues) | null;
   /**
    * Rows not logged yet: copies `previous` into the row. Makes the Previous
    * line a button.
@@ -157,6 +165,15 @@ export interface SetRowProps {
    * the same thing.
    */
   clip?: { posterId: string | null } | null;
+  /**
+   * The row is cardio (F23): a duration and a level instead of load, reps
+   * and RPE. The screen decides -- from the exercise's kind for a row not
+   * logged yet, from the set's own duration for a logged one.
+   */
+  cardio?: boolean;
+  /** Cardio rows not logged yet: opens the pad on the time, or on the level. */
+  onPressDuration?: () => void;
+  onPressLevel?: () => void;
 }
 
 export function SetRow({
@@ -188,6 +205,9 @@ export function SetRow({
   athleteNote = null,
   athleteNoteFull = false,
   clip = null,
+  cardio = false,
+  onPressDuration,
+  onPressLevel,
 }: SetRowProps) {
   const planned = state === "planned";
   const active = state === "active";
@@ -203,31 +223,46 @@ export function SetRow({
   const uploading = typeof uploadPercent === "number";
   // The coach's ask gates the confirm only where the row itself can film.
   const gated = !editing || Boolean(onFilm);
-  const checked = gated ? set : { ...set, videoRequired: false };
+  // The screen says which kind of row this is (F23), so the confirm applies
+  // that kind's rules whatever stray values the row carries.
+  const checked = { ...(gated ? set : { ...set, videoRequired: false }), isCardio: cardio };
   const blocker = completionBlocker(checked);
   const confirmable = canComplete(checked);
   const showCameraInRpeCell = active && blocker === "video-required";
+  // F20: a row reading "0 × 12" looks finished, so a dead confirm square
+  // beside it needs a reason. Only on the row the square belongs to; the
+  // screen sets `isBodyweight` from the exercise, so a pull-up never sees it.
+  const zeroLoadHint = active && blocker === "zero-load" ? ZERO_LOAD_HINT : null;
+  const hintId = useId();
   const selectable = state === "logged" && Boolean(onSelect);
 
   const size = warmup ? "warmup" : editing ? "active" : "logged";
   const setLabel = index === "W" ? "Warm-up set" : `Set ${index}`;
   const thumb = state === "logged" && clip ? clip : null;
   const videoBadge =
-    !thumb && set.videoRequired && !showCameraInRpeCell ? videoBadgeOf(set, editing, setLabel) : null;
-  const records = state === "logged" && pr && pr.length > 0 ? pr : null;
+    !cardio && !thumb && set.videoRequired && !showCameraInRpeCell ? videoBadgeOf(set, editing, setLabel) : null;
+  const records = !cardio && state === "logged" && pr && pr.length > 0 ? pr : null;
   // A set missed last time stays in line with its marker (F19), rather than
   // vanishing and sliding every later set onto the wrong row.
-  const previousText = previous
-    ? `${loadNumber(previous.loadKg, unit)} × ${previous.reps}${previous.failed ? " · failed" : ""}`
+  // A cardio row shows last time's cardio, and only that (F23): a strength
+  // set from before the exercise was made cardio has nothing to say here.
+  const previousCardio = previous && previous.durationSeconds != null ? previous : null;
+  const shownPrevious = cardio ? previousCardio : previous && !previousCardio ? previous : null;
+  const previousText = shownPrevious
+    ? cardio
+      ? cardioLine(shownPrevious)
+      : `${loadNumber(shownPrevious.loadKg, unit)} × ${shownPrevious.reps}${shownPrevious.failed ? " · failed" : ""}`
     : null;
   const copyable = Boolean(previousText && editing && onCopyPrevious);
-  const spokenPrevious = previous
-    ? `${loadNumber(previous.loadKg, unit)} ${unitName(unit)} for ${previous.reps} reps${previous.failed ? ", failed" : ""}`
+  const spokenPrevious = shownPrevious
+    ? cardio
+      ? spokenCardioLine(shownPrevious)
+      : `${loadNumber(shownPrevious.loadKg, unit)} ${unitName(unit)} for ${shownPrevious.reps} reps${shownPrevious.failed ? ", failed" : ""}`
     : "";
   // F19: the athlete missed it. Marked on the row in every state -- before
   // the confirm, so the switch in the sheet is visibly on the right set, and
   // after it, in the Log and in History, where it reads as part of the record.
-  const failed = set.failed === true;
+  const failed = !cardio && set.failed === true;
 
   const label = (
     <span
@@ -331,47 +366,77 @@ export function SetRow({
             label
           )}
 
-          <LoadCell
-            value={set.loadKg === null ? null : loadIn(set.loadKg, unit)}
-            size={size}
-            align="left"
-            editable={editing}
-            placeholder={editing ? unit.toUpperCase() : "—"}
-            onPress={onPressLoad}
-            label={`${setLabel} weight in ${unitName(unit)}`}
-            marker={editing && suggested ? "Suggested" : undefined}
-          />
-
-          <LoadCell
-            value={set.reps}
-            size={size}
-            align={editing ? "center" : "left"}
-            editable={editing}
-            placeholder={editing ? "REPS" : "—"}
-            onPress={onPressReps}
-            label={`${setLabel} reps`}
-          />
-
-          {showCameraInRpeCell ? (
-            <button
-              type="button"
-              onClick={onFilm}
-              aria-label={`Film ${setLabel} — video required before it can be logged`}
-              className="flex h-12 items-center justify-center rounded-chip border border-accent-fill bg-surface text-accent-fill"
-            >
-              <CameraIcon width={18} height={18} />
-            </button>
+          {cardio ? (
+            <>
+              <LoadCell
+                value={set.durationSeconds ?? null}
+                format={durationCell}
+                size={size}
+                align="left"
+                editable={editing}
+                placeholder={editing ? "MIN" : "—"}
+                onPress={onPressDuration}
+                label={`${setLabel} time${set.durationSeconds != null ? `, ${spokenDuration(set.durationSeconds)}` : ""}`}
+              />
+              <LoadCell
+                value={set.level ?? null}
+                size={size}
+                align={editing ? "center" : "left"}
+                editable={editing}
+                // Optional, and the placeholder says which field it is
+                // rather than looking like a value that is missing.
+                placeholder={editing ? "LVL" : "—"}
+                onPress={onPressLevel}
+                label={`${setLabel} level`}
+              />
+              {/* No RPE on cardio: the column stays so the confirm lines up. */}
+              <span />
+            </>
           ) : (
-            <LoadCell
-              value={set.rpe}
-              size={size}
-              align={editing ? "center" : "left"}
-              // Warm-ups never ask for RPE, so the cell is inert rather than empty.
-              editable={editing && !warmup}
-              placeholder={editing && !warmup ? "RPE" : "—"}
-              onPress={onPressRpe}
-              label={`${setLabel} RPE`}
-            />
+            <>
+              <LoadCell
+                value={set.loadKg === null ? null : loadIn(set.loadKg, unit)}
+                size={size}
+                align="left"
+                editable={editing}
+                placeholder={editing ? unit.toUpperCase() : "—"}
+                onPress={onPressLoad}
+                label={`${setLabel} weight in ${unitName(unit)}`}
+                marker={editing && suggested ? "Suggested" : undefined}
+              />
+
+              <LoadCell
+                value={set.reps}
+                size={size}
+                align={editing ? "center" : "left"}
+                editable={editing}
+                placeholder={editing ? "REPS" : "—"}
+                onPress={onPressReps}
+                label={`${setLabel} reps`}
+              />
+
+              {showCameraInRpeCell ? (
+                <button
+                  type="button"
+                  onClick={onFilm}
+                  aria-label={`Film ${setLabel} — video required before it can be logged`}
+                  className="flex h-12 items-center justify-center rounded-chip border border-accent-fill bg-surface text-accent-fill"
+                >
+                  <CameraIcon width={18} height={18} />
+                </button>
+              ) : (
+                <LoadCell
+                  value={set.rpe}
+                  size={size}
+                  align={editing ? "center" : "left"}
+                  // Warm-ups never ask for RPE, so the cell is inert rather than empty.
+                  editable={editing && !warmup}
+                  placeholder={editing && !warmup ? "RPE" : "—"}
+                  onPress={onPressRpe}
+                  label={`${setLabel} RPE`}
+                />
+              )}
+            </>
           )}
 
           {active ? (
@@ -380,6 +445,7 @@ export function SetRow({
               onClick={onConfirm}
               disabled={!confirmable}
               aria-label={`Log ${setLabel}`}
+              aria-describedby={zeroLoadHint ? hintId : undefined}
               className={cn(
                 "flex h-14 items-center justify-center rounded-chip text-value-lg font-bold",
                 confirmable
@@ -486,7 +552,7 @@ export function SetRow({
 
       {uploading ? <UploadBar percent={uploadPercent} flush /> : null}
 
-      {uploading || pendingSync || note || previousText ? (
+      {uploading || pendingSync || note || previousText || zeroLoadHint ? (
         <div className="flex justify-between gap-3 px-2.5 pt-[5px] font-mono text-label text-muted-2">
           <span className="flex min-w-0 items-center gap-3">
             {previousText ? (
@@ -512,7 +578,14 @@ export function SetRow({
                 </span>
               )
             ) : null}
-            {note ? <span className="min-w-0">{note}</span> : null}
+            {zeroLoadHint ? (
+              // In place of a suggestion's note: a 0 kg load is not one.
+              <span id={hintId} data-blocker="zero-load" className="min-w-0 text-muted">
+                {zeroLoadHint}
+              </span>
+            ) : note ? (
+              <span className="min-w-0">{note}</span>
+            ) : null}
             {!note && uploading ? <span>video uploading {Math.round(uploadPercent)}%</span> : null}
           </span>
           {pendingSync ? <span>queued · no signal</span> : null}
@@ -716,17 +789,21 @@ function useSwipeToDelete(ref: RefObject<HTMLElement | null>, onDelete?: () => v
   };
 }
 
-/** Column headers above a block of set rows. Mono, 9px, never a real table. */
-export function SetRowHeader({ unit = "kg" }: { unit?: UnitPreference } = {}) {
+/**
+ * Column headers above a block of set rows. Mono, 9px, never a real table.
+ * A cardio block (F23) heads its columns MIN and LEVEL, and the RPE column
+ * goes unnamed.
+ */
+export function SetRowHeader({ unit = "kg", cardio = false }: { unit?: UnitPreference; cardio?: boolean } = {}) {
   return (
     <div
       style={{ gridTemplateColumns: GRID, "--set-row-last": "34px" } as React.CSSProperties}
       className="grid items-center gap-2 px-2.5 font-mono text-label-xs text-muted-2"
     >
       <span>#</span>
-      <span>{unit.toUpperCase()}</span>
-      <span>REPS</span>
-      <span>RPE</span>
+      <span>{cardio ? "MIN" : unit.toUpperCase()}</span>
+      <span>{cardio ? "LEVEL" : "REPS"}</span>
+      <span>{cardio ? "" : "RPE"}</span>
       <span />
     </div>
   );

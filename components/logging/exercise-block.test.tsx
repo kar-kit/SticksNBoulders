@@ -226,3 +226,67 @@ describe("ExerciseBlock — last time, records and history (F6)", () => {
     expect(screen.queryAllByRole("button", { name: /use last time/ })).toHaveLength(1);
   });
 });
+
+describe("ExerciseBlock — a bodyweight exercise (F20)", () => {
+  it("lends the flag to its rows, so the head confirms at 0 kg", () => {
+    render(<ExerciseBlock name="Pull Up" sets={[]} planned={[row("p1", { loadKg: 0, reps: 10 })]} isBodyweight />);
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+  });
+
+  it("leaves 0 kg refused on an exercise without it", () => {
+    render(<ExerciseBlock name="Squat" sets={[]} planned={[row("p1", { loadKg: 0, reps: 10 })]} />);
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeDisabled();
+  });
+});
+
+describe("ExerciseBlock — a cardio exercise (F23)", () => {
+  it("asks its rows for a time and a level, and logs one on a time alone", () => {
+    render(
+      <ExerciseBlock
+        name="Stairmaster"
+        sets={[]}
+        planned={[row("p1", { loadKg: null, reps: null, durationSeconds: 900 })]}
+        isCardio
+        historyHref="/lift/stairs"
+      />,
+    );
+    expect(screen.getByText("MIN")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set 1 time, 15 minutes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Log Set 1" })).toBeEnabled();
+    // Lift Detail is records and e1RM, neither of which cardio has.
+    expect(screen.queryByRole("link", { name: /history and records/ })).not.toBeInTheDocument();
+  });
+
+  it("opens the pad on the field tapped", async () => {
+    const onFocus = vi.fn();
+    render(
+      <ExerciseBlock name="Bike" sets={[]} planned={[row("p1", { loadKg: null, reps: null })]} isCardio onFocus={onFocus} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Set 1 time" }));
+    await userEvent.click(screen.getByRole("button", { name: "Set 1 level" }));
+    expect(onFocus.mock.calls).toEqual([
+      ["p1", "duration"],
+      ["p1", "level"],
+    ]);
+  });
+
+  it("draws its logged sets as cardio, with no camera and no warm-up switch", () => {
+    render(
+      <ExerciseBlock
+        name="Bike"
+        sets={[logged("s1", { loadKg: 0, reps: 0, rpe: null, durationSeconds: 1200, level: 8 })]}
+        isCardio
+        camera={<button type="button">Film</button>}
+        onToggleWarmup={vi.fn()}
+      />,
+    );
+    expect(screen.getByLabelText("Set 1 time, 20 minutes")).toHaveTextContent("20");
+    expect(screen.queryByRole("button", { name: "Film" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /mark as warm-up/ })).not.toBeInTheDocument();
+  });
+
+  it("still draws a strength set logged before the exercise was made cardio as a lift", () => {
+    render(<ExerciseBlock name="Bike" sets={[logged("s1", { loadKg: 100, reps: 5 })]} isCardio />);
+    expect(screen.getByLabelText("Set 1 weight in kilograms")).toHaveTextContent("100");
+  });
+});

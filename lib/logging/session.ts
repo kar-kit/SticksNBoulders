@@ -1,3 +1,5 @@
+import { cardioSeconds, isCardioSet, isStrengthSet, type CardioValues } from "./cardio";
+
 /**
  * Rules about a training session, kept out of the components that draw it.
  *
@@ -21,7 +23,7 @@ export interface SessionRecord {
   name?: string | null;
 }
 
-export interface SessionSet {
+export interface SessionSet extends CardioValues {
   exerciseId: string;
   exerciseName: string;
   loadKg: number;
@@ -121,6 +123,12 @@ export interface SessionSummary {
   tonnageKg: number;
   exerciseCount: number;
   warmupCount: number;
+  /**
+   * Total cardio time, in seconds (F23). Its own figure, never folded into
+   * the set count or the tonnage. Optional so a summary held from before v21
+   * reads as none.
+   */
+  cardioSeconds?: number;
 }
 
 /**
@@ -134,12 +142,19 @@ export interface SessionSummary {
  * [SME to confirm] with Ruairi, who may well count everything that moved.
  */
 export function summariseSession(sets: readonly SessionSet[]): SessionSummary {
-  const working = sets.filter((set) => !set.isWarmup);
+  // Cardio (F23) first, and out: a set count and a tonnage are strength
+  // figures, and `isStrengthSet` fails closed (lib/logging/cardio.ts). The
+  // stored `sessions.set_count` and `tonnage_kg` are written from this, so
+  // they never carry a treadmill either.
+  const strength = sets.filter(isStrengthSet);
+  const working = strength.filter((set) => !set.isWarmup);
   return {
     setCount: working.length,
     tonnageKg: Math.round(working.reduce((total, set) => total + set.loadKg * set.reps, 0) * 10) / 10,
+    // Every exercise trained, cardio included: the Bike was in the session.
     exerciseCount: new Set(sets.map((set) => set.exerciseId)).size,
-    warmupCount: sets.length - working.length,
+    warmupCount: strength.length - working.length,
+    cardioSeconds: cardioSeconds(sets.filter(isCardioSet)),
   };
 }
 

@@ -65,6 +65,19 @@ function isUsableLoad(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+/**
+ * A load the athlete already logged, for rules 3 and 4: zero allowed (F20).
+ *
+ * A 0 kg set exists only because the Log accepted it, which it does only on
+ * an exercise flagged bodyweight, so repeating it is repeating a pull-up at
+ * bodyweight -- straight sets cost one tap there too. Rules 1 and 2 stay
+ * strictly above zero: a prescription or a suggestion of "0 kg" is a number
+ * nothing meant (a suggestion is never made from a 0 kg set anyway).
+ */
+function isRepeatableLoad(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 function isUsableReps(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
@@ -106,11 +119,11 @@ export function resolvePrefill(inputs: PrefillInputs = {}): Prefill {
     };
   }
 
-  if (previousSetThisSession && isUsableLoad(previousSetThisSession.loadKg)) {
+  if (previousSetThisSession && isRepeatableLoad(previousSetThisSession.loadKg)) {
     return { loadKg: previousSetThisSession.loadKg, reps, source: "repeated", note: null };
   }
 
-  if (sameExerciseLastSession && isUsableLoad(sameExerciseLastSession.loadKg)) {
+  if (sameExerciseLastSession && isRepeatableLoad(sameExerciseLastSession.loadKg)) {
     return {
       loadKg: sameExerciseLastSession.loadKg,
       reps,

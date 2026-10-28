@@ -11,6 +11,7 @@ import {
   MAX_RESULTS,
   type Exercise,
 } from "@/lib/exercises/match";
+import { isCardioExercise } from "@/lib/exercises/kind";
 
 /**
  * Choosing an exercise by typing its name.
@@ -42,6 +43,12 @@ export interface ExerciseTypeaheadProps {
    * the coach's Program Editor may want that; the athlete's logger never does.
    */
   onCreate?: (name: string) => void;
+  /**
+   * Called with a new name the athlete wants as a cardio exercise (F23): a
+   * second create option, "Add as cardio", under the first. Omit for no
+   * such option -- the Program Editor does not offer it.
+   */
+  onCreateCardio?: (name: string) => void;
   placeholder?: string;
   /** `lg` is the 56px field. Default `md` matches every other field at 48px. */
   size?: "md" | "lg";
@@ -62,12 +69,13 @@ export interface ExerciseTypeaheadProps {
 
 type Option =
   | { kind: "exercise"; exercise: Exercise }
-  | { kind: "create"; name: string };
+  | { kind: "create"; name: string; cardio?: boolean };
 
 export function ExerciseTypeahead({
   exercises,
   onSelect,
   onCreate,
+  onCreateCardio,
   placeholder = "Type an exercise",
   size = "md",
   label = "Exercise",
@@ -108,9 +116,12 @@ export function ExerciseTypeahead({
       // Last, never first. Selecting an existing lift is the common case, and
       // a create option under the thumb would split a lift's history in two.
       list.push({ kind: "create", name: trimmed });
+      // F23: the same new name, as cardio. After the plain create, so the
+      // first create a thumb meets is still the one it always was.
+      if (onCreateCardio) list.push({ kind: "create", name: trimmed, cardio: true });
     }
     return list;
-  }, [query, exercises, limit, onCreate]);
+  }, [query, exercises, limit, onCreate, onCreateCardio]);
 
   const clamped = Math.min(activeIndex, Math.max(0, options.length - 1));
 
@@ -121,7 +132,8 @@ export function ExerciseTypeahead({
       onSelect(option.exercise);
     } else {
       setQuery(clearOnSelect ? "" : option.name);
-      onCreate?.(option.name);
+      if (option.cardio) onCreateCardio?.(option.name);
+      else onCreate?.(option.name);
     }
     setOpen(false);
     setActiveIndex(0);
@@ -211,7 +223,8 @@ export function ExerciseTypeahead({
         >
           {options.map((option, index) => {
             const active = index === clamped;
-            const key = option.kind === "create" ? `create:${option.name}` : option.exercise.id;
+            const key =
+              option.kind === "create" ? `create${option.cardio ? "-cardio" : ""}:${option.name}` : option.exercise.id;
             return (
               <li key={key} className="contents">
                 <button
@@ -221,8 +234,8 @@ export function ExerciseTypeahead({
                   aria-selected={active}
                   aria-label={
                     option.kind === "create"
-                      ? `Add custom exercise: ${option.name}`
-                      : option.exercise.name
+                      ? `Add custom ${option.cardio ? "cardio " : ""}exercise: ${option.name}`
+                      : `${option.exercise.name}${isCardioExercise(option.exercise) ? ", cardio" : ""}`
                   }
                   // Selection must survive the blur that a tap would otherwise
                   // fire first, closing the list before the click lands.
@@ -244,8 +257,14 @@ export function ExerciseTypeahead({
                   {option.kind === "exercise" ? (
                     <>
                       <span className="text-body text-foreground">{option.exercise.name}</span>
-                      {!option.exercise.isGlobal ? (
-                        <span className="font-mono text-label uppercase text-muted-2">yours</span>
+                      {isCardioExercise(option.exercise) || !option.exercise.isGlobal ? (
+                        // F23: cardio says so before it is picked, so nobody
+                        // adds the Bike expecting a weight and reps.
+                        <span className="font-mono text-label uppercase text-muted-2">
+                          {[isCardioExercise(option.exercise) ? "cardio" : null, option.exercise.isGlobal ? null : "yours"]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
                       ) : null}
                     </>
                   ) : (
@@ -258,7 +277,9 @@ export function ExerciseTypeahead({
                         library forever and nothing should get there unseen.
                       */}
                       <span className="flex flex-col gap-0.5 py-2">
-                        <span className="text-body text-foreground">Add custom exercise</span>
+                        <span className="text-body text-foreground">
+                          {option.cardio ? "Add as cardio" : "Add custom exercise"}
+                        </span>
                         <span className="text-caption text-muted">&ldquo;{option.name}&rdquo;</span>
                       </span>
                       <span className="font-mono text-label uppercase text-muted-2">new</span>

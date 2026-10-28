@@ -73,6 +73,15 @@ distinction the RPE sheet exists to capture.
   edit sheet recomputes the stored value like any other correction, and
   `e1rm:backfill` reads `failed` too, so a re-run clears any estimate a failed
   set should not have.
+- **A bodyweight set at 0 kg (F20, schema v20).** Logged on an exercise
+  flagged `is_bodyweight` (a pull-up with nothing on the belt). Brzycki on 0 kg
+  is 0, which is not an estimate of anyone's max, so `estimateOneRepMax`
+  returns null -- never 0, never NaN -- and the column stays unset. A weighted
+  pull-up (+20 kg) is estimated on its added load, exactly as before F20.
+- **A cardio set (F23, schema v21).** A duration and a level, not a lift.
+  `estimateOneRepMax` refuses any set carrying either (`isCardioSet`), whatever
+  load and reps it holds, and the write helper stores a cardio set with no
+  e1RM at all; `e1rm:backfill` reads the two columns and clears any.
 
 ## Where it is computed
 

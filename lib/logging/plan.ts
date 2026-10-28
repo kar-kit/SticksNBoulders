@@ -1,6 +1,7 @@
 import { resolvePrefill, type Suggestion } from "./prefill";
 import type { RpeValue } from "./set";
 import type { UnitPreference } from "@/lib/units";
+import { isCardioSet, type CardioValues } from "./cardio";
 
 /**
  * The rows an athlete has not logged yet.
@@ -17,7 +18,12 @@ import type { UnitPreference } from "@/lib/units";
  * shows up mid-session.
  */
 
-export interface PlannedRow {
+/**
+ * A row not logged yet. On a cardio exercise (F23) it is typed into
+ * `durationSeconds` and `level` and its load and reps stay null; which cells
+ * a row shows is the exercise's kind, read by the screen, not anything here.
+ */
+export interface PlannedRow extends CardioValues {
   exerciseId: string;
   /** Generated when the row appears, reused as the Appwrite row id on confirm. */
   clientSetId: string;
@@ -73,7 +79,8 @@ export interface PlannedRow {
   touched?: boolean;
 }
 
-export interface LoggedValues {
+/** The set a new row follows. A cardio one (F23) also says how long and at what level. */
+export interface LoggedValues extends CardioValues {
   loadKg: number;
   reps: number;
 }
@@ -87,12 +94,29 @@ export interface LoggedValues {
  */
 export function rowAfter(
   exerciseId: string,
-  previous: { loadKg: number | null; reps: number | null } | null,
+  previous: ({ loadKg: number | null; reps: number | null } & CardioValues) | null,
   newId: () => string,
   planned = false,
   suggestion: Suggestion | null = null,
   unit: UnitPreference = "kg",
 ): PlannedRow {
+  // F23: after a cardio set, the next row repeats its duration and level --
+  // three rounds of five minutes is one tap each -- and never its stored
+  // 0 x 0, which is not a load or a rep count. No suggestion: nothing prices
+  // a cardio row.
+  if (previous && isCardioSet(previous)) {
+    return {
+      exerciseId,
+      clientSetId: newId(),
+      loadKg: null,
+      reps: null,
+      rpe: null,
+      isWarmup: false,
+      planned,
+      durationSeconds: previous.durationSeconds ?? null,
+      level: previous.level ?? null,
+    };
+  }
   const prefill = resolvePrefill({
     unit,
     suggestion,
@@ -192,10 +216,12 @@ export function afterConfirm(
  */
 export function refreshBehind(
   rows: readonly PlannedRow[],
-  logged: { exerciseId: string; loadKg: number; reps: number; isWarmup: boolean; failed?: boolean },
+  logged: { exerciseId: string; loadKg: number; reps: number; isWarmup: boolean; failed?: boolean } & CardioValues,
 ): { rows: PlannedRow[]; reprice: Set<string> } {
   const reprice = new Set<string>();
-  if (logged.isWarmup || logged.failed) return { rows: [...rows], reprice };
+  // Nor a cardio set (F23): rows behind it already repeat it (`rowAfter`),
+  // and there is no load to reprice them from.
+  if (logged.isWarmup || logged.failed || isCardioSet(logged)) return { rows: [...rows], reprice };
   const next = rows.map((row) => {
     if (row.exerciseId !== logged.exerciseId || row.touched || row.isWarmup) return row;
     reprice.add(row.clientSetId);

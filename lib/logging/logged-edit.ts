@@ -1,6 +1,7 @@
 import { canComplete, type RpeValue } from "./set";
 import type { SetValues } from "./offline-view";
 import { noteOf } from "./set-note";
+import { canCompleteCardio, isCardioSet } from "./cardio";
 
 /**
  * Correcting a set already logged, from the Log (F9).
@@ -37,6 +38,17 @@ export interface EditDraft {
    * spaces while they type. Blank is no note; `editOf` decides what is stored.
    */
   notes: string;
+  /**
+   * The set being corrected is cardio (F23): the sheet edits its time and
+   * level, and Save writes those. Fixed when the sheet opens, from the set
+   * itself, so backspacing the time empty never turns it into a strength
+   * draft. Absent is false.
+   */
+  cardio?: boolean;
+  /** A cardio draft's time in seconds, null while backspaced empty. */
+  durationSeconds?: number | null;
+  /** A cardio draft's level, null for none. */
+  level?: number | null;
 }
 
 /**
@@ -55,13 +67,19 @@ export function draftOf(set: SetValues, heldRpe: number | null = null): EditDraf
     isWarmup: set.isWarmup,
     failed: set.failed === true,
     notes: set.notes ?? "",
+    ...(isCardioSet(set)
+      ? { cardio: true, durationSeconds: set.durationSeconds ?? null, level: set.level ?? null }
+      : {}),
   };
 }
 
 /**
  * What Save writes, or null when the draft is not a set yet (no load, no
  * reps, or zero of either: the same rule as the confirm square -- except
- * that a failed set may be saved with 0 reps, F19).
+ * that a failed set may be saved with 0 reps, F19, and a set of a bodyweight
+ * exercise at 0 kg, F20). `isBodyweight` is the exercise's flag, which the
+ * draft does not carry: correcting a pull-up to 0 kg saves, correcting a
+ * squat to 0 kg does not, exactly as when they were logged.
  *
  * The note always goes with it, trimmed, and null when blank: a Save from
  * this sheet is a statement about the whole set, note included, so emptying
@@ -71,8 +89,23 @@ export function draftOf(set: SetValues, heldRpe: number | null = null): EditDraf
  * of PRs and rollups, and the stored e1RM is recomputed from these four
  * values, so an RPE left on a warm-up would be a number nothing reads.
  */
-export function editOf(draft: EditDraft): SetValues | null {
-  if (!canComplete(draft)) return null;
+export function editOf(draft: EditDraft, isBodyweight = false): SetValues | null {
+  // A cardio correction (F23) saves a time above zero and an optional level,
+  // with the strength values as the inert ones the helper stores anyway.
+  if (draft.cardio) {
+    if (!canCompleteCardio(draft)) return null;
+    return {
+      loadKg: 0,
+      reps: 0,
+      rpe: null,
+      isWarmup: false,
+      failed: false,
+      notes: noteOf(draft.notes),
+      durationSeconds: draft.durationSeconds as number,
+      level: draft.level ?? null,
+    };
+  }
+  if (!canComplete({ ...draft, isBodyweight })) return null;
   return {
     loadKg: draft.loadKg as number,
     reps: draft.reps as number,
@@ -96,6 +129,9 @@ export function changesSet(set: SetValues, edit: SetValues): boolean {
     set.isWarmup !== edit.isWarmup ||
     // Absent is false: every set before v19, and every edit that predates F19.
     (set.failed === true) !== (edit.failed === true) ||
+    // F23: a cardio set's time and level. Absent and null are both none.
+    (set.durationSeconds ?? null) !== (edit.durationSeconds ?? null) ||
+    (set.level ?? null) !== (edit.level ?? null) ||
     // A set with no note and a draft left blank are the same: absent, null
     // and "" all mean none.
     (edit.notes !== undefined && noteOf(set.notes) !== noteOf(edit.notes))

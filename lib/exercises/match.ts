@@ -25,6 +25,19 @@ export interface Exercise {
    * that logs reads it. Absent and false mean the same.
    */
   videoDefault?: boolean;
+  /**
+   * A bodyweight movement (F20, schema v20): a set of it may be logged at
+   * 0 kg. Absent and false mean the same -- every row from before v20, and
+   * every library the device cached before then. See ./bodyweight.ts.
+   */
+  isBodyweight?: boolean;
+  /**
+   * What a set of it records (F23, schema v21): "cardio" is a duration and
+   * an optional level, anything else -- absent included, which is every row
+   * and every cached library from before v21 -- is strength. Read it through
+   * `kindOf` in ./kind.ts rather than comparing it here.
+   */
+  kind?: "strength" | "cardio";
 }
 
 /**

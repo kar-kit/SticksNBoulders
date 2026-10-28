@@ -1,6 +1,7 @@
 import { weekStart } from "@/lib/strength/rollup";
 import { calendarDayLabel, type SessionRecord } from "./session";
 import { sessionTitle } from "./session-edit";
+import { formatCardioTotal } from "./cardio";
 
 /**
  * The History list.
@@ -29,8 +30,29 @@ export interface HistoryCard {
   exerciseNames: string[];
   setCount: number;
   tonnageKg: number;
+  /**
+   * Cardio time in the session, in seconds (F23). From the sets the screen
+   * already reads for the exercise names, because the session row's stored
+   * totals are strength figures and hold none. 0 when there was none, or
+   * when the sets could not be read.
+   */
+  cardioSeconds: number;
   /** Logged on this device and not yet at Appwrite. A quiet mark, never an error. */
   pendingSync: boolean;
+}
+
+/**
+ * The numbers line of a card: "12 sets · 4,200 kg", then the cardio time
+ * (F23) -- "12 sets · 4,200 kg · 20 min cardio". A session of nothing but
+ * cardio reads "20 min cardio" rather than "0 sets", which would say the
+ * session was empty. `tonnage` is the screen's, in the athlete's unit.
+ */
+export function cardStatsLine(card: Pick<HistoryCard, "setCount" | "cardioSeconds">, tonnage: string | null): string {
+  const parts: string[] = [];
+  if (card.setCount > 0 || card.cardioSeconds <= 0) parts.push(`${card.setCount} set${card.setCount === 1 ? "" : "s"}`);
+  if (tonnage) parts.push(tonnage);
+  if (card.cardioSeconds > 0) parts.push(`${formatCardioTotal(card.cardioSeconds)} cardio`);
+  return parts.join(" · ");
 }
 
 export interface HistoryWeek {
@@ -142,6 +164,7 @@ export function historyCards(
   exercisesOf: (sessionId: string) => string[],
   isPending: (sessionId: string) => boolean = () => false,
   dayLabelOf: (programDayId: string) => string | null = () => null,
+  cardioOf: (sessionId: string) => number = () => 0,
 ): HistoryCard[] {
   return sessions.map((session) => ({
     sessionId: session.id,
@@ -154,6 +177,7 @@ export function historyCards(
     exerciseNames: exercisesOf(session.id),
     setCount: session.setCount,
     tonnageKg: session.tonnageKg,
+    cardioSeconds: cardioOf(session.id),
     pendingSync: isPending(session.id),
   }));
 }

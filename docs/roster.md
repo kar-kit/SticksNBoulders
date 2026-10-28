@@ -11,7 +11,7 @@ teams. No server key, no new tables, nothing written.
 | Column | Read | Note |
 | --- | --- | --- |
 | This week: sessions | `sessions`, finished, started in this London week | one row per session; a count of rows, not a GROUP BY over sets |
-| This week: sets | `stats_rollups` for this `week_start`, summed across lifts | working sets only, same rule as the rollups |
+| This week: sets | `stats_rollups` for this `week_start`, summed across lifts | working sets only, same rule as the rollups. Cardio (F23) is never a set: it has no rollup. A cardio-only session still counts in "sessions" -- it was one |
 | Videos | `sets` with a clip, minus this coach's `set_reviews` | the Review Queue's own two reads |
 | Bodyweight | `bodyweight_entries`, last 21 days; newest-ever for anyone with none | trend from `lib/bodyweight`'s window rule |
 | Block | `fetchProgramSignals` | the athlete's live published program, decided in `lib/coach/program-signals.ts` (Order 19) |

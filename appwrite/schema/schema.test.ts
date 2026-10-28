@@ -510,7 +510,7 @@ describe("re-queueing a replaced clip (v18)", () => {
 
 describe("failed sets (v19, F19)", () => {
   it("record a miss as one nullable boolean with no default, so every existing set is untouched", () => {
-    expect(schema.version).toBe(19);
+    expect(schema.version).toBeGreaterThanOrEqual(19);
     // No default: a default would have Appwrite stamp a value on every row
     // when the column is created. Null reads as not failed everywhere.
     expect(table("sets").columns.find((c) => c.key === "failed")).toEqual({
@@ -524,5 +524,54 @@ describe("failed sets (v19, F19)", () => {
 
   it("let reps go to 0, which is how a missed single is logged", () => {
     expect(table("sets").columns.find((c) => c.key === "reps")).toMatchObject({ type: "integer", min: 0 });
+  });
+});
+
+describe("bodyweight exercises (v20, F20)", () => {
+  it("flag a bodyweight movement with one nullable boolean and no default, so every existing exercise is untouched", () => {
+    expect(schema.version).toBeGreaterThanOrEqual(20);
+    // No default, like video_default: null reads as not bodyweight, and
+    // applying the column rewrites no row.
+    expect(table("exercises").columns.find((c) => c.key === "is_bodyweight")).toEqual({
+      key: "is_bodyweight",
+      type: "boolean",
+      required: false,
+    });
+    expect(table("exercises").indexes.some((i) => i.columns.includes("is_bodyweight"))).toBe(false);
+  });
+
+  it("already let a set's load be 0, so a 0 kg pull-up needs no change to the sets table", () => {
+    expect(table("sets").columns.find((c) => c.key === "load_kg")).toMatchObject({ type: "float", min: 0 });
+  });
+});
+
+describe("cardio (v21, F23)", () => {
+  it("adds an exercise kind as a nullable enum with no default, so every existing exercise stays strength", () => {
+    expect(schema.version).toBe(21);
+    expect(table("exercises").columns.find((c) => c.key === "kind")).toEqual({
+      key: "kind",
+      type: "enum",
+      elements: ["strength", "cardio"],
+      required: false,
+    });
+    expect(table("exercises").indexes.some((i) => i.columns.includes("kind"))).toBe(false);
+  });
+
+  it("puts a cardio set in the sets table with two nullable columns and no default, so no set is rewritten", () => {
+    const columns = table("sets").columns;
+    expect(columns.find((c) => c.key === "duration_seconds")).toEqual({
+      key: "duration_seconds",
+      type: "integer",
+      required: false,
+      min: 1,
+      max: 86400,
+    });
+    expect(columns.find((c) => c.key === "level")).toEqual({ key: "level", type: "float", required: false, min: 0, max: 100 });
+    expect(table("sets").indexes.some((i) => i.columns.some((c) => c === "duration_seconds" || c === "level"))).toBe(false);
+  });
+
+  it("already lets a set store load 0 and reps 0, the inert pair a cardio set carries", () => {
+    expect(table("sets").columns.find((c) => c.key === "load_kg")).toMatchObject({ required: true, min: 0 });
+    expect(table("sets").columns.find((c) => c.key === "reps")).toMatchObject({ required: true, min: 0 });
   });
 });

@@ -10,9 +10,10 @@ import type { LoggableSet, RpeValue } from "@/lib/logging/set";
 import { plannedIndex } from "@/lib/logging/plan";
 import type { UnitPreference } from "@/lib/units";
 import type { PrKind } from "@/lib/strength/pr";
+import { isCardioSet, type CardioValues } from "@/lib/logging/cardio";
 
-/** Last time's set lined up with a row, for its Previous line. */
-export interface PreviousValues {
+/** Last time's set lined up with a row, for its Previous line. A cardio one (F23) carries its duration and level. */
+export interface PreviousValues extends CardioValues {
   loadKg: number;
   reps: number;
   /** F19: last time's set was missed; the line says so. */
@@ -69,7 +70,7 @@ export interface ExerciseBlockProps {
   planned?: readonly PlannedSet[];
   /** The row the pad is editing, if it is in this exercise: planned, or a logged set being corrected. */
   focusedId?: string | null;
-  onFocus?: (clientSetId: string, field: "load" | "reps" | "rpe") => void;
+  onFocus?: (clientSetId: string, field: "load" | "reps" | "rpe" | "duration" | "level") => void;
   onConfirm?: (clientSetId: string) => void;
   onDiscard?: (clientSetId: string) => void;
   /**
@@ -131,6 +132,20 @@ export interface ExerciseBlockProps {
    * typed and not logged yet.
    */
   historyHref?: string | null;
+  /**
+   * The exercise is flagged bodyweight (F20): its rows may be logged at 0 kg.
+   * A fact about the exercise, so it is given once here and lent to every
+   * row, rather than carried on each set. Absent is false.
+   */
+  isBodyweight?: boolean;
+  /**
+   * The exercise is cardio (F23): its rows not logged yet ask for a time and
+   * a level. Logged sets go by their own duration, so a strength set logged
+   * before the kind flipped still reads as one. No camera and no Lift Detail
+   * link on a cardio block -- nothing films it in this version, and Lift
+   * Detail is records and e1RM, neither of which cardio has.
+   */
+  isCardio?: boolean;
 }
 
 /**
@@ -169,6 +184,8 @@ export function ExerciseBlock({
   prescribedAs = null,
   onCopyPrevious,
   historyHref = null,
+  isBodyweight = false,
+  isCardio = false,
 }: ExerciseBlockProps) {
   const working = sets.filter((s) => !s.isWarmup).length;
   const open = planned.length > 0;
@@ -201,7 +218,7 @@ export function ExerciseBlock({
           </button>
         )}
         <span className="flex flex-none items-center">
-        {historyHref ? (
+        {historyHref && !isCardio ? (
           // A drill-in: /lift/[id] is deeper than /log, so the shell's screen
           // transition slides it in (F7) with nothing set here.
           <Link
@@ -285,7 +302,7 @@ export function ExerciseBlock({
         </ul>
       ) : null}
 
-      {sets.length > 0 || open ? <SetRowHeader unit={unit} /> : null}
+      {sets.length > 0 || open ? <SetRowHeader unit={unit} cardio={isCardio} /> : null}
 
       <div className="flex flex-col gap-1.5">
         {sets.map((set, at) => (
@@ -293,6 +310,7 @@ export function ExerciseBlock({
             key={set.clientSetId}
             index={displayIndex(sets, at)}
             set={set}
+            cardio={isCardioSet(set)}
             state="logged"
             pendingSync={set.pendingSync}
             selected={selectedId === set.clientSetId}
@@ -300,7 +318,7 @@ export function ExerciseBlock({
             onSelect={onSelect ? () => onSelect(set.clientSetId) : undefined}
             onDelete={onDelete ? () => onDelete(set.clientSetId) : undefined}
             deleteBlocked={set.deleteBlocked ?? null}
-            onToggleWarmup={onToggleWarmup ? () => onToggleWarmup(set.clientSetId) : undefined}
+            onToggleWarmup={onToggleWarmup && !isCardioSet(set) ? () => onToggleWarmup(set.clientSetId) : undefined}
             unit={unit}
             previous={set.previous ?? null}
             pr={set.pr ?? null}
@@ -314,7 +332,8 @@ export function ExerciseBlock({
           <SetRow
             key={row.clientSetId}
             index={plannedIndex(working, planned, at)}
-            set={row}
+            set={isBodyweight ? { ...row, isBodyweight: true } : row}
+            cardio={isCardio}
             state={at === 0 ? "active" : "planned"}
             focused={focusedId === row.clientSetId}
             note={row.note ?? null}
@@ -322,9 +341,11 @@ export function ExerciseBlock({
             onPressLoad={() => onFocus?.(row.clientSetId, "load")}
             onPressReps={() => onFocus?.(row.clientSetId, "reps")}
             onPressRpe={() => onFocus?.(row.clientSetId, "rpe")}
+            onPressDuration={() => onFocus?.(row.clientSetId, "duration")}
+            onPressLevel={() => onFocus?.(row.clientSetId, "level")}
             onConfirm={() => onConfirm?.(row.clientSetId)}
             onDiscard={onDiscard ? () => onDiscard(row.clientSetId) : undefined}
-            onToggleWarmup={onToggleWarmup ? () => onToggleWarmup(row.clientSetId) : undefined}
+            onToggleWarmup={onToggleWarmup && !isCardio ? () => onToggleWarmup(row.clientSetId) : undefined}
             unit={unit}
             arrived={arrived(row.clientSetId)}
             previous={row.previous ?? null}
@@ -351,7 +372,7 @@ export function ExerciseBlock({
           ) : (
             <span />
           )}
-          {sets.length > 0 ? camera : null}
+          {sets.length > 0 && !isCardio ? camera : null}
         </div>
       ) : null}
     </section>

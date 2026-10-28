@@ -26,6 +26,8 @@ import {
   type ResolvedMax,
   type StoredKind,
 } from "@/lib/strength/reference-max";
+import { cardioLine, type CardioValues } from "@/lib/logging/cardio";
+import { formatNumber } from "@/lib/logging/prefill";
 
 // --- access ------------------------------------------------------------------
 
@@ -295,7 +297,8 @@ export function maxSource(max: ResolvedMax, entries: readonly ReferenceMaxEntry[
 
 // --- sessions ----------------------------------------------------------------
 
-export interface BlockSet {
+/** A set in the coach's session view. A cardio one (F23) carries its time and level. */
+export interface BlockSet extends CardioValues {
   loadKg: number;
   reps: number;
   rpe: number | null;
@@ -354,9 +357,23 @@ export function exerciseBlocks(
       isWarmup: set.isWarmup,
       ...(set.failed ? { failed: true } : {}),
       ...(set.notes?.trim() ? { notes: set.notes.trim() } : {}),
+      ...(set.durationSeconds != null || set.level != null
+        ? { durationSeconds: set.durationSeconds ?? null, level: set.level ?? null }
+        : {}),
     });
   }
   return blocks;
+}
+
+/**
+ * How one set reads in the coach's session view: "140 × 5 @8", or for a
+ * cardio set (F23) "20 min · level 8" -- never the stored 0 × 0, which would
+ * read as a lift that did not happen. Warm-up and failed marks stay the
+ * screen's.
+ */
+export function blockSetText(set: BlockSet): string {
+  if (set.durationSeconds != null || set.level != null) return cardioLine(set);
+  return `${formatNumber(set.loadKg)} × ${set.reps}${set.rpe === null ? "" : ` @${formatNumber(set.rpe)}`}`;
 }
 
 // --- videos ------------------------------------------------------------------

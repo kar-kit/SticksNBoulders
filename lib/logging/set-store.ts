@@ -5,6 +5,7 @@ import { weekStart } from "@/lib/strength/rollup";
 import type { UnnamedSet } from "./session-store";
 import type { RpeValue } from "./set";
 import { noteOf } from "./set-note";
+import type { CardioValues } from "./cardio";
 
 /**
  * Writing sets.
@@ -16,7 +17,12 @@ import { noteOf } from "./set-note";
  * how long this takes or what the screen does next.
  */
 
-export interface NewSet {
+/**
+ * A set to log. A cardio set (F23) also carries `durationSeconds` and,
+ * optionally, `level`; its load and reps are passed as 0 and are what the
+ * write helper stores whatever they say (appwrite/documents/write.ts).
+ */
+export interface NewSet extends CardioValues {
   sessionId: string;
   exerciseId: string;
   setIndex: number;
@@ -56,6 +62,8 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
     failed: input.failed,
     loggedAt: loggedAt.toISOString(),
     ...(input.prescriptionId ? { prescriptionId: input.prescriptionId, prescribed: input.prescribed ?? null } : {}),
+    // F23: only on a cardio set, so a strength op is byte-for-byte what it was.
+    ...cardioPayload(input),
   });
   // The set is on disk from here, so nothing after this may report it as not
   // logged: the screen would take the row back while the set still synced.
@@ -71,12 +79,28 @@ export async function logSet(input: NewSet): Promise<UnnamedSet> {
     rpe: input.rpe,
     isWarmup: input.isWarmup,
     ...(input.failed ? { failed: true } : {}),
+    ...cardioPayload(input),
     loggedAt,
   };
 }
 
-/** A correction from History. All five values, because e1RM depends on all five. */
-export interface SetEdit {
+/**
+ * The cardio keys of a set op (F23): the duration, and the level (null for
+ * none) beside it. Nothing at all for a strength set -- the runner reads a
+ * missing duration as strength, which is also what every op queued before
+ * v21 says.
+ */
+function cardioPayload(set: CardioValues): { durationSeconds?: number; level?: number | null } {
+  if (typeof set.durationSeconds !== "number") return {};
+  return { durationSeconds: set.durationSeconds, level: set.level ?? null };
+}
+
+/**
+ * A correction from History. All five values, because e1RM depends on all
+ * five. A cardio correction (F23) carries its duration and level too, and its
+ * five are the inert 0 / 0 / null / false / false the helper stores anyway.
+ */
+export interface SetEdit extends CardioValues {
   loadKg: number;
   reps: number;
   rpe: RpeValue | null;
@@ -119,6 +143,7 @@ export async function editSet(
     // Only when the edit says something about the note, so a queued flip
     // replayed after a queued note does not wipe it on the server.
     ...(edit.notes !== undefined && { notes: noteOf(edit.notes) }),
+    ...cardioPayload(edit),
   });
   await queueRollupRefresh(set.exerciseId, set.loggedAt);
 }

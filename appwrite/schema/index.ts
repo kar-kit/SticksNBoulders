@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 19,
+  version: 21,
   tables: [
     {
       id: "profiles",
@@ -74,6 +74,28 @@ export const schema: DatabaseSpec = {
         // adds a line for this exercise. Null on every row written before, and
         // null reads as false: no default, so applying it rewrites nothing.
         { key: "video_default", type: "boolean", required: false },
+        // v20 (F20): the movement is done with the body as the load -- pull-up,
+        // dip, push-up -- so a set of it may be logged at 0 kg. The only thing
+        // it changes is which loads the Log accepts (lib/exercises/bodyweight.ts):
+        // 0 kg on a lift without it is still a fat-fingered set, and added load
+        // on one with it (a +20 pull-up) is logged exactly as before. No
+        // default, like `video_default`: null on every row written before v20
+        // reads as false, so applying it rewrites nothing. The seed script
+        // flags the library's bodyweight rows; an athlete flags their own from
+        // My exercises. No index: nothing filters by it.
+        { key: "is_bodyweight", type: "boolean", required: false },
+        // v21 (F23): what a set of this exercise records. "cardio" -- a
+        // treadmill, a stairmaster -- is logged as a duration and an optional
+        // machine level instead of load, reps and RPE (lib/exercises/kind.ts).
+        // The machine is the exercise's name, never a field. Like
+        // `is_bodyweight` it only decides what the Log asks for: each set says
+        // for itself whether it is cardio (`sets.duration_seconds`), so
+        // flipping an exercise's kind never re-reads a set already logged. An
+        // enum rather than a boolean so a third kind is an element, not a
+        // second flag. No default, like `video_default`: null on every row
+        // written before v21 reads as strength, so applying it rewrites
+        // nothing. No index: nothing filters by it.
+        { key: "kind", type: "enum", elements: ["strength", "cardio"], required: false },
         { key: "created_at", type: "datetime", required: true },
       ],
       indexes: [
@@ -180,6 +202,20 @@ export const schema: DatabaseSpec = {
         // answer to, and a pointer alone would silently start pointing at the
         // new plan.
         { key: "prescribed", type: "string", size: 160, required: false },
+        // v21 (F23): a cardio set -- how long, in whole seconds, and the
+        // machine's level if the athlete gave one (stairmaster 8, treadmill
+        // 2.5). A set with either is cardio, whatever its exercise says now
+        // (lib/logging/cardio.ts `isCardioSet`), and is stored with load_kg 0,
+        // reps 0, no RPE, no e1RM and never a warm-up or a failure, so a
+        // reader that has never heard of these columns still finds nothing in
+        // it to total: 0 kg is no tonnage, no e1RM and no weight (F20), 0
+        // reps not failed is no volume and no record. Nullable, no default,
+        // no index: every set before v21 is strength and needs no backfill.
+        // Minimum 1 second because a 0-minute cardio set is not one; 24 hours
+        // is past any session. Level is a float because treadmills step in
+        // halves; the pad stops at 99.9, and 100 is headroom, not a target.
+        { key: "duration_seconds", type: "integer", required: false, min: 1, max: 86400 },
+        { key: "level", type: "float", required: false, min: 0, max: 100 },
       ],
       indexes: [
         { key: "idx_athlete_logged", type: "key", columns: ["athlete_id", "logged_at"], orders: ["asc", "desc"] },

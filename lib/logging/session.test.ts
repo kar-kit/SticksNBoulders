@@ -140,6 +140,16 @@ describe("what finishing writes", () => {
     expect(summary.tonnageKg).toBe(1212.5);
   });
 
+  it("counts a bodyweight set at 0 kg as a set, adding nothing to the tonnage (F20)", () => {
+    const summary = summariseSession([
+      set({ exerciseId: "pull-up", loadKg: 0, reps: 12 }),
+      set({ exerciseId: "pull-up", loadKg: 20, reps: 5 }),
+      set({ loadKg: 100, reps: 5 }),
+    ]);
+    expect(summary.setCount).toBe(3);
+    expect(summary.tonnageKg).toBe(600);
+  });
+
   it("excludes warm-ups, so the session total agrees with the weekly rollup", () => {
     const summary = summariseSession([
       set({ loadKg: 60, reps: 5, isWarmup: true }),
@@ -166,6 +176,7 @@ describe("what finishing writes", () => {
       tonnageKg: 0,
       exerciseCount: 0,
       warmupCount: 0,
+      cardioSeconds: 0,
     });
   });
 });

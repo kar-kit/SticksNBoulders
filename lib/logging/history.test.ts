@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cardStatsLine,
   filterByExercise,
   formatDuration,
   formatTonnage,
@@ -20,6 +21,7 @@ const card = (over: Partial<HistoryCard> = {}): HistoryCard => ({
   exerciseNames: ["Squat", "Bench Press"],
   setCount: 8,
   tonnageKg: 4200,
+  cardioSeconds: 0,
   pendingSync: false,
   ...over,
 });
@@ -186,5 +188,27 @@ describe("searching by a session's name", () => {
   it("does not match the date of an unnamed session", () => {
     const weeks = groupByWeek([card({ exerciseNames: ["Squat"] })], NOW);
     expect(filterByExercise(weeks, "monday")).toEqual([]);
+  });
+});
+
+describe("cardio on a History card (F23)", () => {
+  it("adds the cardio time after the strength numbers", () => {
+    expect(cardStatsLine(card({ cardioSeconds: 1200 }), "4,200 kg")).toBe("8 sets · 4,200 kg · 20 min cardio");
+  });
+
+  it("reads a session of only cardio as its time, never as 0 sets", () => {
+    expect(cardStatsLine(card({ setCount: 0, tonnageKg: 0, cardioSeconds: 1830 }), null)).toBe("31 min cardio");
+  });
+
+  it("reads as before with no cardio, empty sessions included", () => {
+    expect(cardStatsLine(card(), "4,200 kg")).toBe("8 sets · 4,200 kg");
+    expect(cardStatsLine(card({ setCount: 0, tonnageKg: 0 }), null)).toBe("0 sets");
+    expect(cardStatsLine(card({ setCount: 1 }), null)).toBe("1 set");
+  });
+
+  it("takes the cardio time from the caller, per session", () => {
+    const sessions = [{ id: "s1", clientSessionId: "s1", startedAt: NOW, finishedAt: NOW, setCount: 0, tonnageKg: 0 }];
+    expect(historyCards(sessions, () => ["Bike"], () => false, () => null, () => 900)[0].cardioSeconds).toBe(900);
+    expect(historyCards(sessions, () => ["Bike"])[0].cardioSeconds).toBe(0);
   });
 });

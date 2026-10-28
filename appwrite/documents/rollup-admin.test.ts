@@ -236,3 +236,69 @@ describe("a failed set in the week (F19)", () => {
     });
   });
 });
+
+describe("a week of bodyweight sets (F20)", () => {
+  it("writes the sets and reps, 0 tonnage, the rep best at 0 kg, and no heaviest or e1RM", async () => {
+    // No NaN can reach a column with min 0, and no 0 lands in best_single_kg
+    // to be read back as a record.
+    const t = tables([set("bw1", 0, 12), set("bw2", 0, 10)]);
+    await rebuild(t.store);
+    expect(t.db.stats_rollups).toHaveLength(1);
+    expect(t.db.stats_rollups[0]).toMatchObject({
+      set_count: 2,
+      volume_reps: 22,
+      tonnage_kg: 0,
+      best_single_kg: null,
+      best_single_reps: null,
+      best_reps: 12,
+      best_reps_load_kg: 0,
+      best_e1rm_kg: null,
+    });
+  });
+
+  it("keeps a weighted set the week's heaviest beside bodyweight ones", async () => {
+    const t = tables([set("bw", 0, 15), set("plus20", 20, 5, { e1rm_kg: 24 })]);
+    await rebuild(t.store);
+    expect(t.db.stats_rollups[0]).toMatchObject({
+      tonnage_kg: 100,
+      best_single_kg: 20,
+      best_single_reps: 5,
+      best_reps: 15,
+      best_reps_load_kg: 0,
+      best_e1rm_kg: 24,
+    });
+  });
+});
+
+describe("a week with cardio sets (F23)", () => {
+  it("leaves them out of every figure, so the stored row is the strength work alone", async () => {
+    const t = tables([
+      set("sq", 140, 5, { e1rm_kg: 160 }),
+      // A cardio set as the helper stores it, and one carrying strength numbers.
+      set("tread", 0, 0, { duration_seconds: 1200, level: 8 }),
+      set("odd", 200, 5, { duration_seconds: 600, e1rm_kg: 230 }),
+    ]);
+    await rebuild(t.store);
+    expect(t.db.stats_rollups).toHaveLength(1);
+    expect(t.db.stats_rollups[0]).toMatchObject({
+      set_count: 1,
+      volume_reps: 5,
+      tonnage_kg: 700,
+      best_e1rm_kg: 160,
+      best_single_kg: 140,
+    });
+  });
+
+  it("writes no rollup for a week of only cardio, and removes one a strength set left behind", async () => {
+    const onlyCardio = tables([set("tread", 0, 0, { duration_seconds: 1200, level: 8 })]);
+    expect((await rebuild(onlyCardio.store)).status).toBe("absent");
+    expect(onlyCardio.db.stats_rollups).toHaveLength(0);
+
+    const flipped = tables([set("sq", 140, 5), set("tread", 0, 0, { duration_seconds: 900 })]);
+    await rebuild(flipped.store);
+    expect(flipped.db.stats_rollups).toHaveLength(1);
+    flipped.deleteSet("sq");
+    expect((await rebuild(flipped.store)).status).toBe("removed");
+    expect(flipped.db.stats_rollups).toHaveLength(0);
+  });
+});

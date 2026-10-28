@@ -125,6 +125,33 @@ describe("with several records", () => {
   });
 });
 
+describe("the cardio line (F23)", () => {
+  it("sits under the totals and outside the records, as minutes", () => {
+    render(
+      <FinishedSummary
+        summary={{ ...SUMMARY, cardioSeconds: 1200 }}
+        prs={ONE}
+        nameFor={nameFor}
+        unit="kg"
+        onDone={vi.fn()}
+      />,
+    );
+    const line = document.querySelector("[data-cardio-total]") as HTMLElement;
+    expect(line).toHaveTextContent("Cardio · 20 min");
+    expect(line.previousElementSibling?.tagName).toBe("DL");
+    expect(within(screen.getByRole("region", { name: "Personal records" })).queryByText(/Cardio/)).toBeNull();
+  });
+
+  it("is absent with no cardio, including a summary from before v21", () => {
+    show(ONE);
+    expect(document.querySelector("[data-cardio-total]")).toBeNull();
+    render(
+      <FinishedSummary summary={{ ...SUMMARY, cardioSeconds: 0 }} prs={[]} nameFor={nameFor} unit="kg" onDone={vi.fn()} />,
+    );
+    expect(document.querySelector("[data-cardio-total]")).toBeNull();
+  });
+});
+
 describe("motion", () => {
   it("gates every animation behind motion-safe, so reduced motion has nothing to play", () => {
     const { container } = show(MANY);

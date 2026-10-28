@@ -5,6 +5,7 @@ import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
 import { authenticRows, markSetReviewed, posterOf, unmarkSetReviewed, type Actor } from "@/appwrite/documents";
 import type { ClipSet, ReviewedClips } from "./queue";
+import { cardioColumns, isCardioSet } from "@/lib/logging/cardio";
 
 /**
  * Reading the Review Queue, and clearing it.
@@ -45,6 +46,8 @@ export interface SetRow {
   failed?: unknown;
   prescription_id?: unknown;
   prescribed?: unknown;
+  duration_seconds?: unknown;
+  level?: unknown;
 }
 
 const num = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
@@ -61,6 +64,10 @@ export function toClip(raw: SetRow): ClipSet | null {
   // Dropped rather than rendered half-blank, which would look like a bug in
   // the player rather than a bad row.
   if (!videoFileId || !athleteId || !loggedAt) return null;
+  // F23: cardio has no clip in this version, so a cardio row with a file on
+  // it is a write nothing in the app makes. Kept off the coach's queue and
+  // the athlete's gallery rather than shown as a 0 x 0 lift to review.
+  if (isCardioSet(cardioColumns(raw))) return null;
 
   return {
     id: raw.$id,

@@ -119,3 +119,19 @@ describe("NumberPad's Failed switch (F19)", () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ field: "reps", text: "0" }));
   });
 });
+
+describe("NumberPad on a cardio row (F23)", () => {
+  it("labels the time in minutes and shows the decimal key as a colon", () => {
+    setup({ state: beginEdit("duration", 1230), onToggleWarmup: undefined, nextLabel: "Level" });
+    expect(screen.getByRole("region", { name: "Time, min keypad" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Seconds" })).toHaveTextContent(":");
+    expect(screen.getByRole("button", { name: "Increase time by 1 minute" })).toBeInTheDocument();
+  });
+
+  it("shows no Warm-up or Failed switch when the screen offers none", () => {
+    setup({ state: beginEdit("level", 8), onToggleWarmup: undefined, nextLabel: "Done" });
+    expect(screen.getByRole("region", { name: "Level keypad" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Decimal point" })).toBeEnabled();
+  });
+});

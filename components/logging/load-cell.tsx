@@ -44,6 +44,11 @@ export interface LoadCellProps {
    * description, so a screen reader hears it without the name changing.
    */
   marker?: string;
+  /**
+   * How the value reads, when it is not a plain number: a cardio row's time
+   * as "20:30" (F23). Plain `formatNumber` when absent.
+   */
+  format?: (value: number) => string;
   className?: string;
 }
 
@@ -57,11 +62,12 @@ export function LoadCell({
   onPress,
   label,
   marker,
+  format = formatNumber,
   className,
 }: LoadCellProps) {
   const markerId = useId();
   const empty = value === null;
-  const text = empty ? placeholder : formatNumber(value);
+  const text = empty ? placeholder : format(value);
 
   const content = cn(
     SIZES[size],

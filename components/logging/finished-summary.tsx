@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { PrCelebration } from "@/components/logging/pr-celebration";
+import { formatCardioTotal } from "@/lib/logging/cardio";
 import { formatNumber } from "@/lib/logging/prefill";
 import type { SessionSummary } from "@/lib/logging/session";
 import type { SessionPr } from "@/lib/strength/pr";
@@ -46,6 +47,13 @@ export function FinishedSummary({
         <Stat label="Exercises" value={String(summary.exerciseCount)} quiet={quiet} />
         <Stat label="Warm-ups" value={String(summary.warmupCount)} quiet={quiet} />
       </dl>
+      {summary.cardioSeconds ? (
+        // F23: cardio is not in the sets or the tonnage above, so it gets a
+        // line of its own -- small, because the session's work is the lifting.
+        <p data-cardio-total="" className="m-0 -mt-2 font-mono text-label uppercase text-muted">
+          Cardio &middot; {formatCardioTotal(summary.cardioSeconds)}
+        </p>
+      ) : null}
       <div className="mt-auto">
         <Button size="xl" block onClick={onDone}>
           Back to Today
