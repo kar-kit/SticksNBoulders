@@ -976,13 +976,18 @@ try {
       // v20: `is_bodyweight` rides along, so the probe proves nobody but the
       // owner can open an exercise to 0 kg sets -- and nobody at all can on a
       // library row, whose flag only the seed script writes.
-      exercises: { name: tag, is_bodyweight: n % 2 === 1 },
-      "exercises:library": { name: tag, is_bodyweight: n % 2 === 1 },
+      // v21: `kind` too -- flipping a lift to cardio is how a hijacker would
+      // change what its next set even asks for.
+      exercises: { name: tag, is_bodyweight: n % 2 === 1, kind: n % 2 === 1 ? "cardio" : "strength" },
+      "exercises:library": { name: tag, is_bodyweight: n % 2 === 1, kind: n % 2 === 1 ? "cardio" : "strength" },
       sessions: { notes: tag },
       // v19: `failed` rides along, so the probe proves nobody but the athlete
       // can mark their set missed (or made). Row permissions cover every
       // column alike; this is the column F19 made worth hijacking.
-      sets: { load_kg: 900 + n, failed: true },
+      // v21: `duration_seconds` rides along as well: it is what takes a set
+      // out of every strength total, so it is the column F23 made worth
+      // hijacking.
+      sets: { load_kg: 900 + n, failed: true, duration_seconds: 60 + n },
       bodyweight_entries: { weight_kg: 300 + n },
       // v18: re-pointing the review at another clip is what decides whether a
       // replaced clip comes back, so it is the column worth hijacking.

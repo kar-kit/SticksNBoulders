@@ -3,6 +3,7 @@ import type { QueuedOp } from "@/lib/offline/queue";
 import { deleteRefusal, hasQueuedSets } from "./my-exercises";
 import { fetchExerciseUsage } from "./usage-store";
 import type { Exercise } from "./match";
+import type { ExerciseKind } from "./kind";
 
 /**
  * Renaming and deleting the athlete's own exercises. Both queued, like the
@@ -20,6 +21,16 @@ export async function renameMyExercise(exerciseId: string, name: string): Promis
  */
 export async function setMyExerciseBodyweight(exerciseId: string, isBodyweight: boolean): Promise<void> {
   await enqueue("exercise.bodyweight", { exerciseId, isBodyweight });
+}
+
+/**
+ * Sets what one of the athlete's own exercises records (F23): cardio's
+ * duration and level, or strength. Queued like the bodyweight flag beside
+ * it, as its own op; the Log reads the kind from the library, which the
+ * caller updates first.
+ */
+export async function setMyExerciseKind(exerciseId: string, kind: ExerciseKind): Promise<void> {
+  await enqueue("exercise.kind", { exerciseId, kind });
 }
 
 export type ExerciseDeleteCheck = { ok: true } | { ok: false; message: string };

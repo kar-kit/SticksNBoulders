@@ -5,6 +5,7 @@ import { fetchExerciseLibrary } from "./library";
 import { cacheLibrary, cachedLibrary } from "./library-cache";
 import { normaliseExerciseName } from "@/appwrite/documents/write";
 import type { Exercise } from "./match";
+import type { ExerciseKind } from "./kind";
 
 /**
  * The exercise library, fetched once per app load.
@@ -34,6 +35,12 @@ interface LibraryValue {
    * no signal too. The write itself is queued by the caller.
    */
   flagBodyweight: (exerciseId: string, isBodyweight: boolean) => void;
+  /**
+   * Applies a kind from My exercises locally (F23), and to the cached copy,
+   * so the Log's next row of that exercise asks for a duration -- with no
+   * signal too. The write itself is queued by the caller.
+   */
+  setKind: (exerciseId: string, kind: ExerciseKind) => void;
   /** Takes a deleted exercise out of the typeahead. */
   forget: (exerciseId: string) => void;
   reload: () => Promise<void>;
@@ -128,6 +135,12 @@ export function ExerciseLibraryProvider({
       flagBodyweight: (exerciseId, isBodyweight) =>
         setState((prev) => {
           const exercises = prev.exercises.map((e) => (e.id === exerciseId ? { ...e, isBodyweight } : e));
+          if (userId) cacheLibrary(userId, exercises);
+          return { ...prev, exercises };
+        }),
+      setKind: (exerciseId, kind) =>
+        setState((prev) => {
+          const exercises = prev.exercises.map((e) => (e.id === exerciseId ? { ...e, kind } : e));
           if (userId) cacheLibrary(userId, exercises);
           return { ...prev, exercises };
         }),
