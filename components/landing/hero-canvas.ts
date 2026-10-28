@@ -1,5 +1,5 @@
-import { heroFrame, weekAt, type Poly } from "@/lib/landing/hero-geometry";
-import { TOTAL_MS, timelineAt, tooSlow } from "@/lib/landing/hero-mode";
+import { heroFrame, type Poly } from "@/lib/landing/hero-geometry";
+import { FINAL_LABEL, FINAL_POSE, momentAt, TOTAL_MS, tooSlow, type Pose } from "@/lib/landing/hero-mode";
 
 /**
  * The hero's animation loop. Loaded with `import()` from hero.tsx only when
@@ -25,8 +25,8 @@ export interface Player {
 }
 
 export interface PlayerHooks {
-  /** Every frame drawn, with the week it shows. */
-  onFrame(week: number): void;
+  /** Every frame drawn, with the line under the hero. */
+  onFrame(label: string): void;
   /** Playback reached the end, or gave up on a slow device. */
   onDone(reason: "finished" | "slow"): void;
 }
@@ -37,7 +37,8 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
 
   let width = 0;
   let height = 0;
-  let t = 1;
+  let pose: Pose = FINAL_POSE;
+  let label = FINAL_LABEL;
   let elapsed = 0;
   let last: number | null = null;
   let frame: number | null = null;
@@ -58,8 +59,8 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
     ctx!.clearRect(0, 0, width, height);
     ctx!.lineJoin = "round";
     ctx!.lineWidth = 0.6;
-    for (const poly of heroFrame(t, { width, height })) fill(ctx!, poly);
-    hooks.onFrame(weekAt(t));
+    for (const poly of heroFrame(pose, { width, height })) fill(ctx!, poly);
+    hooks.onFrame(label);
   }
 
   function tick(now: number) {
@@ -70,7 +71,7 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
       gaps.push(gap);
     }
     last = now;
-    t = timelineAt(elapsed);
+    ({ pose, label } = momentAt(elapsed));
     draw();
 
     if (tooSlow(gaps)) {
@@ -87,7 +88,8 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
 
   function finish(reason: "finished" | "slow") {
     playing = false;
-    t = 1;
+    pose = FINAL_POSE;
+    label = FINAL_LABEL;
     draw();
     hooks.onDone(reason);
   }
@@ -123,7 +125,8 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
     skip() {
       stop();
       playing = false;
-      t = 1;
+      pose = FINAL_POSE;
+      label = FINAL_LABEL;
       draw();
     },
     resize() {

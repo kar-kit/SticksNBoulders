@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { chooseHero, TOTAL_WEEKS } from "@/lib/landing/hero-mode";
+import { chooseHero, FINAL_LABEL } from "@/lib/landing/hero-mode";
 import type { Player } from "./hero-canvas";
 
 type Status = "still" | "loading" | "playing" | "done";
@@ -22,7 +22,7 @@ interface Connection {
 export function Hero({ children }: { children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const week = useRef<HTMLSpanElement>(null);
+  const label = useRef<HTMLSpanElement>(null);
   const player = useRef<Player | null>(null);
   const [status, setStatus] = useState<Status>("still");
   // Whether the play button is offered at all: anyone who can draw a canvas,
@@ -37,8 +37,8 @@ export function Hero({ children }: { children: ReactNode }) {
     const { createPlayer } = await import("./hero-canvas");
     if (!canvas.current) return null;
     player.current = createPlayer(canvas.current, {
-      onFrame(n) {
-        if (week.current) week.current.textContent = String(n);
+      onFrame(text) {
+        if (label.current && label.current.textContent !== text) label.current.textContent = text;
       },
       onDone() {
         setStatus("done");
@@ -130,12 +130,13 @@ export function Hero({ children }: { children: ReactNode }) {
         />
       </div>
       <figcaption className="flex min-h-12 items-center justify-between gap-4 border-t border-border">
-        <span className="font-mono text-label uppercase text-muted-2" aria-hidden="true">
-          Week <span ref={week}>{TOTAL_WEEKS}</span>
+        <span ref={label} className="font-mono text-label uppercase text-muted-2" aria-hidden="true">
+          {FINAL_LABEL}
         </span>
         <span className="sr-only">
-          A thin stick on the ground. Sticks land beside it one at a time, slowly at first, until the pile
-          packs down into a boulder and the first stick, grown thick, leans against it.
+          A thin stick on a lifting platform. Sticks gather round both ends of it one at a time, slowly at
+          first, and pack into two stone plates. The stick, now a barbell, is pulled from the floor for three
+          reps.
         </span>
         {canPlay && (
           <button

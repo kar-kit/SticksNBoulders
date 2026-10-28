@@ -1,13 +1,18 @@
 import {
   BUILD_MS,
   chooseHero,
+  FINAL_LABEL,
+  FINAL_POSE,
   HOLD_MS,
+  momentAt,
   PAUSE_MS,
+  REPS,
+  REST_YAW,
   REWIND_MS,
   SAMPLE_FRAMES,
-  timelineAt,
   tooSlow,
   TOTAL_MS,
+  TOTAL_WEEKS,
   type HeroEnvironment,
 } from "./hero-mode";
 
@@ -54,20 +59,52 @@ describe("tooSlow", () => {
   });
 });
 
-describe("timelineAt", () => {
-  it("opens on the finished boulder, which is the poster", () => {
-    expect(timelineAt(0)).toBe(1);
-    expect(timelineAt(HOLD_MS)).toBe(1);
+describe("momentAt", () => {
+  it("opens and ends on the poster, the last rep locked out", () => {
+    for (const ms of [0, TOTAL_MS, TOTAL_MS * 3]) {
+      expect(momentAt(ms)).toEqual({ pose: FINAL_POSE, label: FINAL_LABEL });
+    }
   });
 
-  it("rewinds to one stick, then builds back", () => {
-    expect(timelineAt(HOLD_MS + REWIND_MS / 2)).toBeCloseTo(0.5);
-    expect(timelineAt(HOLD_MS + REWIND_MS + PAUSE_MS / 2)).toBe(0);
-    expect(timelineAt(HOLD_MS + REWIND_MS + PAUSE_MS + BUILD_MS / 2)).toBeCloseTo(0.5);
+  it("rewinds to one twig on the floor", () => {
+    const { pose, label } = momentAt(HOLD_MS + REWIND_MS + PAUSE_MS / 2);
+    expect(pose.build).toBe(0);
+    expect(pose.lift).toBe(0);
+    expect(label).toBe("Week 1");
   });
 
-  it("ends, and stays, on the poster", () => {
-    expect(timelineAt(TOTAL_MS)).toBe(1);
-    expect(timelineAt(TOTAL_MS * 3)).toBe(1);
+  it("counts weeks while the bar is being made, then reps", () => {
+    const building = momentAt(HOLD_MS + REWIND_MS + PAUSE_MS + BUILD_MS * 0.4);
+    expect(building.pose.lift).toBe(0);
+    expect(building.label).toMatch(/^Week \d+$/);
+    const firstPull = momentAt(HOLD_MS + REWIND_MS + PAUSE_MS + BUILD_MS * 0.95);
+    expect(firstPull.pose.build).toBe(1);
+    expect(firstPull.pose.lift).toBeGreaterThan(0);
+    expect(firstPull.label).toBe(`Week ${TOTAL_WEEKS} \u00b7 Rep 1`);
+  });
+
+  it("does a triple: the bar touches the floor twice after the first pull", () => {
+    const labels = new Set<string>();
+    let touches = 0;
+    let down = false;
+    const storyEnd = HOLD_MS + REWIND_MS + PAUSE_MS + BUILD_MS;
+    for (let ms = storyEnd; ms <= TOTAL_MS; ms += 20) {
+      const { pose, label } = momentAt(ms);
+      labels.add(label);
+      if (pose.lift === 0 && !down) touches++;
+      down = pose.lift === 0;
+    }
+    expect(touches).toBe(REPS - 1);
+    expect([...labels]).toEqual([1, 2, 3].map((n) => `Week ${TOTAL_WEEKS} \u00b7 Rep ${n}`));
+  });
+
+  it("swings the camera away and back without a jump", () => {
+    let last = momentAt(0).pose.yaw;
+    for (let ms = 16; ms <= TOTAL_MS; ms += 16) {
+      const { yaw } = momentAt(ms).pose;
+      expect(Math.abs(yaw - last)).toBeLessThan(0.01);
+      last = yaw;
+    }
+    expect(momentAt(TOTAL_MS / 2).pose.yaw).not.toBeCloseTo(REST_YAW);
   });
 });

@@ -312,43 +312,60 @@ dense, heavy and earned.
 
 ### Three concepts
 
-**A. The pile (recommended, built).** The page opens on the logo's picture in
-3D: a thick copper stick leaning on a grey boulder, the end result, which is all
-anyone sees of a lifter. After a beat the scene runs backwards to a single thin
-twig on the ground, then builds forward: sticks land beside it one at a time,
-slowly at first and then faster, a heap of them, until the heap packs down and
-turns to stone, and the first twig, now thick, stands up and leans on it. A
-mono counter under it runs "Week 1" to "Week 156". It plays once and stops on
-the logo. No narration beyond the counter.
+**A. The pile (first build, replaced).** The logo in 3D: a thick copper stick
+leaning on a grey boulder. The scene runs back to a single twig, then sticks
+land beside it one at a time, the heap packs into stone, and the twig, now
+thick, leans on it. On brand, but Joey's review (28 Oct): keep the style, make
+it more animated and make it about powerlifting. Nothing in it said "lifting".
 
 **B. The strata.** A cut-away boulder, rotating slowly, whose layers are made
 of compressed sticks; scrolling the page adds a layer per section. It says
 the same thing, but scroll-linked animation ties the hero's cost to the whole
 page's scroll, and it never resolves into the logo.
 
-**C. The bar.** A copper bar, thin as a stick, gaining faceted stone plates
-until it bends. It is the most literally powerlifting, but plates are a cliché
-of the sport's marketing and it loses the stick-and-boulder identity.
+**C. The bar (built, merged with A).** The first version of this concept was
+rejected for losing the stick-and-boulder identity. It does not have to: the
+stick is the bar and the boulders are the plates. The page opens on a loaded
+barbell locked out over a low-poly competition platform (rubber where the
+plates land, wood in the middle where a lifter stands). It runs back to one
+thin twig lying on the platform. Sticks gather round both ends of it, slowly
+at first and then faster, and the heaps lift the bar off the floor as they
+grow. Each heap packs into a faceted stone plate. Then the bar comes off the
+floor: it bends as the plates break from the platform, the way a loaded bar
+does on a heavy deadlift, and locks out. Two more reps make it a triple, and
+it stops where it started. The counter runs "Week 1" to "Week 156", then
+"Rep 1" to "Rep 3". The camera swings slowly round the bar and back over the
+whole ~18 seconds.
 
-**Why A.** It ends on the logo, so the brand and the hero are the same
-picture. Its meaning comes from time, not effects, which suits a sport where
-nothing flashy happens. It plays once and then costs nothing. And its last
-frame is a complete static hero, which is what makes the fallbacks honest.
+**Why C now.** It keeps everything that made A right (the logo's materials
+and lighting, growth through time, a still last frame) and adds the sport. No
+lifter is shown, on purpose: you only see the bar move, which is the point
+about only seeing the result. Plates and bar whip are the most recognisable
+thing in powerlifting that is not a person.
 
 ### How it is built
 
 **Software 3D on a 2D canvas, no dependency.** `lib/landing/hero-geometry.ts`
-builds the scene once from a seeded random generator (a 6-sided stick with a
-fork, 42 four-sided sticks, an 80-face boulder), lights each face from the
-upper left like the logo, culls back faces, and depth-sorts, returning flat
-polygons. About 70 faces at rest and a few hundred mid-build.
+builds the scene once from a seeded random generator (a 6-sided bar with
+thicker sleeves, 52 four-sided sticks, two 80-face stone plates, a three-strip
+platform), lights each face from the upper left like the logo with a weak fill
+from the camera's side, culls back faces, and depth-sorts, returning flat
+polygons. The bar is cut into five pieces where it passes through the plates so
+the depth sort can hide the part inside each plate. About 150 faces at rest
+and a few hundred mid-build. The bend is a parabola along the bar, largest as
+the plates leave the floor (`bendAt`).
+
+**What happens when** is `momentAt(ms)` in `lib/landing/hero-mode.ts`, pure
+and tested: hold the poster 0.9 s, rewind 1.7 s, build 7.2 s (the last fifth
+of it is the first pull), then two reps of lower 1.1 s, floor 0.7 s, pull
+1.4 s, hold 0.8 s. About 18 s in all.
 
 | Option | Cost on the wire | Why not / why |
 | --- | --- | --- |
 | three.js | ~150 KB gzip for the core [Inference: typical tree-shaken three r16x builds], more than the rest of the page's JavaScript | Built for textures, depth buffers and thousands of faces; this has none |
 | react-three-fiber | three.js plus ~40 KB [Inference] | Same, plus a second React reconciler |
 | Raw WebGL | Small | Needs a GPU path and a separate no-WebGL fallback |
-| **Canvas 2D, hand-rolled** | **3.0 KB gzip [Fact, build output]** | Flat-shaded low poly needs exactly a depth sort and a fill. Runs on every browser, GPU or not |
+| **Canvas 2D, hand-rolled** | **3.5 KB gzip [Fact, build output, barbell version]** | Flat-shaded low poly needs exactly a depth sort and a fill. Runs on every browser, GPU or not |
 
 `docs/athlete-motion.md`'s no-animation-library rule is for the athlete's
 screens; this page adds no library either, so the question did not arise.
@@ -371,14 +388,17 @@ box, so the swap moves nothing.
 - No JavaScript: the poster is plain server HTML.
 
 **Cost while running:** device pixel ratio capped at 2; pauses when the tab is
-hidden or the hero is scrolled away; stops requesting frames entirely once it
-ends; a Stop button while it plays (WCAG 2.2.2, anything moving for over five
+hidden or the hero is scrolled away; stops requesting frames entirely once the
+triple ends; a Stop button while it plays (WCAG 2.2.2, anything moving for over five
 seconds can be stopped).
 
 ### Measured, 28 Oct 2026
 
-- **Hero chunk:** 5.9 KB raw, **3.0 KB gzipped** [Fact, `.next/static/chunks`
+- **Hero chunk:** 7.3 KB raw, **3.5 KB gzipped** for the barbell version
+  (the first, stick-and-boulder version was 3.0 KB) [Fact, `.next/static/chunks`
   after `next build`]. Loaded after hydration, not in the page's first script.
+- **Barbell version, Lighthouse mobile, three runs:** performance 95 / 92 / 92,
+  LCP 3.0 / 3.3 / 3.3 s, TBT 10 / 0 / 0 ms, CLS 0. No cost over the first version.
 - **`/` is prerendered static** [Fact, build output `○ /`].
 - **Layout shift: 0.** Lighthouse CLS 0 on every run, and the H1 sits at the
   same pixel with JavaScript on and off (checked with Playwright at 1440×900).
