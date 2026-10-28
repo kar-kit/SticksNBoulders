@@ -9,6 +9,7 @@ import { SetRow, SetRowHeader } from "@/components/logging/set-row";
 import { NumberPad } from "@/components/logging/number-pad";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
 import { SetNoteField } from "@/components/logging/set-note-field";
+import { AttachVideo } from "@/components/logging/attach-video";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { useTrainingSessions } from "@/lib/logging/session-context";
@@ -25,13 +26,22 @@ import {
   reviseSession,
   reviseSessionTotals,
 } from "@/lib/logging/session-edit-store";
-import { mergeById, queuedSetEdits, queuedSets, withSetEdits } from "@/lib/logging/offline-view";
+import {
+  mergeById,
+  queuedClipChanges,
+  queuedSetEdits,
+  queuedSets,
+  withQueuedClips,
+  withSetEdits,
+} from "@/lib/logging/offline-view";
 import { noteOf } from "@/lib/logging/set-note";
 import { useDayLabels } from "@/lib/logging/use-day-labels";
 import { subscribeToQueue } from "@/lib/offline/client";
 import type { QueuedOp } from "@/lib/offline/queue";
 import { useUnits } from "@/lib/profile/units-context";
 import { loadFromInput, loadIn } from "@/lib/units";
+import { retireReplacedClip } from "@/lib/video/my-clips-store";
+import type { UploadResult } from "@/lib/video/upload";
 import { DeleteSessionConfirm, SessionFieldsForm } from "./session-fields";
 
 /**
@@ -57,9 +67,20 @@ import { DeleteSessionConfirm, SessionFieldsForm } from "./session-fields";
  * over what Appwrite returned, so a note written with no signal is on screen
  * after a reload rather than reappearing when the queue drains.
  *
+ * A set's clip (F21) is added or replaced here too, however old the session:
+ * the set being corrected gets a Video line with the Log's own camera
+ * (`AttachVideo`), so the upload, resume, poster grab (F12) and the queued
+ * `set.attachVideo` are exactly the Log's, and the coach's Review Queue picks
+ * the clip up the way it picks up one filmed mid-session -- it reads every set
+ * with a `video_file_id`, whenever it was logged, and a replaced clip comes
+ * back to it because the file id changes (F15). Like the Log's edit sheet, a
+ * clip is not part of the draft: it goes up the moment it is picked, and
+ * Cancel does not take it back. A clip attached with no signal shows on its
+ * row from the queue (`withQueuedClips`), as an edited note does.
+ *
  * Not here yet, and deliberately absent rather than faked: the prescription the
- * session ran against (Order 22), attached video (Order 29) and the coach's
- * comments threaded on the sets they refer to (phase 3).
+ * session ran against (Order 22) and the coach's comments threaded on the sets
+ * they refer to (phase 3).
  */
 
 interface Draft {
@@ -97,6 +118,13 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
   const [editingFields, setEditingFields] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * The set whose clip is uploading from this screen. Delete set waits for
+   * it, as on the Log and the Clips screen: a finished upload would otherwise
+   * re-attach a clip to the set just deleted. Kept here, not in the camera,
+   * because Save and Cancel close the row mid-upload and the upload carries on.
+   */
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   /** The set read failed, so the screen cannot know what a delete would leave behind. */
   const [loadFailed, setLoadFailed] = useState(false);
 
@@ -135,7 +163,11 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
   }, [library.exercises]);
 
   const ordered = useMemo(
-    () => withSetEdits(setsBySession(sets ?? []).get(sessionId) ?? [], queuedSetEdits(ops)),
+    () =>
+      withQueuedClips(
+        withSetEdits(setsBySession(sets ?? []).get(sessionId) ?? [], queuedSetEdits(ops)),
+        queuedClipChanges(ops),
+      ),
     [sets, sessionId, ops],
   );
 
@@ -318,6 +350,29 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
     }
   };
 
+  /**
+   * A clip on its way to `setId` from this screen (F21). Once its attach is
+   * queued (`ok`) the set names the new file here too, so the row keeps its
+   * clip after the queue drains and a later Delete set takes the right file;
+   * the poster is unknown until the next read, so the placeholder until then,
+   * as on the Clips screen. A replacement retires the file it replaced only
+   * then, for the reason the Log and the Clips screen wait (docs/video.md,
+   * F13): queued any earlier, the cleanup would find the set still naming the
+   * old file and keep it for good. A clip still uploading (`pending`) leaves
+   * the old file for the sweep.
+   */
+  const clipAttached = (setId: string, oldFileId: string | null) => (result: UploadResult) => {
+    if (!result.ok) return;
+    setSets((prev) =>
+      prev
+        ? prev.map((set) =>
+            set.clientSetId === setId ? { ...set, videoFileId: result.fileId, videoPosterId: null } : set,
+          )
+        : prev,
+    );
+    if (oldFileId && result.fileId !== oldFileId) void retireReplacedClip(setId, oldFileId).catch(() => {});
+  };
+
   const remove = async () => {
     if (!editingSet) return;
     setBusy(true);
@@ -458,6 +513,25 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
                           + Add a note
                         </Button>
                       )}
+                      {athleteId ? (
+                        <div role="group" aria-label="Video" className="flex items-center justify-between gap-3">
+                          <p className="m-0 flex min-w-0 flex-col text-caption">
+                            <span className="font-mono text-label-xs text-muted-2">VIDEO</span>
+                            <span className="text-muted">Goes up straight away, not on Save.</span>
+                          </p>
+                          <AttachVideo
+                            key={set.clientSetId}
+                            setId={set.clientSetId}
+                            athleteId={athleteId}
+                            hasVideo={Boolean(set.videoFileId)}
+                            onAttached={clipAttached(set.clientSetId, set.videoFileId ?? null)}
+                            onUploadingChange={(uploading) => {
+                              const id = set.clientSetId;
+                              setUploadingFor((was) => (uploading ? id : was === id ? null : was));
+                            }}
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <button
@@ -522,7 +596,7 @@ export function SessionDetail({ sessionId }: { sessionId: string }) {
             {/* Deleting is deliberately one tap with no confirmation dialog: it
                 is the fix for a set that should not be there, and the queue can
                 be watched to see it go. */}
-            <Button block variant="danger" onClick={remove} disabled={busy}>
+            <Button block variant="danger" onClick={remove} disabled={busy || uploadingFor === editingSet.clientSetId}>
               Delete set
             </Button>
           </div>

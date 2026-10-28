@@ -1,6 +1,7 @@
 import type { QueuedOp } from "@/lib/offline/queue";
 import { failedOps, pendingOps } from "@/lib/offline/queue";
 import { EXERCISE_IN_USE, SESSION_HAS_SETS, SET_HAS_COACH_COMMENTS } from "@/appwrite/documents/write";
+import { posterIdFor } from "@/appwrite/documents/poster";
 import type { SessionRecord } from "./session";
 import type { UnnamedSet } from "./session-store";
 
@@ -187,6 +188,60 @@ export function queuedSetEdits(ops: readonly QueuedOp[]): Map<string, SetValues>
     });
   }
   return edits;
+}
+
+/** A set's clip as a queued `set.attachVideo` leaves it. Null file is a clip removed. */
+export interface ClipChange {
+  videoFileId: string | null;
+  videoPosterId: string | null;
+}
+
+/**
+ * The clip each set will carry once the queue drains, for sets with a
+ * `set.attachVideo` still waiting. Latest op wins. Null is a clip deleted.
+ *
+ * Only pending ops: one that failed for good never reached the server, so
+ * the server's copy is what is true.
+ *
+ * Here rather than in lib/video/my-clips.ts (where the Clips gallery first
+ * needed it) since F21, because History's session screen lays it over its
+ * rows as well, and this file is the one the screens read the queue through.
+ */
+export function queuedClipChanges(ops: readonly QueuedOp[]): Map<string, ClipChange> {
+  const changes = new Map<string, ClipChange>();
+  for (const op of pendingOps(ops)) {
+    if (op.kind !== "set.attachVideo") continue;
+    const setId = str(op.payload.setId);
+    if (!setId) continue;
+    const videoFileId = str(op.payload.videoFileId) || null;
+    // The poster is only believed when it is this clip's own (posterOf's rule).
+    const poster = str(op.payload.videoPosterId);
+    const videoPosterId = videoFileId && poster && poster === posterIdFor(videoFileId) ? poster : null;
+    changes.set(setId, { videoFileId, videoPosterId });
+  }
+  return changes;
+}
+
+/**
+ * Sets with their queued clips laid over them (F21): a clip attached in
+ * History, or in the Log, with no signal is on the row after a reload, its
+ * poster too when the phone grabbed one; a clip removed offline is off it.
+ * The same overlay the Clips gallery makes (`withQueuedClipState`), for rows
+ * that keep their sets rather than drop the clipless ones.
+ *
+ * A clip still uploading is not here: it has no `set.attachVideo` yet, only
+ * an entry in the resumable-upload store, and the camera says "pending" for
+ * it. With no changes the list itself comes back, so a memo downstream holds.
+ */
+export function withQueuedClips<T extends { clientSetId: string; videoFileId?: string | null; videoPosterId?: string | null }>(
+  sets: readonly T[],
+  changes: ReadonlyMap<string, ClipChange>,
+): readonly T[] {
+  if (changes.size === 0) return sets;
+  return sets.map((set) => {
+    const change = changes.get(set.clientSetId);
+    return change ? { ...set, ...change } : set;
+  });
 }
 
 /** Sets undone on the device whose delete has not reached Appwrite yet. */

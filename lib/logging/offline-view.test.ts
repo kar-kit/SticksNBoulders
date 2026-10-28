@@ -4,12 +4,14 @@ import {
   applyQueuedSessionEdits,
   lostOps,
   mergeById,
+  queuedClipChanges,
   queuedSessions,
   queuedSetEdits,
   queuedSets,
   refusedDeletes,
   refusedRowDeletes,
   unsyncedIds,
+  withQueuedClips,
   withSetEdits,
 } from "./offline-view";
 import { EXERCISE_IN_USE, SESSION_HAS_SETS } from "@/appwrite/documents/write";
@@ -270,5 +272,48 @@ describe("failed sets in the queue (F19)", () => {
   it("lays a queued correction's flag over the set", () => {
     const edits = queuedSetEdits([op("set.update", { setId: "st-1", loadKg: 150, reps: 2, rpe: null, isWarmup: false, failed: true })]);
     expect(edits.get("st-1")).toMatchObject({ reps: 2, failed: true });
+  });
+});
+
+describe("queued clips on History's rows (F21)", () => {
+  const row = (clientSetId: string, videoFileId: string | null = null) => ({
+    clientSetId,
+    videoFileId,
+    videoPosterId: null as string | null,
+  });
+
+  it("puts a clip attached with no signal on its row, with its own poster", () => {
+    const changes = queuedClipChanges([
+      op("set.attachVideo", { setId: "a", videoFileId: "f1", videoPosterId: "f1_poster" }),
+    ]);
+    const [a, b] = withQueuedClips([row("a"), row("b")], changes);
+    expect(a).toEqual({ clientSetId: "a", videoFileId: "f1", videoPosterId: "f1_poster" });
+    expect(b).toEqual(row("b"));
+  });
+
+  it("shows the latest of several, so a replacement wins over the clip it replaced", () => {
+    const changes = queuedClipChanges([
+      op("set.attachVideo", { setId: "a", videoFileId: "f1", videoPosterId: null }),
+      op("set.attachVideo", { setId: "a", videoFileId: "f2", videoPosterId: null }),
+    ]);
+    expect(withQueuedClips([row("a", "f0")], changes)[0].videoFileId).toBe("f2");
+  });
+
+  it("takes a clip off a row when its removal is queued", () => {
+    const changes = queuedClipChanges([op("set.attachVideo", { setId: "a", videoFileId: null, videoPosterId: null })]);
+    expect(withQueuedClips([row("a", "f0")], changes)[0].videoFileId).toBeNull();
+  });
+
+  it("does not believe a poster that is not the clip's own", () => {
+    const changes = queuedClipChanges([
+      op("set.attachVideo", { setId: "a", videoFileId: "f1", videoPosterId: "f0_poster" }),
+    ]);
+    expect(withQueuedClips([row("a")], changes)[0].videoPosterId).toBeNull();
+  });
+
+  it("ignores an attach that failed for good, and hands back the same list when nothing applies", () => {
+    const failed = { ...op("set.attachVideo", { setId: "a", videoFileId: "f1" }), permanentError: "nope" };
+    const rows = [row("a")];
+    expect(withQueuedClips(rows, queuedClipChanges([failed]))).toBe(rows);
   });
 });

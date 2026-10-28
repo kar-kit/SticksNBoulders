@@ -439,6 +439,45 @@ sheet still finishes, queues its attach and releases Delete set after the
 sheet closes, which `edit-sheet-video.test.tsx` now pins.
 
 
+## Add or replace a clip from History (F21)
+
+_28 Oct 2026. Source: Joey._ Once a session was logged, a set could only get
+a clip from the Log while that session was running; History had no Add video
+and the Clips screen can only replace a clip that exists. Now the set being
+corrected in History's session screen
+(`app/(athlete)/history/[sessionId]/session-detail.tsx`) has a **Video** line
+under its note, with **Add video** or **Replace video**: the Log's own
+`AttachVideo`, so upload, resume, poster capture (F12) and the queued
+`set.attachVideo` are the Log's path, not a copy of it.
+
+- **No time limit.** Nothing on the client, the queue runner, `attachVideo`
+  or `validate-row` looks at when a set was logged; a set from last year
+  takes a clip like one from this morning.
+- **Review Queue.** `fetchClips` reads every set with a `video_file_id`,
+  whenever it was logged, so a clip added from History is in the coach's
+  queue exactly as one filmed mid-session. Replacing mints a new file id, so a
+  clip the coach had cleared comes back (F15). One consequence, by design of
+  the queue rather than of this: it sorts oldest first by `logged_at`, so a
+  clip added to an old set lands at the **front** of the coach's queue.
+- **Replace retires the old file** once the new clip's attach is queued
+  (`retireReplacedClip`), as the Log and the Clips screen do; a pending
+  replacement leaves it for `clips:sweep`.
+- **Not part of the draft.** "Goes up straight away, not on Save." Cancel and
+  Save close the row; an upload in flight carries on, and **Delete set**
+  waits for it (also after the row is closed and opened again), so a finished
+  upload cannot re-attach a clip to a deleted set.
+- **On the row.** A clip whose attach is queued shows on its row from the
+  queue (`withQueuedClips` over `queuedClipChanges`, now in
+  `lib/logging/offline-view.ts`; `lib/video/my-clips.ts` re-exports it), with
+  its poster when the phone grabbed one, and a removal queued from the Clips
+  screen takes it off. Once the attach is queued the screen also holds the new
+  file id itself, so the row keeps the clip after the queue drains, with the
+  placeholder thumbnail until the next read. A clip still uploading is only in
+  the resumable-upload store; the camera says "Video pending" for it and the
+  row shows it once it attaches.
+- **No schema or permission change.** `set.attachVideo` already stamps the
+  set's permissions for the athlete.
+
 <!-- BEGIN: the coach's ask as a popup (F18) -->
 ## The coach's ask as a popup (F18)
 
