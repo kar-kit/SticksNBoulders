@@ -843,3 +843,12 @@ body {
     animation-name: vt-fade-in;
   }
 }
+
+/*
+ * The public landing page, hidden before first paint for a visitor the
+ * device remembers as signed in (lib/landing/root.ts). They are on their way
+ * to the app and see the same blank dark frame the root always showed.
+ */
+html[data-returning] .landing-page {
+  visibility: hidden;
+}
