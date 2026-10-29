@@ -78,6 +78,14 @@ describe("withQueuedClipState", () => {
     expect(stale.videoPosterId).toBeNull();
   });
 
+  it("drops the proxy when a replacement is queued, so the new take plays its original (v22)", () => {
+    const [swapped] = withQueuedClipState(
+      [clip("a", { videoProxyId: "file-a_proxy" })],
+      [op("set.attachVideo", { setId: "a", videoFileId: "file-new", videoPosterId: null })],
+    );
+    expect(swapped).toMatchObject({ videoFileId: "file-new", videoProxyId: null });
+  });
+
   it("takes the latest of several queued changes", () => {
     const ops = [
       op("set.attachVideo", { setId: "a", videoFileId: null }),

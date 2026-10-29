@@ -38,6 +38,21 @@ describe("deleteClipIfUnused", () => {
     expect(appwrite.deleteFile.mock.calls.map(([p]) => p)).toEqual([
       { bucketId: "set_videos", fileId: "vid-1" },
       { bucketId: "set_video_posters", fileId: "vid-1_poster" },
+      { bucketId: "set_video_proxies", fileId: "vid-1_proxy" },
+    ]);
+  });
+
+  it("takes the proxy too, and an original the worker already pruned is not an error (v22)", async () => {
+    appwrite.getRow.mockResolvedValue({ $id: "st-1", video_file_id: "vid-2" });
+    appwrite.deleteFile.mockImplementation(async (p) => {
+      if (p.bucketId === "set_videos") throw notFound;
+      return {};
+    });
+    await expect(deleteClipIfUnused("st-1", "vid-1")).resolves.toBeUndefined();
+    expect(appwrite.deleteFile.mock.calls.map(([p]) => p)).toEqual([
+      { bucketId: "set_videos", fileId: "vid-1" },
+      { bucketId: "set_video_posters", fileId: "vid-1_poster" },
+      { bucketId: "set_video_proxies", fileId: "vid-1_proxy" },
     ]);
   });
 
@@ -59,6 +74,7 @@ describe("deleteClipIfUnused", () => {
     expect(appwrite.deleteFile.mock.calls.map(([p]) => p)).toEqual([
       { bucketId: "set_videos", fileId: "vid-1" },
       { bucketId: "set_video_posters", fileId: "vid-1_poster" },
+      { bucketId: "set_video_proxies", fileId: "vid-1_proxy" },
     ]);
   });
 

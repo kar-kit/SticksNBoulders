@@ -15,6 +15,7 @@ import { fetchCoachStatus } from "@/lib/auth/role";
 import { subscribeToLinks } from "@/lib/coach/coach-links-store";
 import { droppedClipsNotice, reconcileDropped, sameAthletes } from "@/lib/coach/link-status";
 import { loadClipUrlBatches } from "@/lib/review/clip-url-batches";
+import { clipSource } from "@/lib/video/clip-source";
 import { buildQueue, firstItem, groupByAthlete, nextAfter, stillReviewed, type QueueItem } from "@/lib/review/queue";
 import { countBySet, type Comment } from "@/lib/review/comments";
 import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
@@ -206,9 +207,11 @@ export function ReviewQueue() {
   useEffect(() => {
     if (items.length === 0) return;
     let cancelled = false;
+    // Batched by clip id; each batch sends the proxy its rows name (v22).
+    const proxyOf = new Map(items.map((item) => [item.videoFileId, item.videoProxyId ?? null]));
     void loadClipUrlBatches(
       items.map((item) => item.videoFileId),
-      fetchClipUrls,
+      (ids) => fetchClipUrls(ids.map((id) => clipSource(id, proxyOf.get(id)))),
       (outcome) => {
         if (cancelled) return;
         if (outcome.ok) {
@@ -228,8 +231,8 @@ export function ReviewQueue() {
   // The batch above runs only when the queue changes, so a coach who stays on
   // a clip, or picks one from the rail, past five minutes would otherwise be
   // holding an expired ticket. See ClipPlayer's refreshSrc.
-  const refreshUrl = useCallback(async (fileId: string): Promise<boolean> => {
-    const fresh = await fetchClipUrls([fileId]).catch(() => new Map<string, string>());
+  const refreshUrl = useCallback(async (fileId: string, proxyId?: string | null): Promise<boolean> => {
+    const fresh = await fetchClipUrls([clipSource(fileId, proxyId)]).catch(() => new Map<string, string>());
     const url = fresh.get(fileId);
     if (!url) return false;
     setUrls((have) => new Map(have).set(fileId, url));
@@ -515,7 +518,7 @@ export function ReviewQueue() {
           <ClipPlayer
             src={currentUrl}
             clipId={current.id}
-            refreshSrc={() => refreshUrl(current.videoFileId)}
+            refreshSrc={() => refreshUrl(current.videoFileId, current.videoProxyId)}
             unavailable={
               urlsFailed.has(current.videoFileId) ? "The video for this clip could not be loaded. Try again." : undefined
             }

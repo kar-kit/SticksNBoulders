@@ -32,6 +32,12 @@ export interface ClipSet {
    * Optional so a fixture need not spell it out.
    */
   videoPosterId?: string | null;
+  /**
+   * The clip's verified proxy (v22), or null to play the original. Only ever
+   * the proxy OF `videoFileId` (`proxyOf`). Optional so a fixture need not
+   * spell it out.
+   */
+  videoProxyId?: string | null;
   notes: string | null;
   /**
    * The set's warm-up flag. Read so a write that restates the set's values

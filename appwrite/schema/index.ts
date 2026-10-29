@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 21,
+  version: 22,
   tables: [
     {
       id: "profiles",
@@ -191,6 +191,15 @@ export const schema: DatabaseSpec = {
         // Nullable, no index: every set before v17 has none and needs no
         // backfill to stay correct (`npm run clips:posters` adds them).
         { key: "video_poster_id", type: "string", size: 36, required: false },
+        // v22: the clip's verified proxy, a normalised H.264 copy in
+        // `set_video_proxies` (docs/video-proxy.md). Derived id, like the
+        // poster's, and readers accept it only when it is the proxy OF this
+        // row's clip (appwrite/documents/proxy.ts `proxyOf`). Written only by
+        // `npm run clips:proxies`, after ffprobe has passed the file; a row
+        // without it plays the original. `video_file_id` stays the clip's
+        // identity even after the original is pruned. Nullable, no index:
+        // every set before v22 has none and plays exactly as before.
+        { key: "video_proxy_id", type: "string", size: 36, required: false },
         { key: "notes", type: "string", size: 500, required: false },
         // The prescription line this set was logged against, or null for a set
         // nobody prescribed. A pointer for "which line was this", not a
@@ -755,6 +764,38 @@ export const schema: DatabaseSpec = {
        * revealing as the clip's first second.
        */
       encryption: true,
+      // No ClamAV beside the instance. Same reason as the clips.
+      antivirus: false,
+    },
+    {
+      id: "set_video_proxies",
+      name: "Set video proxies",
+      purpose:
+        "A normalised copy of each clip -- H.264, at most 1080p and 60fps, moov atom first -- made beside the instance by npm run clips:proxies, so a coach on any browser can start an iPhone HEVC clip at once instead of waiting on 100-150MB of a codec it may not decode (docs/video-proxy.md).",
+      // Per file, stamped exactly like the clip it was made from
+      // (`proxyPermissions` is `videoPermissions`): the same footage, so the
+      // same audience.
+      fileSecurity: true,
+      // No create for anyone. Unlike the clip and poster buckets, nothing a
+      // session does ever writes here: only the worker, with the API key,
+      // which Appwrite does not hold to bucket permissions. So no session can
+      // plant a file at a clip's proxy id for the worker to find.
+      permissions: [],
+      // The clip bucket's ceiling, and for the same reason: it tracks
+      // `_APP_STORAGE_LIMIT`. A proxy is far smaller than its original -- 10
+      // Mbps peak is about 75MB a minute at worst -- so this is never the cap
+      // a real one meets.
+      maximumFileSizeBytes: 200_000_000,
+      // What the worker writes. Nothing else belongs here.
+      allowedFileExtensions: ["mp4"],
+      // Already compressed.
+      compression: "none",
+      /**
+       * Off, as for clips. Appwrite skips encryption above 20MB, and a
+       * minute of proxy is over that, so turning it on would encrypt short
+       * proxies and silently not long ones.
+       */
+      encryption: false,
       // No ClamAV beside the instance. Same reason as the clips.
       antivirus: false,
     },

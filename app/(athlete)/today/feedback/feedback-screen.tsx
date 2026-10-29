@@ -24,6 +24,7 @@ import { useFeedbackBadge } from "@/lib/review/feedback-context";
 import { readSeenAt, readSetSeen, type SetSeenMarks } from "@/lib/review/feedback-seen";
 import { fetchFeedback } from "@/lib/review/feedback-store";
 import { fetchClipUrls } from "@/lib/review/queue-store";
+import { clipSource } from "@/lib/video/clip-source";
 import { pendingUploads } from "@/lib/video/pending-store";
 
 /**
@@ -96,6 +97,8 @@ export function FeedbackScreen() {
   const [state, setState] = useState<State>({ status: "loading" });
   const [clipUrls, setClipUrls] = useState<Map<string, string>>(new Map());
   const retried = useRef(new Set<string>());
+  // Clip id to the proxy its set names (v22), for the one-off re-mint below.
+  const proxies = useRef(new Map<string, string | null>());
 
   const apply = useCallback(
     (next: Loaded | { status: "failed" }) => {
@@ -106,14 +109,15 @@ export function FeedbackScreen() {
       // Clips last and off the critical path: the words are what the athlete
       // came for, and a batch of tickets is one request however many clips.
       const spokenAbout = new Set(next.comments.map((comment) => comment.setId));
-      const fileIds = [...next.sets.values()]
-        .filter((set) => spokenAbout.has(set.id))
-        .map((set) => set.videoFileId)
-        .filter((id): id is string => Boolean(id));
+      const filmed = [...next.sets.values()].filter(
+        (set): set is typeof set & { videoFileId: string } => spokenAbout.has(set.id) && Boolean(set.videoFileId),
+      );
+      for (const set of filmed) proxies.current.set(set.videoFileId, set.videoProxyId ?? null);
+      const sources = filmed.map((set) => clipSource(set.videoFileId, set.videoProxyId));
       // /api/clip takes at most 60 ids a request; a season of feedback can
       // name more clips than that, and one oversized batch would lose them all.
-      for (let i = 0; i < fileIds.length; i += CLIP_BATCH) {
-        void fetchClipUrls(fileIds.slice(i, i + CLIP_BATCH))
+      for (let i = 0; i < sources.length; i += CLIP_BATCH) {
+        void fetchClipUrls(sources.slice(i, i + CLIP_BATCH))
           .then((urls) => setClipUrls((current) => new Map([...current, ...urls])))
           .catch(() => {});
       }
@@ -181,7 +185,7 @@ export function FeedbackScreen() {
   const onClipError = useCallback((fileId: string) => {
     if (retried.current.has(fileId)) return;
     retried.current.add(fileId);
-    void fetchClipUrls([fileId])
+    void fetchClipUrls([clipSource(fileId, proxies.current.get(fileId))])
       .then((fresh) => setClipUrls((current) => new Map([...current, ...fresh])))
       .catch(() => {});
   }, []);

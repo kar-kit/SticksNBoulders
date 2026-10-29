@@ -192,6 +192,26 @@ describe("restoring clips", () => {
     expect(validateBackup(backupWithClip())).toEqual([]);
   });
 
+  it("expects a pruned original when the dump holds the proxy that plays instead (v22)", () => {
+    const b = backupWithClip();
+    b.tables[0].rows[0].data.video_proxy_id = "clipA_proxy";
+    b.files = [{ ...clip("clipA_proxy"), bucketId: "set_video_proxies", name: "clipA_proxy.mp4" }];
+    b.manifest.buckets = [
+      { id: "set_videos", files: 0, bytes: 0, incomplete: [] },
+      { id: "set_video_proxies", files: 1, bytes: 12_000_000, incomplete: [] },
+    ];
+    expect(validateBackup(b)).toEqual([]);
+  });
+
+  it("still warns about a missing original with no proxy to play instead", () => {
+    const b = backupWithClip();
+    b.files = [];
+    b.manifest.buckets = [{ id: "set_videos", files: 0, bytes: 0, incomplete: [] }];
+    expect(validateBackup(b).map((p) => p.message)).toEqual([
+      "sets/set1 points at clip clipA, which this dump does not hold.",
+    ]);
+  });
+
   it("blocks a clip granting read to a circle the dump does not hold", () => {
     const b = backupWithClip();
     b.files = [clip("clipA", [`read("team:circle_gone")`])];

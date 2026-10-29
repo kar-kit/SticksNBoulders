@@ -3,9 +3,10 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { authenticRows, markSetReviewed, posterOf, unmarkSetReviewed, type Actor } from "@/appwrite/documents";
+import { authenticRows, markSetReviewed, posterOf, proxyOf, unmarkSetReviewed, type Actor } from "@/appwrite/documents";
 import type { ClipSet, ReviewedClips } from "./queue";
 import { cardioColumns, isCardioSet } from "@/lib/logging/cardio";
+import type { ClipSource } from "@/lib/video/clip-source";
 
 /**
  * Reading the Review Queue, and clearing it.
@@ -41,6 +42,7 @@ export interface SetRow {
   logged_at?: unknown;
   video_file_id?: unknown;
   video_poster_id?: unknown;
+  video_proxy_id?: unknown;
   notes?: unknown;
   is_warmup?: unknown;
   failed?: unknown;
@@ -83,6 +85,8 @@ export function toClip(raw: SetRow): ClipSet | null {
     videoFileId,
     // Only the poster OF this clip; a stale one reads as none (F12).
     videoPosterId: posterOf(raw as unknown as Record<string, unknown>),
+    // Only the proxy OF this clip; a stale one plays the original (v22).
+    videoProxyId: proxyOf(raw as unknown as Record<string, unknown>),
     notes: str(raw.notes) || null,
     isWarmup: raw.is_warmup === true,
     failed: raw.failed === true,
@@ -296,14 +300,24 @@ export async function restoreClip(coachId: string, setId: string): Promise<void>
 }
 
 /**
- * Playback URLs for a batch of clips.
+ * Playback URLs for a batch of clips, keyed by clip id.
  *
  * One request for the visible queue rather than one per clip. See
- * lib/video/ticket.ts for why a plain Appwrite file URL will not do.
+ * lib/video/ticket.ts for why a plain Appwrite file URL will not do. A clip
+ * whose row names its proxy gets a URL that streams the proxy; the key is
+ * still the clip id, so no screen has to know which it got.
  */
-export async function fetchClipUrls(fileIds: readonly string[]): Promise<Map<string, string>> {
+export async function fetchClipUrls(clips: readonly ClipSource[]): Promise<Map<string, string>> {
   const urls = new Map<string, string>();
-  const unique = [...new Set(fileIds.filter(Boolean))];
+  const proxies: Record<string, string> = {};
+  const fileIds: string[] = [];
+  for (const clip of clips) {
+    const fileId = typeof clip === "string" ? clip : clip.fileId;
+    if (!fileId) continue;
+    fileIds.push(fileId);
+    if (typeof clip !== "string" && clip.proxyId) proxies[fileId] = clip.proxyId;
+  }
+  const unique = [...new Set(fileIds)];
   if (unique.length === 0) return urls;
 
   const { account } = browserAppwrite();
@@ -311,7 +325,9 @@ export async function fetchClipUrls(fileIds: readonly string[]): Promise<Map<str
   const response = await fetch("/api/clip", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${jwt}` },
-    body: JSON.stringify({ fileIds: unique }),
+    // `proxies` only when there are some: the request is then byte for byte
+    // what it was before v22.
+    body: JSON.stringify(Object.keys(proxies).length > 0 ? { fileIds: unique, proxies } : { fileIds: unique }),
   });
   if (!response.ok) throw new Error(`clip urls failed: ${response.status}`);
 

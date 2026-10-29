@@ -26,6 +26,7 @@ import { serverAppwriteConfig } from "../appwrite/env";
 import { dedupeSdkWarnings } from "../appwrite/dedupe-sdk-warning";
 import { isAuthentic } from "../appwrite/documents/provenance";
 import { POSTER_BUCKET } from "../appwrite/documents/poster";
+import { PROXY_BUCKET, proxyIdFor } from "../appwrite/documents/proxy";
 import { posterPermissions } from "../appwrite/documents/policy";
 import { setPosterOnSet } from "../appwrite/documents/poster-admin";
 import type { RowWriter } from "../appwrite/documents/row-writer";
@@ -48,7 +49,7 @@ const clips = appwriteBucketSource(storage, {
   endpoint: config.endpoint,
   projectId: config.projectId,
   apiKey: config.apiKey,
-  bucketIds: [VIDEO_BUCKET],
+  bucketIds: [VIDEO_BUCKET, PROXY_BUCKET],
 });
 // Matched on the code, not instanceof: under tsx the SDK can load twice, so its class is not always ours.
 const notFound = (error: unknown) => (error as { code?: unknown })?.code === 404;
@@ -77,8 +78,12 @@ const writer: RowWriter = {
 };
 
 async function renderPoster(clipFileId: string): Promise<Uint8Array> {
-  const source = await clips.download(VIDEO_BUCKET, clipFileId);
-  if (!source) throw new Error(`clip ${clipFileId} is not in the bucket`);
+  // The original, or its proxy once `clips:proxies -- --prune` has deleted
+  // the original (v22). A frame of either is the same frame.
+  const proxyId = proxyIdFor(clipFileId);
+  const source =
+    (await clips.download(VIDEO_BUCKET, clipFileId)) ?? (proxyId ? await clips.download(PROXY_BUCKET, proxyId) : null);
+  if (!source) throw new Error(`clip ${clipFileId} is not in the bucket, and neither is its proxy`);
   const input = join(workDir, `${clipFileId}.clip`);
   const output = join(workDir, `${clipFileId}.jpg`);
   try {

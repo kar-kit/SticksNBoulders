@@ -47,7 +47,8 @@ export function withQueuedClipState<T extends ClipSet>(clips: readonly T[], ops:
     const change = changes.get(clip.id);
     if (change) {
       if (change.videoFileId === null) continue;
-      next = { ...next, videoFileId: change.videoFileId, videoPosterId: change.videoPosterId };
+      // A new clip has no proxy until the worker makes one (v22).
+      next = { ...next, videoFileId: change.videoFileId, videoPosterId: change.videoPosterId, videoProxyId: null };
     }
     const edit = edits.get(clip.id);
     if (edit) {

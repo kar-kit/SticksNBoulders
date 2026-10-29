@@ -4,10 +4,12 @@
  *
  * Used by `e2e:prune` (every stranded fixture on the instance) and by the
  * e2e runner's crash net (only the accounts that run created). Reaches all 16
- * tables in appwrite/schema through their person columns, and all three
+ * tables in appwrite/schema through their person columns, and all four
  * buckets: a clip is reached through a deletable set's `video_file_id`, its
- * poster through the id derived from the clip's (appwrite/documents/poster.ts)
- * -- so a poster uploaded but never pointed at goes too -- and a picture
+ * poster and proxy through the ids derived from the clip's
+ * (appwrite/documents/poster.ts, proxy.ts) -- so a poster uploaded but never
+ * pointed at goes too, and so does a proxy the clips:proxies timer made of a
+ * fixture's clip while the e2e ran -- and a picture
  * through the owner's avatar namespace (appwrite/documents/avatar.ts).
  *
  * What it will not do, by design:
@@ -24,6 +26,7 @@ import { schema } from "../appwrite/schema";
 import { circleTeamId } from "../appwrite/documents/circle";
 import { AVATAR_BUCKET, isOwnAvatarFileId } from "../appwrite/documents/avatar";
 import { POSTER_BUCKET, posterIdFor } from "../appwrite/documents/poster";
+import { PROXY_BUCKET, proxyIdFor } from "../appwrite/documents/proxy";
 import { isFixtureEmail, mayDeleteRow, permissionsOwnedByFixtures, personColumnsOf } from "./e2e-fixture-scope";
 
 const CLIP_BUCKET = "set_videos";
@@ -132,9 +135,11 @@ export async function purgeFixtureUsers(
     const files: Array<{ bucketId: string; fileId: string }> = [];
     const candidates = [...clipIds].flatMap((clipId) => {
       const posterId = posterIdFor(clipId);
+      const proxyId = proxyIdFor(clipId);
       return [
         { bucketId: CLIP_BUCKET, fileId: clipId },
         ...(posterId ? [{ bucketId: POSTER_BUCKET, fileId: posterId }] : []),
+        ...(proxyId ? [{ bucketId: PROXY_BUCKET, fileId: proxyId }] : []),
       ];
     });
     for (const { bucketId, fileId } of candidates) {

@@ -124,6 +124,17 @@ Lift <timestamp>"), because a library row can only be written by the server
 and the audit needs one it is allowed to lose. Another session's typeahead
 could see it briefly.
 
+## Clip proxies (schema v22)
+
+`set_video_proxies` mirrors `set_videos` for read, update and delete. Create
+is `nobody`, A included: the bucket grants create to no one, because only the
+`clips:proxies` worker's key writes there, and the audit writes A's proxy the
+same way. A landed create from any session is a FAIL: it would let a session
+plant a file at a clip's proxy id. [Inference] The rule adds 20 matrix cells
+and 2 checks (the key writes the target; the ex-coach cannot read it after
+revocation), so the next run should total 22 more than the one before it.
+[Unverified] until Joey runs it (docs/video-proxy.md, runbook step 7).
+
 ## Adding a table
 
 A new table without a rule fails both the audit and `npm test`

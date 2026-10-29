@@ -44,10 +44,12 @@ import {
   commentPermissions,
   LIBRARY_TEAM_ID,
   posterPermissions,
+  proxyPermissions,
   readableByAnySession,
   videoPermissions,
 } from "../appwrite/documents/policy";
 import { POSTER_BUCKET, posterIdFor } from "../appwrite/documents/poster";
+import { PROXY_BUCKET, proxyIdFor } from "../appwrite/documents/proxy";
 import { AVATAR_BUCKET, newAvatarFileId } from "../appwrite/documents/avatar";
 import { authenticRows, isAuthentic, ownerProof } from "../appwrite/documents/provenance";
 import { FUNCTIONS } from "../appwrite/functions";
@@ -457,6 +459,42 @@ try {
     );
   }
 
+  // The clip's proxy (v22). The bucket grants create to nobody, so A's own
+  // upload is the first cell and must be refused; the target is then written
+  // the way the clips:proxies worker writes it, with the API key, stamped by
+  // the policy.
+  const proxyId = targets.set_videos ? proxyIdFor(targets.set_videos) : null;
+  if (proxyId) {
+    const own = await attempt(async () => {
+      const file = await A.storage.createFile({
+        bucketId: PROXY_BUCKET,
+        fileId: proxyId,
+        file: new File([Buffer.alloc(1024, 7)], "proxy.mp4", { type: "video/mp4" }),
+        permissions: proxyPermissions({ athleteId: A.id }),
+      });
+      createdFiles.push({ bucketId: PROXY_BUCKET, fileId: file.$id });
+    });
+    record(ruleFor("set_video_proxies"), "create", "athlete", own, "upload a proxy from their own session");
+    // Only if A's attempt did not already land there; a landed one is a
+    // failure above, and the run still needs a target either way.
+    const target = await adminStorage.getFile({ bucketId: PROXY_BUCKET, fileId: proxyId }).catch(() => null);
+    if (target) {
+      targets.set_video_proxies = target.$id;
+    } else {
+      const made = await adminStorage
+        .createFile({
+          bucketId: PROXY_BUCKET,
+          fileId: proxyId,
+          file: new File([Buffer.alloc(1024, 7)], "proxy.mp4", { type: "video/mp4" }),
+          permissions: proxyPermissions({ athleteId: A.id }),
+        })
+        .catch(() => null);
+      targets.set_video_proxies = made?.$id ?? "";
+      if (made) createdFiles.push({ bucketId: PROXY_BUCKET, fileId: made.$id });
+    }
+    check("the worker's key writes A's proxy, stamped by the policy", Boolean(targets.set_video_proxies));
+  }
+
   // A's profile picture: uploaded from A's session into A's own namespace,
   // stamped by the policy, then pointed at through the helper.
   targets.avatars = await ownerCreate("avatars", () =>
@@ -792,6 +830,16 @@ try {
         createdFiles.push({ bucketId: POSTER_BUCKET, fileId: file.$id });
       });
       record(ruleFor("set_video_posters"), "create", actor, poster, "upload a poster stamped with A's poster permissions");
+      const proxy = await attempt(async () => {
+        const file = await party[actor].storage.createFile({
+          bucketId: PROXY_BUCKET,
+          fileId: ID.unique(),
+          file: new File([Buffer.alloc(512, 8)], "forged.mp4", { type: "video/mp4" }),
+          permissions: proxyPermissions({ athleteId: A.id }),
+        });
+        createdFiles.push({ bucketId: PROXY_BUCKET, fileId: file.$id });
+      });
+      record(ruleFor("set_video_proxies"), "create", actor, proxy, "upload a proxy stamped with A's proxy permissions");
       const picture = await attempt(async () => {
         const file = await party[actor].storage.createFile({
           bucketId: AVATAR_BUCKET,
@@ -1112,6 +1160,7 @@ try {
     ["his own comment on A's set", () => C.tables.getRow({ databaseId: D, tableId: "set_comments", rowId: extras.comment2 })],
     ["A's reply to him", () => C.tables.getRow({ databaseId: D, tableId: "set_comments", rowId: extras.reply })],
     ["A's clip", () => C.storage.getFile({ bucketId: BUCKET, fileId: targets.set_videos })],
+    ["A's clip's proxy", () => C.storage.getFile({ bucketId: PROXY_BUCKET, fileId: targets.set_video_proxies })],
     ["A's picture", () => C.storage.getFile({ bucketId: AVATAR_BUCKET, fileId: targets.avatars })],
   ];
   for (const [what, fn] of exCoachCannotRead) {

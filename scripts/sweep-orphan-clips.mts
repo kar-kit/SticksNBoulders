@@ -123,6 +123,10 @@ const plan = classify(files, references, now, minAgeDays * DAY_MS);
 console.log(`  ${files.length} file(s), ${plan.referenced} referenced by a set`);
 console.log(`  ${plan.uploading.length} still uploading (never swept)`);
 console.log(`  ${plan.tooYoung.length} unreferenced but younger than ${minAgeDays} days (left alone)`);
+if (plan.pruned.length > 0) {
+  // Deleted on purpose by clips:proxies -- --prune; the players load the proxy.
+  console.log(`  ${plan.pruned.length} set(s) play their proxy, original pruned (expected)`);
+}
 if (plan.dangling.length > 0) {
   // Not acted on: deleting is the only thing this script does, and a row
   // pointing at nothing is not a file. Worth knowing about, though.

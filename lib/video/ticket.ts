@@ -1,4 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { PROXY_BUCKET, proxyIdFor } from "@/appwrite/documents/proxy";
+import { VIDEO_BUCKET } from "./bucket";
 
 /**
  * A short-lived, single-file pass for a clip URL.
@@ -45,6 +47,28 @@ export interface TicketClaims {
   userId: string;
   /** Epoch milliseconds. */
   expiresAt: number;
+  /**
+   * Which bucket the file is in (v22). Absent means the clip bucket: every
+   * ticket minted before proxies existed, and every clip without one, so an
+   * old ticket in a tab that was open across the deploy still plays. Signed
+   * with the rest, so it cannot be edited, and read through `ticketBucket`,
+   * so a ticket can only ever open a bucket on PLAYABLE_BUCKETS.
+   */
+  bucketId?: string;
+}
+
+/**
+ * The buckets a playback ticket may name. A ticket carries identity, not
+ * authority, so naming the avatar bucket would still only fetch what
+ * Appwrite lets the user read -- but the stream route is a video pipe, and a
+ * pipe that will fetch from any bucket is a second way into every one of them.
+ */
+export const PLAYABLE_BUCKETS: readonly string[] = [VIDEO_BUCKET, PROXY_BUCKET];
+
+/** The bucket a ticket opens, or null for one not on the allowlist. */
+export function ticketBucket(claims: TicketClaims): string | null {
+  const bucket = claims.bucketId ?? VIDEO_BUCKET;
+  return PLAYABLE_BUCKETS.includes(bucket) ? bucket : null;
 }
 
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
@@ -110,9 +134,25 @@ export function readTicket(token: string, secret: string, now: number = Date.now
   if (typeof claims.fileId !== "string" || !claims.fileId) return null;
   if (typeof claims.userId !== "string" || !claims.userId) return null;
   if (typeof claims.expiresAt !== "number" || !Number.isFinite(claims.expiresAt)) return null;
+  if (claims.bucketId !== undefined && (typeof claims.bucketId !== "string" || !claims.bucketId)) return null;
   if (claims.expiresAt <= now) return null;
 
   return claims;
+}
+
+/**
+ * What a clip id plays from: its proxy when the caller says the row names one
+ * and that proxy is this clip's own (`proxyIdFor`), else the original.
+ *
+ * The caller's word is enough because a wrong one costs nothing: the derived
+ * id can only be this clip's proxy, which the caller can read exactly when
+ * they can read the clip, and a proxy that does not exist yet falls back to
+ * the original in the stream route.
+ */
+export function playbackTarget(fileId: string, proxyId: unknown): { fileId: string; bucketId?: string } {
+  return typeof proxyId === "string" && proxyId !== "" && proxyId === proxyIdFor(fileId)
+    ? { fileId: proxyId, bucketId: PROXY_BUCKET }
+    : { fileId };
 }
 
 /** The URL a `<video>` element loads. Relative, because it is this app's own. */

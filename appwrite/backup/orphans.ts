@@ -1,3 +1,4 @@
+import { proxyIdFor } from "../documents/proxy";
 import { fileKey, isComplete, type SourceFile } from "./bucket";
 import type { BackupFile } from "./types";
 
@@ -28,7 +29,20 @@ import type { BackupFile } from "./types";
  * The 14-day grace below is far longer than the picture's own race (upload,
  * then repoint, seconds apart), which only makes it safer.
  */
-export const CLIP_REFERENCES = [
+export interface ClipReferenceSpec {
+  tableId: string;
+  column: string;
+  bucketId: string;
+  /**
+   * The file id a row keeps, when it is not simply the column's value. Read
+   * from the whole row, so a derived id can follow the column it hangs off.
+   */
+  fileIdOf?: (data: Record<string, unknown>) => unknown;
+  /** A row without this file is normal, not a row pointing at nothing. */
+  optional?: boolean;
+}
+
+export const CLIP_REFERENCES: readonly ClipReferenceSpec[] = [
   { tableId: "sets", column: "video_file_id", bucketId: "set_videos" },
   { tableId: "profiles", column: "avatar_file_id", bucketId: "avatars" },
   // Schema v17 (F12). A poster is deleted with its clip from the phone --
@@ -36,7 +50,19 @@ export const CLIP_REFERENCES = [
   // delete never ran: the logger's undo, which knows no file ids, a poster
   // whose clip upload was refused, or a phone that went offline for good.
   { tableId: "sets", column: "video_poster_id", bucketId: "set_video_posters" },
-] as const;
+  // Schema v22. A proxy is kept while the clip it was made from is live --
+  // derived from `video_file_id`, not read off `video_proxy_id` -- so a proxy
+  // the worker uploaded but has not pointed at yet is not an orphan, and one
+  // a replaced or deleted clip left behind is. Optional: most clips have no
+  // proxy until the worker reaches them, and that is not a dangling row.
+  {
+    tableId: "sets",
+    column: "video_proxy_id",
+    bucketId: "set_video_proxies",
+    fileIdOf: (data) => proxyIdFor(data.video_file_id),
+    optional: true,
+  },
+];
 
 /**
  * Columns that name a file without keeping it. Listed so the schema check in
@@ -55,6 +81,8 @@ export interface ClipReference {
   tableId: string;
   rowId: string;
   fileId: string;
+  /** See ClipReferenceSpec.optional. */
+  optional?: boolean;
 }
 
 /** The clip references in one table's rows. Tables with no file column yield none. */
@@ -66,14 +94,16 @@ export function referencesIn(
   for (const ref of CLIP_REFERENCES) {
     if (ref.tableId !== tableId) continue;
     for (const row of rows) {
-      const value = row.data[ref.column];
+      const value = ref.fileIdOf ? ref.fileIdOf(row.data) : row.data[ref.column];
       if (typeof value === "string" && value.trim() !== "") {
-        found.push({ bucketId: ref.bucketId, tableId, rowId: row.$id, fileId: value });
+        found.push({ bucketId: ref.bucketId, tableId, rowId: row.$id, fileId: value, ...(ref.optional ? { optional: true } : {}) });
       }
     }
   }
   return found;
 }
+
+const PROXY_REFERENCE = CLIP_REFERENCES.find((r) => r.column === "video_proxy_id")!;
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -117,6 +147,13 @@ export interface SweepPlan {
   referenced: number;
   /** Rows naming a file the bucket does not hold. Reported, never acted on. */
   dangling: ClipReference[];
+  /**
+   * Rows whose original `clips:proxies -- --prune` deleted on purpose: the
+   * clip is gone and the same row's proxy is in its bucket. Not dangling --
+   * the players load the proxy -- and listed apart so a real dangling row
+   * still stands out.
+   */
+  pruned: ClipReference[];
   reclaimableBytes: number;
 }
 
@@ -169,12 +206,23 @@ export function classify(
   const referenced = new Set(references.map((r) => folded(r.bucketId, r.fileId)));
   const inBucket = new Set(files.map((f) => folded(f.bucketId, f.$id)));
 
+  // A row's file is "missing" only if it is not optional and not in its bucket.
+  const missing = references.filter((r) => !r.optional && !inBucket.has(folded(r.bucketId, r.fileId)));
+  const rowsWithProxy = new Set(
+    references
+      .filter((r) => r.bucketId === PROXY_REFERENCE.bucketId && inBucket.has(folded(r.bucketId, r.fileId)))
+      .map((r) => `${r.tableId}/${r.rowId}`),
+  );
+  const prunedOriginal = (r: ClipReference) =>
+    r.bucketId === "set_videos" && rowsWithProxy.has(`${r.tableId}/${r.rowId}`);
+
   const plan: SweepPlan = {
     orphans: [],
     tooYoung: [],
     uploading: [],
     referenced: 0,
-    dangling: references.filter((r) => !inBucket.has(folded(r.bucketId, r.fileId))),
+    dangling: missing.filter((r) => !prunedOriginal(r)),
+    pruned: missing.filter(prunedOriginal),
     reclaimableBytes: 0,
   };
 
