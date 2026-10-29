@@ -49,11 +49,20 @@ const readers: Record<string, string[]> = {
   "clip-a": [COACH],
   "clip-b": [COACH],
   [OTHER_ATHLETES_CLIP]: ["athlete_somebody_else"],
+  // v22: a proxy carries its clip's readers.
+  "clip-a_proxy": [COACH],
+  [`${OTHER_ATHLETES_CLIP}_proxy`]: ["athlete_somebody_else"],
 };
+/** Files that do not exist, as `bucket/id`. */
+const absent = new Set<string>();
 
 const storage = vi.fn(async (url: string, init: RequestInit) => {
   const headers = init.headers as Record<string, string>;
-  const fileId = decodeURIComponent(/\/files\/([^/]+)\/view$/.exec(url)![1]);
+  const [, bucketId, rawId] = /\/buckets\/([^/]+)\/files\/([^/]+)\/view$/.exec(url)!;
+  const fileId = decodeURIComponent(rawId);
+  if (absent.has(`${bucketId}/${fileId}`)) {
+    return Response.json({ message: "The requested file could not be found.", type: "storage_file_not_found" }, { status: 404 });
+  }
   const asAdmin = Object.keys(headers).some((name) => name.toLowerCase() === "x-appwrite-key");
   const jwtUser = headers["x-appwrite-jwt"]?.replace(/^jwt-for-/, "");
 
@@ -90,6 +99,7 @@ const get = (fileId: string, token: string | null, range?: string) =>
   );
 
 beforeEach(() => {
+  absent.clear();
   appwrite.jwtFails = false;
   appwrite.jwtFor = [];
   storage.mockClear();
@@ -306,5 +316,58 @@ describe("GET /api/clip/[fileId] — a missing VIDEO_TICKET_SECRET", () => {
     expect(await response.json()).toEqual({ error: "unavailable" });
     expect(logged).toHaveBeenCalledTimes(1);
     expect(String(logged.mock.calls[0][0])).toContain("VIDEO_TICKET_SECRET");
+  });
+});
+
+describe("GET /api/clip/[fileId] — which bucket (v22)", () => {
+  const proxyTicket = (fileId: string, bucketId = "set_video_proxies") =>
+    mintTicket({ fileId, userId: COACH, expiresAt: Date.now() + TICKET_TTL_MS, bucketId }, SECRET);
+
+  it("streams a proxy ticket from the proxy bucket, as the user, with the range", async () => {
+    const response = await get("clip-a_proxy", proxyTicket("clip-a_proxy"), "bytes=0-10");
+    expect(response.status).toBe(206);
+    expect(await response.text()).toBe("video-bytes");
+    const [url, init] = storage.mock.calls[0];
+    expect(url).toBe("https://appwrite.test/v1/storage/buckets/set_video_proxies/files/clip-a_proxy/view");
+    expect(init.headers).toMatchObject({ "x-appwrite-jwt": `jwt-for-${COACH}`, range: "bytes=0-10" });
+  });
+
+  it("streams a ticket that names no bucket from the clip bucket, as before proxies", async () => {
+    await get("clip-a", ticket("clip-a"));
+    expect(storage.mock.calls[0][0]).toContain("/buckets/set_videos/");
+  });
+
+  it("refuses a signed ticket for a bucket off the allowlist without fetching anything", async () => {
+    const response = await get("clip-a", proxyTicket("clip-a", "avatars"));
+    expect(response.status).toBe(404);
+    expect(storage).not.toHaveBeenCalled();
+    expect(appwrite.jwtFor).toEqual([]);
+  });
+
+  it("falls back to the original, as the same user, when the proxy file is gone", async () => {
+    absent.add("set_video_proxies/clip-a_proxy");
+    const response = await get("clip-a_proxy", proxyTicket("clip-a_proxy"), "bytes=0-10");
+    expect(response.status).toBe(206);
+    expect(storage.mock.calls.map((c) => c[0])).toEqual([
+      "https://appwrite.test/v1/storage/buckets/set_video_proxies/files/clip-a_proxy/view",
+      "https://appwrite.test/v1/storage/buckets/set_videos/files/clip-a/view",
+    ]);
+    expect((storage.mock.calls[1][1].headers as Record<string, string>)["x-appwrite-jwt"]).toBe(`jwt-for-${COACH}`);
+  });
+
+  it("does not fall back for a clip ticket, and the fallback still answers to Appwrite's permissions", async () => {
+    absent.add("set_videos/clip-a");
+    expect((await get("clip-a", ticket("clip-a"))).status).toBe(404);
+    expect(storage).toHaveBeenCalledTimes(1);
+
+    storage.mockClear();
+    absent.add(`set_video_proxies/${OTHER_ATHLETES_CLIP}_proxy`);
+    const response = await get(`${OTHER_ATHLETES_CLIP}_proxy`, proxyTicket(`${OTHER_ATHLETES_CLIP}_proxy`));
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain("video-bytes");
+  });
+
+  it("refuses a proxy ticket replayed against a different path", async () => {
+    expect((await get("clip-a", proxyTicket("clip-a_proxy"))).status).toBe(404);
   });
 });

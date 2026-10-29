@@ -2,7 +2,7 @@ import { Account, Client } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { serverAppwriteConfig } from "@/appwrite/env";
 import { MAX_FILES } from "@/lib/video/clip-limits";
-import { clipUrl, mintTicket, ticketSecret, TICKET_TTL_MS } from "@/lib/video/ticket";
+import { clipUrl, mintTicket, playbackTarget, ticketSecret, TICKET_TTL_MS } from "@/lib/video/ticket";
 
 /**
  * Mints playback URLs for clips.
@@ -17,6 +17,12 @@ import { clipUrl, mintTicket, ticketSecret, TICKET_TTL_MS } from "@/lib/video/ti
  * clip the caller cannot read is a ticket that fetches a 404. Putting an
  * access check here as well would be a second implementation of a decision
  * Appwrite already makes correctly, and a second place for it to rot.
+ *
+ * Proxies (v22). The body may carry `proxies`, clip id to the proxy id the
+ * row names. Where that is the clip's own proxy, the URL streams the proxy
+ * bucket instead, still keyed by the clip id so every screen keeps one key
+ * per clip. The field is optional both ways: an old client sends none and
+ * gets the originals; an old server ignores it and mints the originals.
  */
 
 export const runtime = "nodejs";
@@ -26,13 +32,17 @@ export async function POST(request: Request) {
   const jwt = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!jwt) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
 
-  let body: { fileIds?: unknown };
+  let body: { fileIds?: unknown; proxies?: unknown };
   try {
-    body = (await request.json()) as { fileIds?: unknown };
+    body = (await request.json()) as { fileIds?: unknown; proxies?: unknown };
   } catch {
     return NextResponse.json({ error: "bad-request" }, { status: 400 });
   }
 
+  const proxies =
+    body.proxies !== null && typeof body.proxies === "object" && !Array.isArray(body.proxies)
+      ? (body.proxies as Record<string, unknown>)
+      : {};
   const fileIds = Array.isArray(body.fileIds)
     ? body.fileIds.filter((id): id is string => typeof id === "string" && id.length > 0)
     : [];
@@ -66,7 +76,8 @@ export async function POST(request: Request) {
   const expiresAt = Date.now() + TICKET_TTL_MS;
   const urls: Record<string, string> = {};
   for (const fileId of fileIds) {
-    urls[fileId] = clipUrl(fileId, mintTicket({ fileId, userId, expiresAt }, secret));
+    const target = playbackTarget(fileId, Object.hasOwn(proxies, fileId) ? proxies[fileId] : undefined);
+    urls[fileId] = clipUrl(target.fileId, mintTicket({ ...target, userId, expiresAt }, secret));
   }
 
   return NextResponse.json(

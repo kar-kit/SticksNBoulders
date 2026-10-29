@@ -10,6 +10,7 @@ import { useArrivals, usePresence } from "@/components/ui/motion";
 import { useSession } from "@/lib/auth/session-context";
 import { fetchExerciseLibrary } from "@/lib/exercises/library";
 import { fetchClips, fetchClipUrls, fetchReviews } from "@/lib/review/queue-store";
+import { clipSource } from "@/lib/video/clip-source";
 import { stillReviewed } from "@/lib/review/queue";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import type { Comment } from "@/lib/review/comments";
@@ -234,7 +235,7 @@ function ClipDialog({
   // not watched, and each URL is a signed ticket with a short life.
   useEffect(() => {
     let cancelled = false;
-    void fetchClipUrls([row.videoFileId])
+    void fetchClipUrls([clipSource(row.videoFileId, row.videoProxyId)])
       .catch(() => new Map<string, string>())
       .then((urls) => {
         if (!cancelled) setSrc({ clipId: row.id, url: urls.get(row.videoFileId) ?? null });
@@ -242,12 +243,12 @@ function ClipDialog({
     return () => {
       cancelled = true;
     };
-  }, [row.id, row.videoFileId]);
+  }, [row.id, row.videoFileId, row.videoProxyId]);
 
   // The ticket lasts five minutes; ClipPlayer asks for a new one when a seek
   // past that fails.
   const refreshSrc = async (): Promise<boolean> => {
-    const urls = await fetchClipUrls([row.videoFileId]).catch(() => new Map<string, string>());
+    const urls = await fetchClipUrls([clipSource(row.videoFileId, row.videoProxyId)]).catch(() => new Map<string, string>());
     const url = urls.get(row.videoFileId);
     if (!url) return false;
     setSrc({ clipId: row.id, url });

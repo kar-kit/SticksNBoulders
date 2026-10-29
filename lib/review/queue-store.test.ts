@@ -125,6 +125,19 @@ describe("fetchClips", () => {
   });
 });
 
+describe("fetchClips and proxies (v22)", () => {
+  it("plays a row's proxy only when it is the proxy of that row's clip", async () => {
+    db.current!.seed("sets", [
+      clip("own", "joey", { video_file_id: "f1", video_proxy_id: "f1_proxy" }),
+      clip("stale", "joey", { video_file_id: "f2", video_proxy_id: "f1_proxy" }),
+      clip("none", "joey", { video_file_id: "f3" }),
+    ]);
+    const clips = await fetchClips(["joey"]);
+    const proxy = Object.fromEntries(clips.map((c) => [c.id, c.videoProxyId]));
+    expect(proxy).toEqual({ own: "f1_proxy", stale: null, none: null });
+  });
+});
+
 describe("fetchReviews", () => {
   const review = (id: string, coachId: string, setId: string, over: Partial<FakeRow> = {}): FakeRow => ({
     $id: id,

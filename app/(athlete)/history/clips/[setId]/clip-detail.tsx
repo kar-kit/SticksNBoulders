@@ -25,6 +25,7 @@ import { nextSeenAt, type FeedbackSet } from "@/lib/review/feedback";
 import { useFeedbackBadge } from "@/lib/review/feedback-context";
 import type { ClipSet } from "@/lib/review/queue";
 import { fetchClipUrls } from "@/lib/review/queue-store";
+import { clipSource } from "@/lib/video/clip-source";
 import { haptic } from "@/lib/ui/haptics";
 import { deleteMyClip, fetchMyClip, retireReplacedClip } from "@/lib/video/my-clips-store";
 import { pendingClipIds, replyParentFor, withQueuedClipState } from "@/lib/video/my-clips";
@@ -136,12 +137,14 @@ export function ClipDetail({ setId }: { setId: string }) {
   }, [load, ops]);
   const pending = useMemo(() => pendingClipIds(ops).has(setId), [ops, setId]);
   const fileId = clip?.videoFileId ?? null;
+  // The verified proxy, when the row names this clip's own (v22).
+  const proxyId = clip?.videoProxyId ?? null;
 
   // A ticket per open, for this clip only. Re-minted when Replace swaps the file.
   useEffect(() => {
     if (!fileId) return;
     let cancelled = false;
-    void fetchClipUrls([fileId])
+    void fetchClipUrls([clipSource(fileId, proxyId)])
       .catch(() => new Map<string, string>())
       .then((urls) => {
         if (!cancelled) setSrc({ fileId, url: urls.get(fileId) ?? null });
@@ -149,11 +152,11 @@ export function ClipDetail({ setId }: { setId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [fileId]);
+  }, [fileId, proxyId]);
 
   const refreshSrc = async (): Promise<boolean> => {
     if (!fileId) return false;
-    const urls = await fetchClipUrls([fileId]).catch(() => new Map<string, string>());
+    const urls = await fetchClipUrls([clipSource(fileId, proxyId)]).catch(() => new Map<string, string>());
     const url = urls.get(fileId);
     if (!url) return false;
     setSrc({ fileId, url });
@@ -300,7 +303,7 @@ export function ClipDetail({ setId }: { setId: string }) {
       // Its poster is unknown here, so the placeholder until the next read.
       setLoad((was) =>
         was.status === "ready"
-          ? { ...was, clip: { ...was.clip, videoFileId: result.fileId, videoPosterId: null } }
+          ? { ...was, clip: { ...was.clip, videoFileId: result.fileId, videoPosterId: null, videoProxyId: null } }
           : was,
       );
       void retireReplacedClip(clip.id, old).catch(() => {});

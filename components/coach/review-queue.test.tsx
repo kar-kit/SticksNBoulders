@@ -246,6 +246,28 @@ describe("a playback url that expires", () => {
     expect(queueStore.fetchClipUrls).toHaveBeenLastCalledWith(["file-joey-1"]);
     expect(screen.queryByText(/would not play/)).not.toBeInTheDocument();
   });
+
+  it("asks for the proxy a row names, keyed by the clip, and re-mints it the same way (v22)", async () => {
+    queueStore.fetchClips.mockResolvedValue([{ ...ALL[0], videoProxyId: "file-joey-1_proxy" }, ALL[1]]);
+    queueStore.fetchClipUrls.mockImplementation(async (batch: ReadonlyArray<string | { fileId: string }>) =>
+      new Map(batch.map((c) => (typeof c === "string" ? [c, `/api/clip/${c}?t=x`] : [c.fileId, `/api/clip/${c.fileId}_proxy?t=x`]))),
+    );
+    const { container } = render(<ReviewQueue />);
+    await waitFor(() =>
+      expect(container.querySelector("video")).toHaveAttribute("src", "/api/clip/file-joey-1_proxy?t=x"),
+    );
+    expect(queueStore.fetchClipUrls.mock.calls[0][0]).toEqual([
+      { fileId: "file-joey-1", proxyId: "file-joey-1_proxy" },
+      "file-joey-2",
+    ]);
+
+    act(() => {
+      container.querySelector("video")!.dispatchEvent(new Event("error"));
+    });
+    await waitFor(() =>
+      expect(queueStore.fetchClipUrls).toHaveBeenLastCalledWith([{ fileId: "file-joey-1", proxyId: "file-joey-1_proxy" }]),
+    );
+  });
 });
 
 describe("playback urls for a long queue", () => {

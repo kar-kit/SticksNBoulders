@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { clipUrl, mintTicket, readTicket, ticketSecret, TICKET_TTL_MS } from "./ticket";
+import { clipUrl, mintTicket, playbackTarget, readTicket, ticketBucket, ticketSecret, TICKET_TTL_MS } from "./ticket";
 
 const SECRET = "a-test-secret-that-is-long-enough-to-pass";
 const OTHER = "a-different-secret-also-long-enough-here";
@@ -89,5 +89,46 @@ describe("clipUrl", () => {
 
   it("is same-origin and relative", () => {
     expect(clipUrl("clip123", "tok")).toBe("/api/clip/clip123?t=tok");
+  });
+});
+
+describe("which bucket a ticket opens (v22)", () => {
+  it("is the clip bucket for a ticket that names none, so tickets minted before proxies still play", () => {
+    const old = readTicket(mintTicket(claims, SECRET), SECRET)!;
+    expect(old).not.toHaveProperty("bucketId");
+    expect(ticketBucket(old)).toBe("set_videos");
+  });
+
+  it("round-trips a proxy bucket, signed with the rest", () => {
+    const proxy = { ...claims, fileId: "clip123_proxy", bucketId: "set_video_proxies" };
+    const read = readTicket(mintTicket(proxy, SECRET), SECRET)!;
+    expect(read).toEqual(proxy);
+    expect(ticketBucket(read)).toBe("set_video_proxies");
+  });
+
+  it("opens nothing outside the allowlist, even when correctly signed", () => {
+    const avatars = readTicket(mintTicket({ ...claims, bucketId: "avatars" }, SECRET), SECRET)!;
+    expect(ticketBucket(avatars)).toBeNull();
+  });
+
+  it("refuses a correctly signed ticket whose bucket is not a non-empty string", () => {
+    for (const bucketId of ["", 7, null]) {
+      const payload = Buffer.from(JSON.stringify({ ...claims, bucketId })).toString("base64url");
+      const signature = createHmac("sha256", SECRET).update(payload).digest("base64url");
+      expect(readTicket(`${payload}.${signature}`, SECRET)).toBeNull();
+    }
+  });
+});
+
+describe("playbackTarget", () => {
+  it("plays the clip's own proxy from the proxy bucket", () => {
+    expect(playbackTarget("clip123", "clip123_proxy")).toEqual({ fileId: "clip123_proxy", bucketId: "set_video_proxies" });
+  });
+
+  it("plays the original for no proxy, another clip's proxy, or anything that is not this clip's derived id", () => {
+    expect(playbackTarget("clip123", undefined)).toEqual({ fileId: "clip123" });
+    expect(playbackTarget("clip123", null)).toEqual({ fileId: "clip123" });
+    expect(playbackTarget("clip123", "other_proxy")).toEqual({ fileId: "clip123" });
+    expect(playbackTarget("clip123", "avatar_joey")).toEqual({ fileId: "clip123" });
   });
 });

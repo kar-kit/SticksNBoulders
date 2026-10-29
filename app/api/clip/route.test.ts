@@ -126,3 +126,33 @@ describe("POST /api/clip — a missing VIDEO_TICKET_SECRET", () => {
     expect(String(logged.mock.calls[0][0])).toContain("VIDEO_TICKET_SECRET");
   });
 });
+
+describe("POST /api/clip — proxies (v22)", () => {
+  const urlsOf = async (body: unknown) =>
+    ((await (await post(body, `jwt-${COACH}`)).json()) as { urls: Record<string, string> }).urls;
+  const claimsOf = (url: string) => readTicket(decodeURIComponent(new URL(url, "http://x").searchParams.get("t")!), SECRET)!;
+
+  it("keys the URL by the clip id but streams the clip's own proxy from the proxy bucket", async () => {
+    const urls = await urlsOf({ fileIds: ["clip-a", "clip-b"], proxies: { "clip-a": "clip-a_proxy" } });
+    expect(Object.keys(urls).sort()).toEqual(["clip-a", "clip-b"]);
+    expect(urls["clip-a"]).toMatch(/^\/api\/clip\/clip-a_proxy\?t=/);
+    expect(claimsOf(urls["clip-a"])).toMatchObject({ fileId: "clip-a_proxy", bucketId: "set_video_proxies", userId: COACH });
+    // No proxy named: exactly the ticket an old server would mint.
+    expect(urls["clip-b"]).toMatch(/^\/api\/clip\/clip-b\?t=/);
+    expect(claimsOf(urls["clip-b"])).not.toHaveProperty("bucketId");
+  });
+
+  it("ignores a proxy that is not the clip's own, and a malformed proxies field", async () => {
+    const wrong = await urlsOf({ fileIds: ["clip-a"], proxies: { "clip-a": "clip-z_proxy" } });
+    expect(claimsOf(wrong["clip-a"])).toMatchObject({ fileId: "clip-a" });
+    for (const proxies of [["clip-a_proxy"], "clip-a_proxy", null, 5]) {
+      const urls = await urlsOf({ fileIds: ["clip-a"], proxies });
+      expect(claimsOf(urls["clip-a"]).fileId).toBe("clip-a");
+    }
+  });
+
+  it("reads only the proxies map's own keys", async () => {
+    const urls = await urlsOf({ fileIds: ["toString"], proxies: {} });
+    expect(claimsOf(urls["toString"]).fileId).toBe("toString");
+  });
+});

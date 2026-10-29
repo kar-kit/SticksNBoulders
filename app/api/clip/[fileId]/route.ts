@@ -2,8 +2,9 @@ import { Users } from "node-appwrite";
 import { NextResponse } from "next/server";
 import { serverAppwriteConfig } from "@/appwrite/env";
 import { createServerClient } from "@/appwrite/server-client";
+import { PROXY_BUCKET, proxyIdFor } from "@/appwrite/documents/proxy";
 import { VIDEO_BUCKET } from "@/lib/video/bucket";
-import { readTicket, ticketSecret } from "@/lib/video/ticket";
+import { readTicket, ticketBucket, ticketSecret } from "@/lib/video/ticket";
 
 /**
  * Streams one clip, through this app's origin.
@@ -24,6 +25,14 @@ import { readTicket, ticketSecret } from "@/lib/video/ticket";
  * unbuffered. Both matter: the blueprint wants frame-stepping at 0.25x, which
  * is seeking, which is range requests -- and reading a 150MB clip into memory
  * to hand it on would work in every test and fall over on the first real one.
+ *
+ * Which bucket (v22) comes from the signed ticket, never the URL, and only
+ * from PLAYABLE_BUCKETS. A ticket with no bucket -- every ticket minted before
+ * proxies, and every clip without one -- opens the clip bucket as it always
+ * did. A proxy ticket whose file Appwrite does not have falls back to the
+ * clip it was derived from, as the same user: a row can name a proxy that has
+ * since been deleted, and the original, while it exists, is the right thing
+ * to play.
  */
 
 export const runtime = "nodejs";
@@ -58,6 +67,8 @@ export async function GET(request: Request, context: { params: Promise<{ fileId:
   if (!claims || claims.fileId !== fileId) {
     return NextResponse.json({ error: "not-found" }, { status: 404 });
   }
+  const bucket = ticketBucket(claims);
+  if (!bucket) return NextResponse.json({ error: "not-found" }, { status: 404 });
 
   const config = serverAppwriteConfig();
 
@@ -71,9 +82,8 @@ export async function GET(request: Request, context: { params: Promise<{ fileId:
   }
 
   const range = request.headers.get("range");
-  const upstream = await fetch(
-    `${config.endpoint}/storage/buckets/${VIDEO_BUCKET}/files/${encodeURIComponent(fileId)}/view`,
-    {
+  const view = (bucketId: string, id: string) =>
+    fetch(`${config.endpoint}/storage/buckets/${bucketId}/files/${encodeURIComponent(id)}/view`, {
       headers: {
         "x-appwrite-project": config.projectId,
         "x-appwrite-jwt": jwt,
@@ -88,8 +98,17 @@ export async function GET(request: Request, context: { params: Promise<{ fileId:
       // right shape: a coach who lost access learns nothing about whether the
       // clip still exists.
       cache: "no-store",
-    },
-  );
+    });
+
+  let upstream = await view(bucket, fileId);
+  if (upstream.status === 404 && bucket === PROXY_BUCKET) {
+    // Only the clip this proxy id was derived from, never a guess.
+    const clipId = fileId.endsWith("_proxy") ? fileId.slice(0, -"_proxy".length) : "";
+    if (clipId && proxyIdFor(clipId) === fileId) {
+      await upstream.body?.cancel();
+      upstream = await view(VIDEO_BUCKET, clipId);
+    }
+  }
 
   if (!upstream.ok && upstream.status !== 206) {
     return NextResponse.json({ error: "not-found" }, { status: 404 });

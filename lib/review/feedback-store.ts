@@ -2,7 +2,7 @@
 
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
-import { authenticRows } from "@/appwrite/documents";
+import { authenticRows, proxyOf } from "@/appwrite/documents";
 import { fetchCommentsForAthlete, fetchCommentsForSets } from "./comment-store";
 import type { Comment } from "./comments";
 import { seenAtFor, setIdsToFetch, type FeedbackSet } from "./feedback";
@@ -36,6 +36,7 @@ interface SetRow {
   failed?: unknown;
   logged_at?: unknown;
   video_file_id?: unknown;
+  video_proxy_id?: unknown;
   notes?: unknown;
 }
 
@@ -55,6 +56,7 @@ function toFeedbackSet(raw: SetRow): FeedbackSet {
     failed: raw.failed === true,
     loggedAt: str(raw.logged_at),
     videoFileId: str(raw.video_file_id) || null,
+    videoProxyId: proxyOf(raw as unknown as Record<string, unknown>),
     notes: str(raw.notes) || null,
   };
 }
@@ -88,6 +90,9 @@ export async function fetchSetsByIds(setIds: readonly string[]): Promise<Map<str
           "failed",
           "logged_at",
           "video_file_id",
+          // v22. Like `failed` above: the instance must have the column
+          // before this client ships, or the select is refused.
+          "video_proxy_id",
           "notes",
         ]),
       ],

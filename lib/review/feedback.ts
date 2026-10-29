@@ -25,6 +25,8 @@ export interface FeedbackSet {
   /** ISO 8601. */
   loggedAt: string;
   videoFileId: string | null;
+  /** The clip's verified proxy (v22), or null to play the original. Optional for fixtures. */
+  videoProxyId?: string | null;
   notes: string | null;
 }
 
