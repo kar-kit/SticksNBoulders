@@ -1,5 +1,6 @@
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { POSTER_BUCKET, posterIdFor } from "@/appwrite/documents/poster";
+import { PROXY_BUCKET, proxyIdFor } from "@/appwrite/documents/proxy";
 import { VIDEO_BUCKET } from "./bucket";
 
 /**
@@ -24,6 +25,9 @@ import { VIDEO_BUCKET } from "./bucket";
  *   be read at all is treated as still naming it: unsure keeps the file.
  *
  * A file already gone is what this wanted, so a 404 on the delete is success.
+ * That covers an original the proxy worker already pruned (v22): the clip,
+ * its poster and its proxy are three deletes, each allowed to find nothing,
+ * and none waits on another.
  */
 
 const isNotFound = (error: unknown): boolean => (error as { code?: unknown })?.code === 404;
@@ -43,13 +47,17 @@ export async function deleteClipIfUnused(setId: string, fileId: string): Promise
     // session -- and the queue retries it rather than guessing.
     if (!isNotFound(error)) throw error;
   }
-  // The poster goes with its clip (F12). Its id is derived from the clip's,
-  // so nothing extra had to be queued to know it; most clips filmed before
-  // v17 have none, which the 404 covers.
+  // The poster (F12) and the proxy (v22) go with their clip. Both ids are
+  // derived from the clip's, so nothing extra had to be queued to know them;
+  // a clip with neither, or a proxy not made yet, is the 404 below. The
+  // athlete may delete all three: `posterPermissions` and `proxyPermissions`
+  // are `videoPermissions`.
   const posterId = posterIdFor(fileId);
+  const proxyId = proxyIdFor(fileId);
   const doomed = [
     { bucketId: VIDEO_BUCKET, fileId },
     ...(posterId ? [{ bucketId: POSTER_BUCKET, fileId: posterId }] : []),
+    ...(proxyId ? [{ bucketId: PROXY_BUCKET, fileId: proxyId }] : []),
   ];
   for (const file of doomed) {
     try {

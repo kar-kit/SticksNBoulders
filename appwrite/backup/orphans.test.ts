@@ -1,6 +1,7 @@
 import { VIDEO_BUCKET } from "@/lib/video/bucket";
 import { AVATAR_BUCKET } from "@/appwrite/documents/avatar";
 import { POSTER_BUCKET } from "@/appwrite/documents/poster";
+import { PROXY_BUCKET } from "@/appwrite/documents/proxy";
 import { schema } from "../schema";
 import type { SourceFile } from "./bucket";
 import {
@@ -43,9 +44,10 @@ const refs = (...sets: ReturnType<typeof set>[]) => referencesIn("sets", sets);
 const ids = (files: readonly SourceFile[]) => files.map((f) => f.$id);
 
 describe("what counts as a reference", () => {
-  it("reads video_file_id off sets", () => {
+  it("reads video_file_id off sets, and keeps that clip's derived proxy (v22)", () => {
     expect(refs(set("s1", "clipA"))).toEqual([
       { bucketId: VIDEO_BUCKET, tableId: "sets", rowId: "s1", fileId: "clipA" },
+      { bucketId: PROXY_BUCKET, tableId: "sets", rowId: "s1", fileId: "clipA_proxy", optional: true },
     ]);
   });
 
@@ -63,7 +65,7 @@ describe("what counts as a reference", () => {
     const exempt = new Set<string>(NON_OWNING_FILE_COLUMNS.map((r) => `${r.tableId}.${r.column}`));
     const fileColumns = schema.tables.flatMap((t) =>
       t.columns
-        .filter((c) => /(file|poster)_?id$/i.test(c.key))
+        .filter((c) => /(file|poster|proxy)_?id$/i.test(c.key))
         .map((c) => `${t.id}.${c.key}`)
         .filter((key) => !exempt.has(key)),
     );
@@ -81,7 +83,7 @@ describe("what counts as a reference", () => {
   });
 
   it("points into the buckets the app uploads to, which the schema declares", () => {
-    expect(CLIP_REFERENCES.map((r) => r.bucketId)).toEqual([VIDEO_BUCKET, AVATAR_BUCKET, POSTER_BUCKET]);
+    expect(CLIP_REFERENCES.map((r) => r.bucketId)).toEqual([VIDEO_BUCKET, AVATAR_BUCKET, POSTER_BUCKET, PROXY_BUCKET]);
     for (const ref of CLIP_REFERENCES) expect(schema.buckets.map((b) => b.id)).toContain(ref.bucketId);
   });
 
@@ -108,7 +110,7 @@ describe("finding orphans", () => {
     });
 
     it("reads both files off a filmed set, each into its own bucket", () => {
-      expect(referencesIn("sets", [filmed("s1", "a", "a_poster")])).toEqual([
+      expect(referencesIn("sets", [filmed("s1", "a", "a_poster")]).filter((r) => r.bucketId !== PROXY_BUCKET)).toEqual([
         { bucketId: VIDEO_BUCKET, tableId: "sets", rowId: "s1", fileId: "a" },
         { bucketId: POSTER_BUCKET, tableId: "sets", rowId: "s1", fileId: "a_poster" },
       ]);
@@ -129,6 +131,51 @@ describe("finding orphans", () => {
       // Same id, different bucket: a clip named like a poster is not a reference to the poster.
       const plan = sweep([poster("a_poster")], refs(set("s1", "a_poster")));
       expect(ids(plan.orphans)).toEqual(["a_poster"]);
+    });
+  });
+
+  describe("clip proxies (v22)", () => {
+    const proxy = (id: string) => clip(id, 30 * DAY_MS, { bucketId: PROXY_BUCKET, name: `${id}.mp4`, sizeOriginal: 4_000_000 });
+    const filmed = (id: string, clipId: string | null, proxyId: unknown = null) => ({
+      $id: id,
+      data: { athlete_id: "joey", video_file_id: clipId, video_proxy_id: proxyId },
+    });
+
+    it("keeps the proxy of a live clip, pointed at or not yet", () => {
+      const plan = sweep(
+        [proxy("a_proxy"), proxy("b_proxy")],
+        referencesIn("sets", [filmed("s1", "a", "a_proxy"), filmed("s2", "b")]),
+      );
+      expect(plan.orphans).toEqual([]);
+      expect(plan.referenced).toBe(2);
+    });
+
+    it("sweeps the proxy a replaced clip left behind, even while the row still names it", () => {
+      // s1 was refilmed with b; its video_proxy_id still says a_proxy until the worker catches up.
+      const plan = sweep([proxy("a_proxy")], referencesIn("sets", [filmed("s1", "b", "a_proxy")]));
+      expect(ids(plan.orphans)).toEqual(["a_proxy"]);
+    });
+
+    it("sweeps the proxy of a deleted set or a detached clip", () => {
+      const plan = sweep([proxy("a_proxy"), proxy("c_proxy")], referencesIn("sets", [filmed("s1", null, "c_proxy")]));
+      expect(ids(plan.orphans)).toEqual(["a_proxy", "c_proxy"]);
+    });
+
+    it("does not call a clip with no proxy yet a dangling row", () => {
+      const plan = sweep([clip("a")], referencesIn("sets", [filmed("s1", "a")]));
+      expect(plan.dangling).toEqual([]);
+      expect(plan.pruned).toEqual([]);
+    });
+
+    it("lists a pruned original apart from a truly dangling row", () => {
+      // s1's original was pruned and its proxy plays; s2 names a clip that is simply gone.
+      const plan = sweep(
+        [proxy("a_proxy")],
+        referencesIn("sets", [filmed("s1", "a", "a_proxy"), filmed("s2", "z")]),
+      );
+      expect(plan.pruned.map((r) => r.rowId)).toEqual(["s1"]);
+      expect(plan.dangling.map((r) => [r.rowId, r.fileId])).toEqual([["s2", "z"]]);
+      expect(plan.orphans).toEqual([]);
     });
   });
 

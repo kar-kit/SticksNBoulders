@@ -159,7 +159,15 @@ export function validateBackup(backup: Backup): Problem[] {
   if (version >= 2) {
     const held = new Set(backup.files.map((f) => fileKey(f.bucketId, f.$id)));
     for (const table of backup.tables) {
-      for (const ref of referencesIn(table.id, table.rows)) {
+      const refs = referencesIn(table.id, table.rows);
+      // v22: a row whose original was pruned plays its proxy. If the dump
+      // holds that proxy, the set restores playable, so the missing original
+      // is expected; and a clip with no proxy yet (`optional`) is normal.
+      const playsProxy = new Set(
+        refs.filter((r) => r.optional && held.has(fileKey(r.bucketId, r.fileId))).map((r) => r.rowId),
+      );
+      for (const ref of refs) {
+        if (ref.optional || (ref.bucketId === "set_videos" && playsProxy.has(ref.rowId))) continue;
         if (!held.has(fileKey(ref.bucketId, ref.fileId))) {
           problems.push({
             severity: "warning",
