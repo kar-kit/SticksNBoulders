@@ -1,5 +1,6 @@
 import { heroFrame, type Poly } from "@/lib/landing/hero-geometry";
-import { FINAL_LABEL, FINAL_POSE, momentAt, NO_FX, TOTAL_MS, tooSlow, type Fx, type Pose } from "@/lib/landing/hero-mode";
+import { FINAL_LABEL, FINAL_POSE, NO_FX, tooSlow, type Fx, type Pose } from "@/lib/landing/hero-mode";
+import { momentAt, TOTAL_MS } from "@/lib/landing/hero-timeline";
 
 /**
  * The hero's animation loop. Loaded with `import()` from hero.tsx only when

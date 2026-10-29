@@ -333,30 +333,39 @@ one-plate to a four-plate deadlift, then squat and bench with racks.
 bench press, and back to the logo. About 33 seconds. Joey's third review
 (29 Oct): more impact, and only one movement once four plates are on.
 
-**E. Loading the bar (built).** About 14 seconds, starting and ending on the
-logo:
+**E. Loading the bar (fourth build, replaced).** Logo, then plates slammed
+on one at a time with shake and chips, then a single 4-plate deadlift set
+down hard. About 14 seconds. Joey's fourth review (29 Oct): add the squat and
+the bench, reload the bar for each, order them SBD, and make the bar less
+whippy.
+
+**F. SBD (built).** About 33 seconds, starting and ending on the logo, in
+competition order. Every lift starts from a bar stripped to one plate a side,
+is loaded up with plates slammed on, and gets one rep:
 
 1. The logo in 3D: the stick leaning on the boulder.
 2. The stick swings level into a barbell; the boulder splits into its first
-   pair of stone plates, which land on a platform with a thud of dust.
-3. Three more plates are slammed onto each end, one at a time, each harder
-   than the last. Every hit shakes the camera, flexes the bar and throws a
-   burst of stone chips and copper splinters (the sticks the plates were made
-   of) from the seam.
-4. One deadlift at four plates: a beat, then slow off the floor with the bar
-   bending, the camera leaning in, lockout, and the bar set down hard. The
-   floor hit is the biggest: the strongest shake, a ring of dust spreading
-   across the platform under each end, and chips everywhere.
-5. The plates come off to one a side and it folds back into the logo.
+   pair of plates, which land on a platform with a thud of dust.
+3. **Squat · 3 plates.** A rack grows out of the platform; the bar goes up
+   onto the hooks with a clank. Two plates slammed on. Walk out, squat, stand,
+   rerack (clank).
+4. **Bench · 2 plates.** Stripped to one; the hooks drop carrying the bar and a
+   bench rises. One plate slammed on. Unrack, down, a competition pause,
+   press, rerack (clank).
+5. **Deadlift · 4 plates.** Stripped to one; off the hooks, the rack and bench
+   sink and the bar lands on the platform. Three plates slammed on. One pull,
+   set down hard: the biggest shake, a dust ring, chips everywhere.
+6. Stripped to one and folded back into the logo.
 
-The caption reads "Deadlift · 1 plate" up to "Deadlift · 4 plates", then
-"Sticks and boulders". The rack, bench and squat/bench steps from D are gone
-from the timeline; their geometry is still in hero-geometry.ts (it draws
-nothing while `rack` and `bench` are 0) in case they come back.
+Plate counts follow the usual ratio between the three lifts (deadlift
+heaviest, bench lightest). Every plate hit shakes the camera, rings the bar
+and throws stone chips and copper splinters; a bar racked on the hooks shakes
+but throws nothing. The bar is stiffer than in D and E: its biggest bend over
+the whole story is under 0.08 units on a 4.4-unit bar (a test holds it there).
 
-**Why E.** One movement lands harder than five. Loading the bar is the
-progression; the single pull is the payoff; the impacts give it weight
-without a person on screen.
+**Why F.** Joey asked for all three lifts in meet order. Stripping and
+reloading before each one keeps the "build it up" idea from E, with the same
+payoff three times instead of once.
 
 ### How it is built
 
@@ -371,7 +380,7 @@ bar is cut at every plate slot and upright so each piece sorts against the
 thing it passes. At most 483 polygons in a frame; about 0.1 ms of geometry per
 frame on Joey's Mac.
 
-**What happens when** is `momentAt(ms)` in `lib/landing/hero-mode.ts`: a list
+**What happens when** is `momentAt(ms)` in `lib/landing/hero-timeline.ts`: a list
 of steps, each a partial pose to ease towards, plus the bar's whip on the
 pull. A step can land an **impact** as it ends; for 1.1 s afterwards
 `momentAt` returns a decaying camera shake, a flex added to the bar's bend,
@@ -379,16 +388,16 @@ and a burst that `heroFrame` turns into chips (two-sided low-poly shards
 thrown with gravity, seeded so every playback throws the same ones) and, for
 a floor hit, a dust ring. Pure and tested: every frame of the story, sampled
 every 50 ms, stays inside the box; nothing but the bar's flex jumps between
-two 60 Hz frames; the bar stays on the floor until four plates are on and
-leaves it exactly once; five impacts land in order, each plate harder than
-the last; the shake never passes 4% of the box and settles after each hit.
+two 60 Hz frames; the lifts come in SBD order with one rep each on the full bar; the bar never
+moves while plates go on or off; its bend stays under 0.08; every impact
+lands in order and rack clanks throw no chips; the shake never passes 4% of the box and settles after each hit.
 
 | Option | Cost on the wire | Why not / why |
 | --- | --- | --- |
 | three.js | ~150 KB gzip for the core [Inference: typical tree-shaken three r16x builds], more than the rest of the page's JavaScript | Built for textures, depth buffers and thousands of faces; this has none |
 | react-three-fiber | three.js plus ~40 KB [Inference] | Same, plus a second React reconciler |
 | Raw WebGL | Small | Needs a GPU path and a separate no-WebGL fallback |
-| **Canvas 2D, hand-rolled** | **4.8 KB gzip [Fact, build output, loading version]** | Flat-shaded low poly needs exactly a depth sort and a fill. Runs on every browser, GPU or not |
+| **Canvas 2D, hand-rolled** | **5.9 KB gzip, timeline included [Fact, build output, SBD version]** | Flat-shaded low poly needs exactly a depth sort and a fill. Runs on every browser, GPU or not |
 
 `docs/athlete-motion.md`'s no-animation-library rule is for the athlete's
 screens; this page adds no library either, so the question did not arise.
@@ -420,6 +429,14 @@ seconds can be stopped).
 - **Hero chunk:** 7.3 KB raw, **3.5 KB gzipped** for the barbell version
   (the first, stick-and-boulder version was 3.0 KB) [Fact, `.next/static/chunks`
   after `next build`]. Loaded after hydration, not in the page's first script.
+- **SBD version (F):** the timeline now lives in `lib/landing/hero-timeline.ts`,
+  reached only from the lazy canvas loop, so the page's first scripts carry
+  none of it (checked against the scripts `/` loads in the build). Lazy chunk
+  13.5 KB raw, **5.9 KB gzipped** (geometry, player and timeline together).
+  Lighthouse mobile, two runs: performance 93 / 92, LCP 3.2 / 3.3 s, TBT
+  10 / 0 ms, CLS 0. With Chromium's CPU throttled 4x at phone size,
+  median frame 16.7 ms (60 fps), p95 16.7 ms, worst 33.4 ms over 1,895
+  frames [Fact, measured on Joey's Mac; a real phone is Unverified].
 - **Loading version (E):** lazy chunk 10.4 KB raw, **4.8 KB gzipped**.
   Lighthouse mobile, two runs: performance 96 / 92, LCP 2.8 / 3.3 s, TBT
   10 / 0 ms, CLS 0 (the shake moves pixels inside the canvas, never the

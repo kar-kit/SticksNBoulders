@@ -1,5 +1,5 @@
 import { FINAL_POSE, heroFrame } from "./hero-geometry";
-import { IMPACTS, momentAt, TOTAL_MS } from "./hero-mode";
+import { IMPACTS, momentAt, TOTAL_MS } from "./hero-timeline";
 
 const view = { width: 640, height: 480 };
 
@@ -38,7 +38,7 @@ describe("heroFrame", () => {
   });
 
   it("throws chips on an impact, and draws the floor's dust ring", () => {
-    for (const hit of IMPACTS) {
+    for (const hit of IMPACTS.filter((i) => i.kind !== "hook")) {
       const { pose, fx } = momentAt(hit.at + 120);
       expect(heroFrame(pose, view, fx).length).toBeGreaterThan(heroFrame(pose, view).length + 10);
     }

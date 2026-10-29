@@ -135,9 +135,9 @@ export function Hero({ children }: { children: ReactNode }) {
         </span>
         <span className="sr-only">
           The Sticks N Boulders logo, a stick leaning on a boulder. The stick straightens into a barbell and the
-          boulder splits into its first plates. Three more plates are slammed onto each end, one at a time, then
-          the bar is deadlifted once with four plates a side and set down hard, before it all folds back into the
-          stick and the boulder.
+          boulder splits into its first plates. In competition order, the bar is loaded and lifted once for each
+          lift: plates slammed on in a rack for a squat, then on a bench for a paused bench press, then on the
+          platform for a deadlift set down hard. It all folds back into the stick and the boulder.
         </span>
         {canPlay && (
           <button
