@@ -208,6 +208,7 @@ would make every apply report drift it cannot fix.
 | `lib/video/poster-capture.ts`, `poster-upload.ts`, `poster-cache.ts` | F12 posters: grab, upload, show |
 | `scripts/clip-posters.ts`, `backfill-clip-posters.mts` | `npm run clips:posters` |
 | `lib/video/my-clips.ts`, `my-clips-store.ts` | F13: the athlete's own clips, paged, and delete / replace |
+| `lib/video/proxy-profile.ts`, `scripts/clip-proxies.ts`, `make-clip-proxies.mts` | v22: the H.264 proxy every player loads, `npm run clips:proxies` (docs/video-proxy.md) |
 | `app/(athlete)/history/clips-view.tsx`, `clips/[setId]/` | F13: the Clips grid and one clip |
 
 ## Verified against the live instance
@@ -255,6 +256,23 @@ Bench Press, Close Grip Bench Press, Sumo Deadlift, Romanian Deadlift ...) is
 Ruairi's call. His quote says to record variations "if you have questions", which
 reads as coach-flagged rather than default. Not guessed at here.
 <!-- END: video default (compounds by default) -->
+
+<!-- BEGIN: clip proxies (schema v22) -->
+## Proxies: what the players actually load (schema v22)
+
+Every clip gets a normalised copy: H.264, capped (never raised) at 1080p and
+60fps, `moov` first, in bucket `set_video_proxies`, named by
+`sets.video_proxy_id`. Made beside the instance by `npm run clips:proxies` on a
+one-minute systemd timer, verified with ffprobe before any set points at it.
+The Review Queue, the coach's Videos dialog, the athlete's clip screen and
+Coach feedback play the proxy when the row names one (`proxyOf`), else the
+original; the ticket now carries the bucket, allowlisted, so old tickets and
+old clients keep working. The original is deleted 7 days after its proxy is
+verified, only by `clips:proxies -- --prune --yes`. HDR (iPhone HLG) is
+tone-mapped, or refused loudly when ffmpeg lacks zscale; [Unverified] on a real
+iPhone HDR clip. Everything, including the runbook and the consumer audit, is
+in **docs/video-proxy.md**.
+<!-- END: clip proxies (schema v22) -->
 
 <!-- BEGIN: clip posters (F12, schema v17) -->
 ## Thumbnails: a poster frame per clip (F12, schema v17)

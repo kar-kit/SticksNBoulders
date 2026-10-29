@@ -326,3 +326,29 @@ week at base, which is Ruairi's problem to size and `video_required` to
 throttle. Storage gets its own trigger only at **470 GB on the NAS** (half of
 941), which the base case never reaches and the high case reaches in
 sixteen weeks if the migration slips.
+
+## Addendum, 29 Oct 2026: clip proxies (schema v22)
+
+docs/video-proxy.md adds an H.264 proxy of every clip, capped at 1080p/60fps,
+10 Mbps peak (CRF 23, so most of a clip sits well under the peak), and deletes
+the original 7 days after its proxy is verified (`clips:proxies -- --prune`,
+off until Joey turns it on). What that does to the numbers above, all
+[Inference] until real proxies exist to measure:
+
+- **Storage, before prune is on:** every clip is stored twice. A proxy is at
+  most 75 MB a minute (10 Mbps) and typically well under it, against the 100
+  MB/min base rate, so the base case's 29 GB by 31 Jan grows by up to about
+  three quarters. Still a few percent of the 941 GB.
+- **Storage, with prune on:** steady state is every clip's proxy plus the last
+  week's originals, so the base case comes out *below* the table in section 4.
+- **Playback:** what the uplink and the tunnel must sustain for a smooth scrub
+  falls from `playback_Mbps` at the source rate (about 13 Mbps for the base
+  100 MB/min) to at most 10 Mbps, and HEVC clips start in browsers that could
+  not play them at all.
+- **Backups:** the dump copies the proxy bucket too, so `SNB_BACKUP_DIR` and
+  the offsite copy grow by the proxies; once prune is on, pruned originals
+  leave `files/` after the `--keep` window.
+- **CPU:** one transcode at a time on forge, `nice -n 19`, preset veryfast.
+  [Unverified] how long a 60 s 4K60 HEVC clip takes there; the first manual
+  run (runbook step 5) prints seconds per clip.
+

@@ -229,6 +229,16 @@ orphan once no set's `video_poster_id` names it -- its clip was replaced or
 detached, its set deleted before the phone's clean-up ran, or the phone
 uploaded it and the attach never landed. Same age and backup rules.
 
+Since schema v22 it covers `set_video_proxies` too (docs/video-proxy.md). A
+proxy is kept while the clip it was made from is live -- derived from
+`video_file_id`, whether or not `video_proxy_id` points at it yet -- and is an
+orphan once that clip is replaced, detached or its set deleted. A clip with no
+proxy yet is not a dangling row. A set whose original `clips:proxies --
+--prune` deleted, and whose proxy is present, is listed as "plays its proxy,
+original pruned" rather than as dangling. The dump copies the proxy bucket like
+every other schema bucket, so the same coverage check applies; a pruned
+original stays in `files/` for as long as a kept dump names it.
+
 Since schema v13 the same sweep also covers the `avatars` bucket: an old
 profile picture whose best-effort delete failed on replace or remove is an
 orphan by the same rules, judged against `profiles.avatar_file_id`
