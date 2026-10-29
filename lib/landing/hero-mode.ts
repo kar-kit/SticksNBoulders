@@ -78,7 +78,6 @@ export const PLATE_RADIUS = 0.72;
 const FLOOR = PLATE_RADIUS;
 const LOCKOUT = FLOOR + 0.8;
 const SQUAT_HOOK = 1.75;
-const BENCH_HOOK = 1.3;
 
 /** The logo. The first frame, the last frame and the poster. */
 export const FINAL_POSE: Pose = {
@@ -99,11 +98,45 @@ export const FINAL_POSE: Pose = {
 export const FINAL_LABEL = "Sticks and boulders";
 
 const easeInOut = (x: number): number => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2);
+/** Gathering speed all the way in: a plate slammed home, a bar set down. */
+const slam = (x: number): number => x * x * x;
 /** A heavy pull: slow off the floor, faster through the middle, eased into lockout. */
 const grind = (x: number): number => easeInOut(x) * 0.85 + x * x * 0.15;
 const clamp = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 /** A bar's whip: a bump early in the concentric, gone by `until`. */
 const whip = (k: number, size: number, until = 0.45): number => (k < until ? Math.sin((Math.PI * k) / until) * size : 0);
+
+/**
+ * Something landing: a plate slammed against the one before it, or the bar
+ * set down on the platform. It happens at the end of its step, then shakes
+ * the camera, flexes the bar and throws chips for a second or so.
+ */
+export interface Impact {
+  kind: "plate" | "floor";
+  /** For a plate, which slot it lands in (0 at the collar). */
+  slot: number;
+  /** 1 is a normal hit. The fourth plate and the set-down hit harder. */
+  strength: number;
+}
+
+/** An impact that is still playing out, `age` seconds after it landed. */
+export interface Burst extends Impact {
+  age: number;
+  /** Seeds the chips, so a burst looks the same every time it plays. */
+  seed: number;
+}
+
+/** What is still moving from impacts: a camera shake and the chips in the air. */
+export interface Fx {
+  /** Camera shake as a fraction of the box's shorter side. */
+  shakeX: number;
+  shakeY: number;
+  bursts: Burst[];
+}
+
+export const NO_FX: Fx = { shakeX: 0, shakeY: 0, bursts: [] };
+/** How long a burst's chips and shake last. */
+export const BURST_SECONDS = 1.1;
 
 interface Step {
   ms: number;
@@ -114,84 +147,67 @@ interface Step {
   label?: string;
   /** Extra bend while the step runs, on top of the blend. */
   whip?: (k: number) => number;
+  /** Lands as the step ends. */
+  impact?: Impact;
 }
 
 const plates = (n: number) => `${n} plate${n === 1 ? "" : "s"}`;
 
-/** One deadlift: the pull, a beat at lockout, down, a beat on the floor. Heavier is slower and bends more. */
-const deadlift = (n: number, pullMs: number): Step[] => [
-  { ms: pullMs, to: { barY: LOCKOUT, bend: 0.01 * n }, ease: grind, whip: (k) => whip(k, 0.03 + 0.025 * n) },
-  { ms: 380, to: {} },
-  { ms: 820, to: { barY: FLOOR, bend: 0 } },
-  { ms: 260, to: {} },
+/** A plate slammed on each end. Harder each time; the fourth hits hardest. */
+const load = (n: number, ms: number, strength: number, yaw: number): Step[] => [
+  {
+    ms,
+    to: { plates: n, yaw },
+    ease: slam,
+    label: `Deadlift \u00b7 ${plates(n)}`,
+    impact: { kind: "plate", slot: n - 1, strength },
+  },
+  { ms: 380 + strength * 220, to: {} },
 ];
 
-/** On to the next plate: one slides on each end, and the camera eases round a little. */
-const loadTo = (n: number, yaw: number): Step => ({
-  ms: 700,
-  to: { plates: n, yaw },
-  label: `Deadlift \u00b7 ${plates(n)}`,
-});
-
 /*
- * The story. The logo; the stick becomes a bar and the boulder its first
- * plates; a deadlift at one plate, then two, three, four; a rack grows out
- * of the platform for a squat; the hooks come down and a bench comes up for
- * a paused bench press; everything sinks away and the bar and plates fold
- * back into the logo. Same picture first and last, so the poster, the
- * canvas's first frame and its last are one.
+ * The story, about 14 seconds. The logo; the stick becomes a bar and the
+ * boulder its first plates, which land on a platform; three more plates
+ * slammed on, one at a time, each harder than the last; then one heavy
+ * deadlift, slow off the floor, set down hard. Then it folds back into the
+ * logo. Same picture first and last, so the poster, the canvas's first frame
+ * and its last are one.
  */
 const STEPS: Step[] = [
   { ms: 1000, to: {}, label: FINAL_LABEL },
   {
-    ms: 2600,
+    ms: 2300,
     to: { form: 1, deck: 1, barY: FLOOR, yaw: -0.74, pitch: 0.36, camY: 0.95, camDist: 7.6 },
     label: `Deadlift \u00b7 ${plates(1)}`,
+    impact: { kind: "floor", slot: 0, strength: 0.55 },
   },
-  ...deadlift(1, 1100),
-  loadTo(2, -0.67),
-  ...deadlift(2, 1200),
-  loadTo(3, -0.6),
-  ...deadlift(3, 1350),
-  loadTo(4, -0.53),
-  ...deadlift(4, 1800),
-
-  // Squat. A plate comes off and the rack grows; the bar goes up in front of
-  // the hooks, back onto them, out, down, up, and back in.
-  {
-    ms: 1000,
-    to: { plates: 3, rack: 1, hook: SQUAT_HOOK, yaw: -0.45, pitch: 0.3, camY: 1.25, camDist: 8.2 },
-    label: `Squat \u00b7 ${plates(3)}`,
-  },
-  { ms: 1000, to: { barY: SQUAT_HOOK + 0.1, barZ: 0.36 } },
-  { ms: 500, to: { barY: SQUAT_HOOK, barZ: 0 } },
   { ms: 450, to: {} },
-  { ms: 650, to: { barY: SQUAT_HOOK + 0.07, barZ: 0.36, bend: 0.03 } },
-  { ms: 1150, to: { barY: 1.05 } },
-  { ms: 1150, to: { barY: SQUAT_HOOK + 0.07 }, whip: (k) => whip(k, 0.05, 0.4) },
-  { ms: 600, to: { barY: SQUAT_HOOK, barZ: 0, bend: 0 } },
+  ...load(2, 520, 0.7, -0.68),
+  ...load(3, 480, 0.85, -0.62),
+  ...load(4, 440, 1.15, -0.56),
 
-  // Bench. Another plate off, the hooks drop to bench height carrying the
-  // bar, the bench rises. Unrack, down, a competition pause, press, rack.
+  // The one lift. A beat set up, then the pull: slow off the floor, the bar
+  // bending under four plates, the camera leaning in. Lockout, then down hard.
+  { ms: 350, to: {} },
   {
-    ms: 1600,
-    to: { plates: 2, hook: BENCH_HOOK, barY: BENCH_HOOK, bench: 1, yaw: -0.55, pitch: 0.52, camY: 0.95, camDist: 7.8 },
-    label: `Bench \u00b7 ${plates(2)}`,
+    ms: 2100,
+    to: { barY: LOCKOUT, bend: 0.045, camDist: 6.9, camY: 1.1 },
+    ease: grind,
+    whip: (k) => whip(k, 0.15, 0.5),
   },
-  { ms: 600, to: { barY: BENCH_HOOK + 0.06, barZ: 0.3, bend: 0.02 } },
-  { ms: 1000, to: { barY: 0.84 } },
-  { ms: 480, to: {} },
-  { ms: 1000, to: { barY: BENCH_HOOK + 0.06 }, whip: (k) => whip(k, 0.035, 0.4) },
-  { ms: 600, to: { barY: BENCH_HOOK, barZ: 0, bend: 0 } },
+  { ms: 750, to: {} },
+  {
+    ms: 430,
+    to: { barY: FLOOR, bend: 0, camDist: 7.6, camY: 0.95 },
+    ease: slam,
+    impact: { kind: "floor", slot: 0, strength: 1.4 },
+  },
+  { ms: 1100, to: {} },
 
-  // Home: the equipment sinks, the bar comes down to one plate a side, and
-  // folds back into the stick and the boulder.
-  {
-    ms: 1300,
-    to: { rack: 0, bench: 0, plates: 1, barY: FLOOR, yaw: -0.62, pitch: 0.34, camY: 0.95, camDist: 7.6 },
-    label: FINAL_LABEL,
-  },
-  { ms: 2200, to: FINAL_POSE },
+  // Home: the plates come off back to one a side, then it all folds back
+  // into the stick and the boulder.
+  { ms: 800, to: { plates: 1, yaw: -0.66 }, label: FINAL_LABEL },
+  { ms: 2100, to: FINAL_POSE },
   { ms: 700, to: {} },
 ];
 
@@ -213,10 +229,18 @@ const TRACK = (() => {
 
 export const TOTAL_MS = TRACK[TRACK.length - 1].start + STEPS[STEPS.length - 1].ms;
 
+/** Every impact and the moment it lands, in ms. */
+export const IMPACTS = TRACK.filter((t) => t.step.impact).map((t, i) => ({
+  ...t.step.impact!,
+  at: t.start + t.step.ms,
+  seed: 0x1a2b + i * 977,
+}));
+
 export interface Moment {
   pose: Pose;
   /** The line under the hero. */
   label: string;
+  fx: Fx;
 }
 
 const blend = (a: Pose, b: Pose, k: number): Pose => {
@@ -227,14 +251,26 @@ const blend = (a: Pose, b: Pose, k: number): Pose => {
 
 /** Where playback is, `ms` in. Before the start and past the end it is the poster. */
 export function momentAt(ms: number): Moment {
-  if (ms <= 0 || ms >= TOTAL_MS) return { pose: FINAL_POSE, label: FINAL_LABEL };
+  if (ms <= 0 || ms >= TOTAL_MS) return { pose: FINAL_POSE, label: FINAL_LABEL, fx: NO_FX };
   let i = TRACK.length - 1;
   while (i > 0 && TRACK[i].start > ms) i--;
   const { step, from, to, label, start } = TRACK[i];
   const k = clamp((ms - start) / step.ms);
   const pose = blend(from, to, (step.ease ?? easeInOut)(k));
   if (step.whip) pose.bend += step.whip(k);
-  return { pose, label };
+
+  // Impacts still ringing: a decaying shake, the bar flexing, chips flying.
+  const fx: Fx = { shakeX: 0, shakeY: 0, bursts: [] };
+  for (const hit of IMPACTS) {
+    const age = (ms - hit.at) / 1000;
+    if (age < 0 || age > BURST_SECONDS) continue;
+    const decay = Math.exp(-age * 9) * hit.strength;
+    fx.shakeX += 0.022 * decay * Math.sin(age * 72 + hit.seed);
+    fx.shakeY += 0.018 * decay * Math.cos(age * 57 + hit.seed);
+    pose.bend += (hit.kind === "floor" ? 0.07 : 0.04) * Math.exp(-age * 6) * hit.strength * Math.sin(age * 38);
+    fx.bursts.push({ kind: hit.kind, slot: hit.slot, strength: hit.strength, age, seed: hit.seed });
+  }
+  return { pose, label, fx };
 }
 
 /** Every label the story shows, in order. For tests and the doc. */

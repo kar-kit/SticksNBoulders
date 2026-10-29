@@ -15,9 +15,9 @@
  * every device that has no WebGL. docs/landing-page.md has the comparison.
  */
 
-import { FINAL_POSE, PLATE_RADIUS, type Pose } from "./hero-mode";
+import { BURST_SECONDS, FINAL_POSE, NO_FX, PLATE_RADIUS, type Burst, type Fx, type Pose } from "./hero-mode";
 
-export { FINAL_POSE, type Pose };
+export { FINAL_POSE, NO_FX, type Fx, type Pose };
 
 export interface Vec3 {
   x: number;
@@ -380,11 +380,13 @@ function plateSolids(pose: Pose): Solid[] {
       if (slot === 0) on = phase(pose.form, 0.15, 0.8) * (pose.plates > 0 ? 1 : 0);
       if (on <= 0) continue;
       const mesh = plates[slot * 2 + (side > 0 ? 1 : 0)];
-      // Loaded from the end of the sleeve: slides on from outside.
-      const slide = slot === 0 ? 0 : (1 - smooth(on)) * 0.5;
+      // Loaded from the end of the sleeve. The step's easing gathers speed, so
+      // this is linear: the plate is still accelerating when it hits.
+      const slide = slot === 0 ? 0 : (1 - on) * 0.75;
       let centre = at(side * (slotX(slot) + slide));
-      // Solid from the first frame and grown, never faded: a see-through plate reads as wireframe.
-      const size = slot === 0 ? lerp(0.45, 1, smooth(on)) : lerp(0.15, 1, smooth(on));
+      // Solid from the first frame and grown in quickly, never faded: a
+      // see-through plate reads as wireframe.
+      const size = slot === 0 ? lerp(0.45, 1, smooth(on)) : Math.min(1, 0.35 + on * 3);
       // The first pair comes out of the boulder rather than off the end.
       if (slot === 0 && fromRock > 0) centre = lerp3(BOULDER_CENTRE, centre, smooth(on));
       solids.push({
@@ -434,6 +436,64 @@ function benchSolids(pose: Pose): Solid[] {
     { tris: pad, centre: v(0, y(0.44), 0.39), colour: PAD },
     ...legs.map((tris, i) => ({ tris, centre: v(0, y(0.19), i ? 1.05 : -0.25), colour: STEEL })),
   ];
+}
+
+/* --- Impacts ---------------------------------------------------------- */
+
+/** Units per second squared. Faster than the scene's scale would say: chips should snap down, not drift. */
+const GRAVITY = 14;
+
+/**
+ * The chips thrown by one impact: little low-poly shards, mostly stone with
+ * some copper splinters (the sticks the plates were made of). Each is two
+ * triangles back to back so it shows whichever way it tumbles. A pure
+ * function of the burst's age and seed, so every playback throws the same
+ * chips and a test can check where they go.
+ */
+function chips(burst: Burst, pose: Pose): Solid[] {
+  const rng = random(burst.seed);
+  const { at } = barFrame(pose);
+  const t = burst.age;
+  const count = Math.round((burst.kind === "floor" ? 24 : 15) * Math.min(1.4, burst.strength));
+  const solids: Solid[] = [];
+  for (const side of [-1, 1] as const) {
+    for (let i = 0; i < count; i++) {
+      const angle = rng() * Math.PI * 2;
+      const life = BURST_SECONDS * (0.6 + rng() * 0.4);
+      const speed = (1.4 + rng() * 2.2) * burst.strength;
+      let origin: Vec3;
+      let velocity: Vec3;
+      if (burst.kind === "plate") {
+        // From the seam between this plate and the one inside it, out round the rim.
+        const r = PLATE_RADIUS * (0.6 + rng() * 0.4);
+        const seam = at(side * (slotX(burst.slot) - PLATE_HALF_WIDTH));
+        origin = add(seam, v(0, Math.cos(angle) * r, Math.sin(angle) * r));
+        velocity = v(side * rng() * 1.2, Math.cos(angle) * speed + 1.2, Math.sin(angle) * speed);
+      } else {
+        // From the floor under each end, out across the platform and up.
+        const x = side * (COLLAR_X + Math.max(1, pose.plates) * PLATE_HALF_WIDTH);
+        origin = v(x + (rng() - 0.5) * 0.5, 0.03, pose.barZ + (rng() - 0.5) * 0.9);
+        velocity = v(Math.cos(angle) * speed * 0.9, (1.5 + rng() * 2.5) * burst.strength, Math.sin(angle) * speed * 0.9);
+      }
+      const size = (0.07 + rng() * 0.08) * (1 - (t / life) * 0.5);
+      const spin = rng() * Math.PI * 2 + t * (6 + rng() * 10);
+      const copper = rng() < 0.3;
+      if (t >= life) continue;
+      const centre = add(origin, v(velocity.x * t, velocity.y * t - 0.5 * GRAVITY * t * t, velocity.z * t));
+      // Chips come to rest on the platform rather than falling through it.
+      centre.y = Math.max(0.02, centre.y);
+      const a = add(centre, v(Math.cos(spin) * size, Math.sin(spin) * size, size * 0.4));
+      const b = add(centre, v(Math.cos(spin + 2.2) * size, Math.sin(spin + 2.2) * size * 0.6, -size));
+      const c = add(centre, v(Math.cos(spin + 4.1) * size * 0.8, Math.sin(spin + 4.1) * size, size * 0.7));
+      solids.push({
+        tris: [{ a, b, c }, { a, b: c, c: b }],
+        centre,
+        colour: copper ? COPPER : STONE,
+        opacity: Math.min(1, (1 - t / life) * 2.5),
+      });
+    }
+  }
+  return solids;
 }
 
 /* --- The platform ------------------------------------------------------ */
@@ -491,11 +551,13 @@ export interface Viewport {
  * The bar is cut at every plate and upright, so each piece sorts against the
  * thing it passes through rather than the bar's middle.
  */
-export function heroFrame(pose: Pose, view: Viewport): Poly[] {
+export function heroFrame(pose: Pose, view: Viewport, fx: Fx = NO_FX): Poly[] {
   const toCamera = camera(pose);
   const focal = Math.min(view.width / 6.2, view.height / 4.6) * pose.camDist;
-  const cx = view.width / 2;
-  const cy = view.height / 2;
+  // The shake moves the whole picture, as a camera would.
+  const side = Math.min(view.width, view.height);
+  const cx = view.width / 2 + fx.shakeX * side;
+  const cy = view.height / 2 + fx.shakeY * side;
   const project = (p: Vec3): [number, number] => [cx + (focal * p.x) / -p.z, cy - (focal * p.y) / -p.z];
 
   const polys: Poly[] = [];
@@ -535,7 +597,14 @@ export function heroFrame(pose: Pose, view: Viewport): Poly[] {
 
   draw(platform(pose));
   polys.push(...shadows(pose, (p) => project(toCamera(p))));
-  draw([...rackSolids(pose), ...benchSolids(pose), ...barSolids(pose), ...plateSolids(pose)]);
+  polys.push(...dust(pose, fx, (p) => project(toCamera(p))));
+  draw([
+    ...rackSolids(pose),
+    ...benchSolids(pose),
+    ...barSolids(pose),
+    ...plateSolids(pose),
+    ...fx.bursts.flatMap((burst) => chips(burst, pose)),
+  ]);
   return polys;
 }
 
@@ -558,6 +627,39 @@ function shadows(pose: Pose, project: (p: Vec3) => [number, number]): Poly[] {
     for (const side of [-1, 1]) {
       const x = side * (COLLAR_X + width - 0.15);
       out.push(disc(x, pose.barZ, width * (1 + lifted * 0.4), 0.8 * (1 + lifted * 0.4), 0.3 * f * (1 - 0.65 * lifted)));
+    }
+  }
+  return out;
+}
+
+/**
+ * A floor hit's dust: a pale ring spreading across the platform under each
+ * end and fading, drawn flat on the floor under everything else.
+ */
+function dust(pose: Pose, fx: Fx, project: (p: Vec3) => [number, number]): Poly[] {
+  const out: Poly[] = [];
+  for (const burst of fx.bursts) {
+    if (burst.kind !== "floor") continue;
+    const k = clamp01(burst.age / 0.7);
+    if (k >= 1) continue;
+    const spread = 0.35 + 1.1 * (1 - (1 - k) ** 3);
+    const width = 0.12 + 0.2 * k;
+    for (const side of [-1, 1]) {
+      const cx = side * (COLLAR_X + Math.max(1, pose.plates) * PLATE_HALF_WIDTH);
+      const ring = (r: number) =>
+        Array.from({ length: 22 }, (_, i) => {
+          const angle = (i / 22) * Math.PI * 2;
+          return project(v(cx + Math.cos(angle) * r * 0.7, 0.004, pose.barZ + Math.sin(angle) * r));
+        });
+      const outer = ring(spread * burst.strength);
+      const inner = ring(Math.max(0.01, spread * burst.strength - width)).reverse();
+      // Outer edge round one way, inner edge back the other: an annulus as one polygon.
+      out.push({
+        points: [...outer.flat(), ...outer[0], ...inner.flat(), ...inner[inner.length - 1]],
+        fill: rgb(STONE, 0.85),
+        stroke: null,
+        opacity: 0.32 * (1 - k) * Math.min(1, burst.strength),
+      });
     }
   }
   return out;

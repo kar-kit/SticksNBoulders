@@ -1,5 +1,5 @@
 import { FINAL_POSE, heroFrame } from "./hero-geometry";
-import { momentAt, TOTAL_MS } from "./hero-mode";
+import { IMPACTS, momentAt, TOTAL_MS } from "./hero-mode";
 
 const view = { width: 640, height: 480 };
 
@@ -35,6 +35,20 @@ describe("heroFrame", () => {
     const bare = heroFrame(base, view).length;
     expect(heroFrame({ ...base, rack: 1 }, view).length).toBeGreaterThan(bare);
     expect(heroFrame({ ...base, bench: 1 }, view).length).toBeGreaterThan(bare);
+  });
+
+  it("throws chips on an impact, and draws the floor's dust ring", () => {
+    for (const hit of IMPACTS) {
+      const { pose, fx } = momentAt(hit.at + 120);
+      expect(heroFrame(pose, view, fx).length).toBeGreaterThan(heroFrame(pose, view).length + 10);
+    }
+  });
+
+  it("moves the whole picture with the shake", () => {
+    const { pose } = momentAt(1);
+    const still = heroFrame(pose, view)[3].points;
+    const shaken = heroFrame(pose, view, { shakeX: 0.01, shakeY: 0, bursts: [] })[3].points;
+    expect(shaken[0] - still[0]).toBeCloseTo(4.8, 6);
   });
 
   it("scales with the box, so a 4:3 canvas draws the same picture as the 4:3 poster", () => {

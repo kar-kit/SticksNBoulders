@@ -1,9 +1,12 @@
 import {
+  BURST_SECONDS,
   chooseHero,
   FINAL_LABEL,
   FINAL_POSE,
+  IMPACTS,
   LABELS,
   momentAt,
+  NO_FX,
   PLATE_RADIUS,
   SAMPLE_FRAMES,
   tooSlow,
@@ -55,66 +58,70 @@ describe("tooSlow", () => {
 });
 
 describe("momentAt", () => {
-  it("starts and ends on the poster, the logo", () => {
+  it("starts and ends on the poster, the logo, with nothing shaking", () => {
     for (const ms of [0, TOTAL_MS, TOTAL_MS * 3]) {
-      expect(momentAt(ms)).toEqual({ pose: FINAL_POSE, label: FINAL_LABEL });
+      expect(momentAt(ms)).toEqual({ pose: FINAL_POSE, label: FINAL_LABEL, fx: NO_FX });
     }
   });
 
-  it("tells the story in order: logo, deadlift 1 to 4 plates, squat, bench, logo", () => {
+  it("tells the story in order: logo, loading 1 to 4 plates, the lift, logo", () => {
     expect(LABELS).toEqual([
       "Sticks and boulders",
       "Deadlift \u00b7 1 plate",
       "Deadlift \u00b7 2 plates",
       "Deadlift \u00b7 3 plates",
       "Deadlift \u00b7 4 plates",
-      "Squat \u00b7 3 plates",
-      "Bench \u00b7 2 plates",
       "Sticks and boulders",
     ]);
   });
 
-  it("pulls each deadlift from the floor to lockout, with the plates it says", () => {
-    for (const n of [1, 2, 3, 4]) {
-      const label = `Deadlift \u00b7 ${n} plate${n === 1 ? "" : "s"}`;
-      let low = Infinity;
-      let high = -Infinity;
-      for (let ms = 0; ms < TOTAL_MS; ms += 20) {
-        const { pose, label: shown } = momentAt(ms);
-        if (shown !== label || Math.abs(pose.plates - n) > 1e-9) continue;
-        low = Math.min(low, pose.barY);
-        high = Math.max(high, pose.barY);
-      }
-      expect(low).toBeCloseTo(PLATE_RADIUS, 5);
-      expect(high - low).toBeGreaterThan(0.75);
-    }
-  });
-
-  it("bends the bar as it leaves the floor, more with more plates", () => {
-    const peakBend = (n: number) => {
-      let peak = 0;
-      for (let ms = 0; ms < TOTAL_MS; ms += 10) {
-        const { pose, label } = momentAt(ms);
-        if (label.startsWith("Deadlift") && Math.abs(pose.plates - n) < 1e-9) peak = Math.max(peak, pose.bend);
-      }
-      return peak;
-    };
-    expect(peakBend(4)).toBeGreaterThan(peakBend(1));
-  });
-
-  it("only stands the rack up for the squat and the bench, and the bench only for the bench", () => {
-    for (let ms = 0; ms < TOTAL_MS; ms += 50) {
+  it("keeps the bar on the floor while it is loaded, and lifts it once, at four plates", () => {
+    let lifts = 0;
+    let up = false;
+    for (let ms = 0; ms < TOTAL_MS; ms += 10) {
       const { pose, label } = momentAt(ms);
-      if (label.startsWith("Deadlift")) expect(pose.rack).toBe(0);
-      if (pose.bench > 0) expect(["Bench \u00b7 2 plates", "Sticks and boulders"]).toContain(label);
+      const off = pose.form === 1 && pose.barY > PLATE_RADIUS + 0.4;
+      if (off) expect(label).toBe("Deadlift \u00b7 4 plates");
+      if (off && !up) lifts++;
+      up = off;
+    }
+    expect(lifts).toBe(1);
+  });
+
+  it("lands five impacts: the first plates, three plates slammed on, and the set-down", () => {
+    expect(IMPACTS.map((i) => i.kind)).toEqual(["floor", "plate", "plate", "plate", "floor"]);
+    expect(IMPACTS.filter((i) => i.kind === "plate").map((i) => i.slot)).toEqual([1, 2, 3]);
+    // Each plate harder than the last, and the set-down hardest of all.
+    const strengths = IMPACTS.map((i) => i.strength);
+    expect(strengths[2]).toBeGreaterThan(strengths[1]);
+    expect(strengths[3]).toBeGreaterThan(strengths[2]);
+    expect(Math.max(...strengths)).toBe(strengths[4]);
+  });
+
+  it("shakes and throws chips only just after an impact, and settles", () => {
+    for (const hit of IMPACTS) {
+      expect(momentAt(hit.at - 30).fx.bursts.some((b) => b.seed === hit.seed)).toBe(false);
+      const soon = momentAt(hit.at + 40).fx;
+      expect(soon.bursts.some((b) => b.seed === hit.seed)).toBe(true);
+      expect(Math.hypot(soon.shakeX, soon.shakeY)).toBeGreaterThan(0);
+      const later = momentAt(hit.at + BURST_SECONDS * 1000 + 50).fx;
+      expect(later.bursts.some((b) => b.seed === hit.seed)).toBe(false);
     }
   });
 
-  it("never jumps: no value moves far between two 60 Hz frames", () => {
+  it("keeps the shake small: under 4% of the box at its worst", () => {
+    for (let ms = 0; ms < TOTAL_MS; ms += 5) {
+      const { fx } = momentAt(ms);
+      expect(Math.hypot(fx.shakeX, fx.shakeY)).toBeLessThan(0.04);
+    }
+  });
+
+  it("never jumps, apart from the bar's flex on an impact", () => {
     let last = momentAt(0).pose;
     for (let ms = 16; ms <= TOTAL_MS; ms += 16) {
       const { pose } = momentAt(ms);
       for (const key of Object.keys(pose) as (keyof typeof pose)[]) {
+        if (key === "bend") continue;
         expect(Math.abs(pose[key] - last[key])).toBeLessThan(0.12);
       }
       last = pose;

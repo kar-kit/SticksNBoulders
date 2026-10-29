@@ -1,5 +1,5 @@
 import { heroFrame, type Poly } from "@/lib/landing/hero-geometry";
-import { FINAL_LABEL, FINAL_POSE, momentAt, TOTAL_MS, tooSlow, type Pose } from "@/lib/landing/hero-mode";
+import { FINAL_LABEL, FINAL_POSE, momentAt, NO_FX, TOTAL_MS, tooSlow, type Fx, type Pose } from "@/lib/landing/hero-mode";
 
 /**
  * The hero's animation loop. Loaded with `import()` from hero.tsx only when
@@ -39,6 +39,7 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
   let height = 0;
   let pose: Pose = FINAL_POSE;
   let label = FINAL_LABEL;
+  let fx: Fx = NO_FX;
   let elapsed = 0;
   let last: number | null = null;
   let frame: number | null = null;
@@ -59,7 +60,7 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
     ctx!.clearRect(0, 0, width, height);
     ctx!.lineJoin = "round";
     ctx!.lineWidth = 0.6;
-    for (const poly of heroFrame(pose, { width, height })) fill(ctx!, poly);
+    for (const poly of heroFrame(pose, { width, height }, fx)) fill(ctx!, poly);
     hooks.onFrame(label);
   }
 
@@ -71,7 +72,7 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
       gaps.push(gap);
     }
     last = now;
-    ({ pose, label } = momentAt(elapsed));
+    ({ pose, label, fx } = momentAt(elapsed));
     draw();
 
     if (tooSlow(gaps)) {
@@ -90,6 +91,7 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
     playing = false;
     pose = FINAL_POSE;
     label = FINAL_LABEL;
+    fx = NO_FX;
     draw();
     hooks.onDone(reason);
   }
@@ -127,6 +129,7 @@ export function createPlayer(canvas: HTMLCanvasElement, hooks: PlayerHooks): Pla
       playing = false;
       pose = FINAL_POSE;
       label = FINAL_LABEL;
+      fx = NO_FX;
       draw();
     },
     resize() {
