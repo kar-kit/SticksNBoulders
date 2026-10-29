@@ -509,6 +509,61 @@ Run over the finished page, desktop and mobile screenshots.
 | Accent colour | Copper from the logo's stick, the app's `--accent-fill`. No purple, no gradient, no glass, no icon grid, no stat banner, no badge pill |
 | "Type, never scroll" | Kept: it is CLAUDE.md constraint 3 ("Type, never hunt") in the athlete's words |
 
+### The ruled ledger (29 Oct)
+
+Joey's fifth review: real app screenshots on the page, borders, and no
+AI-slop patterns for the rest of the site. The page is now one bordered
+frame with hairline rules between every row and cell, and a left rail
+carrying each section's mono label (on a phone the rail becomes a strip
+across the top of its section).
+
+Why a ledger: the product is a training log, and the thing coaches keep
+going back to is a spreadsheet. A ruled sheet is that, done properly. It is
+also one layout primitive repeated (the slop lens's first positive sign)
+rather than a stack of differently styled sections.
+
+| Choice | Why, in one sentence |
+| --- | --- |
+| One 1 px border colour (`--border`) for every rule | The app's own token; a second line colour would need a reason and there isn't one |
+| Square cells, no cards, no shadows | A card says "this floats"; a cell says "this is one entry in the sheet" |
+| Feature lists as a two-column spec (`dl`): mono "what", prose "how" | It is how the app itself labels data, and it forces every item to say how it works |
+| Screenshots in a bordered cell with a caption bar saying "Demo data" | Real screens beat descriptions (the Hevy finding), and the data on them is invented, so the page says so |
+| No phone bezels or device mockups | A glossy bezel is decoration; the screen at its real proportions is the evidence |
+| Copper only on the two buttons | `--accent-fill` means "do this" in the app; it means the same here |
+
+Slop pass on the ledger version:
+
+| Flagged | What changed |
+| --- | --- |
+| A "facts" strip under the hero (offline / typed / invite code) was drafted | Not built: it is the stat-banner tell, and each fact is already in a spec row |
+| Numbered steps | Kept as "Step 1/2/3" cells: the literal procedure, now three ruled cells rather than a decorative list |
+| Mono uppercase rail labels | Kept: the app's label type, and the rail is what makes it read as a ledger |
+
+### The screenshots
+
+`/landing/*.webp`, listed in `lib/landing/shots.ts`. Real screens of this
+app, rendered by the dev server in Playwright with **every** request to the
+Appwrite host and to `/api/**` answered in the browser by invented fixtures
+(service workers blocked), so no live data was read and nothing reached the
+live instance. The harness logged zero requests to either (153 Appwrite and
+1 `/api` request answered in the browser, the realtime sockets intercepted).
+Athlete names are invented. Roster at 1440×900, program editor at 1680×1050
+(see the bug below), Today and Log session at 390×844; exported to WebP at
+1800 px (desktop) and 780 px (phone) wide, 185 KB for all four. They load
+lazily below the fold. To remake them after a screen changes, rerun the
+harness (`node shoot.mjs` in the harness folder named in the PR) and
+re-export.
+
+**Bug found on the way [Fact, screenshot at 1440×900]:** the program
+editor's week grid clips its right-hand columns at 1440 wide: the NOTE cell
+shows one letter and BACKOFF and VIDEO are cut off. CLAUDE.md says the coach
+side must work at 1280. Not fixed here (out of this branch's scope); the
+landing shot is taken at 1680 so it does not show a broken screen.
+
+Measured with the ledger and screenshots (Lighthouse mobile, two runs):
+performance 99 / 91, LCP 2.1 / 3.5 s, TBT 0 ms, CLS 0, 494 KB transferred.
+Accessibility 95, failing only the existing app-wide `meta-viewport`.
+
 ---
 
 ## 8. Open decisions for Joey
@@ -520,8 +575,9 @@ Run over the finished page, desktop and mobile screenshots.
    email address on the page.
 3. **A named line from Ruairi.** Only with his agreement. Until then the page
    says "one powerlifting coach and their athletes".
-4. **Product screenshots.** Hevy's strongest asset is its real set row. A real
-   Log Session or Review Queue screenshot (with fake data) would beat any
-   description; it needs Joey to choose the screens.
-5. **Privacy and terms.** No pages exist; GDPR is phase 5. Worth having before
+4. **Product screenshots.** Done (29 Oct) with demo data: Roster, Program
+   editor, Today, Log session. Swap any screen by editing `lib/landing/shots.ts`.
+5. **Program editor at 1440 px.** Clips its right-hand columns (see "The
+   screenshots"). Needs its own ticket.
+6. **Privacy and terms.** No pages exist; GDPR is phase 5. Worth having before
    the page is public.
