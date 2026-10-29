@@ -58,6 +58,16 @@ describe("the audit's rules", () => {
     for (const op of ["create", "update", "delete"] as const) expect(isAllowed(rule, op, "coach"), op).toBe(false);
   });
 
+  it("expects a clip's proxy to mirror the clip in every cell but create, which nobody gets (v22)", () => {
+    const clip = RULES.find((r) => r.key === "set_videos")!;
+    const proxy = RULES.find((r) => r.key === "set_video_proxies")!;
+    expect(proxy.kind).toBe("bucket");
+    expect(proxy.allow.read).toEqual(clip.allow.read);
+    expect(proxy.allow.update).toEqual(clip.allow.update);
+    expect(proxy.allow.delete).toEqual(clip.allow.delete);
+    expect(proxy.allow.create).toEqual([]);
+  });
+
   it("expects a clip's poster to be allowed exactly what the clip is (F12)", () => {
     const clip = RULES.find((r) => r.key === "set_videos")!;
     const poster = RULES.find((r) => r.key === "set_video_posters")!;

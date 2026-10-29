@@ -465,3 +465,47 @@ describe("v20 -> v21 on a live instance", () => {
     expect((await applySchema(driver, schema)).noop).toBe(true);
   });
 });
+
+describe("v21 -> v22 on a live instance", () => {
+  // A v21 instance is this schema minus the proxy bucket and sets.video_proxy_id.
+  const v21: DatabaseSpec = {
+    ...schema,
+    version: 21,
+    buckets: schema.buckets.filter((b) => b.id !== "set_video_proxies"),
+    tables: schema.tables.map((t) =>
+      t.id === "sets" ? { ...t, columns: t.columns.filter((c) => c.key !== "video_proxy_id") } : t,
+    ),
+  };
+
+  it("plans exactly the proxy bucket and one column, touching nothing else", async () => {
+    // These lines are what `npm run appwrite:setup -- --dry-run` should print.
+    // Anything more on the live instance means it has drifted from v21.
+    const { driver } = fakeDriver();
+    await applySchema(driver, v21);
+    const lines: string[] = [];
+    const result = await applySchema(driver, schema, { dryRun: true, log: (m) => lines.push(m) });
+    expect(lines.sort()).toEqual(
+      ["  would create bucket set_video_proxies", "  would create column sets.video_proxy_id (string)"].sort(),
+    );
+    expect(result.reported).toEqual([]);
+
+    const plan = planSchema(await driver.readState(schema.id), schema);
+    expect(plan.find((a) => a.kind === "create-bucket")).toMatchObject({
+      bucket: { id: "set_video_proxies", fileSecurity: true, permissions: [], allowedFileExtensions: ["mp4"] },
+    });
+    expect(plan.every(isExecutable)).toBe(true);
+  });
+
+  it("writes nothing on the dry run, then creates the two and settles", async () => {
+    const { driver, calls } = fakeDriver();
+    await applySchema(driver, v21);
+    calls.length = 0;
+    expect((await applySchema(driver, schema, { dryRun: true })).applied).toEqual([]);
+    expect(calls).toEqual([]);
+
+    const applied = await applySchema(driver, schema);
+    expect([...calls].sort()).toEqual(["createBucket:set_video_proxies", "createColumn:sets.video_proxy_id"]);
+    expect(applied.reported).toEqual([]);
+    expect((await applySchema(driver, schema)).noop).toBe(true);
+  });
+});

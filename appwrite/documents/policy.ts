@@ -317,6 +317,19 @@ export function posterPermissions(owner: RowOwner): string[] {
 }
 
 /**
+ * A clip's proxy: the normalised H.264 copy the players load (schema v22).
+ *
+ * The clip's own stamp, for the poster's reason, only more so: a proxy is the
+ * same footage at a lower bitrate, so its audience is the clip's by
+ * definition. The athlete may delete it -- deleting a set or replacing a clip
+ * takes the proxy too (lib/video/clip-cleanup.ts) -- and the coach may not.
+ * Only the server writes one; the bucket grants create to nobody.
+ */
+export function proxyPermissions(owner: RowOwner): string[] {
+  return videoPermissions(owner);
+}
+
+/**
  * A profile picture.
  *
  * The audience of the profile row that points at it, and deliberately no

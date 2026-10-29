@@ -273,7 +273,7 @@ describe("the video bucket", () => {
 
   it("exists, because infrastructure is not clicked into a console", () => {
     expect(bucket).toBeDefined();
-    expect(schema.buckets.map((b) => b.id).sort()).toEqual(["avatars", "set_video_posters", "set_videos"]);
+    expect(schema.buckets.map((b) => b.id).sort()).toEqual(["avatars", "set_video_posters", "set_video_proxies", "set_videos"]);
   });
 
   /**
@@ -547,7 +547,7 @@ describe("bodyweight exercises (v20, F20)", () => {
 
 describe("cardio (v21, F23)", () => {
   it("adds an exercise kind as a nullable enum with no default, so every existing exercise stays strength", () => {
-    expect(schema.version).toBe(21);
+    expect(schema.version).toBeGreaterThanOrEqual(21);
     expect(table("exercises").columns.find((c) => c.key === "kind")).toEqual({
       key: "kind",
       type: "enum",
@@ -573,5 +573,39 @@ describe("cardio (v21, F23)", () => {
   it("already lets a set store load 0 and reps 0, the inert pair a cardio set carries", () => {
     expect(table("sets").columns.find((c) => c.key === "load_kg")).toMatchObject({ required: true, min: 0 });
     expect(table("sets").columns.find((c) => c.key === "reps")).toMatchObject({ required: true, min: 0 });
+  });
+});
+
+describe("clip proxies (v22)", () => {
+  const bucket = schema.buckets.find((b) => b.id === "set_video_proxies")!;
+  const clips = schema.buckets.find((b) => b.id === "set_videos")!;
+
+  it("point at a proxy with one nullable id, so every existing set is untouched", () => {
+    expect(schema.version).toBe(22);
+    expect(table("sets").columns.find((c) => c.key === "video_proxy_id")).toEqual({
+      key: "video_proxy_id",
+      type: "string",
+      // A proxy id is the clip id plus "_proxy", and Appwrite ids stop at 36.
+      size: 36,
+      required: false,
+    });
+    expect(table("sets").indexes.some((i) => i.columns.includes("video_proxy_id"))).toBe(false);
+  });
+
+  it("let no session create a file: only the worker's API key writes proxies", () => {
+    expect(bucket.fileSecurity).toBe(true);
+    expect(bucket.permissions).toEqual([]);
+  });
+
+  it("accept only mp4, up to the clip bucket's own ceiling, uncompressed", () => {
+    expect(bucket.allowedFileExtensions).toEqual(["mp4"]);
+    expect(bucket.maximumFileSizeBytes).toBe(clips.maximumFileSizeBytes);
+    expect(bucket.compression).toBe("none");
+  });
+
+  it("stay unencrypted like the clips, because Appwrite skips encryption above 20MB", () => {
+    expect(bucket.encryption).toBe(false);
+    expect(bucket.maximumFileSizeBytes).toBeGreaterThan(20_000_000);
+    expect(bucket.antivirus).toBe(false);
   });
 });

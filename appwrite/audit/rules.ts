@@ -279,6 +279,31 @@ export const RULES: readonly ResourceRule[] = [
       "permissions; pointing A's set at it is a separate write only A (or the backfill's key) makes.",
   },
   {
+    key: "set_video_proxies",
+    kind: "bucket",
+    resource: "set_video_proxies",
+    target: "the proxy of A's clip, made by the clips:proxies worker",
+    // The clip's own row for read, update and delete, cell for cell: a proxy
+    // is the same footage, so its audience is the clip's (`proxyPermissions`
+    // is `videoPermissions`). A difference in read is a proxy showing someone
+    // a clip they cannot watch.
+    //
+    // Create is the one cell that cannot mirror, by design: the bucket grants
+    // create to nobody, so A is refused too. The worker writes the target with
+    // the API key. If A's own create ever lands, a session can plant a file at
+    // a clip's proxy id, which is the thing the empty bucket permission exists
+    // to rule out.
+    allow: {
+      read: athleteAndCoach,
+      create: nobody,
+      update: nobody,
+      delete: owner,
+    },
+    notes:
+      "Mirrors set_videos except create, which every session is refused: only the worker's key writes a " +
+      "proxy. Pointing A's set at it is a separate write only that key makes (setProxyOnSet).",
+  },
+  {
     key: "avatars",
     kind: "bucket",
     resource: "avatars",

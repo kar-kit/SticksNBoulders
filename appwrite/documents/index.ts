@@ -29,9 +29,12 @@ export { AVATAR_BUCKET, avatarOf, isOwnAvatarFileId, newAvatarFileId } from "./a
 
 export { POSTER_BUCKET, posterIdFor, posterOf } from "./poster";
 
+export { PROXY_BUCKET, proxyIdFor, proxyOf } from "./proxy";
+
 export {
   avatarPermissions,
   posterPermissions,
+  proxyPermissions,
   videoPermissions,
   exercisePermissions,
   invitePermissions,
