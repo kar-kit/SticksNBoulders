@@ -344,10 +344,13 @@ export const DURATION_TOLERANCE_SECONDS = 0.5;
 /**
  * What is wrong with a proxy, or nothing. Every check is one a coach would
  * otherwise discover by pressing play.
+ *
+ * `source` null means there is no original to compare the duration with (it
+ * was pruned): every other check still runs.
  */
 export function verifyProxy(
   output: ProbeJson,
-  source: MediaFacts,
+  source: MediaFacts | null,
   layout: { moovBeforeMdat: boolean },
   cap: ProxyCap = PROXY_CAP,
 ): string[] {
@@ -361,7 +364,9 @@ export function verifyProxy(
   const v = out.video;
   if (v.codec !== "h264") problems.push(`codec is ${v.codec || "unknown"}, not h264`);
   if (!BROWSER_SAFE_PIXELS.has(v.pixFmt)) problems.push(`pixel format is ${v.pixFmt || "unknown"}`);
-  if (source.durationSeconds === null) problems.push("the source's duration is unknown, so the proxy's cannot be checked");
+  if (source === null) {
+    if (out.durationSeconds === null) problems.push("the proxy has no duration");
+  } else if (source.durationSeconds === null) problems.push("the source's duration is unknown, so the proxy's cannot be checked");
   else if (out.durationSeconds === null) problems.push("the proxy has no duration");
   else if (Math.abs(out.durationSeconds - source.durationSeconds) > DURATION_TOLERANCE_SECONDS) {
     problems.push(`duration ${out.durationSeconds.toFixed(2)}s against the source's ${source.durationSeconds.toFixed(2)}s`);

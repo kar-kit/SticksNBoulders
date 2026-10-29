@@ -244,6 +244,11 @@ describe("verifyProxy", () => {
     expect(verifyProxy(F.goodProxyOf1080p30, unknown, faststart)[0]).toMatch(/duration is unknown/);
   });
 
+  it("checks everything but the duration when the original is gone", () => {
+    expect(verifyProxy(F.goodProxyOf1080p30, null, faststart)).toEqual([]);
+    expect(verifyProxy(F.goodProxyOf1080p30, null, { moovBeforeMdat: false })).toHaveLength(1);
+  });
+
   it("accepts a portrait proxy whose coded frame is landscape with a rotation flag", () => {
     const portrait = readProbe(F.portraitRotated);
     expect(verifyProxy(F.portraitRotated, portrait, faststart)).toEqual([]);
