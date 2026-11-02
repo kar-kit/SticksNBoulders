@@ -57,7 +57,7 @@ describe("person columns", () => {
   it("covers every table in the schema, so prune can reach all of them", () => {
     const uncovered = schema.tables.filter((t) => personColumnsOf(t).length === 0).map((t) => t.id);
     expect(uncovered).toEqual([]);
-    expect(schema.tables.length).toBe(16);
+    expect(schema.tables.length).toBe(17);
     expect(schema.buckets.map((b) => b.id).sort()).toEqual(["avatars", "set_video_posters", "set_video_proxies", "set_videos"]);
   });
 });

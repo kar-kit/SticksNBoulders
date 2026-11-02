@@ -40,17 +40,31 @@ const rowEvents = (op: "create" | "update") => [
   `databases.${DATABASE_ID}.tables.*.rows.*.${op}`,
 ];
 
+/**
+ * Deletes of comments only, never of every table (F25). The one delete the
+ * Function acts on is a comment's, to take its reactions with it
+ * (provenance.ts, `cascadeFor`), and subscribing to every delete in the
+ * database would run an execution per removed set, review and weigh-in to do
+ * nothing. Both spellings, for the reason `rowEvents` carries both.
+ */
+const commentDeleteEvents = [
+  `databases.${DATABASE_ID}.collections.set_comments.documents.*.delete`,
+  `databases.${DATABASE_ID}.tables.set_comments.rows.*.delete`,
+];
+
 export const FUNCTIONS: readonly FunctionSpec[] = [
   {
     id: "validate-row",
     name: "validate-row",
     purpose:
       `Deletes a row in ${VALIDATED_TABLES.join(", ")} whose stored permissions do not prove its ` +
-      "owner wrote it. Appwrite polices who reads a row, not what the row claims; this is the server " +
-      "half of the fix for the 27 Sep 2026 forgery finding (docs/permission-audit.md).",
+      "owner wrote it, or that carries a value no honest write produces (a reaction outside the six). " +
+      "Appwrite polices who reads a row, not what the row claims; this is the server half of the fix " +
+      "for the 27 Sep 2026 forgery finding (docs/permission-audit.md). Since F25 it also removes a " +
+      "deleted comment's reactions, which its author has no right to delete themselves.",
     runtime: "node-22",
     dir: "validate-row",
-    events: [...rowEvents("create"), ...rowEvents("update")],
+    events: [...rowEvents("create"), ...rowEvents("update"), ...commentDeleteEvents],
     // Rows only. It must be able to delete a row and nothing else -- not read a
     // user, not touch a team, not write a table.
     scopes: ["rows.read", "rows.write", "documents.read", "documents.write"],

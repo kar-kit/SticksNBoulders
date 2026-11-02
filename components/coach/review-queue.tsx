@@ -19,6 +19,8 @@ import { clipSource } from "@/lib/video/clip-source";
 import { buildQueue, firstItem, groupByAthlete, nextAfter, stillReviewed, type QueueItem } from "@/lib/review/queue";
 import { countBySet, type Comment } from "@/lib/review/comments";
 import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
+import { fetchReactionsQuietly } from "@/lib/review/reaction-store";
+import { useReactions } from "@/lib/review/use-reactions";
 import {
   clearClip,
   fetchClipUrls,
@@ -80,6 +82,8 @@ export function ReviewQueue() {
   const [loaded, setLoaded] = useState<LoadedDetail | null>(null);
   const [lastCleared, setLastCleared] = useState<QueueItem | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
+  // F25. Quiet: the rail's "already commented" mark counts comments, never these.
+  const { controls: reactions, setLoaded: setReactions } = useReactions({ comments, viewerId: coachId ?? "" });
   const [posting, setPosting] = useState(false);
   const [athleteNames, setAthleteNames] = useState<Map<string, string>>(new Map());
   const [dropped, setDropped] = useState<ReadonlyMap<string, string>>(new Map());
@@ -149,9 +153,13 @@ export function ReviewQueue() {
     // What has already been said about what is waiting. Read with the queue
     // rather than per clip, so a coach who commented last Sunday sees it the
     // moment the clip opens instead of a blank box that invites a repeat.
-    setComments(await fetchCommentsForSets(queue.map((item) => item.id)));
+    // The reactions on it (F25) in the same breath, one query for the queue.
+    const waitingIds = queue.map((item) => item.id);
+    const [said, reacted] = await Promise.all([fetchCommentsForSets(waitingIds), fetchReactionsQuietly(waitingIds)]);
+    setComments(said);
+    setReactions(reacted);
     return queue;
-  }, [coachId, commitItems]);
+  }, [coachId, commitItems, setReactions]);
 
   useEffect(() => {
     if (!coachId) return;
@@ -544,6 +552,7 @@ export function ReviewQueue() {
               busy={posting}
               onPost={(body) => commentAndNext(current, body)}
               onSkip={() => clear(current)}
+              reactions={reactions}
             />
             {lastCleared ? (
               <Button variant="ghost" size="sm" onClick={undo} className="self-start motion-safe:animate-rise-in">

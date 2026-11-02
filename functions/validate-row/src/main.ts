@@ -1,4 +1,4 @@
-import { verdictFor, type Row } from "../../../appwrite/documents/provenance";
+import { cascadeFor, verdictFor, type Cascade, type Row } from "../../../appwrite/documents/provenance";
 
 /**
  * validate-row: the server half of the 27 Sep 2026 forgery fix.
@@ -26,6 +26,14 @@ import { verdictFor, type Row } from "../../../appwrite/documents/provenance";
  * bundling node-appwrite to make it would be most of the deployment. The cost
  * of no SDK is a hand-written route, which is how this shipped calling one
  * that does not exist (6 Oct 2026): keep it on `/tablesdb/`.
+ *
+ * Since F25 it also hears one kind of delete: a comment's. The reactions on
+ * a comment were written by the other party and only they may delete them,
+ * so the comment's author cannot take them along when withdrawing it; this
+ * does, with the per-execution key (`cascadeFor` in provenance.ts). It lists
+ * by the deleted comment's own id, in one table, and deletes what it finds.
+ * Readers never show a reaction whose comment is gone, so a cascade that
+ * fails costs a few orphan rows, not a wrong screen.
  */
 
 interface Context {
@@ -65,6 +73,12 @@ export default async function main({ req, res, log, error }: Context) {
   const tableId = str(row.$tableId) || str(row.$collectionId);
   const databaseId = str(row.$databaseId);
   const rowId = str(row.$id);
+  const event = req.headers["x-appwrite-event"] ?? "";
+
+  if (event.endsWith(".delete")) {
+    return cascade({ res, log, error }, tableId, databaseId, rowId, cascadeFor(tableId, row), req.headers["x-appwrite-key"] || "");
+  }
+
   const verdict = verdictFor(tableId, row);
   const summary = `${tableId}/${rowId} (${req.headers["x-appwrite-event"] ?? "?"}): ${verdict.action} -- ${verdict.reason}`;
 
@@ -106,6 +120,76 @@ export default async function main({ req, res, log, error }: Context) {
   }
   error(`delete failed ${response.status} for ${summary}: ${body.slice(0, 300)}`);
   return res.json({ ...verdict, tableId, rowId, deleted: false }, 500);
+}
+
+/** Most reactions one comment can carry: one per person in the circle. A page is plenty. */
+const CASCADE_PAGE = 100;
+
+/**
+ * The reactions on a deleted comment, removed.
+ *
+ * Listed rather than derived: a reaction's id is a client id, and who reacted
+ * -- the athlete, or any coach in their circle -- is not on the comment. The
+ * query is spelled exactly as the SDK spells `Query.equal` and `Query.limit`
+ * (`queries[0]=<json>`), and validate-row.test.ts pins it against the SDK's own
+ * output, because a hand-written route is how this Function once called one
+ * that did not exist.
+ */
+async function cascade(
+  { res, log, error }: Pick<Context, "res" | "log" | "error">,
+  tableId: string,
+  databaseId: string,
+  rowId: string,
+  plan: Cascade | null,
+  key: string,
+) {
+  const summary = `${tableId}/${rowId} deleted`;
+  if (!plan) {
+    log(`${summary}: nothing cascades from ${tableId || "an unknown table"}`);
+    return res.json({ action: "skip", reason: `nothing cascades from ${tableId}`, tableId, rowId });
+  }
+  if (process.env.VALIDATOR_DRY_RUN === "true") {
+    log(`DRY RUN, would delete ${plan.tableId} where ${plan.column} = ${plan.value} (${summary})`);
+    return res.json({ action: "cascade", tableId, rowId, cascade: plan, dryRun: true });
+  }
+  const endpoint = process.env.APPWRITE_ENDPOINT || process.env.APPWRITE_FUNCTION_API_ENDPOINT || "";
+  const project = process.env.APPWRITE_FUNCTION_PROJECT_ID || "";
+  if (!endpoint || !project || !key || !databaseId) {
+    error(`cannot cascade ${summary}: missing endpoint/project/key/database`);
+    return res.json({ action: "cascade", tableId, rowId, deleted: 0 }, 500);
+  }
+  const headers = { "x-appwrite-project": project, "x-appwrite-key": key };
+  const rows = `${endpoint}/tablesdb/${encodeURIComponent(databaseId)}/tables/${encodeURIComponent(plan.tableId)}/rows`;
+
+  const listed = await fetch(`${rows}?${cascadeQuery(plan)}`, { method: "GET", headers });
+  if (!listed.ok) {
+    error(`cascade list failed ${listed.status} for ${summary}: ${(await listed.text()).slice(0, 300)}`);
+    return res.json({ action: "cascade", tableId, rowId, deleted: 0 }, 500);
+  }
+  const page = (await listed.json().catch(() => ({}))) as { rows?: unknown };
+  const ids = (Array.isArray(page.rows) ? page.rows : [])
+    // Belt and braces on the query: only rows that really name this comment.
+    .filter((r): r is Row => Boolean(r) && typeof r === "object" && (r as Row)[plan.column] === plan.value)
+    .map((r) => str(r.$id))
+    .filter(Boolean);
+
+  let deleted = 0;
+  for (const id of ids) {
+    const response = await fetch(`${rows}/${encodeURIComponent(id)}`, { method: "DELETE", headers });
+    const gone = response.ok || (response.status === 404 && isRowNotFound(await response.text()));
+    if (gone) deleted += 1;
+    else error(`cascade delete failed ${response.status} for ${plan.tableId}/${id}`);
+  }
+  log(`${summary}: removed ${deleted}/${ids.length} from ${plan.tableId}`);
+  return res.json({ action: "cascade", tableId, rowId, cascade: plan, deleted }, deleted === ids.length ? 200 : 500);
+}
+
+/** `queries[0]=equal(column, value)&queries[1]=limit(page)`, as the SDK sends a GET. */
+export function cascadeQuery(plan: Cascade): string {
+  const params = new URLSearchParams();
+  params.append("queries[0]", JSON.stringify({ method: "equal", attribute: plan.column, values: [plan.value] }));
+  params.append("queries[1]", JSON.stringify({ method: "limit", values: [CASCADE_PAGE] }));
+  return params.toString();
 }
 
 /** Appwrite's error type for a missing row, under either API's name. */

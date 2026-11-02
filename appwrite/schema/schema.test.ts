@@ -1,7 +1,8 @@
-import { SERVER_ONLY_TABLES } from "@/appwrite/documents/policy";
+import { SERVER_ONLY_TABLES, USER_WRITABLE_TABLES } from "@/appwrite/documents/policy";
 import { DATABASE_ID, schema } from "./index";
 import type { TableSpec } from "./types";
 import { LOGGED_RPE_VALUES } from "@/lib/logging/set";
+import { REACTION_EMOJI_MAX, REACTION_EMOJIS } from "@/appwrite/documents/reaction";
 
 const table = (id: string): TableSpec => {
   const found = schema.tables.find((t) => t.id === id);
@@ -23,6 +24,7 @@ describe("schema shape", () => {
     expect(schema.tables.map((t) => t.id).sort()).toEqual([
       "bodyweight_entries",
       "coach_athlete_links",
+      "comment_reactions",
       "exercises",
       "invite_codes",
       "prescriptions",
@@ -581,7 +583,7 @@ describe("clip proxies (v22)", () => {
   const clips = schema.buckets.find((b) => b.id === "set_videos")!;
 
   it("point at a proxy with one nullable id, so every existing set is untouched", () => {
-    expect(schema.version).toBe(22);
+    expect(schema.version).toBeGreaterThanOrEqual(22);
     expect(table("sets").columns.find((c) => c.key === "video_proxy_id")).toEqual({
       key: "video_proxy_id",
       type: "string",
@@ -607,5 +609,63 @@ describe("clip proxies (v22)", () => {
     expect(bucket.encryption).toBe(false);
     expect(bucket.maximumFileSizeBytes).toBeGreaterThan(20_000_000);
     expect(bucket.antivirus).toBe(false);
+  });
+});
+
+describe("comment reactions (v23, F25)", () => {
+  const reactions = () => table("comment_reactions");
+
+  it("is a new table, so applying v23 rewrites no existing row", () => {
+    expect(schema.version).toBe(23);
+    // Nothing on set_comments changed: reactions hang off it, not inside it.
+    expect(columnKeys("set_comments")).toEqual([
+      "set_id",
+      "athlete_id",
+      "author_id",
+      "body",
+      "parent_id",
+      "created_at",
+      "client_comment_id",
+    ]);
+  });
+
+  it("carries the comment, the denormalised set and athlete, who reacted, which emoji, when, and a client id", () => {
+    expect(columnKeys("comment_reactions")).toEqual([
+      "comment_id",
+      "set_id",
+      "athlete_id",
+      "author_id",
+      "emoji",
+      "created_at",
+      "client_reaction_id",
+    ]);
+    for (const column of reactions().columns) expect(column.required, column.key).toBe(true);
+  });
+
+  it("sizes the emoji column for one of the six and not for a message", () => {
+    const emoji = reactions().columns.find((c) => c.key === "emoji")!;
+    expect(emoji).toMatchObject({ type: "string", size: REACTION_EMOJI_MAX });
+    // Appwrite counts characters as code points; ❤️ is two of them.
+    for (const e of REACTION_EMOJIS) expect([...e].length).toBeLessThanOrEqual(REACTION_EMOJI_MAX);
+  });
+
+  it("allows one reaction per person per message in the database itself", () => {
+    expect(reactions().indexes).toContainEqual({
+      key: "idx_comment_author",
+      type: "unique",
+      columns: ["comment_id", "author_id"],
+    });
+    expect(reactions().indexes.find((i) => i.key === "idx_client_reaction_id")).toMatchObject({ type: "unique" });
+  });
+
+  it("indexes the set, which is how every screen reads them alongside comments", () => {
+    expect(reactions().indexes.some((i) => i.columns[0] === "set_id")).toBe(true);
+  });
+
+  it("is stamped per row and created by sessions, like comments", () => {
+    expect(reactions().rowSecurity).toBe(true);
+    expect(reactions().permissions).toEqual(table("set_comments").permissions);
+    expect(USER_WRITABLE_TABLES).toContain("comment_reactions");
+    expect(reactions().purpose).toMatch(/quiet/i);
   });
 });

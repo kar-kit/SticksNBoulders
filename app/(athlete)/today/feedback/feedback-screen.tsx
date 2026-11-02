@@ -23,6 +23,8 @@ import {
 import { useFeedbackBadge } from "@/lib/review/feedback-context";
 import { readSeenAt, readSetSeen, type SetSeenMarks } from "@/lib/review/feedback-seen";
 import { fetchFeedback } from "@/lib/review/feedback-store";
+import type { Reaction } from "@/lib/review/reactions";
+import { useReactions } from "@/lib/review/use-reactions";
 import { fetchClipUrls } from "@/lib/review/queue-store";
 import { clipSource } from "@/lib/video/clip-source";
 import { pendingUploads } from "@/lib/video/pending-store";
@@ -45,6 +47,8 @@ type Loaded = {
   status: "ready";
   comments: Comment[];
   sets: Map<string, FeedbackSet>;
+  /** F25: read with the threads. Never part of what is "new". */
+  reactions: Reaction[];
   /** Undefined when the lookup failed; null when there is genuinely no coach. */
   coach: MyCoach | null | undefined;
   uploading: FeedbackSet[];
@@ -56,6 +60,8 @@ type Loaded = {
 };
 
 const CLIP_BATCH = 50;
+/** One empty list, so the reaction hook's memo is not rebuilt every loading render. */
+const NO_COMMENTS: Comment[] = [];
 
 type State = { status: "loading" } | { status: "failed" } | Loaded;
 
@@ -69,7 +75,7 @@ async function loadFeedback(viewerId: string): Promise<Loaded | { status: "faile
       .filter((upload) => upload.athleteId === viewerId)
       .map((upload) => upload.setId);
 
-    const [{ comments, sets }, coach] = await Promise.all([
+    const [{ comments, sets, reactions }, coach] = await Promise.all([
       fetchFeedback(viewerId, pending),
       fetchMyCoach().catch(() => undefined),
     ]);
@@ -81,7 +87,7 @@ async function loadFeedback(viewerId: string): Promise<Loaded | { status: "faile
       .filter((set): set is FeedbackSet => set !== undefined);
 
     const order = buildFeedback(comments, sets, viewerId, seenAt, setSeen).map((card) => card.setId);
-    return { status: "ready", comments, sets, coach, uploading, seenAt, setSeen, order };
+    return { status: "ready", comments, sets, reactions, coach, uploading, seenAt, setSeen, order };
   } catch {
     return { status: "failed" };
   }
@@ -100,10 +106,20 @@ export function FeedbackScreen() {
   // Clip id to the proxy its set names (v22), for the one-off re-mint below.
   const proxies = useRef(new Map<string, string | null>());
 
+  // F25. The same "no coach, no new words" rule as the reply box: with nobody
+  // linked, the chips already left still show and nothing new can be added.
+  const { controls: reactions, setLoaded: setReactions } = useReactions({
+    comments: state.status === "ready" ? state.comments : NO_COMMENTS,
+    viewerId,
+    canReact: state.status === "ready" && state.coach !== null,
+  });
+
   const apply = useCallback(
     (next: Loaded | { status: "failed" }) => {
       setState(next);
       if (next.status !== "ready") return;
+      setReactions(next.reactions);
+      // From comments alone: a reaction never moves the watermark (F25).
       markSeen(nextSeenAt(next.comments, viewerId, next.seenAt));
 
       // Clips last and off the critical path: the words are what the athlete
@@ -122,7 +138,7 @@ export function FeedbackScreen() {
           .catch(() => {});
       }
     },
-    [viewerId, markSeen],
+    [viewerId, markSeen, setReactions],
   );
 
   useEffect(() => {
@@ -257,6 +273,7 @@ export function FeedbackScreen() {
                     canReply={state.coach !== null}
                     onReply={reply}
                     onClipError={onClipError}
+                    reactions={reactions}
                   />
                 ))}
               </div>

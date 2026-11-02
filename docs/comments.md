@@ -154,6 +154,94 @@ another clip's (the badge is still capped at 10), and the Feedback screen's
 "New" marks honour the same per-clip marks. Marks the watermark overtakes are
 pruned when the Feedback screen is opened.
 
+## Reactions (F25, schema v23)
+
+Joey's call on 2 Nov 2026, after a real session: either side can put one of
+six emoji on the other's message -- 👍 💪 🔥 ❤️ 😂 ❓, in that order and no
+others. A 👍 on "brace harder" says *got it* without a reply, and a ❓ says
+*huh?* without a paragraph. It ships with F24 as one release.
+
+### `comment_reactions`
+
+| Column | Why |
+| --- | --- |
+| `comment_id` | The message it is on |
+| `set_id`, `athlete_id` | Denormalised from the comment, as `set_comments` copies them from the set: every screen reads reactions in one IN query by the set ids it already holds, and the stamp is derived from whose set it is |
+| `author_id` | Who reacted |
+| `emoji` | One of the six, stored as the emoji itself. ❤️ is two code points (heart + U+FE0F); a bare ❤ is a different string and refused |
+| `created_at`, `client_reaction_id` | When, and idempotency. The client id is also the row id |
+
+A unique index on (`comment_id`, `author_id`) is the "one each" rule in the
+database, so two phones tapping at once cannot leave two. The column is a
+string rather than an enum: whether Appwrite takes ❤️ as an enum element is
+[Unverified], and a schema apply that fails halfway on a heart is worse than a
+check in three places -- Zod in the write helper, `validate-row`, and every
+reader.
+
+### The rules
+
+- **One per person per message.** Tapping a different emoji replaces yours,
+  as an update of the same row; tapping the one you left takes it back.
+- **Never on your own message.** The helper refuses it (`OWN_MESSAGE`); the
+  row cannot, because Appwrite has no constraint across two tables, so
+  readers drop one too.
+- **Quiet.** No unread count, "New" mark, watermark or notification ever
+  reads `comment_reactions`. `fetchUnreadCount` and the realtime
+  subscription read `set_comments` only, and `nextSeenAt` / `buildFeedback`
+  take comments alone. Tests pin it: a coach's ❤️ newer than the athlete's
+  watermark lights nothing.
+
+### Permissions are a comment's
+
+`reactionPermissions` *is* `commentPermissions` -- the same function, and a
+test says so. Circle read, update and delete for the reactor. So unlinking
+behaves exactly as it does for comments (Order 16.6): nothing is deleted, the
+ex-coach leaves the circle and reads neither his reactions nor the athlete's,
+and a re-link brings them back. Provenance is the comment's too:
+`update("user:<author_id>")` proves who reacted, `authenticRows` filters on
+it, `validate-row` deletes a reaction that lacks it -- and, new here, a
+reaction its author did stamp whose emoji is outside the six
+(`contentProblem` in `appwrite/documents/provenance.ts`).
+
+Readers also hold each reaction against the comment it names
+(`trustedReactions`): one whose comment is not on screen, whose `set_id` or
+`athlete_id` differ from the comment's, or whose author wrote the comment is
+not drawn.
+
+### Deleting a comment takes its reactions -- server side
+
+The reactions on a comment were written by the *other* party, and only they
+may delete them. No session can stamp a delete for somebody else, so
+`deleteComment` cannot cascade from the browser. `validate-row` subscribes to
+`set_comments` deletes (both event spellings, that table only) and removes the
+deleted comment's reactions with its key (`cascadeFor`). Until it has -- or if
+the Function is down -- no reader shows them, because a reaction whose comment
+is gone is dropped on read. Nothing in the app withdraws a comment today
+(`withdrawComment` has no caller); the audit does, and checks the cascade.
+
+### On screen
+
+`Reactable` (`components/video/comment-reactions.tsx`) wraps whatever bubble
+a screen already draws and hangs the chips and a small react button under it.
+`CommentThread` uses it, so the Review Queue's comment box, the Athlete View's
+clip dialog and the athlete's clip page get it at once; the Feedback card uses
+it around its own bubble. The six open as an inline row under the message, not
+a floating popover, so nothing has to be positioned on a phone. A long press
+on the message opens them on a touch screen; the button stays for everyone
+else. Enter, Space and the arrows are kept from the window inside it, so
+choosing 👍 in the Review Queue never also clears the clip or plays it.
+
+The Athlete View is still read-only for *words*; reacting there is allowed,
+because a reaction is an acknowledgement and not a second composer.
+
+Loaded with the comments, never per comment: `fetchReactionsForSets` is one
+IN query by set id, run in parallel with the comment read on every screen
+(`fetchFeedback` is four queries now, not three). A failed reaction read is an
+empty list, so an instance without v23 shows threads without chips rather
+than no threads. Optimistic, one tap per message in flight; a refused write
+puts back exactly what was there and says *"That reaction didn't save."* under
+the message for a few seconds.
+
 ## Verified against the instance
 
 `npm run e2e:review` — **21/21**, eleven of them on comments: both directions of
@@ -167,6 +255,11 @@ their own, and the thread disappearing when the link is revoked.
 | --- | --- |
 | `lib/review/comments.ts` | Pure: validation, threading, labels, counts |
 | `lib/review/comment-store.ts` | Reads, posts, withdraws |
+| `appwrite/documents/reaction.ts` | The six (F25), importable by the validator |
+| `lib/review/reactions.ts` | Pure: which reactions to trust, chips, what a tap means |
+| `lib/review/reaction-store.ts` | Reads by set, create / change / remove |
+| `lib/review/use-reactions.ts` | One screen's optimistic reaction state |
+| `components/video/comment-reactions.tsx` | Chips, the react button, the six |
 | `components/coach/comment-box.tsx` | The composer and what was already said |
 | `components/coach/recent-feedback.tsx` | The Athlete View panel |
 | `scripts/e2e-review.mts` | Both directions, live |

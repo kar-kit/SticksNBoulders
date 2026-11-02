@@ -19,6 +19,7 @@ export type WritableTable =
   | "sets"
   | "set_reviews"
   | "set_comments"
+  | "comment_reactions"
   | "bodyweight_entries";
 export type ServerTable =
   | "stats_rollups"
@@ -408,6 +409,39 @@ export function commentPermissions({ athleteId, authorId }: CommentAuthor): stri
 }
 
 /**
+ * A reaction on a comment (F25, schema v23): one of six emoji, by one person,
+ * on somebody else's message.
+ *
+ * Exactly a comment's stamp, and the same function rather than a copy so the
+ * two cannot drift -- a test asserts they are equal, the way a poster's stamp
+ * is a clip's. A reaction is a very small comment, and every reason the
+ * comment's shape is right holds for it:
+ *
+ *   - Read through the circle. Both parties are in it, so either can stamp
+ *     it, and neither has to name the other by `user:` -- the role Appwrite
+ *     refuses to let one session stamp for another (Order 17). Revoking the
+ *     link takes the reactions with the thread, for free: the ex-coach leaves
+ *     the circle and can read neither.
+ *   - Update and delete for the reactor alone. Changing the emoji is an
+ *     update of their own row; taking it back is a delete. Nobody else can
+ *     do either: a coach cannot remove the athlete's question mark from a
+ *     correction, and that question mark is the athlete's to withdraw.
+ *   - `update("user:<author_id>")` is the provenance proof, as on a comment
+ *     (provenance.ts), so a reaction in somebody else's name is never read
+ *     and validate-row deletes it.
+ *
+ * One consequence, recorded because it shapes deleting a comment: the
+ * comment's author cannot delete the reactions on it. They were stamped by
+ * the other party, and no session can stamp a delete for somebody else. So
+ * the cascade runs server-side, in validate-row, on the comment's delete
+ * event -- and every reader ignores a reaction whose comment it cannot see,
+ * so the cascade is a tidy-up, never what keeps an orphan off a screen.
+ */
+export function reactionPermissions(author: CommentAuthor): string[] {
+  return commentPermissions(author);
+}
+
+/**
  * A weigh-in.
  *
  * Exactly the shape of a session or a set, and deliberately so: it is the
@@ -429,6 +463,7 @@ export const POLICIES = {
   sets: setPermissions,
   set_reviews: reviewPermissions,
   set_comments: commentPermissions,
+  comment_reactions: reactionPermissions,
   bodyweight_entries: bodyweightPermissions,
   stats_rollups: rollupPermissions,
   coach_athlete_links: linkPermissions,
@@ -449,6 +484,7 @@ export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
   "sets",
   "set_reviews",
   "set_comments",
+  "comment_reactions",
   "bodyweight_entries",
 ];
 

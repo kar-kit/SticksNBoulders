@@ -1,6 +1,8 @@
 "use client";
 
 import { authorLabel, threadComments, type Comment } from "@/lib/review/comments";
+import type { ReactionControls } from "@/lib/review/use-reactions";
+import { Reactable } from "./comment-reactions";
 
 const timeLabel = (iso: string): string => {
   const date = new Date(iso);
@@ -19,18 +21,25 @@ const timeLabel = (iso: string): string => {
  * nothing for a clip nobody has spoken about; the caller says so in its own
  * words, since "nothing yet" means different things in the queue and on the
  * athlete's page.
+ *
+ * Reactions (F25) hang under each message when the caller passes `reactions`,
+ * on all three screens at once because they all draw this. Without it the
+ * thread is exactly as it was.
  */
 export function CommentThread({
   comments,
   names,
   viewerId,
   fallbackName = "Your athlete",
+  reactions,
 }: {
   comments: readonly Comment[];
   names: ReadonlyMap<string, string>;
   viewerId: string;
   /** Who an unnamed other author is: the coach reads "Your athlete", the athlete "Your coach". */
   fallbackName?: string;
+  /** The screen's reaction state (lib/review/use-reactions.ts), or none to draw no reactions. */
+  reactions?: ReactionControls;
 }) {
   const threads = threadComments(comments);
   if (threads.length === 0) return null;
@@ -39,10 +48,10 @@ export function CommentThread({
       <h3 className="m-0 text-ui font-semibold text-muted">Already said</h3>
       {threads.map(({ comment, replies }) => (
         <div key={comment.id} className="flex flex-col gap-2">
-          <Said comment={comment} names={names} viewerId={viewerId} fallbackName={fallbackName} />
+          <Said comment={comment} names={names} viewerId={viewerId} fallbackName={fallbackName} reactions={reactions} />
           {replies.map((reply) => (
             <div key={reply.id} className="pl-5">
-              <Said comment={reply} names={names} viewerId={viewerId} fallbackName={fallbackName} />
+              <Said comment={reply} names={names} viewerId={viewerId} fallbackName={fallbackName} reactions={reactions} />
             </div>
           ))}
         </div>
@@ -56,19 +65,24 @@ function Said({
   names,
   viewerId,
   fallbackName,
+  reactions,
 }: {
   comment: Comment;
   names: ReadonlyMap<string, string>;
   viewerId: string;
   fallbackName: string;
+  reactions?: ReactionControls;
 }) {
+  const author = authorLabel(comment, names, viewerId, fallbackName);
   return (
-    <div className="rounded-control border border-border p-3">
-      <p className="m-0 text-ui font-semibold text-muted">
-        {authorLabel(comment, names, viewerId, fallbackName)}
-        <span className="font-medium text-muted-2"> · {timeLabel(comment.createdAt)}</span>
-      </p>
-      <p className="m-0 whitespace-pre-wrap text-body">{comment.body}</p>
-    </div>
+    <Reactable comment={comment} controls={reactions} authorName={author}>
+      <div className="rounded-control border border-border p-3">
+        <p className="m-0 text-ui font-semibold text-muted">
+          {author}
+          <span className="font-medium text-muted-2"> · {timeLabel(comment.createdAt)}</span>
+        </p>
+        <p className="m-0 whitespace-pre-wrap text-body">{comment.body}</p>
+      </div>
+    </Reactable>
   );
 }

@@ -1,5 +1,5 @@
 import { POLICIES } from "../documents/policy";
-import { expectedStamp } from "../documents/provenance";
+import { contentProblem, expectedStamp } from "../documents/provenance";
 
 /**
  * The permission audit's expectations: for every table and bucket, which of
@@ -194,6 +194,29 @@ export const RULES: readonly ResourceRule[] = [
       delete: ["coach"],
     },
     ownerColumn: "athlete_id",
+  },
+  {
+    key: "comment_reactions",
+    kind: "table",
+    resource: "comment_reactions",
+    target: "A's reaction on the coach's comment (F25)",
+    allow: {
+      // Stamped read(team:circle_A), exactly as a comment is.
+      read: athleteAndCoach,
+      // A reacts to the coach's words; the coach reacts to A's reply. Both
+      // are real writes through the helper, each from their own session.
+      create: athleteAndCoach,
+      // The reactor owns their reaction: changing it, or taking it back.
+      update: owner,
+      delete: owner,
+    },
+    ownerColumn: "athlete_id",
+    // Joey's six, and nothing else. A stamp cannot police a value, and the
+    // column is a string; validate-row deletes anything else (provenance.ts).
+    invariant: (row) => contentProblem("comment_reactions", row),
+    notes:
+      "Same stamp as a comment (policy.ts reactionPermissions), so the same audience and the same revocation. " +
+      "The target is A's, so update and delete are A's; the coach's reaction on A's reply is checked beside the matrix.",
   },
   {
     key: "stats_rollups",

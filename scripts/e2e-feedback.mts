@@ -12,6 +12,10 @@
  * else. The reply is read back through the coach's session, because a reply
  * the coach cannot see is a reply to nobody.
  *
+ * F25: the athlete reacts to the coach's comment, the coach reacts to the
+ * athlete's reply, and neither lights the dot or a New mark -- reactions are
+ * quiet. Tapping your own reaction again takes it back, at Appwrite too.
+ *
  * Also the two empty states worth a browser: an athlete with no coach gets no
  * way in from Today and a real answer by URL, and one whose coach has not said
  * anything yet is nudged toward filming.
@@ -30,6 +34,7 @@ import { circleTeamId } from "../appwrite/documents/circle";
 import {
   commentPermissions,
   linkPermissions,
+  reactionPermissions,
   sessionPermissions,
   setPermissions,
   videoPermissions,
@@ -297,6 +302,70 @@ try {
   await entry.waitFor({ timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(1500);
   check("it stays gone after a reload", (await dot.count()) === 0);
+
+  // --- reactions (F25) ----------------------------------------------------------
+  console.log("\nReactions, and how quiet they are (F25)");
+  await page.goto(`${BASE}/today/feedback`);
+  const rcard = page.getByRole("article").first();
+  await rcard.getByRole("button", { name: "React to Ruairi Feedback's message" }).click();
+  await rcard.getByRole("button", { name: "React strong" }).click();
+  check(
+    "the athlete's 💪 on the coach's comment shows straight away, as theirs",
+    await until(async () => rcard.getByRole("button", { name: "strong, yours" }).isVisible()),
+  );
+  const reactionQuery = {
+    databaseId: D,
+    tableId: "comment_reactions",
+    queries: [Query.equal("set_id", setId), Query.limit(10)],
+  };
+  type ReactionRow = { $id: string; comment_id?: string; author_id?: string; emoji?: string; $permissions: string[] };
+  const readReactions = async (tables: TablesDB | WebTablesDB) =>
+    (tables instanceof TablesDB
+      ? (await tables.listRows(reactionQuery)).rows
+      : (await tables.listRows(reactionQuery)).rows) as unknown as ReactionRow[];
+  const athletesReaction = async () =>
+    (await readReactions(adminDb)).find((r) => r.author_id === athlete.$id && r.comment_id === firstComment);
+  check("and lands at Appwrite on that comment, as 💪", await until(async () => (await athletesReaction())?.emoji === "💪"));
+  const landedReaction = await athletesReaction();
+  if (landedReaction) created.push({ table: "comment_reactions", id: landedReaction.$id });
+  check(
+    "stamped like a comment, through the write helper",
+    reactionPermissions({ athleteId: athlete.$id, authorId: athlete.$id }).every((p) => landedReaction?.$permissions.includes(p)),
+    landedReaction?.$permissions.join(", "),
+  );
+  check("and the coach reads it from their own session", (await readReactions(coachDb)).some((r) => r.$id === landedReaction?.$id));
+
+  const coachReactionId = `e2efbr${stamp}`;
+  await coachDb.createRow({
+    databaseId: D,
+    tableId: "comment_reactions",
+    rowId: coachReactionId,
+    data: {
+      comment_id: reply?.$id ?? "",
+      set_id: setId,
+      athlete_id: athlete.$id,
+      author_id: coach.$id,
+      emoji: "🔥",
+      created_at: new Date(Date.now() + 500).toISOString(),
+      client_reaction_id: coachReactionId,
+    },
+    permissions: reactionPermissions({ athleteId: athlete.$id, authorId: coach.$id }),
+  });
+  created.push({ table: "comment_reactions", id: coachReactionId });
+  await page.goto(`${BASE}/today`);
+  await entry.waitFor({ timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+  check("the coach's 🔥 on the athlete's reply lights no dot", (await dot.count()) === 0);
+  check("and the entry still says nothing is new", (await entry.innerText()).includes("Nothing new"));
+  await page.goto(`${BASE}/today/feedback`);
+  const quietCard = page.getByRole("article").first();
+  check(
+    "it shows under the athlete's reply, not tappable by them",
+    await until(async () => quietCard.getByRole("img", { name: "fire, 1" }).isVisible()),
+  );
+  check("and nothing on the card is marked New", !(await quietCard.innerText()).includes("New"));
+  await quietCard.getByRole("button", { name: "strong, yours" }).click();
+  check("tapping the athlete's own 💪 again takes it back, at Appwrite too", await until(async () => (await athletesReaction()) === undefined));
 
   await coachSays("Good. Send me the 170 set on Thursday.", new Date(Date.now() + 1000));
   await page.reload();

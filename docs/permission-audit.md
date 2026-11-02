@@ -135,6 +135,30 @@ and 2 checks (the key writes the target; the ex-coach cannot read it after
 revocation), so the next run should total 22 more than the one before it.
 [Unverified] until Joey runs it (docs/video-proxy.md, runbook step 7).
 
+## Comment reactions (schema v23, F25)
+
+`comment_reactions` is stamped exactly as a comment (`reactionPermissions` is
+`commentPermissions`). The audited target is **A's** reaction on his coach's
+comment, so the rule reads: read A and his coach; create A and his coach (the
+coach's reaction on A's reply is a real write too); update and delete A only.
+Every legitimate write is the helper from the reactor's own session
+(`reactToComment`, `changeReaction`, `removeReaction`). The forgeries claim A
+reacted, on a coach comment of their own so the unique index cannot refuse
+them first, stamped `read("users")`.
+
+Beside the matrix: A cannot change or remove the coach's reaction on his
+reply; a second reaction from A on one message is a 409 from the unique
+index; the helper refuses A a reaction on his own reply; a reaction A writes
+around the helper with an emoji outside the six is drawn by no reader and
+must be deleted by `validate-row`; a forged reaction never reaches the
+coach's read while A's real one does; after the coach withdraws a comment,
+`validate-row` deletes A's reaction on it within the bound and leaves A's
+reaction on a comment that stays; after revocation the ex-coach reads neither
+A's reaction nor his own, cannot react to A's reply (refused for the circle,
+not as a 409), and A keeps reading both. The stamp scan checks the six as the
+rule's `invariant`. [Unverified] until Joey runs it against an instance with
+v23 applied and `validate-row` redeployed.
+
 ## Adding a table
 
 A new table without a rule fails both the audit and `npm test`

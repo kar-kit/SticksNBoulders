@@ -1,9 +1,11 @@
+import { z } from "zod";
 import { estimateOneRepMax } from "@/lib/strength/e1rm";
 import { isLoggableDuration, isLoggableLevel } from "@/lib/logging/cardio";
 import { isSuggestionMode, type SuggestionMode } from "@/lib/coach/suggestion-mode";
 import { isOwnAvatarFileId } from "./avatar";
 import { circleTeamId } from "./circle";
 import { posterIdFor } from "./poster";
+import { REACTION_EMOJIS } from "./reaction";
 import {
   bodyweightPermissions,
   exercisePermissions,
@@ -11,6 +13,7 @@ import {
   linkPermissions,
   profilePermissions,
   commentPermissions,
+  reactionPermissions,
   referenceMaxPermissions,
   reviewPermissions,
   rollupPermissions,
@@ -1025,6 +1028,12 @@ export async function postComment(deps: WriteDeps, actor: Actor, input: PostComm
  * Only the author can, and that is enforced by Appwrite rather than here: the
  * row carries a delete for its author alone. A coach cannot withdraw an
  * athlete's reply and an athlete cannot withdraw a coach's correction.
+ *
+ * Its reactions (F25) go too, but not from here. They were written by the
+ * other party and only they may delete them, so this session cannot; the
+ * validate-row Function hears the comment's delete and removes them with its
+ * key (provenance.ts, `cascadeFor`). Until it has, no reader shows them: a
+ * reaction whose comment is not in the thread is dropped on read.
  */
 export async function deleteComment(deps: WriteDeps, _actor: Actor, rowId: string) {
   return deps.writer.deleteRow({
@@ -1032,6 +1041,117 @@ export async function deleteComment(deps: WriteDeps, _actor: Actor, rowId: strin
     tableId: "set_comments",
     rowId,
   });
+}
+
+/* -------------------------------------------------------------------------
+ * Comment reactions (F25, schema v23)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The write boundary for a reaction, in Zod because the emoji is the one
+ * field here whose allowed values are a product decision rather than a type:
+ * six, in Joey's order, and anything else refused before a request is made.
+ * validate-row refuses the same values after the fact (provenance.ts,
+ * `contentProblem`), for a session that skips this file.
+ *
+ * Ids are bounded at Appwrite's 36 so a malformed one fails here with a
+ * message, not at the database as a 400 the store cannot tell from a network
+ * blip.
+ */
+const appwriteId = z.string().min(1).max(36);
+const reactionEmoji = z.enum(REACTION_EMOJIS);
+
+const ReactInput = z.object({
+  commentId: appwriteId,
+  /** Who wrote the message. Needed to refuse a reaction to your own. */
+  commentAuthorId: appwriteId,
+  setId: appwriteId,
+  athleteId: appwriteId,
+  emoji: reactionEmoji,
+  clientReactionId: appwriteId,
+});
+export type ReactToCommentInput = z.input<typeof ReactInput>;
+
+const ChangeReactionInput = z.object({
+  rowId: appwriteId,
+  /** Whose set, for the stamp. Re-stamped on update like every other table. */
+  athleteId: appwriteId,
+  emoji: reactionEmoji,
+});
+export type ChangeReactionInput = z.input<typeof ChangeReactionInput>;
+
+/**
+ * The refusal for reacting to your own message. A string, like
+ * SET_HAS_COACH_COMMENTS, so a caller can recognise it without a class.
+ */
+export const OWN_MESSAGE = "reaction-on-own-message";
+
+/**
+ * Puts one of the six on somebody else's message.
+ *
+ * Refuses the actor's own message here, because the row cannot: Appwrite has
+ * no constraint across two tables, and validate-row sees only the reaction.
+ * Readers drop one anyway (lib/review/reactions.ts), so this is what stops
+ * the app writing a row nobody will ever be shown, not the only defence.
+ *
+ * The client id is the row id and the idempotency key, as on a comment. One
+ * reaction per person per message is the unique index on (comment_id,
+ * author_id); a second create from another tab is a 409, which the store
+ * answers by finding the row that won and changing it (changeReaction).
+ */
+export async function reactToComment(deps: WriteDeps, actor: Actor, raw: ReactToCommentInput) {
+  const input = ReactInput.parse(raw);
+  if (input.commentAuthorId === actor.userId) {
+    const refusal = new Error(OWN_MESSAGE) as Error & { code: number };
+    refusal.code = 400;
+    throw refusal;
+  }
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: "comment_reactions",
+    rowId: input.clientReactionId,
+    data: {
+      comment_id: input.commentId,
+      set_id: input.setId,
+      athlete_id: input.athleteId,
+      author_id: actor.userId,
+      emoji: input.emoji,
+      created_at: iso(deps.now()),
+      client_reaction_id: input.clientReactionId,
+    },
+    permissions: reactionPermissions({ athleteId: input.athleteId, authorId: actor.userId }),
+  });
+}
+
+/**
+ * Swaps the emoji on the actor's own reaction: tapping 🔥 where 👍 was.
+ *
+ * An update of the same row rather than a delete and a create, so there is
+ * never a moment with two reactions -- or none -- from one person, and the
+ * unique index never has to arbitrate. Only the emoji moves. `created_at`
+ * stays when it was first said, and nothing about who or what it is on can be
+ * changed here: re-pointing a reaction at another message is not an edit
+ * this product has.
+ */
+export async function changeReaction(deps: WriteDeps, actor: Actor, raw: ChangeReactionInput) {
+  const input = ChangeReactionInput.parse(raw);
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "comment_reactions",
+    rowId: input.rowId,
+    data: { emoji: input.emoji },
+    permissions: reactionPermissions({ athleteId: input.athleteId, authorId: actor.userId }),
+  });
+}
+
+/**
+ * Takes a reaction back: tapping the one you already left.
+ *
+ * Only its author can, enforced by Appwrite rather than here -- the row
+ * carries a delete for its author alone, as a comment does.
+ */
+export async function removeReaction(deps: WriteDeps, _actor: Actor, rowId: string) {
+  return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: "comment_reactions", rowId });
 }
 
 /* -------------------------------------------------------------------------
