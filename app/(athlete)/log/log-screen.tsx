@@ -15,6 +15,7 @@ import { RestBar } from "@/components/logging/rest-bar";
 import { RpeSheet } from "@/components/logging/rpe-sheet";
 import { VariantSheet } from "@/components/logging/variant-sheet";
 import { swapOptions } from "@/lib/exercises/variants";
+import { releaseKeyboard } from "@/lib/ui/keyboard-gap";
 import { UndoToast } from "@/components/ui/undo-toast";
 import { useSession } from "@/lib/auth/session-context";
 import { AttachVideo } from "@/components/logging/attach-video";
@@ -840,6 +841,13 @@ export function LogScreen() {
         ids.delete(exercise.id);
         return { ...prev, ids };
       });
+      // A pick leaves focus on the typeahead: its options prevent mousedown so
+      // the tap survives. The inline box then unmounts with the keyboard still
+      // up, which fires no focusout, and the bottom box stays focused over the
+      // set row the athlete is about to log. Either way the keyboard state goes
+      // stale and iOS can leave the page shifted by its height (F24). Let go of
+      // it here, while the field is still in the page.
+      releaseKeyboard();
       setAddingInline(false);
       activate(exercise.id);
     },
@@ -2084,7 +2092,16 @@ export function LogScreen() {
               onCreateCardio={(name) => void createExercise(name, "cardio")}
               hint={library.status === "failed" ? "Library unavailable — you can still type a name." : null}
             />
-            <Button variant="ghost" size="sm" onClick={() => setAddingInline(false)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                // A tap on a button does not take focus on iOS, so the field
+                // could otherwise go with the keyboard still claiming it (F24).
+                releaseKeyboard();
+                setAddingInline(false);
+              }}
+            >
               Cancel
             </Button>
           </div>
