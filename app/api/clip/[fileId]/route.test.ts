@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { clipJwts, JWT_REUSE_MS } from "@/lib/video/clip-jwt";
 import { mintTicket, TICKET_TTL_MS } from "@/lib/video/ticket";
 
 /**
@@ -9,8 +10,19 @@ import { mintTicket, TICKET_TTL_MS } from "@/lib/video/ticket";
 
 const SECRET = "a-test-secret-that-is-long-enough-to-pass";
 const COACH = "coach_ruairi";
+const ATHLETE = "athlete_joey";
 
-const appwrite = vi.hoisted(() => ({ jwtFails: false, jwtFor: [] as string[] }));
+/**
+ * Every mint is a distinct JWT, `jwt-for-<user>.<n>`, so a test can tell a
+ * reused JWT from a fresh one, and `refused` holds JWTs Appwrite has stopped
+ * accepting (a deleted session).
+ */
+const appwrite = vi.hoisted(() => ({
+  jwtFails: false,
+  jwtFor: [] as string[],
+  mints: 0,
+  refused: new Set<string>(),
+}));
 
 vi.mock("node-appwrite", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node-appwrite")>();
@@ -18,11 +30,15 @@ vi.mock("node-appwrite", async (importOriginal) => {
     async createJWT({ userId }: { userId: string }) {
       if (appwrite.jwtFails) throw new Error("user not found");
       appwrite.jwtFor.push(userId);
-      return { jwt: `jwt-for-${userId}` };
+      appwrite.mints += 1;
+      return { jwt: `jwt-for-${userId}.${appwrite.mints}` };
     }
   }
   return { ...actual, Users };
 });
+
+/** The user a JWT was minted for. */
+const userOf = (jwt: string | undefined) => /^jwt-for-(.+)\.\d+$/.exec(jwt ?? "")?.[1];
 
 /** The admin-key client. Spied, so a test can say when the key came into play. */
 const createServerClient = vi.hoisted(() => vi.fn(() => ({})));
@@ -46,7 +62,7 @@ vi.mock("@/appwrite/env", () => ({
  */
 const OTHER_ATHLETES_CLIP = "clip-not-yours";
 const readers: Record<string, string[]> = {
-  "clip-a": [COACH],
+  "clip-a": [COACH, ATHLETE],
   "clip-b": [COACH],
   [OTHER_ATHLETES_CLIP]: ["athlete_somebody_else"],
   // v22: a proxy carries its clip's readers.
@@ -56,18 +72,28 @@ const readers: Record<string, string[]> = {
 /** Files that do not exist, as `bucket/id`. */
 const absent = new Set<string>();
 
+/**
+ * The `mimeType` Appwrite stored, as `bucket/id`. Anything not listed comes
+ * back `video/mp4`. The live bucket has `video/quicktime`,
+ * `application/SIMH-tape-data` and `''` (2 Nov 2026).
+ */
+const storedType = new Map<string, string>();
+
 const storage = vi.fn(async (url: string, init: RequestInit) => {
   const headers = init.headers as Record<string, string>;
   const [, bucketId, rawId] = /\/buckets\/([^/]+)\/files\/([^/]+)\/view$/.exec(url)!;
   const fileId = decodeURIComponent(rawId);
-  if (absent.has(`${bucketId}/${fileId}`)) {
-    return Response.json({ message: "The requested file could not be found.", type: "storage_file_not_found" }, { status: 404 });
-  }
   const asAdmin = Object.keys(headers).some((name) => name.toLowerCase() === "x-appwrite-key");
-  const jwtUser = headers["x-appwrite-jwt"]?.replace(/^jwt-for-/, "");
+  const jwt = headers["x-appwrite-jwt"];
+  const jwtUser = jwt && !appwrite.refused.has(jwt) ? userOf(jwt) : undefined;
 
   if (!asAdmin && !jwtUser) {
     return Response.json({ message: "missing scope", type: "user_unauthorized" }, { status: 401 });
+  }
+  // After the JWT check, as in Appwrite: a refused JWT is a 401 before the
+  // file is ever looked up.
+  if (absent.has(`${bucketId}/${fileId}`)) {
+    return Response.json({ message: "The requested file could not be found.", type: "storage_file_not_found" }, { status: 404 });
   }
   if (!asAdmin && !(readers[fileId] ?? []).includes(jwtUser!)) {
     return Response.json(
@@ -78,7 +104,7 @@ const storage = vi.fn(async (url: string, init: RequestInit) => {
   return new Response("video-bytes", {
     status: headers.range ? 206 : 200,
     headers: {
-      "content-type": "video/mp4",
+      "content-type": storedType.get(`${bucketId}/${fileId}`) ?? "video/mp4",
       "accept-ranges": "bytes",
       ...(headers.range ? { "content-range": "bytes 0-10/1000" } : {}),
     },
@@ -87,8 +113,8 @@ const storage = vi.fn(async (url: string, init: RequestInit) => {
 
 const { GET } = await import("./route");
 
-const ticket = (fileId: string, expiresAt = Date.now() + TICKET_TTL_MS) =>
-  mintTicket({ fileId, userId: COACH, expiresAt }, SECRET);
+const ticket = (fileId: string, expiresAt = Date.now() + TICKET_TTL_MS, userId = COACH) =>
+  mintTicket({ fileId, userId, expiresAt }, SECRET);
 
 const get = (fileId: string, token: string | null, range?: string) =>
   GET(
@@ -98,10 +124,19 @@ const get = (fileId: string, token: string | null, range?: string) =>
     { params: Promise.resolve({ fileId }) },
   );
 
+/** The JWT the storage read at `index` was made with. */
+const jwtSent = (index: number) => (storage.mock.calls[index][1].headers as Record<string, string>)["x-appwrite-jwt"];
+
 beforeEach(() => {
   absent.clear();
+  storedType.clear();
+  // One module instance across every test: without this, a JWT minted in one
+  // test is reused in the next and every "minted once" assertion lies.
+  clipJwts.clear();
   appwrite.jwtFails = false;
   appwrite.jwtFor = [];
+  appwrite.mints = 0;
+  appwrite.refused.clear();
   storage.mockClear();
   createServerClient.mockClear();
   vi.stubGlobal("fetch", storage);
@@ -109,6 +144,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -125,7 +161,7 @@ describe("GET /api/clip/[fileId] — a good ticket", () => {
 
     const [url, init] = storage.mock.calls[0];
     expect(url).toBe("https://appwrite.test/v1/storage/buckets/set_videos/files/clip-a/view");
-    expect(init.headers).toMatchObject({ "x-appwrite-jwt": `jwt-for-${COACH}`, range: "bytes=0-10" });
+    expect(init.headers).toMatchObject({ "x-appwrite-jwt": `jwt-for-${COACH}.1`, range: "bytes=0-10" });
   });
 
   /**
@@ -141,7 +177,7 @@ describe("GET /api/clip/[fileId] — a good ticket", () => {
     expect(Object.keys(headers).map((name) => name.toLowerCase())).not.toContain("x-appwrite-key");
     expect(headers).toEqual({
       "x-appwrite-project": "p",
-      "x-appwrite-jwt": `jwt-for-${COACH}`,
+      "x-appwrite-jwt": `jwt-for-${COACH}.1`,
       "accept-encoding": "identity",
       range: "bytes=0-10",
     });
@@ -329,7 +365,7 @@ describe("GET /api/clip/[fileId] — which bucket (v22)", () => {
     expect(await response.text()).toBe("video-bytes");
     const [url, init] = storage.mock.calls[0];
     expect(url).toBe("https://appwrite.test/v1/storage/buckets/set_video_proxies/files/clip-a_proxy/view");
-    expect(init.headers).toMatchObject({ "x-appwrite-jwt": `jwt-for-${COACH}`, range: "bytes=0-10" });
+    expect(init.headers).toMatchObject({ "x-appwrite-jwt": `jwt-for-${COACH}.1`, range: "bytes=0-10" });
   });
 
   it("streams a ticket that names no bucket from the clip bucket, as before proxies", async () => {
@@ -352,7 +388,7 @@ describe("GET /api/clip/[fileId] — which bucket (v22)", () => {
       "https://appwrite.test/v1/storage/buckets/set_video_proxies/files/clip-a_proxy/view",
       "https://appwrite.test/v1/storage/buckets/set_videos/files/clip-a/view",
     ]);
-    expect((storage.mock.calls[1][1].headers as Record<string, string>)["x-appwrite-jwt"]).toBe(`jwt-for-${COACH}`);
+    expect((storage.mock.calls[1][1].headers as Record<string, string>)["x-appwrite-jwt"]).toBe(`jwt-for-${COACH}.1`);
   });
 
   it("does not fall back for a clip ticket, and the fallback still answers to Appwrite's permissions", async () => {
@@ -369,5 +405,260 @@ describe("GET /api/clip/[fileId] — which bucket (v22)", () => {
 
   it("refuses a proxy ticket replayed against a different path", async () => {
     expect((await get("clip-a", proxyTicket("clip-a_proxy"))).status).toBe(404);
+  });
+});
+
+describe("GET /api/clip/[fileId] — the content-type is what is being served, not what was stored", () => {
+  /**
+   * Appwrite sniffs a file's `mimeType` at upload and sometimes gets it
+   * wrong: on 2 Nov 2026, 5 of the 27 live clips were `application/SIMH-tape-data`
+   * and 2 were `''`. With nosniff the browser has to believe the header, so a
+   * forwarded bad type is a clip that will not play.
+   */
+  it.each([
+    ["a sniffed non-video type", "application/SIMH-tape-data"],
+    ["an empty type", ""],
+    ["a generic binary type", "application/octet-stream"],
+    ["a type the browser would render", "text/html"],
+    ["a bare video/ with no subtype", "video/"],
+  ])("serves an original stored with %s as video/mp4", async (_name, stored) => {
+    storedType.set("set_videos/clip-a", stored);
+    const response = await get("clip-a", ticket("clip-a"), "bytes=0-10");
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-type")).toBe("video/mp4");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("keeps an original's own video type, normalised", async () => {
+    storedType.set("set_videos/clip-a", "video/quicktime");
+    expect((await get("clip-a", ticket("clip-a"))).headers.get("content-type")).toBe("video/quicktime");
+
+    storedType.set("set_videos/clip-a", "Video/QuickTime; charset=binary");
+    expect((await get("clip-a", ticket("clip-a"))).headers.get("content-type")).toBe("video/quicktime");
+
+    storedType.set("set_videos/clip-a", "video/webm");
+    expect((await get("clip-a", ticket("clip-a"))).headers.get("content-type")).toBe("video/webm");
+  });
+
+  it("serves a proxy as video/mp4 whatever was stored", async () => {
+    const proxyTicket = mintTicket(
+      { fileId: "clip-a_proxy", userId: COACH, expiresAt: Date.now() + TICKET_TTL_MS, bucketId: "set_video_proxies" },
+      SECRET,
+    );
+    for (const stored of ["", "application/SIMH-tape-data", "video/quicktime"]) {
+      storedType.set("set_video_proxies/clip-a_proxy", stored);
+      expect((await get("clip-a_proxy", proxyTicket)).headers.get("content-type")).toBe("video/mp4");
+    }
+  });
+
+  /**
+   * A proxy ticket that falls back is serving the original, so it gets the
+   * original's type. `video/quicktime` tells the two rules apart: the proxy
+   * rule would say mp4.
+   */
+  it("gives a proxy ticket that fell back to the original the original's type", async () => {
+    absent.add("set_video_proxies/clip-a_proxy");
+    const proxyTicket = mintTicket(
+      { fileId: "clip-a_proxy", userId: COACH, expiresAt: Date.now() + TICKET_TTL_MS, bucketId: "set_video_proxies" },
+      SECRET,
+    );
+
+    storedType.set("set_videos/clip-a", "video/quicktime");
+    const response = await get("clip-a_proxy", proxyTicket, "bytes=0-10");
+    expect(storage.mock.calls.at(-1)![0]).toContain("/buckets/set_videos/files/clip-a/view");
+    expect(response.headers.get("content-type")).toBe("video/quicktime");
+
+    storedType.set("set_videos/clip-a", "application/SIMH-tape-data");
+    expect((await get("clip-a_proxy", proxyTicket)).headers.get("content-type")).toBe("video/mp4");
+  });
+
+  it("does not put a content-type on a 404", async () => {
+    storedType.set("set_videos/clip-a", "video/quicktime");
+    absent.add("set_videos/clip-a");
+    const response = await get("clip-a", ticket("clip-a"));
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-type")).toBe("application/json");
+  });
+});
+
+describe("GET /api/clip/[fileId] — one JWT per user, reused across range requests", () => {
+  it("mints once across a player's range requests for the same ticket", async () => {
+    const token = ticket("clip-a");
+    for (const range of ["bytes=0-", "bytes=500-", "bytes=900-", "bytes=100-200"]) {
+      expect((await get("clip-a", token, range)).status).toBe(206);
+    }
+
+    expect(appwrite.jwtFor).toEqual([COACH]);
+    expect(createServerClient).toHaveBeenCalledTimes(1);
+    expect(storage.mock.calls.map((_, i) => jwtSent(i))).toEqual(Array(4).fill(`jwt-for-${COACH}.1`));
+  });
+
+  /** A player opens with several requests at once; they share one mint. */
+  it("mints once for requests that arrive together", async () => {
+    const token = ticket("clip-a");
+    const responses = await Promise.all(["bytes=0-", "bytes=500-", "bytes=900-"].map((r) => get("clip-a", token, r)));
+
+    expect(responses.map((r) => r.status)).toEqual([206, 206, 206]);
+    expect(appwrite.jwtFor).toEqual([COACH]);
+  });
+
+  it("reuses it across the same user's tickets for different clips", async () => {
+    await get("clip-a", ticket("clip-a"));
+    await get("clip-b", ticket("clip-b"));
+    expect(appwrite.jwtFor).toEqual([COACH]);
+  });
+
+  /**
+   * The security property. The cache is keyed on the signed ticket's user, so
+   * a warm instance holding the coach's JWT never hands it to the athlete's
+   * ticket, or the reverse -- even interleaved, even for the same clip.
+   */
+  it("mints separately per user and never crosses them", async () => {
+    await get("clip-a", ticket("clip-a"), "bytes=0-");
+    await get("clip-a", ticket("clip-a", undefined, ATHLETE), "bytes=0-");
+    await get("clip-a", ticket("clip-a"), "bytes=500-");
+    await get("clip-a", ticket("clip-a", undefined, ATHLETE), "bytes=500-");
+
+    expect(appwrite.jwtFor).toEqual([COACH, ATHLETE]);
+    expect(storage.mock.calls.map((_, i) => userOf(jwtSent(i)))).toEqual([COACH, ATHLETE, COACH, ATHLETE]);
+  });
+
+  it("does not let a cached JWT open a clip the ticket's user may not read", async () => {
+    await get("clip-a", ticket("clip-a"));
+    const response = await get(OTHER_ATHLETES_CLIP, ticket(OTHER_ATHLETES_CLIP));
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain("video-bytes");
+    expect(appwrite.jwtFor).toEqual([COACH]);
+  });
+
+  /**
+   * Reuse must not weaken revocation: Appwrite checks permissions per read,
+   * not per JWT, so a coach unlinked between two seeks 404s on the second
+   * with no new mint involved.
+   */
+  it("still honours revocation mid-scrub with a reused JWT", async () => {
+    const token = ticket("clip-b");
+    expect((await get("clip-b", token, "bytes=0-")).status).toBe(206);
+
+    const before = readers["clip-b"];
+    readers["clip-b"] = [];
+    try {
+      expect((await get("clip-b", token, "bytes=500-")).status).toBe(404);
+    } finally {
+      readers["clip-b"] = before;
+    }
+    expect(appwrite.jwtFor).toEqual([COACH]);
+  });
+
+  it("still refuses an expired ticket while the user's JWT is cached", async () => {
+    await get("clip-a", ticket("clip-a"));
+    storage.mockClear();
+
+    expect((await get("clip-a", ticket("clip-a", Date.now() - 1))).status).toBe(404);
+    expect(storage).not.toHaveBeenCalled();
+  });
+
+  it("sits inside both the JWT's 15-minute default and the ticket's lifetime", () => {
+    expect(JWT_REUSE_MS).toBeGreaterThan(0);
+    expect(JWT_REUSE_MS).toBeLessThan(TICKET_TTL_MS);
+    expect(JWT_REUSE_MS).toBeLessThanOrEqual(15 * 60 * 1000 - 10 * 60 * 1000);
+  });
+
+  it("mints afresh once the reuse window has passed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-02T12:00:00Z"));
+
+    await get("clip-a", ticket("clip-a"));
+    vi.advanceTimersByTime(JWT_REUSE_MS - 1);
+    await get("clip-a", ticket("clip-a"));
+    expect(appwrite.jwtFor).toEqual([COACH]);
+
+    vi.advanceTimersByTime(1);
+    await get("clip-a", ticket("clip-a"));
+    expect(appwrite.jwtFor).toEqual([COACH, COACH]);
+    expect(jwtSent(2)).toBe(`jwt-for-${COACH}.2`);
+  });
+
+  it("does not cache a failed mint", async () => {
+    appwrite.jwtFails = true;
+    expect((await get("clip-a", ticket("clip-a"))).status).toBe(404);
+
+    appwrite.jwtFails = false;
+    expect((await get("clip-a", ticket("clip-a"))).status).toBe(200);
+    expect(appwrite.jwtFor).toEqual([COACH]);
+  });
+});
+
+describe("GET /api/clip/[fileId] — a cached JWT Appwrite no longer accepts", () => {
+  /** A JWT dies with the session it was cut from, e.g. when the user signs out everywhere. */
+  it("evicts it, mints a fresh one and retries once", async () => {
+    const token = ticket("clip-a");
+    await get("clip-a", token, "bytes=0-");
+    appwrite.refused.add(`jwt-for-${COACH}.1`);
+
+    const response = await get("clip-a", token, "bytes=500-");
+
+    expect(response.status).toBe(206);
+    expect(await response.text()).toBe("video-bytes");
+    expect(storage.mock.calls.map((_, i) => jwtSent(i))).toEqual([
+      `jwt-for-${COACH}.1`,
+      `jwt-for-${COACH}.1`,
+      `jwt-for-${COACH}.2`,
+    ]);
+
+    // And the fresh one is what the next seek reuses.
+    await get("clip-a", token, "bytes=900-");
+    expect(jwtSent(3)).toBe(`jwt-for-${COACH}.2`);
+    expect(appwrite.jwtFor).toEqual([COACH, COACH]);
+  });
+
+  it("retries only once, and answers 404 when the fresh JWT is refused too", async () => {
+    const token = ticket("clip-a");
+    await get("clip-a", token);
+    storage.mockClear();
+    // Once per attempt, not mockImplementation: that would outlive this test.
+    const refused = async () => Response.json({ message: "Invalid token", type: "user_unauthorized" }, { status: 401 });
+    storage.mockImplementationOnce(refused).mockImplementationOnce(refused);
+
+    const response = await get("clip-a", token);
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain("user_unauthorized");
+    expect(storage).toHaveBeenCalledTimes(2);
+    expect(appwrite.jwtFor).toEqual([COACH, COACH]);
+  });
+
+  it("does not retry a 401 on a JWT it has just minted", async () => {
+    storage.mockImplementationOnce(async () =>
+      Response.json({ message: "Invalid token", type: "user_unauthorized" }, { status: 401 }),
+    );
+
+    expect((await get("clip-a", ticket("clip-a"))).status).toBe(404);
+    expect(storage).toHaveBeenCalledTimes(1);
+    expect(appwrite.jwtFor).toEqual([COACH]);
+  });
+
+  it("retries the proxy fallback with the fresh JWT as well", async () => {
+    absent.add("set_video_proxies/clip-a_proxy");
+    const proxyTicket = mintTicket(
+      { fileId: "clip-a_proxy", userId: COACH, expiresAt: Date.now() + TICKET_TTL_MS, bucketId: "set_video_proxies" },
+      SECRET,
+    );
+    await get("clip-a_proxy", proxyTicket);
+    storage.mockClear();
+    appwrite.refused.add(`jwt-for-${COACH}.1`);
+
+    const response = await get("clip-a_proxy", proxyTicket);
+
+    // The refused JWT 401s on the proxy before it can learn the proxy is
+    // absent; the fresh one finds it absent and falls back.
+    expect(response.status).toBe(200);
+    expect(storage.mock.calls.map((c, i) => [c[0].replace(/^.*\/buckets\//, ""), jwtSent(i)])).toEqual([
+      ["set_video_proxies/files/clip-a_proxy/view", `jwt-for-${COACH}.1`],
+      ["set_video_proxies/files/clip-a_proxy/view", `jwt-for-${COACH}.2`],
+      ["set_videos/files/clip-a/view", `jwt-for-${COACH}.2`],
+    ]);
   });
 });
