@@ -5,6 +5,7 @@ import { TabBar } from "@/components/ui/tab-bar";
 import { COACH_HOME } from "@/lib/auth/destinations";
 import { canCoach } from "@/lib/auth/mode";
 import { useRequireSession } from "@/lib/auth/session-context";
+import { useKeyboardGapGuard } from "@/lib/ui/keyboard-gap";
 import { ScreenTransition } from "./screen-transition";
 
 /**
@@ -25,6 +26,10 @@ import { ScreenTransition } from "./screen-transition";
 export function AthleteShell({ children }: { children: React.ReactNode }) {
   const state = useRequireSession();
   const coaching = state.status === "signed-in" && canCoach(state.prefs, state.coach.isCoach);
+  // The pinned shell below gives the document nowhere to scroll, but iOS
+  // scrolls it anyway to clear the keyboard and can leave it there, a blank
+  // keyboard-sized band under the tab bar (F24, lib/ui/keyboard-gap.ts).
+  useKeyboardGapGuard();
 
   return (
     // h-dvh, not min-h-dvh: a min-height lets a long screen grow the document,
