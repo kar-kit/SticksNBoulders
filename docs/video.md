@@ -274,6 +274,29 @@ iPhone HDR clip. Everything, including the runbook and the consumer audit, is
 in **docs/video-proxy.md**.
 <!-- END: clip proxies (schema v22) -->
 
+<!-- BEGIN: clip stream type and JWT reuse -->
+## Playback: the type it is served as, and one JWT per user
+
+`GET /api/clip/[fileId]` decides the `content-type` itself (2 Nov 2026).
+[Fact] Appwrite sniffs a file's `mimeType` at upload, and 7 of the 27 live
+clips came out as `application/SIMH-tape-data` (5) or `''` (2); forwarded
+under `nosniff`, the browser has no way past that. The rule: a proxy is
+always `video/mp4`; an original keeps its stored type only if it is
+`video/*` (parameters dropped), else `video/mp4`, which every browser accepts
+for an H.264/HEVC `.mov` as well as an `.mp4` [Inference]. A proxy ticket that
+fell back to the original gets the original's type. Stored data is untouched.
+
+The route also reuses the Appwrite JWT it mints. [Fact] It used to call
+`Users.createJWT` on every request, every seek included: ~80 ms through the
+tunnel each time. Now `lib/video/clip-jwt.ts` keeps one per user in module
+scope (warm Vercel instances share it across a player's range requests) for
+4 minutes, inside both the 5-minute ticket and the JWT's 15-minute default.
+Keyed on the signed ticket's user only, capped at 500 users, never logged.
+A 401 on a reused JWT (session deleted) evicts it, mints once more and
+retries once. Appwrite still checks permissions on every read, so an unlinked
+coach 404s on the next seek exactly as before.
+<!-- END: clip stream type and JWT reuse -->
+
 <!-- BEGIN: clip posters (F12, schema v17) -->
 ## Thumbnails: a poster frame per clip (F12, schema v17)
 
