@@ -10,6 +10,7 @@ import {
   programPermissions,
   profilePermissions,
   commentPermissions,
+  reactionPermissions,
   referenceMaxPermissions,
   reviewPermissions,
   videoPermissions,
@@ -294,11 +295,43 @@ describe("a comment on a set", () => {
   });
 });
 
+describe("a reaction on a comment (F25)", () => {
+  /**
+   * The same function, not a copy: a reaction is a very small comment, and a
+   * change to who reads a thread must be a change to who reads its reactions.
+   */
+  it("is stamped exactly as a comment by the same author is", () => {
+    for (const authorId of [ATHLETE, COACH]) {
+      expect(reactionPermissions({ athleteId: ATHLETE, authorId })).toEqual(
+        commentPermissions({ athleteId: ATHLETE, authorId }),
+      );
+    }
+    expect(POLICIES.comment_reactions).toBe(reactionPermissions);
+  });
+
+  it("lets only the reactor change or take it back, and reads through the circle", () => {
+    const byAthlete = reactionPermissions({ athleteId: ATHLETE, authorId: ATHLETE }).join(" ");
+    expect(byAthlete).toContain(`read("team:${circle}")`);
+    expect(byAthlete).toContain(`update("user:${ATHLETE}")`);
+    expect(byAthlete).toContain(`delete("user:${ATHLETE}")`);
+    // The coach whose comment it is on gets nothing: not the right to remove
+    // the athlete's question mark from his correction.
+    expect(byAthlete).not.toContain(`user:${COACH}`);
+    expect(byAthlete).not.toContain('"users"');
+  });
+
+  it("is a table a session writes, so the validator and the readers cover it", () => {
+    expect(USER_WRITABLE_TABLES).toContain("comment_reactions");
+    expect(() => reactionPermissions({ athleteId: ATHLETE, authorId: "" })).toThrow(/authorId/);
+  });
+});
+
 describe("policy hygiene", () => {
   it("covers every table, so one cannot be added without a policy", () => {
     expect(Object.keys(POLICIES).sort()).toEqual([
       "bodyweight_entries",
       "coach_athlete_links",
+      "comment_reactions",
       "exercises",
       "invite_codes",
       "prescriptions",

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { CommentThread } from "@/components/video/comment-thread";
 import { checkComment, MAX_COMMENT_LENGTH, rejectionMessage, type Comment } from "@/lib/review/comments";
+import type { ReactionControls } from "@/lib/review/use-reactions";
 
 /**
  * What the coach says, and what has already been said.
@@ -32,6 +33,11 @@ export interface CommentBoxProps {
   onPost: (body: string) => Promise<boolean>;
   onSkip: () => void;
   busy?: boolean;
+  /**
+   * F25: reactions on what was already said. A 👍 on the athlete's reply is
+   * how a coach clearing twenty clips says "seen" without writing a word.
+   */
+  reactions?: ReactionControls;
 }
 
 export function CommentBox({
@@ -42,6 +48,7 @@ export function CommentBox({
   onPost,
   onSkip,
   busy = false,
+  reactions,
 }: CommentBoxProps) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +89,7 @@ export function CommentBox({
 
   return (
     <div className="flex flex-col gap-4">
-      <CommentThread comments={comments} names={names} viewerId={viewerId} />
+      <CommentThread comments={comments} names={names} viewerId={viewerId} reactions={reactions} />
 
       <div className="flex flex-col gap-2">
         <label htmlFor="comment" className="sr-only">

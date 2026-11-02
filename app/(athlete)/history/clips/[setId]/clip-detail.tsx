@@ -20,6 +20,9 @@ import type { RpeValue } from "@/lib/logging/set";
 import { subscribeToQueue } from "@/lib/offline/client";
 import type { QueuedOp } from "@/lib/offline/queue";
 import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
+import { fetchReactionsQuietly } from "@/lib/review/reaction-store";
+import type { Reaction } from "@/lib/review/reactions";
+import { useReactions } from "@/lib/review/use-reactions";
 import type { Comment } from "@/lib/review/comments";
 import { nextSeenAt, type FeedbackSet } from "@/lib/review/feedback";
 import { useFeedbackBadge } from "@/lib/review/feedback-context";
@@ -56,7 +59,10 @@ type Load =
   | { status: "loading" }
   | { status: "missing" }
   | { status: "failed" }
-  | { status: "ready"; clip: ClipSet; comments: Comment[] };
+  | { status: "ready"; clip: ClipSet; comments: Comment[]; reactions: Reaction[] };
+
+/** One empty list, so the reaction hook's memo is not rebuilt every loading render. */
+const NO_COMMENTS: Comment[] = [];
 
 const BACK = "/history?view=clips";
 
@@ -85,14 +91,33 @@ export function ClipDetail({ setId }: { setId: string }) {
 
   useEffect(() => subscribeToQueue(setOps), []);
 
+  // F25: reacting to the coach's words here as on Coach Feedback, under the
+  // reply box's rule -- with no coach linked, nothing new can be left.
+  const { controls: reactions, setLoaded: setReactions } = useReactions({
+    comments: load.status === "ready" ? load.comments : NO_COMMENTS,
+    viewerId,
+    canReact: coach !== null,
+  });
+  const landed = useCallback(
+    (next: Load) => {
+      setLoad(next);
+      if (next.status === "ready") setReactions(next.reactions);
+    },
+    [setReactions],
+  );
+
   const read = useCallback(async (): Promise<Load> => {
     try {
       const clip = await fetchMyClip(viewerId, setId);
       if (!clip) return { status: "missing" };
       // The thread is the context, not the point: a failed read shows the
-      // clip without it rather than nothing at all.
-      const comments = await fetchCommentsForSets([clip.id]).catch(() => [] as Comment[]);
-      return { status: "ready", clip, comments };
+      // clip without it rather than nothing at all. Its reactions (F25) come
+      // in the same breath, and fail the same quiet way.
+      const [comments, reactions] = await Promise.all([
+        fetchCommentsForSets([clip.id]).catch(() => [] as Comment[]),
+        fetchReactionsQuietly([clip.id]),
+      ]);
+      return { status: "ready", clip, comments, reactions };
     } catch {
       return { status: "failed" };
     }
@@ -102,7 +127,7 @@ export function ClipDetail({ setId }: { setId: string }) {
     if (!viewerId) return;
     let cancelled = false;
     void read().then((next) => {
-      if (!cancelled) setLoad(next);
+      if (!cancelled) landed(next);
     });
     void fetchMyCoach()
       .then((found) => {
@@ -112,7 +137,7 @@ export function ClipDetail({ setId }: { setId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [viewerId, read]);
+  }, [viewerId, read, landed]);
 
   // The thread is on screen once the clip has loaded, so that is the read.
   // Up to the newest comment from the coach, never a clock: a comment written
@@ -126,7 +151,7 @@ export function ClipDetail({ setId }: { setId: string }) {
 
   const retry = () => {
     setLoad({ status: "loading" });
-    void read().then(setLoad);
+    void read().then(landed);
   };
 
   // What the queue will make of it: a note edited, or a clip replaced, with
@@ -393,7 +418,13 @@ export function ClipDetail({ setId }: { setId: string }) {
         <h2 id="clip-coach" className="m-0 font-mono text-label uppercase text-muted-2">
           {coach?.coachName ? `From ${coach.coachName}` : "From your coach"}
         </h2>
-        <CommentThread comments={comments} names={names} viewerId={viewerId} fallbackName="Your coach" />
+        <CommentThread
+          comments={comments}
+          names={names}
+          viewerId={viewerId}
+          fallbackName="Your coach"
+          reactions={reactions}
+        />
         {comments.length === 0 ? (
           <p className="m-0 text-ui text-muted-2">
             {coach === null

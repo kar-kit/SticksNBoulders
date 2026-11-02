@@ -13,6 +13,8 @@ import {
   type Comment,
 } from "@/lib/review/comments";
 import { isUnread, type FeedbackCard as Card, type FeedbackSet } from "@/lib/review/feedback";
+import type { ReactionControls } from "@/lib/review/use-reactions";
+import { Reactable } from "@/components/video/comment-reactions";
 import { formatWeight } from "@/lib/units";
 import { useUnits } from "@/lib/profile/units-context";
 
@@ -27,6 +29,10 @@ import { useUnits } from "@/lib/profile/units-context";
  * The reply box is small on purpose. The blueprint: "not a chat product, no
  * typing indicators, no read receipts". A real conversation still has
  * WhatsApp.
+ *
+ * Reactions (F25) are the even smaller answer: a 👍 on "brace harder" says
+ * "got it" without a reply. They sit under each message and never touch the
+ * "New" mark, which is drawn from comments alone.
  */
 
 export interface FeedbackCardProps {
@@ -41,6 +47,8 @@ export interface FeedbackCardProps {
   canReply: boolean;
   onReply: (card: Card, body: string) => Promise<boolean>;
   onClipError: (fileId: string) => void;
+  /** The screen's reaction state, or none to draw no reactions. */
+  reactions?: ReactionControls;
 }
 
 const dateLabel = (iso: string): string => {
@@ -83,6 +91,7 @@ export function FeedbackCard({
   canReply,
   onReply,
   onClipError,
+  reactions,
 }: FeedbackCardProps) {
   const { set } = card;
   const label = set ? `${exerciseName}, ${dateLabel(set.loggedAt)}` : "A set that has since been deleted";
@@ -133,10 +142,10 @@ export function FeedbackCard({
       <div className="flex flex-col gap-2">
         {card.threads.map(({ comment, replies }) => (
           <div key={comment.id} className="flex flex-col gap-2">
-            <Said comment={comment} names={names} viewerId={viewerId} seenAt={seenAt} />
+            <Said comment={comment} names={names} viewerId={viewerId} seenAt={seenAt} reactions={reactions} />
             {replies.map((reply) => (
               <div key={reply.id} className="pl-5">
-                <Said comment={reply} names={names} viewerId={viewerId} seenAt={seenAt} />
+                <Said comment={reply} names={names} viewerId={viewerId} seenAt={seenAt} reactions={reactions} />
               </div>
             ))}
           </div>
@@ -153,23 +162,30 @@ function Said({
   names,
   viewerId,
   seenAt,
+  reactions,
 }: {
   comment: Comment;
   names: ReadonlyMap<string, string>;
   viewerId: string;
   seenAt: string | null;
+  reactions?: ReactionControls;
 }) {
+  // Comments only. A reaction on this message, however new, never makes it
+  // "fresh": reactions are quiet (Joey, 2 Nov 2026).
   const fresh = isUnread(comment, viewerId, seenAt);
+  // The athlete is reading their coach here -- the other direction from the
+  // Review Queue, so the fallback is the coach.
+  const author = authorLabel(comment, names, viewerId, "Your coach");
   return (
-    <div className={cn("rounded-control border p-3", fresh ? "border-accent-line" : "border-border")}>
-      <p className="m-0 text-ui font-semibold text-muted">
-        {/* The athlete is reading their coach here -- the other direction
-            from the Review Queue, so the fallback is the coach. */}
-        {authorLabel(comment, names, viewerId, "Your coach")}
-        <span className="font-medium text-muted-2"> · {shortDate(comment.createdAt)}</span>
-      </p>
-      <p className="m-0 whitespace-pre-wrap text-body">{comment.body}</p>
-    </div>
+    <Reactable comment={comment} controls={reactions} authorName={author}>
+      <div className={cn("rounded-control border p-3", fresh ? "border-accent-line" : "border-border")}>
+        <p className="m-0 text-ui font-semibold text-muted">
+          {author}
+          <span className="font-medium text-muted-2"> · {shortDate(comment.createdAt)}</span>
+        </p>
+        <p className="m-0 whitespace-pre-wrap text-body">{comment.body}</p>
+      </div>
+    </Reactable>
   );
 }
 

@@ -6,6 +6,8 @@ import { authenticRows, proxyOf } from "@/appwrite/documents";
 import { fetchCommentsForAthlete, fetchCommentsForSets } from "./comment-store";
 import type { Comment } from "./comments";
 import { seenAtFor, setIdsToFetch, type FeedbackSet } from "./feedback";
+import { fetchReactionsQuietly } from "./reaction-store";
+import type { Reaction } from "./reactions";
 
 /**
  * Reading the athlete's feedback.
@@ -16,8 +18,9 @@ import { seenAtFor, setIdsToFetch, type FeedbackSet } from "./feedback";
  * coach posts with.
  *
  * The screen costs a fixed number of round trips however many comments there
- * are: the recent comments, the full threads on those sets, and the sets
- * themselves, each one query with an IN filter. No per-comment fetch anywhere.
+ * are: the recent comments, the full threads on those sets, the reactions on
+ * those threads (F25), and the sets themselves, each one query with an IN
+ * filter. No per-comment fetch anywhere.
  */
 
 /** How far back the screen reads. A season of feedback, not an archive. */
@@ -108,13 +111,17 @@ export async function fetchSetsByIds(setIds: readonly string[]): Promise<Map<str
 export interface FeedbackData {
   comments: Comment[];
   sets: Map<string, FeedbackSet>;
+  /** On those comments, unfiltered: the screen holds them against the comments it draws. */
+  reactions: Reaction[];
 }
 
 /**
- * Everything the feedback screen shows, in three queries.
+ * Everything the feedback screen shows, in four queries.
  *
- * The recent comments first, because they name the sets. Then two reads in
- * parallel: every comment on those sets, and the sets themselves.
+ * The recent comments first, because they name the sets. Then three reads in
+ * parallel: every comment on those sets, every reaction on those sets (F25),
+ * and the sets themselves. A failed reaction read is an empty list, not a
+ * failed screen: the words are what the athlete came for.
  *
  * The second comment read is what keeps a thread whole. The newest hundred
  * comments can cut a conversation in half, leaving the athlete's reply without
@@ -130,11 +137,12 @@ export async function fetchFeedback(
 ): Promise<FeedbackData> {
   const recent = await fetchCommentsForAthlete(athleteId, RECENT_COMMENTS);
   const spokenAbout = [...new Set(recent.map((comment) => comment.setId))];
-  const [comments, sets] = await Promise.all([
+  const [comments, sets, reactions] = await Promise.all([
     fetchCommentsForSets(spokenAbout),
     fetchSetsByIds(setIdsToFetch(recent, uploadingSetIds)),
+    fetchReactionsQuietly(spokenAbout),
   ]);
-  return { comments, sets };
+  return { comments, sets, reactions };
 }
 
 /** The badge never says more than this; the page is read wider (see below). */
@@ -145,6 +153,9 @@ const UNREAD_PAGE = 100;
  * How many comments from somebody else arrived after `seenAt`, leaving out
  * any on a clip whose thread was read in the Clips gallery since (`setSeen`,
  * F15).
+ *
+ * Comments, and only comments. A reaction from the coach is quiet (F25): it
+ * never reaches this count, so it never lights the Today dot.
  *
  * Capped rather than counted exactly: the badge says "something new", and
  * Appwrite would charge a full count for a number nobody reads past nine.
@@ -211,6 +222,9 @@ export async function fetchHasCoach(athleteId: string): Promise<boolean> {
  * Realtime only delivers rows the subscriber can read, so the circle grant
  * does the filtering. Failing is silent: this improves a badge that already
  * refreshes on focus, it is not what makes it work.
+ *
+ * The comments channel only. Reactions are quiet (F25), so a coach's 👍
+ * does not so much as trigger a recount.
  */
 export function subscribeToComments(onChange: () => void): () => void {
   try {

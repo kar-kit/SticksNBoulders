@@ -43,6 +43,7 @@ import {
   avatarPermissions,
   commentPermissions,
   LIBRARY_TEAM_ID,
+  reactionPermissions,
   posterPermissions,
   proxyPermissions,
   readableByAnySession,
@@ -52,12 +53,14 @@ import { POSTER_BUCKET, posterIdFor } from "../appwrite/documents/poster";
 import { PROXY_BUCKET, proxyIdFor } from "../appwrite/documents/proxy";
 import { AVATAR_BUCKET, newAvatarFileId } from "../appwrite/documents/avatar";
 import { authenticRows, isAuthentic, ownerProof } from "../appwrite/documents/provenance";
+import { toReaction } from "../lib/review/reactions";
 import { FUNCTIONS } from "../appwrite/functions";
 import type { RowWriter } from "../appwrite/documents/row-writer";
 import {
   attachVideo,
   setProfileAvatar,
   bodyweightRowId,
+  changeReaction,
   createExercise,
   createGlobalExercise,
   createProfile,
@@ -69,8 +72,11 @@ import {
   finishSession,
   markSetReviewed,
   normaliseExerciseName,
+  OWN_MESSAGE,
   postComment,
+  reactToComment,
   recordBodyweight,
+  removeReaction,
   reviseBodyweight,
   unmarkSetReviewed,
   updateProfile,
@@ -550,6 +556,48 @@ try {
     })
   ).$id;
 
+  // F25: reactions, each through the helper from the reactor's own session.
+  // A's target sits on comment2, which nobody deletes before the revocation
+  // checks read it; a reaction on the first comment is kept for the cascade.
+  const reactAs = (p: Party, commentId: string, commentAuthorId: string, setId: string, emoji: "👍" | "💪", tag: string) =>
+    reactToComment(p.deps, { userId: p.id }, {
+      commentId,
+      commentAuthorId,
+      setId,
+      athleteId: A.id,
+      emoji,
+      clientReactionId: `audit-react-${tag}-${stamp}`,
+    });
+  targets.comment_reactions = await ownerCreate("comment_reactions", () => reactAs(A, extras.comment2, C.id, extras.set2, "👍", "a"));
+  extras.coachReaction = await ownerCreate("comment_reactions", () => reactAs(C, extras.reply, A.id, targets.sets, "💪", "c"), "coach");
+  const cascadeFixture = await attempt(async () => {
+    extras.cascadeReaction = (await reactAs(A, targets.set_comments, C.id, targets.sets, "👍", "cascade")).$id;
+  });
+  check("A reacts to the coach's first comment too, for the delete cascade", cascadeFixture.kind === "allowed", JSON.stringify(cascadeFixture));
+  // Coach comments nobody reacts to through the app: one for A's off-list
+  // write and one per forger, so the unique index on (comment, author) can
+  // never refuse a forgery for the wrong reason before the audit judges it.
+  for (const [i, key] of ["offList", "unlinkedCoach", "otherAthlete", "anon"].entries()) {
+    extras[`bare:${key}`] = (
+      await postComment(C.deps, { userId: C.id }, {
+        athleteId: A.id,
+        setId: extras.set2,
+        body: `Noted (${key}).`,
+        // Ids stop at 36 characters, so the index rather than the name.
+        clientCommentId: `audit-bare${i}-${stamp}`,
+      })
+    ).$id;
+  }
+  extras.reply2 = (
+    await postComment(A.deps, { userId: A.id }, {
+      athleteId: A.id,
+      setId: extras.set2,
+      body: "Thanks.",
+      parentId: extras.comment2,
+      clientCommentId: `audit-athlete-reply2-${stamp}`,
+    })
+  ).$id;
+
   // Server-only tables, through their routes, with real JWTs.
   const rollup = await callRoute(rollupRoute as Handler, "/api/rollup", A, {
     exerciseId: targets.exercises,
@@ -795,6 +843,8 @@ try {
       remember(`review:${actor}`, await forged(ruleFor("set_reviews"), actor, "set_reviews", ID.unique(), { coach_id: C.id, athlete_id: A.id, set_id: extras.set2, reviewed_at: now(), client_review_id: `forged-${tag}` }, reviewStamp, `createRow claiming the coach cleared A's clip, ${actor === "athlete" ? "stamped read for A's circle" : EVERYONE}`));
     }
     if (actor !== "athlete" && actor !== "coach") {
+      // F25: a reaction in A's name on his coach's comment, as if A had said it.
+      remember(`reaction:${actor}`, await forged(ruleFor("comment_reactions"), actor, "comment_reactions", ID.unique(), { comment_id: extras[`bare:${actor}`], set_id: extras.set2, athlete_id: A.id, author_id: A.id, emoji: "❓", created_at: now(), client_reaction_id: `forged-${tag}` }, readableByEveryone(), `createRow on the coach's comment with author_id = A, ${EVERYONE}`));
       remember(`comment:${actor}`, await forged(ruleFor("set_comments"), actor, "set_comments", ID.unique(), { set_id: targets.sets, athlete_id: A.id, author_id: C.id, body: "Forged coaching note", parent_id: null, created_at: now(), client_comment_id: `forged-${tag}` }, readableByEveryone(), `createRow on A's set with author_id = the coach, ${EVERYONE}`));
     }
     remember(`library:${actor}`, await forged(ruleFor("exercises:library"), actor, "exercises", ID.unique(), { name: `Forged Library ${tag}`, normalised_name: normaliseExerciseName(`Forged Library ${tag}`), is_global: true, owner_id: forgerId(actor), created_at: now() }, readableByEveryone(), `createRow with is_global true, ${EVERYONE}`));
@@ -853,6 +903,27 @@ try {
     }
   }
 
+  // F25. Written around the helper by A himself and stamped perfectly: only
+  // the value is wrong. No reader draws it, and validate-row must delete it
+  // like any forgery, so it joins `landed`.
+  const offList = await attempt(async () => {
+    const row = await A.tables.createRow({
+      databaseId: D,
+      tableId: "comment_reactions",
+      rowId: ID.unique(),
+      data: { comment_id: extras["bare:offList"], set_id: extras.set2, athlete_id: A.id, author_id: A.id, emoji: "🍆", created_at: now(), client_reaction_id: `audit-offlist-${stamp}` },
+      permissions: reactionPermissions({ athleteId: A.id, authorId: A.id }),
+    });
+    createdRows.push({ table: "comment_reactions", id: row.$id });
+    landed.push({ table: "comment_reactions", id: row.$id, what: "A's own reaction outside the six" });
+    if (toReaction(row as unknown as Record<string, unknown> & { $id: string }) !== null) throw new Error("a reader would draw it");
+  });
+  check(
+    "a reaction outside the six, written around the helper, is drawn by no reader",
+    offList.kind === "allowed",
+    offList.kind === "error" ? offList.message : JSON.stringify(offList),
+  );
+
   heading("What a forged row does once it lands: nothing, because no reader trusts it");
   const rollupFor = async (p: Party, exerciseId: string) => {
     const rebuilt = await callRoute(rollupRoute as Handler, "/api/rollup", p, { exerciseId, loggedAt: loggedAt.toISOString() });
@@ -896,6 +967,14 @@ try {
       (await A.tables.listRows({ databaseId: D, tableId: "set_comments", queries: [Query.equal("set_id", targets.sets), Query.limit(100)] })).rows,
     ).map((row) => row.$id);
     check("a forged comment in the coach's name never reaches A's thread", !thread.includes(forgedComment) && thread.includes(targets.set_comments), `thread: ${thread.length} comments`);
+  }
+  const forgedReaction = forgedBy["reaction:otherAthlete"] ?? "";
+  if (forgedReaction) {
+    const seen = authenticRows(
+      "comment_reactions",
+      (await C.tables.listRows({ databaseId: D, tableId: "comment_reactions", queries: [Query.equal("set_id", extras.set2), Query.limit(100)] })).rows,
+    ).map((row) => row.$id);
+    check("a reaction forged in A's name never reaches the coach's thread; A's own does", !seen.includes(forgedReaction) && seen.includes(targets.comment_reactions), `coach reads ${seen.length} reactions`);
   }
   const forgedLibrary = Object.entries(forgedBy).filter(([k]) => k.startsWith("library:")).map(([, id]) => id);
   if (forgedLibrary.length > 0) {
@@ -1041,6 +1120,10 @@ try {
       // replaced clip comes back, so it is the column worth hijacking.
       set_reviews: { reviewed_at: new Date(Date.UTC(2020, 0, n)).toISOString(), video_file_id: `hijacked-${n}` },
       set_comments: { body: tag },
+      // F25: the emoji is the whole row, so it is the column worth hijacking.
+      // One per actor, and never the target's 👍 or the owner's ❓ below, or
+      // a no-op update would pass for permission (see above).
+      comment_reactions: { emoji: (["💪", "🔥", "❤️", "😂", "💪"] as const)[n - 1] },
       stats_rollups: { tonnage_kg: 90000 + n },
       reference_maxes: { value_kg: 500 + n },
       invite_codes: { coach_id: ID.unique() },
@@ -1065,6 +1148,9 @@ try {
     // new clip, from the coach's own session.
     set_reviews: () =>
       markSetReviewed(C.deps, { userId: C.id }, { athleteId: A.id, setId: targets.sets, videoFileId: `audit-replacement-${stamp}` }),
+    // F25: tapping a different emoji replaces A's, as an update of the row.
+    comment_reactions: () =>
+      changeReaction(A.deps, { userId: A.id }, { rowId: targets.comment_reactions, athleteId: A.id, emoji: "❓" }),
   };
 
   for (const rule of RULES) {
@@ -1106,6 +1192,35 @@ try {
     (await attempt(() => C.tables.deleteRow({ databaseId: D, tableId: "set_comments", rowId: extras.reply }))).kind === "denied",
   );
 
+  heading("Reactions (F25): one each, never on your own words, each person's their own");
+  check(
+    "A cannot change the coach's reaction on his reply",
+    (await attempt(() => A.tables.updateRow<Models.DefaultRow>({ databaseId: D, tableId: "comment_reactions", rowId: extras.coachReaction, data: { emoji: "😂" } }))).kind === "denied",
+  );
+  check(
+    "or take it back for him",
+    (await attempt(() => A.tables.deleteRow({ databaseId: D, tableId: "comment_reactions", rowId: extras.coachReaction }))).kind === "denied",
+  );
+  const second = await attempt(async () => {
+    const row = await A.tables.createRow({
+      databaseId: D,
+      tableId: "comment_reactions",
+      rowId: ID.unique(),
+      data: { comment_id: extras.comment2, set_id: extras.set2, athlete_id: A.id, author_id: A.id, emoji: "🔥", created_at: now(), client_reaction_id: `audit-second-${stamp}` },
+      permissions: reactionPermissions({ athleteId: A.id, authorId: A.id }),
+    });
+    createdRows.push({ table: "comment_reactions", id: row.$id });
+  });
+  check(
+    "a second reaction from A on the same message is refused by the unique index (409)",
+    second.kind === "denied" && second.code === 409,
+    second.kind === "error" ? second.message : JSON.stringify(second),
+  );
+  const own = await attempt(() =>
+    reactToComment(A.deps, { userId: A.id }, { commentId: extras.reply, commentAuthorId: A.id, setId: targets.sets, athleteId: A.id, emoji: "👍", clientReactionId: `audit-own-${stamp}` }),
+  );
+  check("the helper refuses A a reaction on his own reply", own.kind === "error" && own.message.includes(OWN_MESSAGE), JSON.stringify(own));
+
   /* -----------------------------------------------------------------------
    * Deletes, part one: everyone who should be refused, then the coach's own
    * -------------------------------------------------------------------- */
@@ -1115,6 +1230,7 @@ try {
     bodyweight_entries: () => deleteBodyweight(A.deps, { userId: A.id }, "2026-01-05"),
     set_reviews: () => unmarkSetReviewed(C.deps, { userId: C.id }, targets.sets),
     set_comments: () => deleteComment(C.deps, { userId: C.id }, targets.set_comments),
+    comment_reactions: () => removeReaction(A.deps, { userId: A.id }, targets.comment_reactions),
   };
 
   const runDelete = async (rule: ResourceRule, actor: AuditActor) => {
@@ -1134,6 +1250,28 @@ try {
   }
   for (const rule of RULES) {
     if (isAllowed(rule, "delete", "coach")) await runDelete(rule, "coach");
+  }
+
+  // F25. The coach has just withdrawn his first comment. A's reaction on it
+  // is A's to delete, not his, so validate-row takes it on the comment's
+  // delete event (provenance.ts, cascadeFor). Polled like the forgeries.
+  heading(`Deleting a comment takes its reactions (validate-row, within ${VALIDATOR_WAIT_MS / 1000}s)`);
+  if (!extras.cascadeReaction) {
+    check("there was a reaction on the withdrawn comment to cascade", false, "the fixture did not write one");
+  } else if (!validatorLive) {
+    check("validate-row is not live, so the withdrawn comment's reaction stays (readers still hide it)", false, "Deploy it: npm run appwrite:functions");
+  } else {
+    const deadline = Date.now() + VALIDATOR_WAIT_MS;
+    let gone = false;
+    while (!gone && Date.now() < deadline) {
+      gone = (await rowOrNull("comment_reactions", extras.cascadeReaction)) === null;
+      if (!gone) await new Promise((r) => setTimeout(r, 2000));
+    }
+    check("A's reaction on the coach's withdrawn comment is deleted with it", gone, `comment_reactions/${extras.cascadeReaction} still present`);
+    check(
+      "and A's reaction on a comment that stays is untouched",
+      (await rowOrNull("comment_reactions", targets.comment_reactions)) !== null,
+    );
   }
 
   /* -----------------------------------------------------------------------
@@ -1159,6 +1297,8 @@ try {
     ["his own review of A's clip", () => C.tables.getRow({ databaseId: D, tableId: "set_reviews", rowId: extras.review2 })],
     ["his own comment on A's set", () => C.tables.getRow({ databaseId: D, tableId: "set_comments", rowId: extras.comment2 })],
     ["A's reply to him", () => C.tables.getRow({ databaseId: D, tableId: "set_comments", rowId: extras.reply })],
+    ["A's reaction to his comment", () => C.tables.getRow({ databaseId: D, tableId: "comment_reactions", rowId: targets.comment_reactions })],
+    ["his own reaction to A's reply", () => C.tables.getRow({ databaseId: D, tableId: "comment_reactions", rowId: extras.coachReaction })],
     ["A's clip", () => C.storage.getFile({ bucketId: BUCKET, fileId: targets.set_videos })],
     ["A's clip's proxy", () => C.storage.getFile({ bucketId: PROXY_BUCKET, fileId: targets.set_video_proxies })],
     ["A's picture", () => C.storage.getFile({ bucketId: AVATAR_BUCKET, fileId: targets.avatars })],
@@ -1183,6 +1323,20 @@ try {
   check(
     "the ex-coach cannot comment on A's set any more",
     (await attempt(() => postComment(C.deps, { userId: C.id }, { athleteId: A.id, setId: extras.set2, body: "Still here", clientCommentId: `audit-after-revoke-${stamp}` }))).kind === "denied",
+  );
+  const lateReaction = await attempt(() =>
+    reactToComment(C.deps, { userId: C.id }, { commentId: extras.reply2, commentAuthorId: A.id, setId: extras.set2, athleteId: A.id, emoji: "👍", clientReactionId: `audit-late-react-${stamp}` }),
+  );
+  check(
+    // Not a 409: refused for the circle he left, not for a reaction already there.
+    "or react to A's reply",
+    lateReaction.kind === "denied" && lateReaction.code !== 409,
+    lateReaction.kind === "error" ? lateReaction.message : JSON.stringify(lateReaction),
+  );
+  check(
+    "while A keeps reading his own reaction, and the coach's on his reply",
+    (await attempt(() => A.tables.getRow({ databaseId: D, tableId: "comment_reactions", rowId: targets.comment_reactions }))).kind === "allowed" &&
+      (await attempt(() => A.tables.getRow({ databaseId: D, tableId: "comment_reactions", rowId: extras.coachReaction }))).kind === "allowed",
   );
   check(
     "or clear A's clip from a queue",
@@ -1369,6 +1523,7 @@ async function teardown() {
     reference_maxes: ["athlete_id", "recorded_by"],
     set_reviews: ["athlete_id", "coach_id"],
     set_comments: ["athlete_id", "author_id"],
+    comment_reactions: ["athlete_id", "author_id"],
     coach_athlete_links: ["athlete_id", "coach_id"],
     invite_codes: ["coach_id"],
     programs: ["athlete_id", "coach_id"],

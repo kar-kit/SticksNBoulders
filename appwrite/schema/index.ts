@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 22,
+  version: 23,
   tables: [
     {
       id: "profiles",
@@ -302,6 +302,50 @@ export const schema: DatabaseSpec = {
         { key: "idx_set_created", type: "key", columns: ["set_id", "created_at"], orders: ["asc", "asc"] },
         { key: "idx_athlete_created", type: "key", columns: ["athlete_id", "created_at"], orders: ["asc", "desc"] },
         { key: "idx_client_comment_id", type: "unique", columns: ["client_comment_id"] },
+      ],
+    },
+
+    {
+      id: "comment_reactions",
+      name: "Comment reactions",
+      purpose:
+        "One of six emoji on somebody else's message in a set's thread (F25): a coach's thumbs up on the athlete's reply, the athlete's question mark on a correction. Quiet on purpose -- it lights no badge, no New mark and no notification, because the point is to say \"seen\" without starting a conversation the thread is trying not to host. One per person per message.",
+      rowSecurity: true,
+      permissions: [perm.createUsers],
+      columns: [
+        // The message it is on. 36 because that is an Appwrite id.
+        { key: "comment_id", type: "string", size: 36, required: true },
+        // Both denormalised from the comment, like set_comments copies them
+        // from the set: Appwrite cannot join, the screens read reactions in
+        // one IN query by the set ids they already hold, and the stamp is
+        // derived from whose set it is. A reader checks both against the
+        // comment it actually loaded (lib/review/reactions.ts), so a reaction
+        // claiming a different set or athlete than its comment is dropped.
+        { key: "set_id", type: "string", size: 36, required: true },
+        { key: "athlete_id", type: "string", size: 36, required: true },
+        { key: "author_id", type: "string", size: 36, required: true },
+        // The emoji itself, one of six (appwrite/documents/reaction.ts). A
+        // string rather than an enum: Appwrite's enum elements are meant for
+        // identifiers, and whether it accepts ❤️ -- two code points, one of
+        // them a variation selector -- as an element is [Unverified]. A schema
+        // apply that fails halfway on a heart is worse than a check in three
+        // places: Zod at the write helper, validate-row, and every reader.
+        { key: "emoji", type: "string", size: 8, required: true },
+        { key: "created_at", type: "datetime", required: true },
+        // The idempotency key, as on comments: generated where the tap
+        // happens, so a retried request writes the same row rather than a
+        // second one. It is also the row id.
+        { key: "client_reaction_id", type: "string", size: 80, required: true },
+      ],
+      indexes: [
+        // One reaction per person per message, in the database rather than
+        // only in the UI: two phones tapping at once must not leave two.
+        // Replacing an emoji updates this row; it never writes another.
+        { key: "idx_comment_author", type: "unique", columns: ["comment_id", "author_id"] },
+        // How every screen reads them: by the sets whose threads it shows,
+        // in the same batch as the comments.
+        { key: "idx_set", type: "key", columns: ["set_id"] },
+        { key: "idx_client_reaction_id", type: "unique", columns: ["client_reaction_id"] },
       ],
     },
 

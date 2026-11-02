@@ -1,4 +1,4 @@
-import { commentPermissions, setPermissions } from "@/appwrite/documents/policy";
+import { commentPermissions, reactionPermissions, setPermissions } from "@/appwrite/documents/policy";
 import { fetchFeedback, fetchHasCoach, fetchUnreadCount } from "./feedback-store";
 
 /**
@@ -44,6 +44,17 @@ const joeySet = (id: string) => ({
   $permissions: setPermissions({ athleteId: "joey" }),
 });
 
+const joeyReaction = (id: string, commentId: string, setId: string, emoji = "👍") => ({
+  $id: id,
+  comment_id: commentId,
+  set_id: setId,
+  athlete_id: "joey",
+  author_id: "joey",
+  emoji,
+  created_at: "2026-09-20T11:00:00.000Z",
+  $permissions: reactionPermissions({ athleteId: "joey", authorId: "joey" }),
+});
+
 const has = (call: Call, method: string, attribute?: string) =>
   call.queries.some((q) => {
     const parsed = JSON.parse(q) as { method: string; attribute?: string };
@@ -56,14 +67,25 @@ beforeEach(() => {
 });
 
 describe("fetchFeedback", () => {
-  it("costs three queries however many comments there are", async () => {
+  it("costs four queries however many comments and reactions there are", async () => {
     const recent = Array.from({ length: 40 }, (_, i) => coachComment(`c${i}`, `s${i % 12}`));
+    const reacted = recent.map((c, i) => joeyReaction(`r${i}`, c.$id, c.set_id));
     rowsFor.fn = ({ tableId }) =>
-      tableId === "set_comments" ? recent : Array.from({ length: 12 }, (_, i) => joeySet(`s${i}`));
+      tableId === "set_comments"
+        ? recent
+        : tableId === "comment_reactions"
+          ? reacted
+          : Array.from({ length: 12 }, (_, i) => joeySet(`s${i}`));
 
-    const { comments, sets } = await fetchFeedback("joey", ["uploading"]);
+    const { comments, sets, reactions } = await fetchFeedback("joey", ["uploading"]);
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
+    // F25: every reaction in ONE query, by the sets the threads are on --
+    // never one per comment.
+    const reactionReads = calls.filter((c) => c.tableId === "comment_reactions");
+    expect(reactionReads).toHaveLength(1);
+    expect(has(reactionReads[0], "equal", "set_id")).toBe(true);
+    expect(reactions).toHaveLength(40);
     expect(comments).toHaveLength(40);
     expect(sets.size).toBe(12);
     const setRead = calls.find((c) => c.tableId === "sets")!;
@@ -90,6 +112,31 @@ describe("fetchFeedback", () => {
 
     const { sets } = await fetchFeedback("joey");
     expect([...sets.keys()]).toEqual(["s1"]);
+  });
+
+  it("drops a reaction its author did not stamp, and one outside the six", async () => {
+    rowsFor.fn = ({ tableId }) =>
+      tableId === "set_comments"
+        ? [coachComment("c", "s1")]
+        : tableId === "comment_reactions"
+          ? [
+              joeyReaction("real", "c", "s1"),
+              { ...joeyReaction("forged", "c", "s1"), $permissions: ['read("users")'] },
+              joeyReaction("off-list", "c", "s1", "🍆"),
+            ]
+          : [joeySet("s1")];
+    const { reactions } = await fetchFeedback("joey");
+    expect(reactions.map((r) => r.id)).toEqual(["real"]);
+  });
+
+  it("still shows the words when the reaction read fails, as on an instance without v23", async () => {
+    rowsFor.fn = ({ tableId }) => {
+      if (tableId === "comment_reactions") throw Object.assign(new Error("Table not found"), { code: 404 });
+      return tableId === "set_comments" ? [coachComment("c", "s1")] : [joeySet("s1")];
+    };
+    const { comments, reactions } = await fetchFeedback("joey");
+    expect(comments).toHaveLength(1);
+    expect(reactions).toEqual([]);
   });
 
   it("stops after one query for an athlete nobody has spoken to", async () => {
@@ -132,6 +179,12 @@ describe("fetchUnreadCount", () => {
   it("never reports more than ten, however wide the page", async () => {
     rowsFor.fn = () => Array.from({ length: 14 }, (_, i) => coachComment(`c${i}`, `s${i}`));
     expect(await fetchUnreadCount("joey", null)).toBe(10);
+  });
+
+  it("never reads reactions: a coach's 👍 is quiet and cannot light the badge (F25)", async () => {
+    rowsFor.fn = ({ tableId }) => (tableId === "comment_reactions" ? [joeyReaction("r", "a", "s1")] : [coachComment("a", "s1")]);
+    expect(await fetchUnreadCount("joey", null)).toBe(1);
+    expect(calls.map((c) => c.tableId)).toEqual(["set_comments"]);
   });
 
   it("drops the time filter when the athlete has never looked", async () => {

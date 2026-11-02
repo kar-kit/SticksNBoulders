@@ -14,6 +14,8 @@ import { clipSource } from "@/lib/video/clip-source";
 import { stillReviewed } from "@/lib/review/queue";
 import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import type { Comment } from "@/lib/review/comments";
+import { fetchReactionsQuietly } from "@/lib/review/reaction-store";
+import { useReactions, type ReactionControls } from "@/lib/review/use-reactions";
 import { shortDate, videoRows, type VideoRow } from "@/lib/coach/athlete-view";
 import { formatNumber } from "@/lib/logging/prefill";
 import { cn } from "@/lib/cn";
@@ -37,6 +39,10 @@ import { cn } from "@/lib/cn";
  * panel carries the prescription, the RPE and recent weeks; a second composer
  * here would be a second place to say the same thing with less attached. A
  * clip still waiting says so and points there.
+ *
+ * Reactions (F25) are the exception, and not a second composer: a 👍 on the
+ * athlete's reply is an acknowledgement, not something to say with context
+ * attached, and a coach reading back a thread here is exactly when one fits.
  */
 
 type Loaded = { rows: VideoRow[]; comments: Comment[] };
@@ -44,6 +50,8 @@ type State = { status: "loading" } | { status: "ready"; athleteId: string; data:
 
 /** Enough to cover a fortnight of filmed top sets without a scroll wall. */
 const FIRST_PAGE = 8;
+/** One empty list, so the reaction hook's memo is not rebuilt every loading render. */
+const NO_COMMENTS: Comment[] = [];
 
 export interface AthleteVideosProps {
   athleteId: string;
@@ -64,6 +72,10 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
   const coachId = session.status === "signed-in" ? session.user.id : "";
   const [state, setState] = useState<State>({ status: "loading" });
   const [showAll, setShowAll] = useState(false);
+  const { controls: reactions, setLoaded: setReactions } = useReactions({
+    comments: state.status === "ready" && state.athleteId === athleteId ? state.data.comments : NO_COMMENTS,
+    viewerId: coachId,
+  });
 
   useEffect(() => {
     if (!coachId) return;
@@ -75,9 +87,12 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
           fetchReviews(coachId),
           fetchExerciseLibrary(athleteId),
         ]);
-        const comments = await fetchCommentsForSets(clips.map((clip) => clip.id));
+        const clipIds = clips.map((clip) => clip.id);
+        // Reactions with the comments, one query for every clip (F25).
+        const [comments, reacted] = await Promise.all([fetchCommentsForSets(clipIds), fetchReactionsQuietly(clipIds)]);
         const names = new Map(library.map((e) => [e.id, e.name]));
         if (!cancelled) {
+          setReactions(reacted);
           setState({
             status: "ready",
             athleteId,
@@ -91,7 +106,7 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
     return () => {
       cancelled = true;
     };
-  }, [athleteId, coachId]);
+  }, [athleteId, coachId, setReactions]);
 
   const data = state.status === "ready" && state.athleteId === athleteId ? state.data : null;
   const rows = data?.rows ?? null;
@@ -205,6 +220,7 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
           onClose={onClose}
           leaving={dialog.leaving}
           onExited={dialog.exited}
+          reactions={reactions}
         />
       ) : null}
     </section>
@@ -219,6 +235,7 @@ function ClipDialog({
   onClose,
   leaving,
   onExited,
+  reactions,
 }: {
   row: VideoRow;
   comments: Comment[];
@@ -227,6 +244,7 @@ function ClipDialog({
   onClose: () => void;
   leaving: boolean;
   onExited: () => void;
+  reactions: ReactionControls;
 }) {
   const heading = useId();
   const [src, setSrc] = useState<{ clipId: string; url: string | null } | null>(null);
@@ -297,7 +315,7 @@ function ClipDialog({
                 <p className="m-0 whitespace-pre-line text-ui">“{row.notes}”</p>
               </div>
             ) : null}
-            <CommentThread comments={comments} names={names} viewerId={viewerId} />
+            <CommentThread comments={comments} names={names} viewerId={viewerId} reactions={reactions} />
             {comments.length === 0 ? (
               <p className="m-0 text-ui text-muted-2">Nothing said on this clip yet.</p>
             ) : null}

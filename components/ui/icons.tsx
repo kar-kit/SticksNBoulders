@@ -81,3 +81,14 @@ export const NoteIcon = (props: IconProps) => (
     <path d="M12.5 16.5v-3.5H17M6.5 7.5h7M6.5 10.5h4" />
   </Icon>
 );
+
+/**
+ * Add a reaction (F25): a face with a small plus, the shape every messaging
+ * app has taught people to look for beside a message.
+ */
+export const ReactIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="M16.6 9.6a7 7 0 1 1-6.2-6.6" />
+    <path d="M7 11.5a3.6 3.6 0 0 0 6 0M7.5 8h.01M12.5 8h.01M15.5 1.5v5M13 4h5" />
+  </Icon>
+);

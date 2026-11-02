@@ -50,6 +50,12 @@ the first Function this product depends on for correctness: a forged row is
 deleted within seconds of landing. If it stops firing, readers still hide the
 row (appwrite/documents/provenance.ts) and the audit says so.
 
+Since F25 (schema v23) it also subscribes to **`set_comments` deletes**, in
+both spellings and for that table only, to remove a withdrawn comment's
+reactions (`cascadeFor` in provenance.ts). Whether delete events reach a
+Function on this instance is [Unverified] until the audit's cascade check
+passes; if they do not, readers still hide a reaction whose comment is gone.
+
 ## What this does and does not change
 
 **Rollups stay in a route.** `app/api/rollup/route.ts` was written as a

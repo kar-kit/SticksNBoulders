@@ -10,6 +10,8 @@ import {
 import {
   VALIDATED_TABLES,
   authenticRows,
+  cascadeFor,
+  contentProblem,
   expectedStamp,
   isAuthentic,
   ownerProof,
@@ -39,6 +41,7 @@ describe("the proof of authorship", () => {
     ["bodyweight_entries", { athlete_id: A }, writtenByUser(A)],
     ["set_reviews", { athlete_id: A, coach_id: C }, writtenByUser(C)],
     ["set_comments", { athlete_id: A, author_id: C }, writtenByUser(C)],
+    ["comment_reactions", { athlete_id: A, author_id: C }, writtenByUser(C)],
   ])("%s: is a permission the policy stamps, so an honest write always carries it", (table, row, proof) => {
     expect(ownerProof(table, row)).toEqual([proof]);
     expect(expectedStamp(table, row)).toContain(proof);
@@ -244,5 +247,63 @@ describe("expectedStamp", () => {
 
   it("reports a row missing its owner rather than guessing", () => {
     expect(expectedStamp("sets", { athlete_id: "" })).toBeNull();
+  });
+});
+
+describe("reactions (F25)", () => {
+  const reaction = (over: Record<string, unknown> = {}) =>
+    stamped("comment_reactions", { comment_id: "c1", set_id: "s1", athlete_id: A, author_id: A, emoji: "👍", ...over });
+
+  it("trusts a reaction its author stamped, and not one claiming somebody else reacted", () => {
+    expect(isAuthentic("comment_reactions", reaction())).toBe(true);
+    // B, writing "A reacted 👍" to his coach's comment, stamped for everyone.
+    expect(
+      isAuthentic("comment_reactions", { $id: "f", comment_id: "c1", athlete_id: A, author_id: A, emoji: "👍", $permissions: EVERYONE }),
+    ).toBe(false);
+  });
+
+  it("keeps each of the six, exactly as stored", () => {
+    for (const emoji of ["👍", "💪", "🔥", "❤️", "😂", "❓"]) {
+      expect(verdictFor("comment_reactions", reaction({ emoji })).action, emoji).toBe("keep");
+      expect(contentProblem("comment_reactions", { emoji })).toBeNull();
+    }
+  });
+
+  it("deletes anything else, even when its own author stamped it", () => {
+    // Written around the helper: the stamp is honest, the value is not one of Joey's.
+    for (const emoji of ["🍆", "❤", "👍👍", "", null, undefined, 1]) {
+      const verdict = verdictFor("comment_reactions", reaction({ emoji }));
+      expect(verdict.action, String(emoji)).toBe("delete");
+      expect(verdict.reason).toMatch(/not one of/);
+    }
+  });
+
+  it("judges authorship first: a forgery is deleted for its stamp, whatever its emoji", () => {
+    const verdict = verdictFor("comment_reactions", { $id: "f", athlete_id: A, author_id: C, emoji: "👍", $permissions: EVERYONE });
+    expect(verdict.action).toBe("delete");
+    expect(verdict.reason).toContain(writtenByUser(C));
+  });
+
+  it("checks content on reactions only, so no other table's honest rows are touched", () => {
+    expect(contentProblem("set_comments", { body: "🍆" })).toBeNull();
+    expect(contentProblem("sets", {})).toBeNull();
+  });
+});
+
+describe("the validator's cascade", () => {
+  it("takes a deleted comment's reactions, by the comment's own id", () => {
+    expect(cascadeFor("set_comments", { $id: "c1", author_id: C })).toEqual({
+      tableId: "comment_reactions",
+      column: "comment_id",
+      value: "c1",
+    });
+  });
+
+  it("cascades from nothing else, and never without an id", () => {
+    for (const table of [...USER_WRITABLE_TABLES, ...SERVER_ONLY_TABLES].filter((t) => t !== "set_comments")) {
+      expect(cascadeFor(table, { $id: "r" }), table).toBeNull();
+    }
+    expect(cascadeFor("set_comments", {})).toBeNull();
+    expect(cascadeFor("set_comments", { $id: "" })).toBeNull();
   });
 });

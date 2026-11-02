@@ -32,6 +32,14 @@ export { POSTER_BUCKET, posterIdFor, posterOf } from "./poster";
 export { PROXY_BUCKET, proxyIdFor, proxyOf } from "./proxy";
 
 export {
+  isReactionEmoji,
+  REACTION_EMOJI_MAX,
+  REACTION_EMOJIS,
+  REACTION_NAMES,
+  type ReactionEmoji,
+} from "./reaction";
+
+export {
   avatarPermissions,
   posterPermissions,
   proxyPermissions,
@@ -41,6 +49,7 @@ export {
   linkPermissions,
   bodyweightPermissions,
   commentPermissions,
+  reactionPermissions,
   profilePermissions,
   reviewPermissions,
   rollupPermissions,
@@ -70,11 +79,14 @@ export { ensureLibraryTeam, libraryTeamMembers } from "./library-admin";
 
 export {
   authenticRows,
+  cascadeFor,
+  contentProblem,
   expectedStamp,
   isAuthentic,
   ownerProof,
   verdictFor,
   VALIDATED_TABLES,
+  type Cascade,
   type Verdict,
 } from "./provenance";
 
@@ -88,6 +100,7 @@ export {
   createSet,
   attachVideo,
   bodyweightRowId,
+  changeReaction,
   deleteBodyweight,
   deleteComment,
   deleteSet,
@@ -95,6 +108,9 @@ export {
   deleteSession,
   EXERCISE_IN_USE,
   normaliseSessionName,
+  OWN_MESSAGE,
+  reactToComment,
+  removeReaction,
   renameExercise,
   setExerciseBodyweight,
   setExerciseKind,
@@ -126,6 +142,8 @@ export {
   type CreateLinkInput,
   type CreateProfileInput,
   type CreateSessionInput,
+  type ChangeReactionInput,
+  type ReactToCommentInput,
   type CreateSetInput,
   type DeleteExerciseGuard,
   type DeleteSessionGuard,
