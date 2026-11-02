@@ -294,7 +294,8 @@ try {
 
   // --- the dot clears --------------------------------------------------------
   console.log("\nWhat is new since they last looked");
-  await page.getByRole("button", { name: "Back" }).click();
+  // exact: a substring match also finds the "React to ... Feedback's message" button (F25).
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.waitForURL("**/today", { timeout: 10000 }).catch(() => {});
   check("back on Today, the dot is gone", await until(async () => (await dot.count()) === 0, 5000));
   check("and the entry says nothing is new", await until(async () => (await entry.innerText()).includes("Nothing new")));
@@ -368,7 +369,9 @@ try {
   check("tapping the athlete's own 💪 again takes it back, at Appwrite too", await until(async () => (await athletesReaction()) === undefined));
 
   await coachSays("Good. Send me the 170 set on Thursday.", new Date(Date.now() + 1000));
-  await page.reload();
+  // From Today, not a reload: the reactions above left the page on Coach
+  // Feedback, and reloading that screen reads the new comment on arrival.
+  await page.goto(`${BASE}/today`);
   check("a second comment brings the dot back", await until(async () => (await dot.count()) === 1));
   await page.goto(`${BASE}/today/feedback`);
   await page.getByText("Send me the 170 set on Thursday.").waitFor({ timeout: 15000 }).catch(() => {});
