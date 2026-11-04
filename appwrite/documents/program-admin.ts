@@ -17,6 +17,7 @@ import {
   type ReorderLevel,
 } from "@/lib/programming/program";
 import { copyCalendar, duplicateShift, shiftDay } from "@/lib/programming/copy";
+import { pastedDayDate, pastedWeekDates } from "@/lib/programming/calendar";
 import {
   copyPrescription,
   createExerciseFor,
@@ -364,6 +365,10 @@ async function apply(ctx: Ctx, op: ProgramOp): Promise<string> {
       return duplicateWeekOp(ctx, op.weekId);
     case "copyProgram":
       return copyProgramOp(ctx, op);
+    case "copyDay":
+      return copyDayOp(ctx, op);
+    case "copyWeek":
+      return copyWeekOp(ctx, op);
   }
 }
 
@@ -577,31 +582,59 @@ function linesByDay(rows: readonly RawRow[]): Map<string, RawRow[]> {
   return byDay;
 }
 
-/** Copies a day's lines under a new day, in parallel: they share nothing but the parent. */
+/**
+ * Copies a day's lines under a new day, in parallel: they share nothing but the
+ * parent. With `idOf`, each line gets that row id and a line already written
+ * under it (a retried paste) counts as written.
+ */
 async function copyLines(
   ctx: Ctx,
   scope: ProgramScope,
   to: { weekId: string; dayId: string },
   lines: readonly RawRow[],
   exerciseFor: (sourceExerciseId: string) => string,
+  idOf?: (position: number) => string,
 ) {
   await Promise.all(
     lines.map((raw, position) =>
-      copyPrescription(
-        ctx.deps,
-        scope,
-        {
-          ...to,
-          exerciseId: exerciseFor(String(raw.exercise_id)),
-          // Remapped by the same map as the line's exercise, never copied as
-          // stored: the source's reference may be a row the target cannot read.
-          referenceExerciseId: referenceIdOf(raw) ? exerciseFor(referenceIdOf(raw)!) : null,
-          position,
-        },
-        raw,
+      once(idOf?.(position) ?? null, ctx.deps, (deps) =>
+        copyPrescription(
+          deps,
+          scope,
+          {
+            ...to,
+            exerciseId: exerciseFor(String(raw.exercise_id)),
+            // Remapped by the same map as the line's exercise, never copied as
+            // stored: the source's reference may be a row the target cannot read.
+            referenceExerciseId: referenceIdOf(raw) ? exerciseFor(referenceIdOf(raw)!) : null,
+            position,
+          },
+          raw,
+        ),
       ),
     ),
   );
+}
+
+const is409 = (error: unknown) => (error as { code?: unknown } | null)?.code === 409;
+
+/**
+ * One create, under a chosen row id when there is one. Appwrite answers a
+ * second create of the same id with 409, which here means "the first attempt
+ * already wrote it" -- the rows of a paste are named from its request id, so
+ * that is the only way the id can already be taken. Without an id, the
+ * helper's own fresh id, exactly as before.
+ */
+async function once(id: string | null, deps: WriteDeps, write: (deps: WriteDeps) => Promise<unknown>): Promise<void> {
+  if (!id) {
+    await write(deps);
+    return;
+  }
+  try {
+    await write({ ...deps, newId: () => id });
+  } catch (error) {
+    if (!is409(error)) throw error;
+  }
 }
 
 /** A stored line's reference lift, or null for its own. */
@@ -702,27 +735,7 @@ async function copyProgramOp(ctx: Ctx, op: ProgramOpOf<"copyProgram">): Promise<
   // reference lift is resolved the same way and by the same rules: it is an
   // exercise the target's phone has to read to price the percentage.
   const target = op.athleteId;
-  const exercises = new Map<string, string>();
-  const missing: Array<{ id: string; name: string }> = [];
-  const copied = [...lines.values()].flat();
-  const own = new Set(copied.map((row) => String(row.exercise_id)));
-  const referenced = copied.map(referenceIdOf).filter((id): id is string => id !== null);
-  for (const id of new Set([...own, ...referenced])) {
-    const row = await rowOf(ctx, "exercises", id);
-    if (!row) {
-      return refuse({
-        status: "invalid",
-        reason: own.has(id)
-          ? "exerciseId: a line's exercise no longer exists"
-          : "referenceExerciseId: a line's reference lift no longer exists",
-      });
-    }
-    if (row.is_global === true || row.owner_id === target) exercises.set(id, id);
-    else missing.push({ id, name: String(row.name ?? "") });
-  }
-  // The only writes before the program row, and find-or-create: a copy that
-  // fails after this leaves at most a variation the athlete was getting anyway.
-  for (const { id, name } of missing) exercises.set(id, await exerciseInLibrary(ctx, target, name));
+  const exercises = await exercisesIn(ctx, target, [...lines.values()].flat());
 
   const calendar = copyCalendar({
     wholeProgram: !op.blockId,
@@ -775,6 +788,193 @@ async function copyProgramOp(ctx: Ctx, op: ProgramOpOf<"copyProgram">): Promise<
     }
   }
   return programRow.$id;
+}
+
+/**
+ * Every exercise the copied lines name -- their own and their reference lifts
+ * -- resolved in `owner`'s library before anything is written. A variation is
+ * its own exercise with its own max, so the source athlete's "Paused Bench"
+ * becomes the target's "Paused Bench": found by name, or created there by the
+ * same path the editor uses. Global rows and rows already theirs are kept.
+ *
+ * The only writes before the copy's own rows, and find-or-create: a copy that
+ * fails after this leaves at most a variation the athlete was getting anyway,
+ * and a retry finds it rather than making a second.
+ */
+async function exercisesIn(ctx: Ctx, owner: string, copied: readonly RawRow[]): Promise<Map<string, string>> {
+  const exercises = new Map<string, string>();
+  const missing: Array<{ id: string; name: string }> = [];
+  const own = new Set(copied.map((row) => String(row.exercise_id)));
+  const referenced = copied.map(referenceIdOf).filter((id): id is string => id !== null);
+  for (const id of new Set([...own, ...referenced])) {
+    const row = await rowOf(ctx, "exercises", id);
+    if (!row) {
+      return refuse({
+        status: "invalid",
+        reason: own.has(id)
+          ? "exerciseId: a line's exercise no longer exists"
+          : "referenceExerciseId: a line's reference lift no longer exists",
+      });
+    }
+    if (row.is_global === true || row.owner_id === owner) exercises.set(id, id);
+    else missing.push({ id, name: String(row.name ?? "") });
+  }
+  for (const { id, name } of missing) exercises.set(id, await exerciseInLibrary(ctx, owner, name));
+  return exercises;
+}
+
+/* -------------------------------------------------------------------------
+ * Paste (F28)
+ *
+ * The clipboard's two writes: a day into a week, a week into a block, from
+ * any program the caller may edit to any program they may edit -- the same
+ * two-ended authorisation as `copyProgram`, both ends checked before a row is
+ * read for copying. Neither reads or writes `sessions` or `sets`.
+ *
+ * Children first, the pasted day or week itself last. Until that last row
+ * exists the rest are orphans `assembleProgram` drops and no athlete query
+ * reaches (Today needs the week; lines are read by their day), so a paste
+ * that dies halfway shows nothing rather than half a week. Every row is named
+ * from the request id, so pressing Paste again finishes the same paste: rows
+ * already written answer 409 and count as done, and once the last row exists
+ * the paste is simply answered with it.
+ * ---------------------------------------------------------------------- */
+
+/** The program's calendar: blocks, weeks and days, no lines -- what dating a paste needs. */
+async function calendarOf(ctx: Ctx, scope: ProgramScope): Promise<ProgramTree> {
+  const program = parseProgram(await rowOf(ctx, "programs", scope.programId));
+  if (!program) return refuse({ status: "not-found" });
+  const all = (tableId: ProgramTable) => listAll(ctx.tables, ctx.databaseId, tableId, "program_id", program.id);
+  const [blocks, weeks, days] = await Promise.all([all("program_blocks"), all("program_weeks"), all("program_days")]);
+  return assembleProgram(program, {
+    blocks: parseRows(blocks, parseBlock),
+    weeks: parseRows(weeks, parseWeek),
+    days: parseRows(days, parseDay),
+    prescriptions: [],
+  });
+}
+
+/**
+ * The paste already finished: its row exists under the request id. Answered
+ * with that row when it is where this paste puts it; refused when the id
+ * names something else, which only a client reusing ids could cause.
+ */
+async function finished(
+  ctx: Ctx,
+  tableId: "program_days" | "program_weeks",
+  requestId: string | undefined,
+  parentColumn: "week_id" | "block_id",
+  parentId: string,
+): Promise<string | null> {
+  if (!requestId) return null;
+  const row = await rowOf(ctx, tableId, requestId);
+  if (!row) return null;
+  if (row[parentColumn] !== parentId) return refuse({ status: "invalid", reason: "requestId: already used for another paste" });
+  return requestId;
+}
+
+/**
+ * Opens a gap at `at` among a parent's children for the row about to land
+ * there, renumbering the rest 0, 1, 2... around it. Computed from what is
+ * stored, never by adding one, so running it twice moves nothing the second
+ * time. Returns the gap, clamped to the end.
+ */
+async function makeRoom(
+  ctx: Ctx,
+  scope: ProgramScope,
+  level: "weeks" | "days",
+  parentId: string,
+  at: number | undefined,
+): Promise<number> {
+  const { table, parentColumn } = REORDER[level];
+  const rows = byPosition(await siblings(ctx, table, parentColumn, parentId));
+  const gap = Math.min(at ?? rows.length, rows.length);
+  for (const [index, row] of rows.entries()) {
+    const position = index < gap ? index : index + 1;
+    if (row.position === position) continue;
+    if (level === "weeks") await updateProgramWeek(ctx.deps, scope, row.id, { position });
+    else await updateProgramDay(ctx.deps, scope, row.id, { position });
+  }
+  return gap;
+}
+
+/** A row id under a paste's: `<request>_d2`, `<request>_d2_l7`. Within 36 for any day under 200 lines. */
+const under = (requestId: string | undefined, suffix: string) => (requestId ? `${requestId}_${suffix}` : null);
+
+async function copyDayOp(ctx: Ctx, op: ProgramOpOf<"copyDay">): Promise<string> {
+  const { row: source } = await childOf(ctx, "program_days", op.dayId, parseDay);
+  const { row: week, scope: to } = await childOf(ctx, "program_weeks", op.toWeekId, parseWeek);
+  const done = await finished(ctx, "program_days", op.requestId, "week_id", week.id);
+  if (done) return done;
+
+  const [lineRows, calendar] = await Promise.all([
+    listAll(ctx.tables, ctx.databaseId, "prescriptions", "day_id", source.id),
+    calendarOf(ctx, to),
+  ]);
+  const lines = linesByDay(lineRows).get(source.id) ?? [];
+  const exercises = await exercisesIn(ctx, libraryOwner(to), lines);
+
+  const dayId = op.requestId ?? ctx.deps.newId();
+  const lineId = op.requestId ? (at: number) => `${op.requestId}_l${at}` : undefined;
+  await copyLines(ctx, to, { weekId: week.id, dayId }, lines, (id) => exercises.get(id)!, lineId);
+  const position = await makeRoom(ctx, to, "days", week.id, op.position);
+  await once(dayId, ctx.deps, (deps) =>
+    createProgramDay(deps, to, {
+      blockId: week.blockId,
+      weekId: week.id,
+      position,
+      label: source.label,
+      scheduledOn: pastedDayDate(calendar, week.id, source.scheduledOn),
+      notes: source.notes,
+    }),
+  );
+  return dayId;
+}
+
+async function copyWeekOp(ctx: Ctx, op: ProgramOpOf<"copyWeek">): Promise<string> {
+  const { row: source } = await childOf(ctx, "program_weeks", op.weekId, parseWeek);
+  const { row: block, scope: to } = await childOf(ctx, "program_blocks", op.toBlockId, parseBlock);
+  const done = await finished(ctx, "program_weeks", op.requestId, "block_id", block.id);
+  if (done) return done;
+
+  const [dayRows, lineRows, calendar] = await Promise.all([
+    listAll(ctx.tables, ctx.databaseId, "program_days", "week_id", source.id),
+    listAll(ctx.tables, ctx.databaseId, "prescriptions", "week_id", source.id),
+    calendarOf(ctx, to),
+  ]);
+  const days = byPosition(parseRows(dayRows, parseDay));
+  const lines = linesByDay(lineRows);
+  const exercises = await exercisesIn(ctx, libraryOwner(to), [...lines.values()].flat());
+
+  const siblingsNow = calendar.blocks.find((b) => b.id === block.id)?.weeks ?? [];
+  const position = Math.min(op.position ?? siblingsNow.length, siblingsNow.length);
+  const dates = pastedWeekDates(calendar, block.id, position, days.map((d) => d.scheduledOn));
+  const weekId = op.requestId ?? ctx.deps.newId();
+
+  for (const [at, day] of days.entries()) {
+    const dayId = under(op.requestId, `d${at}`) ?? ctx.deps.newId();
+    const lineId = op.requestId ? (line: number) => `${dayId}_l${line}` : undefined;
+    await copyLines(ctx, to, { weekId, dayId }, lines.get(day.id) ?? [], (id) => exercises.get(id)!, lineId);
+    await once(dayId, ctx.deps, (deps) =>
+      createProgramDay(deps, to, {
+        blockId: block.id,
+        weekId,
+        position: at,
+        label: day.label,
+        scheduledOn: dates[at],
+        notes: day.notes,
+      }),
+    );
+  }
+  await makeRoom(ctx, to, "weeks", block.id, position);
+  // The label travels with the week -- "Deload idea" is what the coach is
+  // moving -- unless the block already has a week of that name, where two
+  // tabs called "Heavy" are worse than "Week 5" (duplicateWeek's rule).
+  const label = source.label && !siblingsNow.some((w) => w.label === source.label) ? source.label : null;
+  await once(weekId, ctx.deps, (deps) =>
+    createProgramWeek(deps, to, { blockId: block.id, position, label, status: "draft", notes: source.notes }),
+  );
+  return weekId;
 }
 
 /* -------------------------------------------------------------------------

@@ -162,3 +162,83 @@ export function redatePlan(
       }),
     );
 }
+
+/* -------------------------------------------------------------------------
+ * Pasting and moving (F28)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The date a pasted day takes in the week it lands in.
+ *
+ * Its own weekday when the source was dated and that weekday is free in the
+ * target week: Monday's squat stays a Monday. Otherwise "+ Day"'s rule, the
+ * first free weekday after the last one used. Null on a template, on a
+ * program with nothing to count from, or in a full week -- a source date from
+ * another program means nothing on this one's calendar, so it is never kept
+ * as it was. [Inference]
+ */
+export function pastedDayDate(target: ProgramTree, weekId: string, sourceOn: string | null): string | null {
+  const anchor = programAnchor(target);
+  const at = weekIndexOf(target, weekId);
+  if (!anchor || at < 0) return null;
+  if (sourceOn) {
+    const weekday = weekdayOf(sourceOn);
+    const week = target.blocks.flatMap((b) => b.weeks)[at];
+    const taken = week.days.some((d) => {
+      const placed = placeDay(anchor, at, d.scheduledOn);
+      return placed.kind === "on" && placed.weekday === weekday;
+    });
+    if (!taken) return scheduledOnFor(anchor, at, weekday);
+  }
+  return newDayDate(target, weekId);
+}
+
+/**
+ * The dates of a pasted week's days: each source day's weekday, in the week
+ * the paste becomes. `position` is its place in the block, as the server
+ * clamps it. Undated stays undated; a target with no calendar dates nothing.
+ */
+export function pastedWeekDates(
+  target: ProgramTree,
+  blockId: string,
+  position: number,
+  sourceDays: readonly (string | null)[],
+): (string | null)[] {
+  const anchor = programAnchor(target);
+  const at = target.blocks.findIndex((b) => b.id === blockId);
+  if (!anchor || at < 0) return sourceDays.map(() => null);
+  const before = target.blocks.slice(0, at).reduce((n, b) => n + b.weeks.length, 0);
+  const index = before + Math.min(position, target.blocks[at].weeks.length);
+  return sourceDays.map((day) => (day ? scheduledOnFor(anchor, index, weekdayOf(day)) : null));
+}
+
+/**
+ * What a week moving changes on the calendar: every week whose place in the
+ * program changed takes its days with it, whole weeks at a time, weekdays
+ * kept -- the same rule as moving the start date (`redatePlan`). Logged days,
+ * off-week days and undated days stay where they are. Rows only in `after`
+ * (a pasted week) are not moved; they were dated where they landed.
+ *
+ * Counted from `before`'s anchor: the move changes which week a day is in,
+ * not where week 1 starts.
+ */
+export function realignPlan(
+  before: ProgramTree,
+  after: ProgramTree,
+  logged: ReadonlySet<string>,
+): { dayId: string; scheduledOn: string }[] {
+  const anchor = programAnchor(before);
+  if (!anchor) return [];
+  const was = new Map(before.blocks.flatMap((b) => b.weeks).map((w, at) => [w.id, at]));
+  return after.blocks
+    .flatMap((b) => b.weeks)
+    .flatMap((week, at) => {
+      const from = was.get(week.id);
+      if (from === undefined || from === at) return [];
+      return week.days.flatMap((day: DayTree) => {
+        if (logged.has(day.id) || !day.scheduledOn) return [];
+        if (placeDay(anchor, from, day.scheduledOn).kind !== "on") return [];
+        return [{ dayId: day.id, scheduledOn: addDays(day.scheduledOn, 7 * (at - from)) }];
+      });
+    });
+}

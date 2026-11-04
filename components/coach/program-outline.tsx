@@ -25,7 +25,10 @@ import type { BlockTree, ProgramTree } from "@/lib/programming/program";
  * reach week 4.
  *
  * Keyboard: Tab reaches the selected week, Up and Down walk every week in the
- * program, Enter shows it.
+ * program, Enter shows it, Alt+Up and Alt+Down move it within its block (F28).
+ *
+ * With a week on the editor's clipboard, each block offers "Paste" under its
+ * "+ Week": a copy of the held week at the end of the block, as a draft.
  *
  * On a phone the outline sits above the week instead of beside it, and each
  * block's weeks are one row of chips that scrolls sideways, so switching week
@@ -58,6 +61,10 @@ export interface ProgramOutlineProps {
   onAddBlock: () => void;
   onRenameBlock: (block: BlockTree, name: string) => void;
   onRemoveBlock: (block: BlockTree) => unknown;
+  /** F28: a week one place up or down its block. */
+  onMoveWeek?: (weekId: string, step: 1 | -1) => void;
+  /** F28: the held week, when the clipboard holds one, and where pasting it goes. */
+  pasteWeek?: { label: string; onPaste: (block: BlockTree) => void } | null;
 }
 
 export function ProgramOutline({
@@ -74,6 +81,8 @@ export function ProgramOutline({
   onAddBlock,
   onRenameBlock,
   onRemoveBlock,
+  onMoveWeek,
+  pasteWeek = null,
 }: ProgramOutlineProps) {
   const [removing, setRemoving] = useState<string | null>(null);
   const [leavingBlock, setLeavingBlock] = useState<string | null>(null);
@@ -93,6 +102,12 @@ export function ProgramOutline({
     const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (at < 0) return;
     event.preventDefault();
+    if (event.altKey) {
+      // Moving rather than walking: the week goes, the focus stays on it.
+      const weekId = buttons[at].dataset.weekId;
+      if (editable && !busy && weekId) onMoveWeek?.(weekId, event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
     buttons[Math.min(buttons.length - 1, Math.max(0, at + (event.key === "ArrowDown" ? 1 : -1)))]?.focus();
   };
 
@@ -176,6 +191,7 @@ export function ProgramOutline({
                     <button
                       type="button"
                       data-outline-week
+                      data-week-id={week.id}
                       aria-current={selected ? "true" : undefined}
                       aria-label={`${name}, ${STATE_LABEL[state].toLowerCase()}`}
                       tabIndex={selected || (!selectedWeekId && at === 0) ? 0 : -1}
@@ -217,6 +233,18 @@ export function ProgramOutline({
                 className="h-10 self-start rounded-chip px-2 text-left text-ui text-muted transition-control press hover:text-foreground focus-visible:text-foreground disabled:text-muted-2 focus-visible:outline-2 focus-visible:outline-accent-line md:h-8 md:self-auto"
               >
                 + Week
+              </button>
+            ) : null}
+            {editable && pasteWeek ? (
+              <button
+                type="button"
+                disabled={busy}
+                aria-label={`Paste ${pasteWeek.label} into ${block.name}`}
+                title="A copy at the end of this block, as a draft"
+                onClick={() => pasteWeek.onPaste(block)}
+                className="h-10 self-start rounded-chip px-2 text-left text-ui text-accent-line transition-control press hover:text-foreground focus-visible:text-foreground disabled:text-muted-2 focus-visible:outline-2 focus-visible:outline-accent-line md:h-8 md:self-auto"
+              >
+                Paste {pasteWeek.label}
               </button>
             ) : null}
           </section>
