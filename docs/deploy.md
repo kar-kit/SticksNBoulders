@@ -34,6 +34,9 @@ Set them before the first build. The three `NEXT_PUBLIC_*` values are inlined in
 | `APPWRITE_API_KEY` | **secret** | Server routes only (`/api/*`). Never `NEXT_PUBLIC_`. |
 | `VIDEO_TICKET_SECRET` | **secret** | Signs clip playback URLs. The server refuses to start without it. Generate with `openssl rand -base64 48`; use a new value, not the local one. |
 | `NEXT_PUBLIC_APPWRITE_APPLE_ENABLED` | yes | Leave unset until an Apple Developer account exists. |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | yes | Web push (F27). Same value as the `notify` Function's. docs/push-notifications.md |
+| `VAPID_PRIVATE_KEY` | **secret** | Web push: signs every push. Same value as the Function's. |
+| `VAPID_SUBJECT` | yes | Web push: a `mailto:` contact for the push services. |
 
 Do not set `SNB_BACKUP_DIR` or `SNB_BACKUP_OFFSITE` on Vercel: they belong to the backup scripts, which run on the machine that holds the backups.
 
