@@ -159,6 +159,26 @@ not as a 409), and A keeps reading both. The stamp scan checks the six as the
 rule's `invariant`. [Unverified] until Joey runs it against an instance with
 v23 applied and `validate-row` redeployed.
 
+## Thread read marks (schema v24, F26)
+
+`thread_reads` is the coach's alone: `read`, `update` and `delete` for
+`user:<coachId>`, never the circle, because a mark the athlete could read is a
+read receipt (docs/replies.md). The audited target is **A's coach's** mark on
+A's thread, so the rule reads: read, create, update and delete the coach only;
+A is refused all four. The coach's writes are the helper from his own session
+(`markThreadRead`, its update the 409 path on the derived id). The forgeries,
+from everyone but the coach and A included, claim `coach_id` = the coach with
+a mark dated 2030, stamped `read("users")`: the way to silence his Replies
+badge. Each forger uses its own set id so the unique index on
+(`coach_id`, `set_id`) cannot refuse one for the wrong reason.
+
+Beside the matrix: a forged mark never reaches the coach's read of his own
+marks while his real one does, and `validate-row` must delete it within the
+bound; after revocation the ex-coach still reads his own mark (it is his, and
+names only a set id he can no longer open) and A still cannot. [Unverified]
+until Joey runs it against an instance with v24 applied and `validate-row`
+redeployed.
+
 ## Adding a table
 
 A new table without a rule fails both the audit and `npm test`

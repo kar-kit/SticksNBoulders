@@ -56,6 +56,20 @@ reactions (`cascadeFor` in provenance.ts). Whether delete events reach a
 Function on this instance is [Unverified] until the audit's cascade check
 passes; if they do not, readers still hide a reaction whose comment is gone.
 
+Since F26 (schema v24) it also covers **`thread_reads`**, with no change to
+its subscriptions: the table is user-writable, so `VALIDATED_TABLES` picks it
+up, and a mark that lacks `update("user:<coach_id>")` is deleted. The Function
+bundles provenance.ts at deploy time, so it must be **redeployed**
+(`npm run appwrite:functions`) before it knows the new table; until then it
+skips those rows and readers still ignore a forged mark.
+
+**Realtime, not a Function.** The coach layout subscribes the browser to
+`databases.<db>.tables.set_comments.rows` and
+`databases.<db>.tables.thread_reads.rows` for the Replies badge
+(`subscribeToThreads`, lib/review/replies-store.ts). Realtime uses the tables
+spelling, as `subscribeToClips` already does live. It never subscribes to
+`comment_reactions`, which is what keeps reactions quiet.
+
 ## What this does and does not change
 
 **Rollups stay in a route.** `app/api/rollup/route.ts` was written as a

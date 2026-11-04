@@ -233,6 +233,12 @@ not a dependency of it.
 The nav badge is counted from the same two reads the queue itself uses, so the
 number beside "Review" and the number of clips on screen cannot disagree.
 
+**A reply does not requeue a clip (F26).** An athlete answering on a clip the
+coach already cleared lights the separate Replies badge instead, and the clip
+stays cleared: one signal for one event, and the queue keeps meaning footage
+to watch. Reaching a clip in the queue marks its thread read for Replies, as
+far as the comments shown under it. See docs/replies.md.
+
 ## Prescribed, and Adjust program
 
 **"Prescribed:" is the set's own snapshot.** A set logged against a
