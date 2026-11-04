@@ -79,6 +79,9 @@ vi.mock("@/lib/review/queue-store", () => queueStore);
 const commentStore = vi.hoisted(() => ({ fetchCommentsForSets: vi.fn(), submitComment: vi.fn() }));
 vi.mock("@/lib/review/comment-store", () => commentStore);
 
+const replies = vi.hoisted(() => ({ useMarkThreadRead: vi.fn() }));
+vi.mock("@/lib/review/coach-replies-context", () => replies);
+
 let linked: string[] = [];
 
 beforeEach(() => {
@@ -99,6 +102,14 @@ beforeEach(() => {
   queueStore.clearClip.mockResolvedValue(undefined);
   queueStore.subscribeToClips.mockReturnValue(() => {});
   commentStore.fetchCommentsForSets.mockResolvedValue([]);
+});
+
+it("marks the thread under the clip on screen read, with the comments it shows (F26)", async () => {
+  const reply = { id: "r1", setId: "joey-1", athleteId: "joey", authorId: "joey", body: "Felt it.", parentId: null, createdAt: "2026-09-21T09:00:00.000Z" };
+  commentStore.fetchCommentsForSets.mockResolvedValue([reply]);
+  render(<ReviewQueue />);
+  await screen.findByText("3 waiting");
+  await waitFor(() => expect(replies.useMarkThreadRead).toHaveBeenLastCalledWith("joey-1", [reply]));
 });
 
 it("reads who is linked fresh, so a stale session never lists an ex-athlete's clips", async () => {

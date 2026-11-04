@@ -290,6 +290,35 @@ describe("reactions (F25)", () => {
   });
 });
 
+describe("thread read marks (F26)", () => {
+  const mark = (over: Record<string, unknown> = {}) =>
+    stamped("thread_reads", { coach_id: C, athlete_id: A, set_id: "s1", last_read_at: "2026-11-01T10:00:00.000Z", ...over });
+
+  it("trusts a mark its coach stamped", () => {
+    expect(isAuthentic("thread_reads", mark())).toBe(true);
+    expect(verdictFor("thread_reads", mark()).action).toBe("keep");
+    expect(ownerProof("thread_reads", mark())).toEqual([writtenByUser(C)]);
+  });
+
+  it("deletes one planted in the coach's name, which would silence his badge", () => {
+    // A, stamping what he holds, or anyone stamping read(users).
+    const forged = { $id: "f", coach_id: C, athlete_id: A, set_id: "s1", last_read_at: "2030-01-01T00:00:00.000Z" };
+    for (const $permissions of [EVERYONE, [writtenByUser(A), `read("user:${A}")`]]) {
+      const row = { ...forged, $permissions };
+      expect(isAuthentic("thread_reads", row)).toBe(false);
+      const verdict = verdictFor("thread_reads", row);
+      expect(verdict.action).toBe("delete");
+      expect(verdict.reason).toMatch(/coach/);
+    }
+  });
+
+  it("is validated, since a session writes it, and cascades from nothing", () => {
+    expect(VALIDATED_TABLES).toContain("thread_reads");
+    expect(cascadeFor("thread_reads", mark())).toBeNull();
+    expect(contentProblem("thread_reads", mark())).toBeNull();
+  });
+});
+
 describe("the validator's cascade", () => {
   it("takes a deleted comment's reactions, by the comment's own id", () => {
     expect(cascadeFor("set_comments", { $id: "c1", author_id: C })).toEqual({

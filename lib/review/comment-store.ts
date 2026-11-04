@@ -20,7 +20,7 @@ const MAX_COMMENTS = 500;
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
-function toComment(raw: Record<string, unknown> & { $id: string }): Comment | null {
+export function toComment(raw: Record<string, unknown> & { $id: string }): Comment | null {
   const setId = str(raw.set_id);
   const body = str(raw.body);
   // A comment with no set to hang on, or nothing said, cannot be rendered
@@ -34,6 +34,8 @@ function toComment(raw: Record<string, unknown> & { $id: string }): Comment | nu
     body,
     parentId: str(raw.parent_id) || null,
     createdAt: str(raw.created_at),
+    // F26: the server's clock, for the coach's unread watermark.
+    ...(str(raw.$createdAt) ? { postedAt: str(raw.$createdAt) } : {}),
   };
 }
 

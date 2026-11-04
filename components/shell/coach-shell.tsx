@@ -16,8 +16,9 @@ import { useChanged } from "@/components/ui/motion";
  * duplicated in the DOM.
  *
  * The athlete rail is persistent on every coach screen, so switching between
- * people never costs a round trip through a menu. The review count in the top
- * nav is the one number Ruairi should see the moment he opens a tab.
+ * people never costs a round trip through a menu. The review and replies
+ * counts in the top nav are the numbers Ruairi should see the moment he opens
+ * a tab: clips waiting, and athletes waiting on an answer.
  *
  * Motion (docs/coach-motion.md): the active section's rule grows in under it,
  * links answer hover and keyboard focus alike, and the review count pops when
@@ -36,6 +37,8 @@ export interface CoachAthlete {
 const NAV = [
   { href: "/coach/roster", label: "Roster" },
   { href: "/coach/review", label: "Review" },
+  // F26: athlete replies to what the coach said, unread across devices.
+  { href: "/coach/replies", label: "Replies" },
   { href: "/coach/programs", label: "Programs" },
 ] as const;
 
@@ -43,10 +46,17 @@ export interface CoachShellProps {
   athletes: CoachAthlete[];
   /** Shown beside Review. Omitted entirely at zero -- a "0" is noise. */
   reviewCount?: number;
+  /**
+   * Threads with an athlete reply the coach has not read (F26), beside
+   * Replies. Omitted at zero, like the review count. A separate number on
+   * purpose: a clip is footage to watch, a reply is words to answer, and one
+   * badge for both would send him to the wrong screen half the time.
+   */
+  repliesCount?: number;
   children: React.ReactNode;
 }
 
-export function CoachShell({ athletes, reviewCount, children }: CoachShellProps) {
+export function CoachShell({ athletes, reviewCount, repliesCount, children }: CoachShellProps) {
   const state = useRequireSession();
   const pathname = usePathname();
   const router = useRouter();
@@ -68,7 +78,7 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
         </Link>
         <nav
           aria-label="Coach"
-          className="order-last -mx-2 grid basis-full grid-cols-3 gap-1 pb-2 md:order-none md:mx-0 md:flex md:basis-auto md:items-center md:pb-0"
+          className="order-last -mx-2 grid basis-full grid-cols-4 gap-1 pb-2 md:order-none md:mx-0 md:flex md:basis-auto md:items-center md:pb-0"
         >
           {NAV.map(({ href, label }) => {
             const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -87,6 +97,7 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
               >
                 {label}
                 {label === "Review" && reviewCount ? <ReviewCount count={reviewCount} /> : null}
+                {label === "Replies" && repliesCount ? <ReviewCount count={repliesCount} /> : null}
               </Link>
             );
           })}
@@ -158,7 +169,10 @@ export function CoachShell({ athletes, reviewCount, children }: CoachShellProps)
   );
 }
 
-/** The Review badge. A new number pops in, so a clip arriving mid-session is noticed. */
+/**
+ * The Review and Replies badges. A new number pops in, so a clip or a reply
+ * arriving mid-session is noticed.
+ */
 function ReviewCount({ count }: { count: number }) {
   const changed = useChanged(count);
   return (

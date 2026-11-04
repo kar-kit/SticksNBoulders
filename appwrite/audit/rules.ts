@@ -219,6 +219,26 @@ export const RULES: readonly ResourceRule[] = [
       "The target is A's, so update and delete are A's; the coach's reaction on A's reply is checked beside the matrix.",
   },
   {
+    key: "thread_reads",
+    kind: "table",
+    resource: "thread_reads",
+    target: "the coach's read mark on A's thread (F26)",
+    allow: {
+      // The coach's alone, by user: -- not the circle, so A cannot read when
+      // his coach read his reply. A read receipt is the thing ruled out.
+      read: ["coach"],
+      create: ["coach"],
+      // Moving the mark forward is an update of his own row (markThreadRead
+      // answers the 409 on the derived id).
+      update: ["coach"],
+      delete: ["coach"],
+    },
+    ownerColumn: "athlete_id",
+    notes:
+      "Stamped read/update/delete(user:coach) only (policy.ts threadReadPermissions). A forged mark in the coach's name " +
+      "would silence his Replies badge; it lacks update(user:coach), so no reader trusts it and validate-row deletes it.",
+  },
+  {
     key: "stats_rollups",
     kind: "table",
     resource: "stats_rollups",

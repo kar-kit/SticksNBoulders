@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 23,
+  version: 24,
   tables: [
     {
       id: "profiles",
@@ -346,6 +346,38 @@ export const schema: DatabaseSpec = {
         // in the same batch as the comments.
         { key: "idx_set", type: "key", columns: ["set_id"] },
         { key: "idx_client_reaction_id", type: "unique", columns: ["client_reaction_id"] },
+      ],
+    },
+
+    {
+      id: "thread_reads",
+      name: "Thread reads",
+      purpose:
+        "How far into each set's thread a coach has read (F26): one row per coach per set, so an athlete's reply lights the coach's Replies badge until he opens that thread, on his phone and his laptop alike. The coach's alone -- never stamped for the circle, because a read mark the athlete could see is a read receipt, which the blueprint rules out (lib/review/feedback-seen.ts).",
+      rowSecurity: true,
+      permissions: [perm.createUsers],
+      columns: [
+        // The reader. Only coaches write here; an athlete's own unread state
+        // stays on their device (lib/review/feedback-seen.ts).
+        { key: "coach_id", type: "string", size: 36, required: true },
+        // Whose set, denormalised like everywhere else, so a reader can drop
+        // the marks for an athlete who has since unlinked without a join.
+        { key: "athlete_id", type: "string", size: 36, required: true },
+        { key: "set_id", type: "string", size: 36, required: true },
+        // A watermark, and a SERVER time: the Appwrite `$createdAt` of the
+        // newest comment in the thread when the coach opened it. Never the
+        // coach's clock and never a comment's client-written `created_at`, so
+        // a phone set five minutes slow cannot hide a reply
+        // (lib/review/replies.ts). Athlete comments after it are unread.
+        { key: "last_read_at", type: "datetime", required: true },
+      ],
+      indexes: [
+        // One mark per coach per thread, in the database itself. The row id
+        // is derived from the pair as well (write.ts `markThreadRead`); this
+        // is what makes two devices marking the same thread at once one row.
+        // Its coach_id prefix is also how the coach reads every mark he has
+        // in one query.
+        { key: "idx_coach_set", type: "unique", columns: ["coach_id", "set_id"] },
       ],
     },
 

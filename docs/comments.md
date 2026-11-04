@@ -242,6 +242,16 @@ than no threads. Optimistic, one tap per message in flight; a refused write
 puts back exactly what was there and says *"That reaction didn't save."* under
 the message for a few seconds.
 
+## The coach's side: Replies (F26, schema v24)
+
+The athlete has had an unread dot since Order 34; the coach had none. Athlete
+replies now light a **Replies** badge in the coach nav, read state is a
+server-side row per coach per thread (`thread_reads`, readable by the coach
+alone so it is never a read receipt), and `/coach/replies/<setId>` is a stable
+link to one thread. Reactions stay quiet: the inbox never reads or subscribes
+to them. Comments now carry their server `$createdAt` as `postedAt`, which is
+what the coach's unread arithmetic compares on. See docs/replies.md.
+
 ## Verified against the instance
 
 `npm run e2e:review` — **21/21**, eleven of them on comments: both directions of

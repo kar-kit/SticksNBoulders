@@ -137,6 +137,28 @@ describe("CoachShell", () => {
     expect(screen.getByRole("link", { name: "Review" }).textContent).toBe("Review");
   });
 
+  it("shows unread replies beside Replies, separately from the review count (F26)", () => {
+    render(
+      <CoachShell athletes={athletes} reviewCount={7} repliesCount={2}>
+        content
+      </CoachShell>,
+    );
+    expect(screen.getByRole("link", { name: /Replies/ })).toHaveTextContent("2");
+    expect(screen.getByRole("link", { name: /Replies/ })).toHaveAttribute("href", "/coach/replies");
+    expect(screen.getByRole("link", { name: /Review/ })).toHaveTextContent("7");
+  });
+
+  it("shows no replies count at zero either", () => {
+    render(<CoachShell athletes={athletes} repliesCount={0}>content</CoachShell>);
+    expect(screen.getByRole("link", { name: "Replies" }).textContent).toBe("Replies");
+  });
+
+  it("marks Replies current on a thread link too", () => {
+    nav.pathname = "/coach/replies/set_1";
+    render(<CoachShell athletes={athletes}>content</CoachShell>);
+    expect(screen.getByRole("link", { name: "Replies" })).toHaveAttribute("aria-current", "page");
+  });
+
   it("marks the current section", () => {
     nav.pathname = "/coach/review";
     render(<CoachShell athletes={athletes}>content</CoachShell>);

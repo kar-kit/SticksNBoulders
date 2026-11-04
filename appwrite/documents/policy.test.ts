@@ -17,6 +17,7 @@ import {
   rollupPermissions,
   sessionPermissions,
   setPermissions,
+  threadReadPermissions,
   SERVER_ONLY_TABLES,
   USER_WRITABLE_TABLES,
   writtenByServer,
@@ -326,6 +327,29 @@ describe("a reaction on a comment (F25)", () => {
   });
 });
 
+describe("a coach's read mark on a thread (F26)", () => {
+  it("is the coach's alone: read, update and delete by user, and nothing else", () => {
+    expect(threadReadPermissions({ coachId: COACH })).toEqual([
+      `read("user:${COACH}")`,
+      `update("user:${COACH}")`,
+      `delete("user:${COACH}")`,
+    ]);
+    expect(POLICIES.thread_reads).toBe(threadReadPermissions);
+  });
+
+  it("is never readable by the athlete or the circle -- a read receipt is ruled out", () => {
+    const stamp = threadReadPermissions({ coachId: COACH }).join(" ");
+    expect(stamp).not.toContain("team:");
+    expect(stamp).not.toContain(ATHLETE);
+    expect(stamp).not.toContain('"users"');
+  });
+
+  it("is a table a session writes, so the validator and the readers cover it", () => {
+    expect(USER_WRITABLE_TABLES).toContain("thread_reads");
+    expect(() => threadReadPermissions({ coachId: "" })).toThrow(/coachId/);
+  });
+});
+
 describe("policy hygiene", () => {
   it("covers every table, so one cannot be added without a policy", () => {
     expect(Object.keys(POLICIES).sort()).toEqual([
@@ -346,6 +370,7 @@ describe("policy hygiene", () => {
       "set_reviews",
       "sets",
       "stats_rollups",
+      "thread_reads",
     ]);
     expect([...USER_WRITABLE_TABLES, ...SERVER_ONLY_TABLES].sort()).toEqual(Object.keys(POLICIES).sort());
   });
