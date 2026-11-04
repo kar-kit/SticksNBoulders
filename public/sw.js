@@ -1,5 +1,9 @@
 /*
- * The service worker. Its one job: the athlete app opens with no signal.
+ * The service worker. Its first job: the athlete app opens with no signal.
+ * Its second (F27): a coach's push notifications reach the screen -- see the
+ * bottom of the file. Push touches no cache, so the caching below is exactly
+ * what it was, and the version still comes from the registration URL: a
+ * deploy that changes this file is a new worker with new caches, no bump.
  *
  * The logger was already durable -- sets go to IndexedDB first (docs/offline.md)
  * -- but a queue is no use if the page holding it cannot load in a basement.
@@ -187,3 +191,138 @@ function isShareable(response) {
 function timeout(ms) {
   return new Promise((resolve) => setTimeout(() => resolve(null), ms));
 }
+
+/*
+ * Push (F27). A coach hears that an athlete put up a clip or replied.
+ *
+ * The payload is lib/push/message.ts `PushMessage`. Collapsing happens here:
+ * a message names a tag (one per athlete per kind) and a key (the clip or
+ * reply it is about), and the notification already showing under that tag
+ * carries the keys it stands for. A new key adds to the count and buzzes; a
+ * key already in it (the same clip reported twice) replaces it silently.
+ *
+ * Every push shows a notification, malformed or not. Safari revokes the
+ * subscription of a site whose pushes do not, and Chrome shows a generic one
+ * of its own.
+ */
+
+/** Distinct keys one notification remembers. More than this is "lots". */
+const PUSH_KEYS_MAX = 50;
+const PUSH_ICON = "/icon-192.png";
+const PUSH_FALLBACK = {
+  v: 1,
+  kind: "test",
+  tag: "snb",
+  key: "",
+  who: "Sticks N Boulders",
+  title: "Sticks N Boulders",
+  body: "Something needs you.",
+  url: "/",
+  groupUrl: "/",
+};
+
+/** A same-origin absolute path, or "/" -- never a scheme or another host. */
+function appPath(value) {
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") && !value.includes("\\")
+    ? value
+    : "/";
+}
+
+/** The push's message, or the fallback when it is not one. */
+function readPushMessage(data) {
+  let raw = null;
+  try {
+    raw = data ? data.json() : null;
+  } catch {
+    raw = null;
+  }
+  if (!raw || typeof raw !== "object" || raw.v !== 1 || typeof raw.tag !== "string" || !raw.tag) return PUSH_FALLBACK;
+  const text = (v, fallback) => (typeof v === "string" && v ? v : fallback);
+  return {
+    v: 1,
+    kind: raw.kind === "clip" || raw.kind === "reply" ? raw.kind : "test",
+    tag: raw.tag,
+    key: text(raw.key, ""),
+    who: text(raw.who, "Your athlete"),
+    title: text(raw.title, PUSH_FALLBACK.title),
+    body: text(raw.body, ""),
+    url: appPath(raw.url),
+    groupUrl: appPath(raw.groupUrl || raw.url),
+  };
+}
+
+/** Mirrors lib/push/message.ts collapsedTitle; sw-push.test.ts holds them together. */
+function collapsedTitle(kind, who, count) {
+  if (count <= 1 || kind === "test") return "";
+  return kind === "clip" ? `${who} uploaded ${count} clips` : `${who} replied ${count} times`;
+}
+
+/**
+ * What to show for `message`, given the notification already showing under
+ * its tag (or null). Pure, so it is tested without a browser.
+ */
+function collapse(existing, message) {
+  const before = existing && existing.data && Array.isArray(existing.data.keys) ? existing.data.keys : [];
+  const known = message.key !== "" && before.includes(message.key);
+  const keys = known || message.key === "" ? before : [...before, message.key].slice(-PUSH_KEYS_MAX);
+  const count = Math.max(keys.length, 1);
+  const many = count > 1 && message.kind !== "test";
+  return {
+    title: many ? collapsedTitle(message.kind, message.who, count) : message.title,
+    options: {
+      body: message.body,
+      tag: message.tag,
+      // Buzz for something new; replace quietly for a repeat. Ignored where a
+      // browser does not support it (Safari), which then always replaces quietly.
+      renotify: !known,
+      icon: PUSH_ICON,
+      badge: PUSH_ICON,
+      timestamp: Date.now(),
+      data: { url: many ? message.groupUrl : message.url, keys, kind: message.kind },
+    },
+  };
+}
+
+async function showPush(message) {
+  const showing = await self.registration.getNotifications({ tag: message.tag }).catch(() => []);
+  const { title, options } = collapse(showing[0] || null, message);
+  await self.registration.showNotification(title, options);
+}
+
+self.addEventListener("push", (event) => {
+  event.waitUntil(showPush(readPushMessage(event.data)));
+});
+
+/**
+ * A tap: focus a window that is already open and take it to the target,
+ * else open one. A window already ON the target is focused as it is, so a
+ * half-typed comment is not thrown away by a reload.
+ */
+async function openFromNotification(path) {
+  const target = new URL(appPath(path), self.location.origin);
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const same = windows.filter((client) => new URL(client.url).origin === target.origin);
+  const exact = same.find((client) => {
+    const url = new URL(client.url);
+    return url.pathname + url.search === target.pathname + target.search;
+  });
+  if (exact) return exact.focus();
+  const client = same.find((c) => c.focused) || same[0];
+  if (client) {
+    try {
+      const focused = await client.focus();
+      // navigate() works on a window this worker controls; an uncontrolled
+      // one throws, and a new window is the honest fallback.
+      return await (focused || client).navigate(target.href);
+    } catch {
+      /* fall through */
+    }
+  }
+  return self.clients.openWindow(target.href);
+}
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const data = event.notification.data || {};
+  event.waitUntil(openFromNotification(data.url));
+});
