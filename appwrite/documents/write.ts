@@ -19,6 +19,7 @@ import {
   rollupPermissions,
   sessionPermissions,
   setPermissions,
+  threadReadPermissions,
 } from "./policy";
 import type { RowWriter } from "./row-writer";
 
@@ -1152,6 +1153,77 @@ export async function changeReaction(deps: WriteDeps, actor: Actor, raw: ChangeR
  */
 export async function removeReaction(deps: WriteDeps, _actor: Actor, rowId: string) {
   return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: "comment_reactions", rowId });
+}
+
+/* -------------------------------------------------------------------------
+ * Thread reads (F26, schema v24)
+ * ---------------------------------------------------------------------- */
+
+const MarkThreadReadInput = z.object({
+  /** Whose set, denormalised so a reader can drop marks for an unlinked athlete. */
+  athleteId: appwriteId,
+  setId: appwriteId,
+  /**
+   * The server `$createdAt` of the newest comment the coach had on screen.
+   * Appwrite writes offsets ("+00:00"), the browser writes "Z"; both are one
+   * instant, and the row stores it the browser's way.
+   */
+  lastReadAt: z.iso.datetime({ offset: true }),
+});
+export type MarkThreadReadInput = z.input<typeof MarkThreadReadInput>;
+
+/** `<coachId>_<setId>`: one mark per coach per thread, as `markSetReviewed` derives a review's. */
+export const threadReadRowId = (coachId: string, setId: string) => `${coachId}_${setId}`;
+
+/**
+ * Records how far into a set's thread the coach has read: opening it in
+ * Replies, in Athlete View's clip dialog or on the Review Queue.
+ *
+ * Created at an id derived from coach and set, and moved forward by an
+ * update when the row is already there -- Appwrite has no upsert, and the
+ * derived id is what makes the collision mean "already marked" rather than a
+ * race to lose (the unique index on (coach_id, set_id) says the same in the
+ * database). The 41-character id is the review's length, which
+ * docs/review-queue.md records Appwrite accepting.
+ *
+ * Moves the watermark to whatever it is given, backwards included. The store
+ * only calls this with a later one (lib/review/replies-store.ts), and a race
+ * between the coach's phone and laptop can at worst set it back to a comment
+ * he has also read, which re-lights nothing: unread is "athlete comments
+ * after max(mark, his own last comment)" (lib/review/replies.ts), and the
+ * newer device's mark lands a moment later anyway.
+ *
+ * Stamped for the coach alone (policy.ts `threadReadPermissions`), on update
+ * as well as create, so an old row is restamped onto the current policy.
+ */
+export async function markThreadRead(deps: WriteDeps, actor: Actor, raw: MarkThreadReadInput) {
+  const input = MarkThreadReadInput.parse(raw);
+  const rowId = threadReadRowId(actor.userId, input.setId);
+  const lastReadAt = new Date(input.lastReadAt).toISOString();
+  const permissions = threadReadPermissions({ coachId: actor.userId });
+  try {
+    return await deps.writer.createRow({
+      databaseId: deps.databaseId,
+      tableId: "thread_reads",
+      rowId,
+      data: {
+        coach_id: actor.userId,
+        athlete_id: input.athleteId,
+        set_id: input.setId,
+        last_read_at: lastReadAt,
+      },
+      permissions,
+    });
+  } catch (error) {
+    if ((error as { code?: number } | null)?.code !== 409) throw error;
+    return deps.writer.updateRow({
+      databaseId: deps.databaseId,
+      tableId: "thread_reads",
+      rowId,
+      data: { last_read_at: lastReadAt },
+      permissions,
+    });
+  }
 }
 
 /* -------------------------------------------------------------------------
