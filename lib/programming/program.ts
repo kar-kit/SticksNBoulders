@@ -527,6 +527,45 @@ const copyProgram = z.object({
   startOn: calendarDay.nullable().optional(),
 });
 
+/**
+ * The paste's own id, chosen by the editor when the coach taps Paste and kept
+ * for retries of that same paste. It becomes the new day's or week's row id,
+ * and the rows under it are named from it, so a second tap or a retry after a
+ * dropped connection lands on the rows the first one wrote (a 409) instead of
+ * pasting twice -- the offline queue's idempotency key, applied to a copy.
+ * Letters and digits only, and short, so `<id>_d12_l40` is still a row id.
+ */
+const pasteId = z.string().regex(/^[a-zA-Z0-9]{1,24}$/, "must be 1 to 24 letters or digits");
+
+/**
+ * F28. Pastes a copy of a day into a week -- of this program or another the
+ * caller writes, for this athlete or another, or a template. Lines are copied
+ * as typed, exercises remapped into the target's library as `copyProgram`
+ * does. The day takes its date from where it lands: see `pastedDayDate`.
+ */
+const copyDay = z.object({
+  op: z.literal("copyDay"),
+  dayId: rowId,
+  toWeekId: rowId,
+  /** Its place among the week's days. Omitted, or past the end, appends. */
+  position: z.number().int().min(0).max(200).optional(),
+  requestId: pasteId.optional(),
+});
+
+/**
+ * F28. Pastes a copy of a week, every day and line, into a block of this
+ * program or another, as a DRAFT -- the same rule as `duplicateWeek`. Its days
+ * are dated from where the week lands: see `pastedWeekDates`.
+ */
+const copyWeek = z.object({
+  op: z.literal("copyWeek"),
+  weekId: rowId,
+  toBlockId: rowId,
+  /** Its place among the block's weeks. Omitted, or past the end, appends. */
+  position: z.number().int().min(0).max(200).optional(),
+  requestId: pasteId.optional(),
+});
+
 export const REORDER_LEVELS = ["blocks", "weeks", "days", "prescriptions"] as const;
 export type ReorderLevel = (typeof REORDER_LEVELS)[number];
 
@@ -564,6 +603,8 @@ export const programOp = z.discriminatedUnion("op", [
   createExercise,
   duplicateWeek,
   copyProgram,
+  copyDay,
+  copyWeek,
 ]);
 
 /** What a caller writes -- before defaults and trimming. */

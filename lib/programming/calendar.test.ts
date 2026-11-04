@@ -2,9 +2,12 @@ import {
   blockRange,
   mondayOf,
   newDayDate,
+  pastedDayDate,
+  pastedWeekDates,
   placeDay,
   programAnchor,
   rangeLabel,
+  realignPlan,
   redatePlan,
   scheduledOnFor,
   weekdayOf,
@@ -185,5 +188,84 @@ describe("moving the start date", () => {
   it("with no start date before, counts from the anchor the dated days imply", () => {
     const t = tree({}, [[["2026-10-06"]]]);
     expect(redatePlan(t, "2026-10-19", new Set())).toEqual([{ dayId: "d111", scheduledOn: "2026-10-20" }]);
+  });
+});
+
+describe("dating a pasted day (F28)", () => {
+  // Starts Monday 5 Oct; week 1 has a Wednesday, week 2 is empty.
+  const target = () => tree({ startOn: "2026-10-05" }, [[["2026-10-07"], []], [[]]]);
+
+  it("keeps the source's weekday in the week it lands in", () => {
+    // A Monday from any other program, any other month.
+    expect(pastedDayDate(target(), "w11", "2026-03-02")).toBe("2026-10-05");
+    expect(pastedDayDate(target(), "w12", "2026-03-05")).toBe("2026-10-15");
+    expect(pastedDayDate(target(), "w21", "2026-03-08")).toBe("2026-10-25");
+  });
+
+  it("takes + Day's next free weekday when the source's is taken, or the source was undated", () => {
+    expect(pastedDayDate(target(), "w11", "2026-03-04")).toBe("2026-10-08");
+    expect(pastedDayDate(target(), "w11", null)).toBe("2026-10-08");
+    expect(pastedDayDate(target(), "w12", null)).toBe("2026-10-12");
+  });
+
+  it("dates nothing on a template, a program with nothing to count from, or a week not in it", () => {
+    expect(pastedDayDate(tree({ athleteId: null }), "w11", "2026-03-02")).toBeNull();
+    expect(pastedDayDate(tree(), "w11", "2026-03-02")).toBeNull();
+    expect(pastedDayDate(target(), "nope", "2026-03-02")).toBeNull();
+  });
+});
+
+describe("dating a pasted week (F28)", () => {
+  const target = () => tree({ startOn: "2026-10-05" });
+
+  it("puts each day on its weekday in the week the paste becomes, counted across blocks", () => {
+    const days = ["2026-03-02", null, "2026-03-05"];
+    expect(pastedWeekDates(target(), "b1", 0, days)).toEqual(["2026-10-05", null, "2026-10-08"]);
+    // Block 2 starts after block 1's two weeks: its first place is week 3.
+    expect(pastedWeekDates(target(), "b2", 0, days)).toEqual(["2026-10-19", null, "2026-10-22"]);
+    // Past the end clamps to the end, as the server does.
+    expect(pastedWeekDates(target(), "b1", 9, days)).toEqual(["2026-10-19", null, "2026-10-22"]);
+  });
+
+  it("dates nothing with no calendar", () => {
+    expect(pastedWeekDates(tree(), "b1", 0, ["2026-03-02"])).toEqual([null]);
+    expect(pastedWeekDates(tree({ athleteId: null }), "b1", 0, ["2026-03-02"])).toEqual([null]);
+  });
+});
+
+describe("realigning days after a week moves (F28)", () => {
+  // Weeks 1 and 2 of block 1, each with a Monday; week 2 also has an off-week day.
+  const before = () =>
+    tree({ startOn: "2026-10-05" }, [[["2026-10-05"], ["2026-10-12", "2026-11-30"]], [["2026-10-19"]]]);
+  const swapped = () => {
+    const t = before();
+    t.blocks[0].weeks.reverse();
+    return t;
+  };
+
+  it("moves each moved week's days by whole weeks, keeping their weekdays", () => {
+    expect(realignPlan(before(), swapped(), new Set())).toEqual([
+      { dayId: "d121", scheduledOn: "2026-10-05" },
+      { dayId: "d111", scheduledOn: "2026-10-12" },
+    ]);
+  });
+
+  it("leaves logged days, off-week days and weeks that did not move where they are", () => {
+    expect(realignPlan(before(), swapped(), new Set(["d111"]))).toEqual([{ dayId: "d121", scheduledOn: "2026-10-05" }]);
+    expect(realignPlan(before(), before(), new Set())).toEqual([]);
+  });
+
+  it("slides every later week on when a week is pasted in ahead of them, but not the pasted one", () => {
+    const after = before();
+    after.blocks[0].weeks.unshift({ ...after.blocks[0].weeks[0], id: "new", days: [{ ...after.blocks[0].weeks[0].days[0], id: "newday" }] });
+    expect(realignPlan(before(), after, new Set())).toEqual([
+      { dayId: "d111", scheduledOn: "2026-10-12" },
+      { dayId: "d121", scheduledOn: "2026-10-19" },
+      { dayId: "d211", scheduledOn: "2026-10-26" },
+    ]);
+  });
+
+  it("does nothing without a calendar", () => {
+    expect(realignPlan(tree({ athleteId: null }), tree({ athleteId: null }), new Set())).toEqual([]);
   });
 });

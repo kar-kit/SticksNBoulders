@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProgramEditor } from "./program-editor";
+import { clearClip } from "@/lib/programming/clipboard";
 import type { ProgramTree } from "@/lib/programming/program";
 
 const viewer = vi.hoisted(() => ({ id: "ruairi" }));
@@ -10,7 +11,9 @@ vi.mock("@/lib/auth/session-context", () => ({
     refresh: vi.fn(),
   }),
 }));
-vi.mock("@/lib/auth/athletes", () => ({ fetchAthleteNames: async () => [{ id: "joey", name: "Joey" }] }));
+vi.mock("@/lib/auth/athletes", () => ({
+  fetchAthleteNames: async (ids: string[]) => ids.map((id) => ({ id, name: id === "andrea" ? "Andrea" : "Joey" })),
+}));
 vi.mock("@/lib/exercises/library", () => ({
   fetchExerciseLibrary: async () => [
     { id: "squat", name: "Squat", normalisedName: "squat", isGlobal: true },
@@ -150,6 +153,8 @@ beforeEach(() => {
   context.clips = [];
   context.reviewed = new Set();
   window.localStorage.clear();
+  window.sessionStorage.clear();
+  clearClip();
   store.tree = tree();
   store.logged = new Set();
   store.send.mockResolvedValue({ rowId: "new" });
@@ -1447,5 +1452,264 @@ describe("motion", () => {
         "deadlift",
       ]);
     });
+  });
+});
+
+describe("the clipboard (F28)", () => {
+  // jsdom has no layout, so no scrollIntoView: a paste lands on its day.
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+  /** Andrea's program: one draft week, empty, from Monday 2 Nov. */
+  const andreas = (): ProgramTree => {
+    const t = tree();
+    t.id = "p2";
+    t.athleteId = "andrea";
+    t.name = "Winter";
+    t.startOn = "2026-11-02";
+    t.blocks[0].weeks = [{ ...t.blocks[0].weeks[1], id: "aw1", programId: "p2", days: [] }];
+    return t;
+  };
+  /** A week of `t` with a second day after Squat day. */
+  const twoDays = (): ProgramTree => {
+    const t = tree();
+    const first = t.blocks[0].weeks[0].days[0];
+    t.blocks[0].weeks[0].days.push({ ...first, id: "d2", position: 1, label: "Bench day", scheduledOn: "2026-10-07", prescriptions: [] });
+    return t;
+  };
+  const copyFromMenu = async (user: ReturnType<typeof userEvent.setup>, trigger: string, item: string) => {
+    await user.click(screen.getByRole("button", { name: trigger }));
+    await user.click(screen.getByRole("menuitem", { name: item }));
+  };
+
+  it("holds a day copied from its ⋯ and pastes it at the end of a week, under a request id", async () => {
+    const user = userEvent.setup();
+    await ready();
+    expect(screen.queryByRole("group", { name: "Clipboard" })).not.toBeInTheDocument();
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    const bar = screen.getByRole("group", { name: "Clipboard" });
+    expect(bar).toHaveTextContent("Day copied");
+    expect(bar).toHaveTextContent("Squat day (2 lines) · Autumn block");
+    // Same athlete: nothing to warn about.
+    expect(bar).not.toHaveTextContent("percentages");
+
+    await user.click(screen.getByRole("button", { name: /^Week 2/ }));
+    await user.click(screen.getByRole("button", { name: "Paste Squat day here" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith(
+        expect.objectContaining({ op: "copyDay", dayId: "d1", toWeekId: "w2", requestId: expect.stringMatching(/^[0-9a-f]{20}$/) }),
+      ),
+    );
+    expect(store.send.mock.calls[0][0].position).toBeUndefined();
+    // Still held: paste it again somewhere else.
+    expect(screen.getByRole("group", { name: "Clipboard" })).toBeInTheDocument();
+  });
+
+  it("keeps what it holds across programs, and says whose maxes a cross-athlete paste resolves against", async () => {
+    const user = userEvent.setup();
+    const first = render(<ProgramEditor programId="p1" />);
+    await screen.findByRole("region", { name: "Squat day" });
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    first.unmount();
+
+    store.tree = andreas();
+    render(<ProgramEditor programId="p2" />);
+    const bar = await screen.findByRole("group", { name: "Clipboard" });
+    await waitFor(() =>
+      expect(bar).toHaveTextContent("Pasting here: percentages resolve against Andrea's own maxes, not Joey's."),
+    );
+  });
+
+  it("flags pasted lines with no max for the athlete they landed on", async () => {
+    const user = userEvent.setup();
+    const first = render(<ProgramEditor programId="p1" />);
+    await screen.findByRole("region", { name: "Squat day" });
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    first.unmount();
+
+    // Andrea has no squat max.
+    athleteMaxes.entries = [];
+    store.tree = andreas();
+    store.send.mockImplementation(async (op) => {
+      if (op.op === "copyDay") {
+        const t = andreas();
+        const day = tree().blocks[0].weeks[0].days[0];
+        t.blocks[0].weeks[0].days = [
+          { ...day, id: "pasted", programId: "p2", weekId: "aw1", scheduledOn: "2026-11-02", prescriptions: day.prescriptions.map((l) => ({ ...l, dayId: "pasted", weekId: "aw1" })) },
+        ];
+        store.tree = t;
+        return { rowId: "pasted" };
+      }
+      return { rowId: "new" };
+    });
+    render(<ProgramEditor programId="p2" />);
+    await user.click(await screen.findByRole("button", { name: "Paste Squat day here" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Pasted Squat day from Autumn block. Percentages on it resolve against Andrea's own maxes. 1 line has no max to price off yet: they see the percentage, not kilos.",
+    );
+    expect(await screen.findByRole("region", { name: "Squat day" })).toBeInTheDocument();
+  });
+
+  it("retries a failed paste under the same request id, and starts a new one once it lands", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    store.send.mockRejectedValueOnce(new Error("Failed to fetch"));
+    await user.click(screen.getByRole("button", { name: "Paste Squat day here" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to fetch");
+    await user.click(screen.getByRole("button", { name: "Paste Squat day here" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole("button", { name: "Paste Squat day here" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledTimes(3));
+    const ids = store.send.mock.calls.map((c) => c[0].requestId);
+    expect(ids[1]).toBe(ids[0]);
+    expect(ids[2]).not.toBe(ids[0]);
+  });
+
+  it("pastes a day above another from that day's ⋯", async () => {
+    const user = userEvent.setup();
+    store.tree = twoDays();
+    await ready();
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    await copyFromMenu(user, "Bench day actions", "Paste Squat day above Bench day");
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith(expect.objectContaining({ op: "copyDay", dayId: "d1", toWeekId: "w1", position: 1 })),
+    );
+  });
+
+  it("clears with its ×, taking the paste buttons with it", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    await user.click(screen.getByRole("button", { name: "Clear clipboard" }));
+    expect(screen.queryByRole("group", { name: "Clipboard" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Paste Squat day here" })).not.toBeInTheDocument();
+  });
+
+  it("warns that a day pasted into a live week is on their Today at once", async () => {
+    const user = userEvent.setup();
+    const live = tree();
+    live.status = "published";
+    live.blocks[0].weeks[0].status = "published";
+    store.tree = live;
+    await ready();
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    expect(screen.getByText("Live week: a pasted day is on their Today at once.")).toBeInTheDocument();
+  });
+
+  it("copies a week and pastes it after another from the week's ⋯, or at the end of a block from the outline", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await copyFromMenu(user, "Week 1 actions", "Copy week 1");
+    expect(screen.getByRole("group", { name: "Clipboard" })).toHaveTextContent("Week copied");
+    expect(screen.getByRole("group", { name: "Clipboard" })).toHaveTextContent("Week 1 (1 day) · Autumn block");
+    // No day to paste: the week view offers none.
+    expect(screen.queryByRole("button", { name: /^Paste .* here$/ })).not.toBeInTheDocument();
+
+    await copyFromMenu(user, "Week 1 actions", "Paste Week 1 after week 1");
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith(
+        expect.objectContaining({ op: "copyWeek", weekId: "w1", toBlockId: "b1", position: 1, requestId: expect.any(String) }),
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Paste Week 1 into Block 1" }));
+    await waitFor(() =>
+      expect(store.send.mock.calls.filter((c) => c[0].op === "copyWeek").at(-1)?.[0]).toMatchObject({ toBlockId: "b1", position: undefined }),
+    );
+  });
+
+  it("slides the weeks after a pasted week on by a week, logged days staying put", async () => {
+    const user = userEvent.setup();
+    store.send.mockImplementation(async (op) => {
+      if (op.op === "copyWeek") {
+        // The paste lands first in the block; week 1 is now week 2.
+        const t = tree();
+        t.blocks[0].weeks.unshift({ ...t.blocks[0].weeks[1], id: "pastedweek", days: [] });
+        store.tree = t;
+        return { rowId: "pastedweek" };
+      }
+      return { rowId: "new" };
+    });
+    await ready();
+    await copyFromMenu(user, "Week 1 actions", "Copy week 1");
+    // The server put it first (as if pasted at position 0): week 1's Monday follows it into week 2.
+    await user.click(screen.getByRole("button", { name: "Paste Week 1 into Block 1" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledWith({ op: "updateDay", dayId: "d1", scheduledOn: "2026-10-12" }));
+  });
+});
+
+describe("moving days and weeks (F28)", () => {
+  const twoDays = (): ProgramTree => {
+    const t = tree();
+    const first = t.blocks[0].weeks[0].days[0];
+    t.blocks[0].weeks[0].days.push({ ...first, id: "d2", position: 1, label: "Bench day", scheduledOn: "2026-10-07", prescriptions: [] });
+    return t;
+  };
+
+  it("moves a day down its week from the day's ⋯, keeping its date; the top day cannot go up", async () => {
+    const user = userEvent.setup();
+    store.tree = twoDays();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Squat day actions" }));
+    expect(screen.getByRole("menuitem", { name: "Move Squat day up" })).toBeDisabled();
+    await user.click(screen.getByRole("menuitem", { name: "Move Squat day down" }));
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "reorder", level: "days", parentId: "w1", orderedIds: ["d2", "d1"] }),
+    );
+    expect(store.send.mock.calls.some((c) => c[0].op === "updateDay")).toBe(false);
+  });
+
+  it("moves a day with Alt+Up on its name, as a line moves in the grid", async () => {
+    store.tree = twoDays();
+    await ready();
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Bench day name" }), { key: "ArrowUp", altKey: true });
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "reorder", level: "days", parentId: "w1", orderedIds: ["d2", "d1"] }),
+    );
+  });
+
+  it("moves a week down its block and takes its days' dates with it", async () => {
+    const user = userEvent.setup();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Week 1 actions" }));
+    expect(screen.getByRole("menuitem", { name: "Move week 1 up" })).toBeDisabled();
+    await user.click(screen.getByRole("menuitem", { name: "Move week 1 down" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledTimes(2));
+    expect(store.send.mock.calls.map((c) => c[0])).toEqual([
+      { op: "reorder", level: "weeks", parentId: "b1", orderedIds: ["w2", "w1"] },
+      { op: "updateDay", dayId: "d1", scheduledOn: "2026-10-12" },
+    ]);
+  });
+
+  it("moves a week with Alt+Down in the outline, and leaves a logged day's date alone", async () => {
+    store.logged = new Set(["d1"]);
+    await ready();
+    const outline = screen.getByRole("navigation", { name: "Program outline" });
+    const week1 = within(outline).getByRole("button", { name: "Week 1, logged" });
+    week1.focus();
+    fireEvent.keyDown(week1, { key: "ArrowDown", altKey: true });
+    await waitFor(() =>
+      expect(store.send).toHaveBeenCalledWith({ op: "reorder", level: "weeks", parentId: "b1", orderedIds: ["w2", "w1"] }),
+    );
+    expect(store.send.mock.calls.some((c) => c[0].op === "updateDay")).toBe(false);
+  });
+
+  it("moves no dates when it could not tell which days were logged, and says so", async () => {
+    const user = userEvent.setup();
+    store.logged = "fail";
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Week 1 actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Move week 1 down" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Moved. The other weeks kept their dates: it could not be checked which days were logged.",
+    );
+    expect(store.send.mock.calls.map((c) => c[0].op)).toEqual(["reorder"]);
+  });
+
+  it("offers none of it to a coach who did not write the program", async () => {
+    viewer.id = "louis";
+    await ready();
+    expect(screen.queryByRole("button", { name: "Squat day actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Clipboard" })).not.toBeInTheDocument();
   });
 });
