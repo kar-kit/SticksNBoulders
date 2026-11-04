@@ -16,6 +16,7 @@ import { fetchCommentsForSets } from "@/lib/review/comment-store";
 import type { Comment } from "@/lib/review/comments";
 import { fetchReactionsQuietly } from "@/lib/review/reaction-store";
 import { useReactions, type ReactionControls } from "@/lib/review/use-reactions";
+import { useMarkThreadRead } from "@/lib/review/coach-replies-context";
 import { shortDate, videoRows, type VideoRow } from "@/lib/coach/athlete-view";
 import { formatNumber } from "@/lib/logging/prefill";
 import { cn } from "@/lib/cn";
@@ -39,6 +40,10 @@ import { cn } from "@/lib/cn";
  * panel carries the prescription, the RPE and recent weeks; a second composer
  * here would be a second place to say the same thing with less attached. A
  * clip still waiting says so and points there.
+ *
+ * Opening a clip here marks its thread read for the coach's Replies (F26), as
+ * far as the comments the dialog shows: this is where a Replies row and the
+ * stable thread link (`/coach/replies/<setId>`) land.
  *
  * Reactions (F25) are the exception, and not a second composer: a 👍 on the
  * athlete's reply is an acknowledgement, not something to say with context
@@ -248,6 +253,9 @@ function ClipDialog({
 }) {
   const heading = useId();
   const [src, setSrc] = useState<{ clipId: string; url: string | null } | null>(null);
+  // F26: the thread is on screen, so it is read -- up to what is shown. Not
+  // while the dialog fades out, which is the coach leaving it.
+  useMarkThreadRead(leaving ? null : row.id, comments);
 
   // Minted per clip on open, not for the whole list: most of the list is read,
   // not watched, and each URL is a signed ticket with a short life.

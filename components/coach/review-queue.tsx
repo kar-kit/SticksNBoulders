@@ -21,6 +21,7 @@ import { countBySet, type Comment } from "@/lib/review/comments";
 import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
 import { fetchReactionsQuietly } from "@/lib/review/reaction-store";
 import { useReactions } from "@/lib/review/use-reactions";
+import { useMarkThreadRead } from "@/lib/review/coach-replies-context";
 import {
   clearClip,
   fetchClipUrls,
@@ -118,6 +119,14 @@ export function ReviewQueue() {
     () => items.find((item) => item.id === currentId) ?? firstItem(items),
     [items, currentId],
   );
+  // F26: the clip on screen has its thread under it, so an athlete reply in
+  // that thread is read -- the Replies badge drops as the coach reaches it.
+  const currentSetId = current?.id ?? null;
+  const shownComments = useMemo(
+    () => comments.filter((comment) => comment.setId === currentSetId),
+    [comments, currentSetId],
+  );
+  useMarkThreadRead(currentSetId, shownComments);
 
   const refresh = useCallback(async () => {
     if (!coachId) return;
@@ -546,7 +555,7 @@ export function ReviewQueue() {
           <div className="flex flex-col gap-3">
             <CommentBox
               clipId={current.id}
-              comments={comments.filter((comment) => comment.setId === current.id)}
+              comments={shownComments}
               names={athleteNames}
               viewerId={coachId ?? ""}
               busy={posting}

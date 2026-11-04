@@ -12,6 +12,9 @@ vi.mock("@/lib/review/queue-store", () => queue);
 const comments = vi.hoisted(() => ({ fetchCommentsForSets: vi.fn() }));
 vi.mock("@/lib/review/comment-store", () => comments);
 
+const replies = vi.hoisted(() => ({ useMarkThreadRead: vi.fn() }));
+vi.mock("@/lib/review/coach-replies-context", () => replies);
+
 const library = vi.hoisted(() => ({ fetchExerciseLibrary: vi.fn() }));
 vi.mock("@/lib/exercises/library", () => library);
 
@@ -104,6 +107,15 @@ describe("the list", () => {
 });
 
 describe("an opened clip", () => {
+  it("marks its thread read for the coach's Replies, as far as the dialog shows (F26)", async () => {
+    render(<AthleteVideos {...props} openClipId="bench-clip" />);
+    await screen.findByRole("dialog");
+    const [setId, shown] = replies.useMarkThreadRead.mock.lastCall!;
+    expect(setId).toBe("bench-clip");
+    expect((shown as { setId: string }[]).every((c) => c.setId === "bench-clip")).toBe(true);
+    expect(shown).not.toHaveLength(0);
+  });
+
   it("shows the review queue's player and the whole thread together", async () => {
     render(<AthleteVideos {...props} openClipId="bench-clip" />);
     const dialog = await screen.findByRole("dialog", { name: /Bench Press 120 × 5 @8/ });

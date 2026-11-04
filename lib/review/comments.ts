@@ -25,6 +25,14 @@ export interface Comment {
   parentId: string | null;
   /** ISO 8601, as Appwrite stores it. */
   createdAt: string;
+  /**
+   * When the row reached Appwrite: its server `$createdAt` (F26). Unlike
+   * `createdAt`, which the writer's own clock supplies, this is one clock for
+   * both parties, so the coach's unread arithmetic compares like with like
+   * (lib/review/replies.ts). Absent on a comment built locally after posting
+   * and in fixtures; readers fall back to `createdAt`.
+   */
+  postedAt?: string;
 }
 
 export type CommentRejection =
