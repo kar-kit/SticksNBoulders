@@ -5,6 +5,7 @@ import { isSuggestionMode, type SuggestionMode } from "@/lib/coach/suggestion-mo
 import { isOwnAvatarFileId } from "./avatar";
 import { circleTeamId } from "./circle";
 import { posterIdFor } from "./poster";
+import { PUSH_LABEL_MAX, PUSH_TABLE, isP256dh, isPushAuth, isPushEndpoint, type PushPrefs } from "./push";
 import { REACTION_EMOJIS } from "./reaction";
 import {
   bodyweightPermissions,
@@ -12,6 +13,7 @@ import {
   invitePermissions,
   linkPermissions,
   profilePermissions,
+  pushSubscriptionPermissions,
   commentPermissions,
   reactionPermissions,
   referenceMaxPermissions,
@@ -1627,6 +1629,90 @@ export async function setLinkSuggestionMode(
     data: { suggestions_mode: input.mode },
     permissions: linkPermissions(input),
   });
+}
+
+/* -------------------------------------------------------------------------
+ * Push subscriptions (F27)
+ *
+ * Server-only, like reference maxes: every function here runs with the API
+ * key, behind /api/push or inside the notify Function. The user is always the
+ * caller the route resolved from the JWT, never an id from a request body.
+ * ---------------------------------------------------------------------- */
+
+export interface SavePushSubscriptionInput {
+  /** Derived from the endpoint (push-admin.ts), so one device is one row. */
+  rowId: string;
+  endpoint: string;
+  endpointHash: string;
+  p256dh: string;
+  auth: string;
+  label: string | null;
+  prefs: PushPrefs;
+}
+
+function pushData(input: SavePushSubscriptionInput) {
+  if (!isPushEndpoint(input.endpoint)) throw new Error("push subscription: endpoint is not a known push service");
+  if (!isP256dh(input.p256dh) || !isPushAuth(input.auth)) throw new Error("push subscription: malformed keys");
+  if (!/^[a-f0-9]{64}$/.test(input.endpointHash)) throw new Error("push subscription: endpointHash must be sha256 hex");
+  return {
+    endpoint: input.endpoint,
+    endpoint_hash: input.endpointHash,
+    p256dh: input.p256dh,
+    auth: input.auth,
+    label: input.label ? input.label.slice(0, PUSH_LABEL_MAX) : null,
+    notify_clips: input.prefs.clips,
+    notify_replies: input.prefs.replies,
+  };
+}
+
+export async function createPushSubscription(deps: WriteDeps, actor: Actor, input: SavePushSubscriptionInput) {
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: PUSH_TABLE,
+    rowId: input.rowId,
+    data: { user_id: actor.userId, ...pushData(input), created_at: iso(deps.now()) },
+    permissions: pushSubscriptionPermissions({ userId: actor.userId }),
+  });
+}
+
+/** The same device subscribing again: fresh keys, same row. Re-stamped, so the owner cannot drift. */
+export async function updatePushSubscription(deps: WriteDeps, actor: Actor, input: SavePushSubscriptionInput) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: PUSH_TABLE,
+    rowId: input.rowId,
+    data: { user_id: actor.userId, ...pushData(input) },
+    permissions: pushSubscriptionPermissions({ userId: actor.userId }),
+  });
+}
+
+export async function setPushPrefs(deps: WriteDeps, actor: Actor, input: { rowId: string; prefs: PushPrefs }) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: PUSH_TABLE,
+    rowId: input.rowId,
+    data: { notify_clips: input.prefs.clips === true, notify_replies: input.prefs.replies === true },
+    permissions: pushSubscriptionPermissions({ userId: actor.userId }),
+  });
+}
+
+/** The push service took a message for this device. */
+export async function markPushDelivered(deps: WriteDeps, input: { rowId: string; userId: string }) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: PUSH_TABLE,
+    rowId: input.rowId,
+    data: { last_success_at: iso(deps.now()) },
+    permissions: pushSubscriptionPermissions({ userId: input.userId }),
+  });
+}
+
+/**
+ * Gone: the owner turned the device off, signed out on it, or the push
+ * service answered 404/410 (the browser dropped the subscription).
+ */
+export async function deletePushSubscription(deps: WriteDeps, rowId: string) {
+  return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: PUSH_TABLE, rowId });
 }
 
 export { circleTeamId };

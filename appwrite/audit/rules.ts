@@ -280,6 +280,19 @@ export const RULES: readonly ResourceRule[] = [
         : `suggestions_mode is ${JSON.stringify(row.suggestions_mode)}`,
     notes: "Each row carries exactly the two parties' reads: no update, delete, team or users grant.",
   },
+  {
+    key: "push_subscriptions",
+    kind: "table",
+    resource: "push_subscriptions",
+    target: "a device A turned notifications on for, via /api/push (F27)",
+    // A's alone. Not the coach: where A's notifications go is nobody else's
+    // business, and the keys on the row are only of use to a push service.
+    allow: serverOnly(owner),
+    ownerColumn: "user_id",
+    notes:
+      "Server-only, the owner included: a session that could create a row here could register its own " +
+      "device under A's user_id and receive A's notifications. The route takes the user from the JWT.",
+  },
   programTable("programs", "the program A's coach wrote for A, via /api/program"),
   programTable("program_blocks", "a block of that program"),
   programTable("program_weeks", "a week of that program"),

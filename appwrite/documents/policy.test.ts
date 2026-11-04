@@ -364,6 +364,7 @@ describe("policy hygiene", () => {
       "program_days",
       "program_weeks",
       "programs",
+      "push_subscriptions",
       "reference_maxes",
       "sessions",
       "set_comments",
