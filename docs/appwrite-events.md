@@ -56,6 +56,13 @@ reactions (`cascadeFor` in provenance.ts). Whether delete events reach a
 Function on this instance is [Unverified] until the audit's cascade check
 passes; if they do not, readers still hide a reaction whose comment is gone.
 
+Since F27 (schema v25) **`notify`** subscribes to `sets` create and update
+and `set_comments` create, both spellings, and sends web push to coaches
+(docs/push-notifications.md). It was created after `validate-row` on purpose,
+so it runs after it for the same event, and it never fails an execution, for
+the reason below. If both spellings fire for one write it runs twice; the
+service worker collapses the duplicate into a silent replace.
+
 ## What this does and does not change
 
 **Rollups stay in a route.** `app/api/rollup/route.ts` was written as a

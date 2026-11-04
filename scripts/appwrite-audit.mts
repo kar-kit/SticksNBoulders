@@ -111,6 +111,7 @@ import { POST as suggestionsRoute } from "../app/api/link/suggestions/route";
 import { POST as programRoute } from "../app/api/program/route";
 import { POST as referenceMaxRoute, DELETE as referenceMaxDeleteRoute } from "../app/api/reference-max/route";
 import { POST as rollupRoute } from "../app/api/rollup/route";
+import { POST as pushRoute } from "../app/api/push/route";
 
 dedupeSdkWarnings();
 
@@ -308,10 +309,12 @@ for (const spec of FUNCTIONS) {
   try {
     const fn = await functions.get({ functionId: spec.id });
     const eventsMatch = spec.events.every((e) => fn.events.includes(e));
-    validatorLive = fn.enabled && fn.deploymentId !== "" && eventsMatch;
+    const live = fn.enabled && fn.deploymentId !== "" && eventsMatch;
+    // F27 added a second Function; this flag is about the validator only.
+    if (spec.id === "validate-row") validatorLive = live;
     check(
       `Function "${spec.id}" is deployed, enabled and subscribed to its events`,
-      validatorLive,
+      live,
       `enabled=${fn.enabled} activeDeployment=${JSON.stringify(fn.deploymentId)} events ${eventsMatch ? "match" : "differ"}. Run npm run appwrite:functions.`,
     );
   } catch (error) {
@@ -622,6 +625,19 @@ try {
   const coachMax = await callRoute(referenceMaxRoute as Handler, "/api/reference-max", C, maxBody(A.id, "training", 180));
   check("POST /api/reference-max: the coach sets A's training max (reference_maxes write)", coachMax.status === 200, JSON.stringify(coachMax.body));
   if (typeof coachMax.body.rowId === "string") targets.reference_maxes = coachMax.body.rowId;
+  // F27: A's device, through /api/push. The route is the only way a row
+  // gets here; the user is the JWT's.
+  const pushBody = (tag: string) => ({
+    subscription: {
+      endpoint: `https://fcm.googleapis.com/fcm/send/audit-${tag}-${stamp}`,
+      keys: { p256dh: `B${"A".repeat(86)}`, auth: "a".repeat(22) },
+    },
+  });
+  const pushed = await callRoute(pushRoute as Handler, "/api/push", A, pushBody("a"));
+  check("POST /api/push registers A's device (push_subscriptions write)", pushed.status === 200, JSON.stringify(pushed.body));
+  if (typeof pushed.body.rowId === "string") targets.push_subscriptions = pushed.body.rowId;
+  check("POST /api/push with no session is refused", (await callRoute(pushRoute as Handler, "/api/push", anon, pushBody("anon"))).status === 401);
+
   const ownMax = await callRoute(referenceMaxRoute as Handler, "/api/reference-max", A, maxBody(A.id, "tested", 185));
   check("POST /api/reference-max: A records his own tested max", ownMax.status === 200, JSON.stringify(ownMax.body));
   if (typeof ownMax.body.rowId === "string") extras.ownMax = ownMax.body.rowId;
@@ -850,6 +866,7 @@ try {
     remember(`library:${actor}`, await forged(ruleFor("exercises:library"), actor, "exercises", ID.unique(), { name: `Forged Library ${tag}`, normalised_name: normaliseExerciseName(`Forged Library ${tag}`), is_global: true, owner_id: forgerId(actor), created_at: now() }, readableByEveryone(), `createRow with is_global true, ${EVERYONE}`));
     await forged(ruleFor("stats_rollups"), actor, "stats_rollups", ID.unique(), { athlete_id: A.id, exercise_id: targets.exercises, week_start: "2026-01-05T00:00:00.000Z", set_count: 1, volume_reps: 1, tonnage_kg: 999, best_e1rm_kg: 400, rebuilt_at: now() }, readableByEveryone(), `createRow with athlete_id A, ${EVERYONE}`);
     await forged(ruleFor("reference_maxes"), actor, "reference_maxes", ID.unique(), { athlete_id: A.id, exercise_id: targets.exercises, kind: "training", value_kg: 250, effective_from: now(), recorded_by: forgerId(actor), created_at: now() }, readableByEveryone(), `createRow with athlete_id A, ${EVERYONE}`);
+    await forged(ruleFor("push_subscriptions"), actor, "push_subscriptions", ID.unique(), { user_id: A.id, endpoint: `https://fcm.googleapis.com/fcm/send/forged-${tag}`, endpoint_hash: `${tag}`.padEnd(64, "0").slice(0, 64), p256dh: `B${"A".repeat(86)}`, auth: "a".repeat(22), created_at: now() }, readableByEveryone(), `createRow registering a device under A's user_id, ${EVERYONE}`);
     await forged(ruleFor("invite_codes"), actor, "invite_codes", `AUD-${ACTORS.indexOf(actor)}${stamp.slice(-6)}`, { coach_id: ID.unique(), created_at: now() }, readableByEveryone(), `createRow minting a code, ${EVERYONE}`);
     await forged(ruleFor("coach_athlete_links"), actor, "coach_athlete_links", ID.unique(), { coach_id: forgerId(actor), athlete_id: actor === "coach" ? B.id : A.id, status: "active", linked_at: now() }, readableByEveryone(), "createRow granting themselves a coach link");
     // Programming for A, written by anyone but the route. Every table of it.
@@ -1127,6 +1144,8 @@ try {
       stats_rollups: { tonnage_kg: 90000 + n },
       reference_maxes: { value_kg: 500 + n },
       invite_codes: { coach_id: ID.unique() },
+      // F27: re-pointing A's device is how a hijacker would read A's lock screen.
+      push_subscriptions: { endpoint: `https://fcm.googleapis.com/fcm/send/hijacked-${n}` },
       coach_athlete_links: { status: "revoked" },
       programs: { name: tag },
       program_blocks: { name: tag },
@@ -1526,6 +1545,7 @@ async function teardown() {
     comment_reactions: ["athlete_id", "author_id"],
     coach_athlete_links: ["athlete_id", "coach_id"],
     invite_codes: ["coach_id"],
+    push_subscriptions: ["user_id"],
     programs: ["athlete_id", "coach_id"],
     program_blocks: ["athlete_id", "coach_id"],
     program_weeks: ["athlete_id", "coach_id"],

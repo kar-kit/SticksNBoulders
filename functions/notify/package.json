@@ -1,0 +1,6 @@
+{
+  "name": "notify",
+  "private": true,
+  "description": "Source for the notify Appwrite Function (F27). Bundled by scripts/appwrite-functions.mts, web-push included; the bundle is what gets deployed.",
+  "type": "module"
+}

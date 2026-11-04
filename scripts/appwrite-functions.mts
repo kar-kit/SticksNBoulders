@@ -119,8 +119,27 @@ async function ensureVariables(spec: FunctionSpec): Promise<string[]> {
     if (current) await functions.updateVariable({ functionId: spec.id, variableId: current.$id, key, value });
     else await functions.createVariable({ functionId: spec.id, variableId: ID.unique(), key, value });
   }
+  // Secrets come from this shell's environment, never from the spec, and are
+  // stored as secret variables: Appwrite never reads their value back, so
+  // there is nothing to compare and each run rewrites them. Names only in
+  // the output, never a value.
+  for (const key of spec.secrets ?? []) {
+    const value = process.env[key]?.trim();
+    if (!value) {
+      missingSecrets.push(`${spec.id}: ${key}`);
+      changed.push(`${key} (MISSING from the environment)`);
+      continue;
+    }
+    const current = have.find((v) => v.key === key);
+    changed.push(current ? `${key} (secret, rewritten)` : `${key} (secret, create)`);
+    if (dryRun) continue;
+    if (current) await functions.updateVariable({ functionId: spec.id, variableId: current.$id, key, value, secret: true });
+    else await functions.createVariable({ functionId: spec.id, variableId: ID.unique(), key, value, secret: true });
+  }
   return changed;
 }
+
+const missingSecrets: string[] = [];
 
 async function deploy(spec: FunctionSpec, archive: string): Promise<Models.Deployment> {
   let deployment = await functions.createDeployment({
@@ -148,6 +167,11 @@ for (const spec of FUNCTIONS) {
   console.log(`  function: ${changed.length ? changed.join(", ") : "up to date"}`);
   const vars = await ensureVariables(spec);
   console.log(`  variables: ${vars.length ? vars.join(", ") : "up to date"}`);
+  if (missingSecrets.some((m) => m.startsWith(`${spec.id}: `))) {
+    failed = true;
+    console.log(`  not deployed: a secret it needs is not in this shell's environment (docs/push-notifications.md)`);
+    continue;
+  }
 
   if (dryRun) {
     console.log(`  deployment: would upload and activate${fn?.deploymentId ? ` (replacing ${fn.deploymentId})` : ""}`);
