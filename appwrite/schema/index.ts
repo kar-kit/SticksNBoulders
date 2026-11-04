@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 23,
+  version: 25,
   tables: [
     {
       id: "profiles",
@@ -701,6 +701,57 @@ export const schema: DatabaseSpec = {
         // Looked up on every write: "who coaches this athlete?"
         { key: "idx_athlete_status", type: "key", columns: ["athlete_id", "status"] },
         { key: "idx_coach_status", type: "key", columns: ["coach_id", "status"] },
+      ],
+    },
+
+    // v25 (F27). Appended last and self-contained so it rebases cleanly onto
+    // v24 (F26): nothing above changed for it.
+    {
+      id: "push_subscriptions",
+      name: "Push subscriptions",
+      purpose:
+        "One row per device a coach turned notifications on for: where the browser's push service wants a message delivered, the two keys it is encrypted with, and which kinds that coach wants -- a new clip, an athlete's reply. Read by the notify Function with the API key; never by anyone but the owner from a session (docs/push-notifications.md).",
+      rowSecurity: true,
+      // Server-only, like reference_maxes: a session that could create a row
+      // here could register its own endpoint under somebody else's user_id and
+      // receive their notifications. /api/push is the only way in, and it takes
+      // the user from the JWT.
+      permissions: [],
+      columns: [
+        { key: "user_id", type: "string", size: 36, required: true },
+        // The push service URL. https and on a known push host, checked
+        // before it is stored (appwrite/documents/push.ts isPushEndpoint) --
+        // the notify Function POSTs to it with the instance's network, so an
+        // arbitrary URL here would be a request forgery waiting to happen.
+        // Real ones are 150-300 characters; 1024 is headroom, not a target.
+        { key: "endpoint", type: "string", size: 1024, required: true },
+        // sha256 of the endpoint, hex. The unique index lives here rather than
+        // on `endpoint` because a 1024-character unique index is past what
+        // MariaDB will key in full. The row id is derived from the same hash,
+        // so one device is one row however often it re-subscribes.
+        { key: "endpoint_hash", type: "string", size: 64, required: true },
+        // The subscription's keys, base64url. p256dh is a 65-byte point (87
+        // characters), auth 16 bytes (22). Not secrets in the API-key sense,
+        // but only the push service and this server have any use for them,
+        // which is why the row is readable by its owner alone.
+        { key: "p256dh", type: "string", size: 128, required: true },
+        { key: "auth", type: "string", size: 64, required: true },
+        // "iPhone", "Chrome on Mac": so a coach can tell their devices apart.
+        // Derived from the user agent on the server, never free text.
+        { key: "label", type: "string", size: 64, required: false },
+        // Per-type switches. Optional with a default of on: turning the device
+        // on is the consent, these narrow it.
+        { key: "notify_clips", type: "boolean", required: false, default: true },
+        { key: "notify_replies", type: "boolean", required: false, default: true },
+        { key: "created_at", type: "datetime", required: true },
+        // The last time the push service accepted a message for this device.
+        // A row that keeps failing without a 404/410 is visible here.
+        { key: "last_success_at", type: "datetime", required: false },
+      ],
+      indexes: [
+        { key: "idx_endpoint_hash", type: "unique", columns: ["endpoint_hash"] },
+        // "Which devices does this coach have?" -- on every notification.
+        { key: "idx_user", type: "key", columns: ["user_id"] },
       ],
     },
   ],

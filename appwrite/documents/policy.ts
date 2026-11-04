@@ -26,6 +26,7 @@ export type ServerTable =
   | "coach_athlete_links"
   | "invite_codes"
   | "reference_maxes"
+  | "push_subscriptions"
   | ProgramTable;
 
 /** The five tables a program is made of. One policy covers all of them. */
@@ -455,6 +456,25 @@ export function bodyweightPermissions({ athleteId }: RowOwner): string[] {
   return ownedByAthlete(requireId(athleteId, "athleteId"), true);
 }
 
+/**
+ * A device a user turned push notifications on for (F27, schema v25).
+ *
+ * Read by its owner and nobody else -- not the circle, not a coach. It says
+ * where this person's notifications go and carries the keys they are
+ * encrypted with; nobody else has a use for either.
+ *
+ * Written by nobody from a session, the owner included. A row here decides
+ * whose notifications land on which device, so a session that could create
+ * one could register its own browser under somebody else's user_id and read
+ * their athletes' names off the lock screen. /api/push writes it with the API
+ * key, taking the user from the JWT; the notify Function deletes it when the
+ * push service says the device is gone. The owner turning a device off goes
+ * through the same route.
+ */
+export function pushSubscriptionPermissions({ userId }: { userId: string }): string[] {
+  return [read(user(requireId(userId, "userId")))];
+}
+
 /** Every policy in one place, so a table can never be added without one. */
 export const POLICIES = {
   profiles: profilePermissions,
@@ -469,6 +489,7 @@ export const POLICIES = {
   coach_athlete_links: linkPermissions,
   invite_codes: invitePermissions,
   reference_maxes: referenceMaxPermissions,
+  push_subscriptions: pushSubscriptionPermissions,
   programs: programPermissions,
   program_blocks: programPermissions,
   program_weeks: programPermissions,
@@ -501,5 +522,6 @@ export const SERVER_ONLY_TABLES: readonly ServerTable[] = [
   "coach_athlete_links",
   "invite_codes",
   "reference_maxes",
+  "push_subscriptions",
   ...PROGRAM_TABLES,
 ];
