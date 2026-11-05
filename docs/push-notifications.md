@@ -57,9 +57,10 @@ after the first buzz. [Unverified] on a real device.
 
 - One clip: `/coach/athletes/<athleteId>?clip=<setId>`, the existing clip and
   thread panel (`lib/coach/athlete-panel.ts`). Several: `/coach/review`.
-- A reply: `COACH_THREAD_ROUTE` in `lib/push/links.ts`, currently the same
-  clip panel. **F26-SWAP**: after rebasing onto F26 (coach-replies-inbox),
-  change that one constant to F26's coach thread route.
+- A reply: `COACH_THREAD_ROUTE` in `lib/push/links.ts`, F26's
+  `/coach/replies/<setId>` (PR #132), which marks the thread read and
+  redirects to the clip panel. That route only exists once #132 merges, so
+  F27 must merge after it.
 
 Payload URLs are paths, resolved by the worker against its own origin; the
 worker refuses anything that is not a same-origin absolute path.
