@@ -20,17 +20,18 @@ export function coachClipPath(athleteId: string, setId: string): string {
 export const COACH_REVIEW_PATH = "/coach/review";
 
 /**
- * F26-SWAP. The one thing to change after rebasing onto F26
- * (coach-replies-inbox): point this at F26's coach thread route.
+ * A reply: F26's coach thread route (PR #132, coach-replies-inbox). It marks
+ * the thread read, then redirects to `/coach/athletes/<id>?clip=<setId>`.
  *
- * Until F26 merges there is no thread route of its own, so a reply opens the
- * same clip-and-thread panel a clip does, which is where the thread is drawn
- * today. `:athleteId` and `:setId` are filled in by `coachThreadPath`.
+ * The route lives on F26's branch, so this link 404s on any build without
+ * it: F27 must merge after #132. If that route ever moves, this is the one
+ * constant to change. `:setId` is filled in by `coachThreadPath`; the athlete
+ * id is accepted for the day a route wants it, and unused today.
  */
-export const COACH_THREAD_ROUTE = "/coach/athletes/:athleteId?clip=:setId";
+export const COACH_THREAD_ROUTE = "/coach/replies/:setId";
 
-export function coachThreadPath(athleteId: string, setId: string): string {
-  return COACH_THREAD_ROUTE.replace(":athleteId", enc(athleteId)).replace(":setId", enc(setId));
+export function coachThreadPath(_athleteId: string, setId: string): string {
+  return COACH_THREAD_ROUTE.replace(":setId", enc(setId));
 }
 
 /** Where the "send a test" notification goes: back to the settings it came from. */

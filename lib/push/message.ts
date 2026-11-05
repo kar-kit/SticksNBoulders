@@ -103,7 +103,7 @@ export function replyMessage(input: ReplyMessageInput): PushMessage {
     body: clip(input.body, SNIPPET_MAX) || "New reply",
     url,
     // Several replies may be on several sets; the newest one's thread is the
-    // best single place to land until F26's inbox exists.
+    // best single place to land: opening it through F26's route marks it read.
     groupUrl: url,
   };
 }

@@ -61,14 +61,14 @@ describe("replyMessage", () => {
 });
 
 describe("the F26 thread route", () => {
-  it("is one constant, pointing at the existing clip-and-thread panel until F26 lands", () => {
-    expect(COACH_THREAD_ROUTE).toContain(":athleteId");
-    expect(COACH_THREAD_ROUTE).toContain(":setId");
-    expect(coachThreadPath(A, "set1")).toBe(coachClipPath(A, "set1"));
+  it("is one constant, F26's /coach/replies/<setId>, which marks read and redirects to the clip panel", () => {
+    expect(COACH_THREAD_ROUTE).toBe("/coach/replies/:setId");
+    expect(coachThreadPath(A, "set1")).toBe("/coach/replies/set1");
+    expect(coachThreadPath(A, "set1")).not.toBe(coachClipPath(A, "set1"));
   });
 
   it("escapes what it is given", () => {
-    expect(coachThreadPath("a/b", "c&d")).toBe("/coach/athletes/a%2Fb?clip=c%26d");
+    expect(coachThreadPath(A, "c&d/e")).toBe("/coach/replies/c%26d%2Fe");
   });
 });
 
