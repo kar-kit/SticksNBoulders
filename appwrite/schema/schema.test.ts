@@ -33,6 +33,7 @@ describe("schema shape", () => {
       "program_days",
       "program_weeks",
       "programs",
+      "push_subscriptions",
       "reference_maxes",
       "sessions",
       "set_comments",
@@ -616,7 +617,7 @@ describe("comment reactions (v23, F25)", () => {
   const reactions = () => table("comment_reactions");
 
   it("is a new table, so applying v23 rewrites no existing row", () => {
-    expect(schema.version).toBe(23);
+    expect(schema.version).toBeGreaterThanOrEqual(23);
     // Nothing on set_comments changed: reactions hang off it, not inside it.
     expect(columnKeys("set_comments")).toEqual([
       "set_id",
@@ -667,5 +668,48 @@ describe("comment reactions (v23, F25)", () => {
     expect(reactions().permissions).toEqual(table("set_comments").permissions);
     expect(USER_WRITABLE_TABLES).toContain("comment_reactions");
     expect(reactions().purpose).toMatch(/quiet/i);
+  });
+});
+
+describe("push subscriptions (v25, F27)", () => {
+  const push = () => table("push_subscriptions");
+
+  it("is v25, a new table appended last, so applying it rewrites no existing row", () => {
+    expect(schema.version).toBe(25);
+    expect(schema.tables.at(-1)?.id).toBe("push_subscriptions");
+  });
+
+  it("carries the owner, the endpoint and its hash, both keys, a label, the two switches and two times", () => {
+    expect(columnKeys("push_subscriptions")).toEqual([
+      "user_id",
+      "endpoint",
+      "endpoint_hash",
+      "p256dh",
+      "auth",
+      "label",
+      "notify_clips",
+      "notify_replies",
+      "created_at",
+      "last_success_at",
+    ]);
+  });
+
+  it("is unique per endpoint, through its hash, and indexed by owner", () => {
+    expect(push().indexes).toContainEqual({ key: "idx_endpoint_hash", type: "unique", columns: ["endpoint_hash"] });
+    expect(push().indexes.some((i) => i.columns[0] === "user_id")).toBe(true);
+    expect(push().columns.find((c) => c.key === "endpoint_hash")).toMatchObject({ type: "string", size: 64 });
+  });
+
+  it("defaults both switches on, so a device row that predates a switch still notifies", () => {
+    for (const key of ["notify_clips", "notify_replies"]) {
+      expect(push().columns.find((c) => c.key === key)).toMatchObject({ type: "boolean", required: false, default: true });
+    }
+  });
+
+  it("is stamped per row and written by no session, the owner included", () => {
+    expect(push().rowSecurity).toBe(true);
+    expect(push().permissions).toEqual([]);
+    expect(SERVER_ONLY_TABLES).toContain("push_subscriptions");
+    expect(USER_WRITABLE_TABLES).not.toContain("push_subscriptions");
   });
 });

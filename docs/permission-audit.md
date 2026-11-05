@@ -159,6 +159,18 @@ not as a 409), and A keeps reading both. The stamp scan checks the six as the
 rule's `invariant`. [Unverified] until Joey runs it against an instance with
 v23 applied and `validate-row` redeployed.
 
+## Push subscriptions (schema v25, F27)
+
+`push_subscriptions` is server-only and owner-read: each row is stamped
+`read("user:<user_id>")` and nothing else (`pushSubscriptionPermissions`).
+The audited target is **A's** device, registered through `POST /api/push`
+from A's session; the rule reads: read A only (not the coach: where A's
+notifications go is nobody else's business); create, update and delete
+nobody from a session, A included. The forgeries register a device under
+A's `user_id` stamped `read("users")`; the raw update re-points A's endpoint.
+The route refuses a session-less call. [Unverified] until Joey runs it
+against an instance with v25 applied.
+
 ## Adding a table
 
 A new table without a rule fails both the audit and `npm test`

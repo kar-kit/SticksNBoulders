@@ -8,6 +8,7 @@ import { PhotoSettings } from "@/components/profile/photo-settings";
 import { SuggestionModeNote } from "@/components/profile/suggestion-mode-note";
 import Link from "next/link";
 import { InviteCodePanel } from "@/components/coach/invite-code";
+import { NotificationSettings } from "@/components/profile/notification-settings";
 import { ExportLog } from "@/components/export/export-log";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth/session";
@@ -77,6 +78,10 @@ export function MePanel() {
       <SuggestionModeNote athleteId={state.user.id} isCoach={state.coach.isCoach} />
 
       <InviteCodePanel />
+
+      {/* F27. Coach side only: nothing notifies an athlete yet, so offering
+          them a switch would be a switch that does nothing. */}
+      {canCoach(state.prefs, state.coach.isCoach) ? <NotificationSettings userId={state.user.id} /> : null}
 
       <ExportLog athleteId={state.user.id} athleteName={state.user.name} audience="athlete" />
 

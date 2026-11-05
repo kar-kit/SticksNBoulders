@@ -73,6 +73,7 @@
     "node-appwrite": "^28.0.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "web-push": "^3.6.7",
     "zod": "^4.6.4"
   },
   "devDependencies": {
@@ -83,6 +84,7 @@
     "@types/node": "^26.5.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^6.1.1",
     "esbuild": "^0.28.2",
     "eslint": "^9",

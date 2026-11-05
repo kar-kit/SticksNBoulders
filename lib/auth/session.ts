@@ -7,6 +7,7 @@ import { forgetProfile } from "@/lib/profile/profile-store";
 import { forgetAvatars } from "@/lib/profile/avatar-cache";
 import { forgetPosters } from "@/lib/video/poster-cache";
 import { detachQueue } from "@/lib/offline/client";
+import { forgetPushDevice } from "@/lib/push/push-store";
 import { toAuthFailure, type AuthFailure, type OAuthProviderName } from "./errors";
 import { normaliseEmail } from "./method-hint";
 import { AFTER_SIGN_IN } from "./destinations";
@@ -70,6 +71,10 @@ export async function signOut() {
   // on the phone, held for them: on a shared phone the next person to sign in
   // must never inherit it, and it sends when this athlete signs back in here.
   detachQueue();
+  // F27: this device stops getting the coach's notifications. Before the
+  // session goes, because the route needs its JWT; bounded, so signing out
+  // never waits on a push service.
+  await forgetPushDevice();
   return attempt(() => account.deleteSession({ sessionId: "current" }));
 }
 
