@@ -98,10 +98,27 @@ the reply under Replies. F26 does the second, for three reasons:
    realtime `sets` event. Requeuing on replies would add a comments read to
    every one of those for every coach.
 
-The trade-off, recorded because it needs a decision (see below): the Athlete
-View dialog is read-only, by design (Joey, 16 Oct 2026), so a coach reading a
-reply on a cleared clip can react to it (F25) but cannot answer it in words
-without restoring the clip in Review.
+## Answering on a cleared clip (F26 follow-up, approved by Joey)
+
+The Athlete View clip dialog was read-only (Joey, 16 Oct 2026), which left a
+coach able to react to a reply on a cleared clip but not to answer it. A
+**reviewed** clip's dialog now carries the Review Queue's own comment box
+(`CommentBox`, with no Skip, a "Reply" button and no autofocus). Posting:
+
+- writes an ordinary coach comment through `submitComment` → `postComment`,
+  the same write path and `commentPermissions` stamp as the queue, threaded
+  under the newest thread on the set (`latestThreadId`, the same rule as the
+  athlete's reply box), so it shows on the athlete's Feedback screen as usual;
+- **never writes or removes a `set_reviews` row**: the clip stays cleared and
+  the Review badge does not move;
+- marks the thread read (`thread_reads`) through the comments the coach had on
+  screen when he answered; his comment then holds the watermark for anything
+  before it.
+
+A clip still **waiting** keeps no box and points at Review, where commenting
+comes with the context panel. No box when the athlete is no longer linked to
+this coach (session `athleteIds`); the Athlete View gate hides the dialog on a
+revoke anyway, and a refused post keeps the draft.
 
 ## The thread link
 
@@ -146,10 +163,6 @@ answered since shows as unread, which is the truth.
 
 ## Open decisions
 
-- **Answering from the dialog.** Should the Athlete View clip dialog get a
-  reply box when the thread has an athlete reply? Today it is read-only on
-  purpose. [SME to confirm] with Ruairi: does he answer replies in the app,
-  or does a reply only need to be seen?
 - **Threads with another coach.** An athlete replying to Louis lights
   Ruairi's badge too, because the brief counts every athlete comment on a
   linked athlete's set. Restricting to threads he has spoken in is a one-line
@@ -169,5 +182,6 @@ answered since shows as unread, which is the truth.
 | `lib/review/coach-replies-context.tsx` | The shared state, `useMarkThreadRead` |
 | `components/coach/replies-inbox.tsx` | The Replies screen |
 | `components/coach/thread-link.tsx` | Behind `/coach/replies/<setId>` |
+| `components/coach/athlete-videos.tsx`, `comment-box.tsx` | The reply box on a reviewed clip's dialog |
 | `components/shell/coach-shell.tsx` | The nav item and its badge |
 | `scripts/e2e-replies.mts` | The loop, live (`npm run e2e:replies`) |

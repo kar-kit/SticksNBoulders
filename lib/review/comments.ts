@@ -143,6 +143,17 @@ export function authorLabel(
   return names.get(comment.authorId) ?? fallback;
 }
 
+/**
+ * Where a coach's reply from the clip dialog hangs (F26 follow-up): under the
+ * newest thread on the set, the same rule the athlete's reply box uses
+ * (lib/review/feedback.ts `replyParentId`), so his answer lands in the thread
+ * the athlete just wrote in. Null on a set nobody has spoken about.
+ */
+export function latestThreadId(comments: readonly Comment[]): string | null {
+  const threads = threadComments(comments);
+  return threads.length === 0 ? null : threads[threads.length - 1].comment.id;
+}
+
 /** Comment counts per set, for the queue rail and the "already said" marker. */
 export function countBySet(comments: readonly Comment[]): Map<string, number> {
   const counts = new Map<string, number>();

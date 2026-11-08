@@ -231,8 +231,11 @@ on the message opens them on a touch screen; the button stays for everyone
 else. Enter, Space and the arrows are kept from the window inside it, so
 choosing 👍 in the Review Queue never also clears the clip or plays it.
 
-The Athlete View is still read-only for *words*; reacting there is allowed,
-because a reaction is an acknowledgement and not a second composer.
+The Athlete View is read-only for *words* on a clip still waiting; reacting
+there is allowed, because a reaction is an acknowledgement and not a second
+composer. Since the F26 follow-up a *reviewed* clip's dialog carries the
+queue's own comment box, so the coach can answer a reply without un-clearing
+the clip (docs/replies.md).
 
 Loaded with the comments, never per comment: `fetchReactionsForSets` is one
 IN query by set id, run in parallel with the comment read on every screen

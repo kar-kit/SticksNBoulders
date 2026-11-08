@@ -17,7 +17,9 @@
  * -- shows no badge, because the mark is server-side. A reaction lights
  * nothing (F25). A reply on a clip he has already cleared lights Replies and
  * leaves Review alone. The stable thread link, /coach/replies/<setId>, opens
- * the same dialog; for an athlete who has unlinked it says so instead.
+ * the same dialog, where the coach answers in words on the cleared clip: an
+ * ordinary comment, threaded, readable by the athlete, and the clip stays
+ * cleared. For an athlete who has unlinked the link says so instead.
  *
  * Creates throwaway users and removes them and everything they wrote.
  */
@@ -332,6 +334,45 @@ try {
   check("and reads the thread there", await until(async () => (await navCount(page, "Replies")) === 0));
   check("the phone's badge clears with it", await until(async () => (await navCount(phone, "Replies")) === 0));
   created.push({ table: "thread_reads", id: `${coach.$id}_${clearedSet}` });
+
+  // --- answering from the dialog, on the cleared clip ---------------------------
+  console.log("\nAnswering in words without un-clearing the clip");
+  const dialog = page.getByRole("dialog");
+  const box = dialog.getByRole("textbox", { name: "Your comment" });
+  check("a reviewed clip's dialog has a reply box", await until(async () => box.isVisible()));
+  await box.fill("Yes, two-second pause on the first set.");
+  await dialog.getByRole("button", { name: "Reply", exact: true }).click();
+  check("the answer shows in the thread", await until(async () => dialog.getByText("Yes, two-second pause on the first set.").isVisible()));
+  type CommentRow = { $id: string; author_id?: string; parent_id?: string | null; body?: string };
+  const answers = async () =>
+    (
+      await adminDb.listRows({
+        databaseId: D,
+        tableId: "set_comments",
+        queries: [Query.equal("set_id", clearedSet), Query.equal("author_id", coach.$id), Query.limit(10)],
+      })
+    ).rows as unknown as CommentRow[];
+  check("and lands at Appwrite as an ordinary coach comment", await until(async () => (await answers()).length === 2));
+  const answer = (await answers()).find((r) => r.body === "Yes, two-second pause on the first set.");
+  if (answer) created.push({ table: "set_comments", id: answer.$id });
+  check("threaded under the thread the athlete wrote in", answer?.parent_id === cleared, String(answer?.parent_id));
+  check(
+    "the review row is still there: the clip stays cleared",
+    await adminDb.getRow({ databaseId: D, tableId: "set_reviews", rowId: reviewId }).then(() => true, () => false),
+  );
+  await page.waitForTimeout(1500);
+  check("Review's badge has not moved", (await navCount(page, "Review")) === reviewBefore);
+  check("and Replies stays clear", (await navCount(page, "Replies")) === 0);
+  check(
+    "the athlete reads the answer from their own session, as the Feedback screen does",
+    (
+      await athleteDb.listRows({
+        databaseId: D,
+        tableId: "set_comments",
+        queries: [Query.equal("athlete_id", athlete.$id), Query.equal("author_id", coach.$id), Query.limit(10)],
+      })
+    ).rows.some((r) => r.$id === answer?.$id),
+  );
 
   // --- an unlinked athlete -----------------------------------------------------
   console.log("\nAfter the athlete unlinks");
