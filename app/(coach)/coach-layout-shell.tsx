@@ -6,6 +6,7 @@ import { fetchAthleteNames } from "@/lib/auth/athletes";
 import { fetchProfile } from "@/lib/profile/profile-store";
 import { useRecordMode, useSession } from "@/lib/auth/session-context";
 import { fetchClips, fetchReviews, subscribeToClips } from "@/lib/review/queue-store";
+import { CoachRepliesProvider, useCoachReplies } from "@/lib/review/coach-replies-context";
 import { stillReviewed } from "@/lib/review/queue";
 import { browserAppwrite } from "@/appwrite/browser-client";
 
@@ -19,6 +20,13 @@ import { browserAppwrite } from "@/appwrite/browser-client";
  * the number beside the nav and the number of clips on the screen cannot
  * disagree. A badge that says seven over a queue of four is worse than no badge:
  * it sends a coach looking for work that is not there.
+ *
+ * The Replies badge (F26) comes from the provider mounted here, which every
+ * coach screen shares, so opening a thread anywhere clears the same number
+ * the nav shows. It listens to `set_comments` and the coach's own
+ * `thread_reads`, never to the clip queue: a reply on a clip he has already
+ * cleared surfaces under Replies and does not put the clip back in Review
+ * (docs/replies.md).
  *
  * Mounting it records coach as the side in use, whether the coach arrived by
  * the switch or by a link (last-used wins; lib/auth/mode.ts).
@@ -92,7 +100,29 @@ export function CoachLayoutShell({ children }: { children: React.ReactNode }) {
   const badge = linkedNow.size > 0 ? reviewCount : 0;
 
   return (
-    <CoachShell athletes={rail} reviewCount={badge}>
+    <CoachRepliesProvider coachId={coachId} athleteIds={athleteIds}>
+      <ShellWithReplies athletes={rail} reviewCount={badge} linked={linkedNow.size > 0}>
+        {children}
+      </ShellWithReplies>
+    </CoachRepliesProvider>
+  );
+}
+
+/** Reads the provider it sits under, which the layout above cannot. */
+function ShellWithReplies({
+  athletes,
+  reviewCount,
+  linked,
+  children,
+}: {
+  athletes: CoachAthlete[];
+  reviewCount: number;
+  linked: boolean;
+  children: React.ReactNode;
+}) {
+  const { unreadCount } = useCoachReplies();
+  return (
+    <CoachShell athletes={athletes} reviewCount={reviewCount} repliesCount={linked ? unreadCount : 0}>
       {children}
     </CoachShell>
   );

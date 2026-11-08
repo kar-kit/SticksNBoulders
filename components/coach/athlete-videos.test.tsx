@@ -6,18 +6,27 @@ const queue = vi.hoisted(() => ({
   fetchClips: vi.fn(),
   fetchClipUrls: vi.fn(),
   fetchReviews: vi.fn(),
+  clearClip: vi.fn(),
+  restoreClip: vi.fn(),
 }));
 vi.mock("@/lib/review/queue-store", () => queue);
 
-const comments = vi.hoisted(() => ({ fetchCommentsForSets: vi.fn() }));
+const comments = vi.hoisted(() => ({ fetchCommentsForSets: vi.fn(), submitComment: vi.fn() }));
 vi.mock("@/lib/review/comment-store", () => comments);
+
+const replies = vi.hoisted(() => {
+  const markRead = vi.fn();
+  return { markRead, useMarkThreadRead: vi.fn(), useCoachReplies: () => ({ markRead }) };
+});
+vi.mock("@/lib/review/coach-replies-context", () => replies);
 
 const library = vi.hoisted(() => ({ fetchExerciseLibrary: vi.fn() }));
 vi.mock("@/lib/exercises/library", () => library);
 
+const linkState = vi.hoisted(() => ({ athleteIds: ["joey"] as string[] }));
 vi.mock("@/lib/auth/session-context", () => ({
   useSession: () => ({
-    state: { status: "signed-in", user: { id: "coach", name: "Ruairi", email: "" }, coach: { isCoach: true, athleteIds: ["joey"] } },
+    state: { status: "signed-in", user: { id: "coach", name: "Ruairi", email: "" }, coach: { isCoach: true, athleteIds: linkState.athleteIds } },
     refresh: vi.fn(),
   }),
 }));
@@ -54,6 +63,9 @@ beforeEach(() => {
     clip("bench-clip", "bench", "2026-10-14T10:00:00Z"),
   ]);
   queue.fetchReviews.mockResolvedValue(new Map([["bench-clip", "file-bench-clip"]]));
+  linkState.athleteIds = ["joey"];
+  replies.markRead.mockReset();
+  comments.submitComment.mockReset();
   queue.fetchClipUrls.mockReset();
   queue.fetchClipUrls.mockResolvedValue(new Map([["file-bench-clip", "/api/clip/file-bench-clip?t=x"]]));
   comments.fetchCommentsForSets.mockResolvedValue([
@@ -104,6 +116,15 @@ describe("the list", () => {
 });
 
 describe("an opened clip", () => {
+  it("marks its thread read for the coach's Replies, as far as the dialog shows (F26)", async () => {
+    render(<AthleteVideos {...props} openClipId="bench-clip" />);
+    await screen.findByRole("dialog");
+    const [setId, shown] = replies.useMarkThreadRead.mock.lastCall!;
+    expect(setId).toBe("bench-clip");
+    expect((shown as { setId: string }[]).every((c) => c.setId === "bench-clip")).toBe(true);
+    expect(shown).not.toHaveLength(0);
+  });
+
   it("shows the review queue's player and the whole thread together", async () => {
     render(<AthleteVideos {...props} openClipId="bench-clip" />);
     const dialog = await screen.findByRole("dialog", { name: /Bench Press 120 × 5 @8/ });
@@ -145,5 +166,74 @@ describe("an opened clip", () => {
     render(<AthleteVideos {...props} openClipId="somebody-elses" />);
     await screen.findByRole("button", { name: /Bench Press/ });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("answering on a reviewed clip (F26 follow-up)", () => {
+  it("gives a reviewed clip the queue's comment box, without Skip", async () => {
+    render(<AthleteVideos {...props} openClipId="bench-clip" />);
+    const dialog = await screen.findByRole("dialog", { name: /Bench Press/ });
+    expect(within(dialog).getByRole("textbox", { name: "Your comment" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Reply" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
+    // The thread is still there, above the box.
+    expect(within(dialog).getByText("Got it, felt it too.")).toBeInTheDocument();
+  });
+
+  it("keeps a waiting clip pointed at Review, with no box", async () => {
+    render(<AthleteVideos {...props} openClipId="squat-clip" />);
+    const dialog = await screen.findByRole("dialog", { name: /Squat/ });
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("posts a normal coach comment under the athlete's thread, never touches the review, and marks the thread read", async () => {
+    const user = userEvent.setup();
+    comments.submitComment.mockImplementation(async (request: Record<string, unknown>) => ({
+      ok: true,
+      comment: { id: "c3", setId: request.setId, athleteId: request.athleteId, authorId: request.authorId, body: request.body, parentId: request.parentId, createdAt: "2026-10-15T09:00:00Z" },
+    }));
+    render(<AthleteVideos {...props} openClipId="bench-clip" />);
+    const dialog = await screen.findByRole("dialog", { name: /Bench Press/ });
+    await user.type(within(dialog).getByRole("textbox", { name: "Your comment" }), "Yes, keep them tucked.");
+    await user.click(within(dialog).getByRole("button", { name: "Reply" }));
+
+    expect(comments.submitComment).toHaveBeenCalledWith({
+      athleteId: "joey",
+      setId: "bench-clip",
+      authorId: "coach",
+      body: "Yes, keep them tucked.",
+      parentId: "c1",
+    });
+    // The clip stays cleared: no review written, none removed.
+    expect(queue.clearClip).not.toHaveBeenCalled();
+    expect(queue.restoreClip).not.toHaveBeenCalled();
+    // Read through what he had on screen when he answered.
+    expect(replies.markRead).toHaveBeenCalledWith("bench-clip", [
+      expect.objectContaining({ id: "c1" }),
+      expect.objectContaining({ id: "c2" }),
+    ]);
+    expect(await within(dialog).findByText("Yes, keep them tucked.")).toBeInTheDocument();
+    expect(within(dialog).getByRole("textbox", { name: "Your comment" })).toHaveValue("");
+    expect(within(dialog).getByText("Reviewed")).toBeInTheDocument();
+  });
+
+  it("keeps the draft and marks nothing when the post is refused", async () => {
+    const user = userEvent.setup();
+    comments.submitComment.mockResolvedValue({ ok: false, reason: "failed" });
+    render(<AthleteVideos {...props} openClipId="bench-clip" />);
+    const dialog = await screen.findByRole("dialog", { name: /Bench Press/ });
+    await user.type(within(dialog).getByRole("textbox", { name: "Your comment" }), "Lighter next week.");
+    await user.click(within(dialog).getByRole("button", { name: "Reply" }));
+    expect(await within(dialog).findByText(/didn't send/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("textbox", { name: "Your comment" })).toHaveValue("Lighter next week.");
+    expect(replies.markRead).not.toHaveBeenCalled();
+  });
+
+  it("shows no box once the athlete is no longer linked to this coach", async () => {
+    linkState.athleteIds = [];
+    render(<AthleteVideos {...props} openClipId="bench-clip" />);
+    const dialog = await screen.findByRole("dialog", { name: /Bench Press/ });
+    expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Got it, felt it too.")).toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { ClipPlayer } from "@/components/video/clip-player";
 import { ClipThumb } from "@/components/video/clip-thumb";
 import { CommentThread } from "@/components/video/comment-thread";
@@ -12,10 +12,12 @@ import { fetchExerciseLibrary } from "@/lib/exercises/library";
 import { fetchClips, fetchClipUrls, fetchReviews } from "@/lib/review/queue-store";
 import { clipSource } from "@/lib/video/clip-source";
 import { stillReviewed } from "@/lib/review/queue";
-import { fetchCommentsForSets } from "@/lib/review/comment-store";
-import type { Comment } from "@/lib/review/comments";
+import { fetchCommentsForSets, submitComment } from "@/lib/review/comment-store";
+import { latestThreadId, type Comment } from "@/lib/review/comments";
 import { fetchReactionsQuietly } from "@/lib/review/reaction-store";
 import { useReactions, type ReactionControls } from "@/lib/review/use-reactions";
+import { useCoachReplies, useMarkThreadRead } from "@/lib/review/coach-replies-context";
+import { CommentBox } from "./comment-box";
 import { shortDate, videoRows, type VideoRow } from "@/lib/coach/athlete-view";
 import { formatNumber } from "@/lib/logging/prefill";
 import { cn } from "@/lib/cn";
@@ -35,12 +37,25 @@ import { cn } from "@/lib/cn";
  * closes it. Recent feedback used to be a separate list beside this one, and
  * every comment in it was about one of these clips; it now sits on the clip.
  *
- * Read-only, deliberately. Commenting belongs in the queue, where the context
+ * Read-only for a clip still waiting. Commenting there belongs in the queue, where the context
  * panel carries the prescription, the RPE and recent weeks; a second composer
  * here would be a second place to say the same thing with less attached. A
  * clip still waiting says so and points there.
  *
- * Reactions (F25) are the exception, and not a second composer: a 👍 on the
+ * Opening a clip here marks its thread read for the coach's Replies (F26), as
+ * far as the comments the dialog shows: this is where a Replies row and the
+ * stable thread link (`/coach/replies/<setId>`) land.
+ *
+ * One exception, approved by Joey (F26 follow-up): a reviewed clip gets the
+ * Review Queue's own comment box, so the coach can answer an athlete's reply
+ * on a clip he has already cleared without putting it back in the queue. It
+ * writes an ordinary coach comment through the same write path, threaded
+ * under the newest thread, touches no `set_reviews` row (the clip stays
+ * cleared), and marks the thread read. A clip still waiting keeps pointing at
+ * Review, where commenting comes with the context panel. No box for an
+ * athlete who is no longer linked to this coach.
+ *
+ * Reactions (F25) are the other exception, and not a second composer: a 👍 on the
  * athlete's reply is an acknowledgement, not something to say with context
  * attached, and a coach reading back a thread here is exactly when one fits.
  */
@@ -70,6 +85,9 @@ const loadLabel = (row: VideoRow) =>
 export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onClose }: AthleteVideosProps) {
   const { state: session } = useSession();
   const coachId = session.status === "signed-in" ? session.user.id : "";
+  const linkedNow = session.status === "signed-in" && session.coach.athleteIds.includes(athleteId);
+  const { markRead } = useCoachReplies();
+  const [posting, setPosting] = useState(false);
   const [state, setState] = useState<State>({ status: "loading" });
   const [showAll, setShowAll] = useState(false);
   const { controls: reactions, setLoaded: setReactions } = useReactions({
@@ -119,6 +137,41 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
     () => new Map(athleteName ? [[athleteId, athleteName] as const] : []),
     [athleteId, athleteName],
   );
+  /**
+   * Answers on a reviewed clip (F26 follow-up). A comment and nothing else:
+   * no review is written or removed, so the clip stays cleared. The thread is
+   * marked read through what the coach had on screen when he wrote it -- he
+   * is answering it, so he has read it -- and his comment then holds the
+   * watermark for everything before it (lib/review/replies.ts).
+   */
+  const reply = useCallback(
+    async (setId: string, body: string): Promise<boolean> => {
+      if (!coachId || state.status !== "ready" || state.athleteId !== athleteId) return false;
+      const seen = state.data.comments.filter((comment) => comment.setId === setId);
+      setPosting(true);
+      try {
+        const outcome = await submitComment({
+          athleteId,
+          setId,
+          authorId: coachId,
+          body,
+          parentId: latestThreadId(seen),
+        });
+        if (!outcome.ok) return false;
+        setState((current) =>
+          current.status === "ready" && current.athleteId === athleteId
+            ? { ...current, data: { ...current.data, comments: [...current.data.comments, outcome.comment] } }
+            : current,
+        );
+        markRead(setId, seen);
+        return true;
+      } finally {
+        setPosting(false);
+      }
+    },
+    [athleteId, coachId, markRead, state],
+  );
+
   // The dialog outlives the URL by its fade-out; "Show all" rows rise in.
   const dialog = usePresence(data ? opened : null);
   const isNew = useArrivals(
@@ -221,6 +274,9 @@ export function AthleteVideos({ athleteId, athleteName, openClipId, onOpen, onCl
           leaving={dialog.leaving}
           onExited={dialog.exited}
           reactions={reactions}
+          // Reviewed clips only, and only while this coach still coaches them.
+          onReply={dialog.shown.reviewed && linkedNow ? (body) => reply(dialog.shown!.id, body) : undefined}
+          posting={posting}
         />
       ) : null}
     </section>
@@ -236,6 +292,8 @@ function ClipDialog({
   leaving,
   onExited,
   reactions,
+  onReply,
+  posting = false,
 }: {
   row: VideoRow;
   comments: Comment[];
@@ -245,9 +303,15 @@ function ClipDialog({
   leaving: boolean;
   onExited: () => void;
   reactions: ReactionControls;
+  /** Present on a reviewed clip the coach may still answer (F26 follow-up). */
+  onReply?: (body: string) => Promise<boolean>;
+  posting?: boolean;
 }) {
   const heading = useId();
   const [src, setSrc] = useState<{ clipId: string; url: string | null } | null>(null);
+  // F26: the thread is on screen, so it is read -- up to what is shown. Not
+  // while the dialog fades out, which is the coach leaving it.
+  useMarkThreadRead(leaving ? null : row.id, comments);
 
   // Minted per clip on open, not for the whole list: most of the list is read,
   // not watched, and each URL is a signed ticket with a short life.
@@ -315,10 +379,29 @@ function ClipDialog({
                 <p className="m-0 whitespace-pre-line text-ui">“{row.notes}”</p>
               </div>
             ) : null}
-            <CommentThread comments={comments} names={names} viewerId={viewerId} reactions={reactions} />
-            {comments.length === 0 ? (
-              <p className="m-0 text-ui text-muted-2">Nothing said on this clip yet.</p>
-            ) : null}
+            {onReply ? (
+              // The Review Queue's own box: same thread above it, same checks,
+              // same write. No Skip -- the clip is already cleared.
+              <CommentBox
+                clipId={row.id}
+                comments={comments}
+                names={names}
+                viewerId={viewerId}
+                onPost={onReply}
+                busy={posting}
+                reactions={reactions}
+                postLabel="Reply"
+                hint="⌘/Ctrl + Enter replies. The clip stays reviewed."
+                autoFocus={false}
+              />
+            ) : (
+              <>
+                <CommentThread comments={comments} names={names} viewerId={viewerId} reactions={reactions} />
+                {comments.length === 0 ? (
+                  <p className="m-0 text-ui text-muted-2">Nothing said on this clip yet.</p>
+                ) : null}
+              </>
+            )}
             {!row.reviewed ? (
               <Link href="/coach/review" className="self-start text-ui text-accent-fill underline">
                 Comment on it in Review

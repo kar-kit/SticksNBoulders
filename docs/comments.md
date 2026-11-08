@@ -231,8 +231,11 @@ on the message opens them on a touch screen; the button stays for everyone
 else. Enter, Space and the arrows are kept from the window inside it, so
 choosing 👍 in the Review Queue never also clears the clip or plays it.
 
-The Athlete View is still read-only for *words*; reacting there is allowed,
-because a reaction is an acknowledgement and not a second composer.
+The Athlete View is read-only for *words* on a clip still waiting; reacting
+there is allowed, because a reaction is an acknowledgement and not a second
+composer. Since the F26 follow-up a *reviewed* clip's dialog carries the
+queue's own comment box, so the coach can answer a reply without un-clearing
+the clip (docs/replies.md).
 
 Loaded with the comments, never per comment: `fetchReactionsForSets` is one
 IN query by set id, run in parallel with the comment read on every screen
@@ -241,6 +244,16 @@ empty list, so an instance without v23 shows threads without chips rather
 than no threads. Optimistic, one tap per message in flight; a refused write
 puts back exactly what was there and says *"That reaction didn't save."* under
 the message for a few seconds.
+
+## The coach's side: Replies (F26, schema v24)
+
+The athlete has had an unread dot since Order 34; the coach had none. Athlete
+replies now light a **Replies** badge in the coach nav, read state is a
+server-side row per coach per thread (`thread_reads`, readable by the coach
+alone so it is never a read receipt), and `/coach/replies/<setId>` is a stable
+link to one thread. Reactions stay quiet: the inbox never reads or subscribes
+to them. Comments now carry their server `$createdAt` as `postedAt`, which is
+what the coach's unread arithmetic compares on. See docs/replies.md.
 
 ## Verified against the instance
 
