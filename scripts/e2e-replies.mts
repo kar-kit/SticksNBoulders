@@ -35,6 +35,7 @@ import { circleTeamId } from "../appwrite/documents/circle";
 import {
   commentPermissions,
   linkPermissions,
+  profilePermissions,
   reactionPermissions,
   reviewPermissions,
   sessionPermissions,
@@ -124,6 +125,17 @@ try {
   await ensureCircle(teams, athlete.$id, "Replies Athlete");
   await ensureCircle(teams, coach.$id, "Ruairi Replies");
   await addCoachToCircle(teams, athlete.$id, coach.$id);
+
+  // The inbox names a thread from the athlete's profile, as e2e:athlete-view
+  // seeds it; without one the row honestly reads "Unnamed athlete".
+  await adminDb.createRow({
+    databaseId: D,
+    tableId: "profiles",
+    rowId: athlete.$id,
+    data: { user_id: athlete.$id, display_name: "Replies Athlete", units: "kg", created_at: new Date().toISOString() },
+    permissions: profilePermissions({ athleteId: athlete.$id }),
+  });
+  created.push({ table: "profiles", id: athlete.$id });
 
   // The link row is server-only in the app; the admin key stands in for the
   // redemption Function here, exactly as e2e:feedback does.
