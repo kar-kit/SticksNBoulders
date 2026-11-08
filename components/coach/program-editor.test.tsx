@@ -1586,15 +1586,90 @@ describe("the clipboard (F28)", () => {
     expect(screen.queryByRole("button", { name: "Paste Squat day here" })).not.toBeInTheDocument();
   });
 
-  it("warns that a day pasted into a live week is on their Today at once", async () => {
-    const user = userEvent.setup();
+  /** Autumn block published, week 1 live, week 2 still a draft. */
+  const liveTree = () => {
     const live = tree();
     live.status = "published";
     live.blocks[0].weeks[0].status = "published";
-    store.tree = live;
+    return live;
+  };
+  const copyDays = () => store.send.mock.calls.filter((c) => c[0].op === "copyDay");
+
+  it("asks before pasting a day into a live week, Cancel focused, and Cancel writes nothing", async () => {
+    const user = userEvent.setup();
+    store.tree = liveTree();
     await ready();
     await copyFromMenu(user, "Squat day actions", "Copy Squat day");
-    expect(screen.getByText("Live week: a pasted day is on their Today at once.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Paste Squat day here" }));
+    const dialog = screen.getByRole("dialog", { name: "Paste Squat day into a live week?" });
+    expect(dialog).toHaveTextContent("Week 1 is published, so the day goes on Joey's Today straight away.");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(store.send).not.toHaveBeenCalled();
+    // Escape is Cancel too.
+    await user.click(screen.getByRole("button", { name: "Paste Squat day here" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(store.send).not.toHaveBeenCalled();
+  });
+
+  it("pastes into the live week once confirmed, once however many taps", async () => {
+    const user = userEvent.setup();
+    store.tree = liveTree();
+    await ready();
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    await copyFromMenu(user, "Squat day actions", "Paste Squat day above Squat day");
+    const confirm = within(screen.getByRole("dialog", { name: "Paste Squat day into a live week?" })).getByRole("button", {
+      name: "Paste to live week",
+    });
+    await user.dblClick(confirm);
+    await waitFor(() => expect(copyDays()).toHaveLength(1));
+    expect(copyDays()[0][0]).toMatchObject({ dayId: "d1", toWeekId: "w1", position: 0 });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("names the athlete the live paste reaches when it crosses athletes", async () => {
+    const user = userEvent.setup();
+    const first = render(<ProgramEditor programId="p1" />);
+    await screen.findByRole("region", { name: "Squat day" });
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    first.unmount();
+    const hers = andreas();
+    hers.status = "published";
+    hers.blocks[0].weeks[0].status = "published";
+    store.tree = hers;
+    render(<ProgramEditor programId="p2" />);
+    await screen.findByText(/Andrea's own maxes/);
+    await user.click(await screen.findByRole("button", { name: "Paste Squat day here" }));
+    expect(screen.getByRole("dialog", { name: "Paste Squat day into a live week?" })).toHaveTextContent(
+      "the day goes on Andrea's Today straight away.",
+    );
+    expect(store.send).not.toHaveBeenCalled();
+  });
+
+  it("pastes into a draft week, a week into a live program, and + Day into a live week with no prompt", async () => {
+    const user = userEvent.setup();
+    store.tree = liveTree();
+    await ready();
+    // + Day is not a paste: unchanged, no prompt.
+    await user.click(screen.getByRole("button", { name: "+ Day" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledWith(expect.objectContaining({ op: "addDay", weekId: "w1" })));
+    // A pasted week is always a draft.
+    await copyFromMenu(user, "Week 1 actions", "Copy week 1");
+    await user.click(screen.getByRole("button", { name: "Paste Week 1 into Block 1" }));
+    await waitFor(() => expect(store.send).toHaveBeenCalledWith(expect.objectContaining({ op: "copyWeek" })));
+    // A day into week 2, still a draft under the live program, double-tapped.
+    await copyFromMenu(user, "Squat day actions", "Copy Squat day");
+    await user.click(screen.getByRole("button", { name: "Week 2, draft" }));
+    // The paste is still on the wire when the second tap lands.
+    let answer: (value: { rowId: string }) => void = () => {};
+    store.send.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    await user.dblClick(screen.getByRole("button", { name: "Paste Squat day here" }));
+    answer({ rowId: "pasted" });
+    await waitFor(() => expect(copyDays()).toHaveLength(1));
+    expect(copyDays()[0][0]).toMatchObject({ toWeekId: "w2" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("copies a week and pastes it after another from the week's ⋯, or at the end of a block from the outline", async () => {

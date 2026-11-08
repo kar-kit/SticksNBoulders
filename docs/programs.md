@@ -260,9 +260,13 @@ time, except days an athlete logged from (`realignPlan`, run by the editor
 after the op, the same rule as moving the start date). Moving a day within its
 week does not change its date: its date is its weekday chip. [Inference]
 
-**Drafts.** A pasted week is a draft. A pasted day lands in the target week as
-it stands, like "+ Day": in a live week it is on the athlete's Today at once,
-and the editor says so beside the Paste button.
+**Drafts.** A pasted week is a draft, so it never prompts. A pasted day lands
+in the target week as it stands: in a live week (week and program published)
+it is on the athlete's Today at once, so the editor asks first -- a dialog
+naming whose Today it reaches, Cancel focused, nothing written until "Paste to
+live week" (Joey, Nov 2026). A draft week pastes with no prompt. "+ Day" does
+not share the paste path and is unchanged: it adds an empty day. Moving a day
+within its week keeps its date (confirmed, Nov 2026).
 
 **Retries and double taps.** The editor mints a `requestId` per paste and keeps
 it until that paste succeeds. It is the new day's or week's row id, and every

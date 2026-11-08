@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Menu, type MenuItem } from "@/components/ui/menu";
 import { flash, useArrivals, useChanged, usePresence } from "@/components/ui/motion";
@@ -240,6 +241,10 @@ export function ProgramEditor({
   const pastes = useRef(new Map<string, string>());
   /** The last paste, for the cross-athlete notice under it. */
   const [pasted, setPasted] = useState<{ from: ClipItem; dayIds: string[]; weekId: string | null } | null>(null);
+  /** A day paste into a live week, waiting on the coach's yes. Nothing is written until then. */
+  const [confirmPaste, setConfirmPaste] = useState<{ into: WeekTree; position?: number; item: ClipItem } | null>(null);
+  /** A paste on its way: a second tap before `busy` has rendered is dropped here. */
+  const pasting = useRef(false);
   /** Opened or closed by the coach this visit, so it slides; remembered-open just is. */
   const contextToggled = useChanged(contextOpen);
   const drawer = usePresence(contextOpen);
@@ -659,9 +664,24 @@ export function ProgramEditor({
   /** Paste the held day into a week: at the end, or at `position`. Opens the week, lands on the day. */
   const pasteDay = async (into: WeekTree, position?: number) => {
     if (clip?.kind !== "day") return;
-    const from = clip;
+    // Into a live week the day is on the athlete's Today the moment it lands,
+    // so the coach says yes first. A draft week pastes at once, as before.
+    if (into.status === "published" && tree.status === "published") {
+      setConfirmPaste({ into, position, item: clip });
+      return;
+    }
+    await writeDayPaste(clip, into, position);
+  };
+
+  const writeDayPaste = async (from: ClipItem, into: WeekTree, position?: number) => {
+    if (pasting.current) return;
+    pasting.current = true;
     const key = `day:${from.sourceId}>${into.id}@${position ?? "end"}`;
-    const id = await run({ op: "copyDay", dayId: from.sourceId, toWeekId: into.id, position, requestId: requestFor(key) });
+    const id = await run({ op: "copyDay", dayId: from.sourceId, toWeekId: into.id, position, requestId: requestFor(key) }).finally(
+      () => {
+        pasting.current = false;
+      },
+    );
     if (!id) return;
     pastes.current.delete(key);
     setPasted({ from, dayIds: [id], weekId: null });
@@ -841,6 +861,34 @@ export function ProgramEditor({
         <div className="px-4 pt-4 md:px-6">
           <ClipboardBar item={clip} crossNote={clipNote} onClear={clearClip} />
         </div>
+      ) : null}
+      {editable && confirmPaste ? (
+        // Cancel is the safe default: it has the focus, and Escape or the
+        // backdrop is Cancel too.
+        <Dialog labelledBy="paste-live-q" size="sm" onClose={() => setConfirmPaste(null)}>
+          <h2 id="paste-live-q" className="m-0 text-title font-semibold">
+            Paste {confirmPaste.item.label} into a live week?
+          </h2>
+          <p className="mt-2 mb-0 text-body text-muted">
+            {weekName(confirmPaste.into.id)} is published, so the day goes on{" "}
+            {tree.athleteId === tree.coachId ? "your" : `${athleteName ?? "the athlete"}'s`} Today straight away.
+          </p>
+          <div className="mt-5 flex gap-3">
+            <Button block variant="secondary" autoFocus onClick={() => setConfirmPaste(null)}>
+              Cancel
+            </Button>
+            <Button
+              block
+              onClick={() => {
+                const { item, into, position } = confirmPaste;
+                setConfirmPaste(null);
+                void writeDayPaste(item, into, position);
+              }}
+            >
+              Paste to live week
+            </Button>
+          </div>
+        </Dialog>
       ) : null}
       {pastedNotice ? (
         <p role="status" className="mx-4 mt-3 mb-0 text-ui text-muted md:mx-6">
@@ -1116,10 +1164,6 @@ export function ProgramEditor({
                           >
                             Paste {clip.label} here
                           </Button>
-                          {live ? (
-                            // Pasting into a published week is adding a day to it: live on save.
-                            <span className="text-caption text-muted">Live week: a pasted day is on their Today at once.</span>
-                          ) : null}
                         </>
                       ) : null}
                     </div>
