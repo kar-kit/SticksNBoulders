@@ -211,6 +211,73 @@ leaves a draft week, or a draft program only the coach sees -- never half a
 block on Today. Templates and bulk percentage shifting are deliberately not
 built.
 
+## Clipboard: copy, paste and move days and weeks (F28)
+
+_Source: Ruairi, Nov 2026: "if I could copy and paste days and weeks that would
+be great ... I sometimes have ideas for one program and then I'll make it and
+then make ideas for another and then I can't move them around."_
+
+**In the editor.** A day's or week's ⋯ has **Copy**. What is held shows as a
+chip under the program header, with an × to clear it, and stays held across
+programs and athletes for the tab (sessionStorage, `lib/programming/clipboard.ts`).
+A held day pastes with **Paste … here** beside "+ Day" (end of the week) or
+**Paste … above** in another day's ⋯; a held week with **Paste …** under a
+block's "+ Week" in the outline (end of the block) or **Paste … after** in a
+week's ⋯. Days and weeks move one place with **Move up / Move down** in their
+⋯, or Alt+Up/Down on a day's name or an outline week -- the same keys that
+move a line. Moving across programs is copy, paste, then Remove the original;
+there is no cut. [Inference]
+
+**What is held is a reference, not a snapshot.** The paste copies the source as
+it is when Paste is pressed, on the server. An edit to the source after Copy is
+pasted too; a source removed since is a `not-found`. [Inference]
+
+Two ops on `POST /api/program`, both server-only:
+
+- **`copyDay {dayId, toWeekId, position?, requestId?}`** copies a day and its
+  lines into a week of any program the caller may edit.
+- **`copyWeek {weekId, toBlockId, position?, requestId?}`** copies a week, its
+  days and lines, into a block, as a **draft** (as `duplicateWeek`). Its label
+  travels unless the target block already has a week of that name.
+
+`position` is the place among the target's siblings; omitted or past the end
+appends. The siblings are renumbered 0, 1, 2... around the new row.
+
+**Authorisation, exercises, percentages, lines:** exactly as `copyProgram`
+above. Edit rights on the source, an active link (or self, or a template) on
+the target; exercises and reference lifts re-resolved in the target's library
+(the coach's for a template); lines copied as typed, so `75%` is 75% of the
+target athlete's max. The editor says so before and after a paste that crosses
+athletes, and counts the pasted lines that have no max for them.
+
+**Dates come from where it lands, never from the source.** A pasted day takes
+its source's weekday in the target week if that weekday is free, otherwise
+"+ Day"'s next free weekday (`pastedDayDate`). A pasted week's days take their
+weekdays in the week the paste becomes (`pastedWeekDates`). On a template, or a
+program with nothing to count from, a paste is undated. A week that moves --
+by Move or by a paste ahead of it -- takes its days with it whole weeks at a
+time, except days an athlete logged from (`realignPlan`, run by the editor
+after the op, the same rule as moving the start date). Moving a day within its
+week does not change its date: its date is its weekday chip. [Inference]
+
+**Drafts.** A pasted week is a draft, so it never prompts. A pasted day lands
+in the target week as it stands: in a live week (week and program published)
+it is on the athlete's Today at once, so the editor asks first -- a dialog
+naming whose Today it reaches, Cancel focused, nothing written until "Paste to
+live week" (Joey, Nov 2026). A draft week pastes with no prompt. "+ Day" does
+not share the paste path and is unchanged: it adds an empty day. Moving a day
+within its week keeps its date (confirmed, Nov 2026).
+
+**Retries and double taps.** The editor mints a `requestId` per paste and keeps
+it until that paste succeeds. It is the new day's or week's row id, and every
+row under it is named from it (`<id>_d2`, `<id>_d2_l7`), so a retry after a
+dropped connection or a second tap gets 409 on rows already written and counts
+them as done. Rows are written children first and the day or week itself last:
+until it exists the rest are orphans the tree drops, so a paste that dies
+halfway shows nothing, and pressing Paste again finishes it.
+
+Neither op reads or writes `sessions` or `sets`.
+
 ## Seams for what comes next
 
 - **Backoff rules (21), built:** see below.

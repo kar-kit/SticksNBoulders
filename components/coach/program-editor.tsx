@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Menu } from "@/components/ui/menu";
+import { Menu, type MenuItem } from "@/components/ui/menu";
 import { flash, useArrivals, useChanged, usePresence } from "@/components/ui/motion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs } from "@/components/ui/tabs";
 import { ExerciseTypeahead } from "@/components/exercises/exercise-typeahead";
 import { BumpWeek } from "@/components/coach/bump-week";
 import { CopyProgram } from "@/components/coach/copy-program";
+import { ClipboardBar } from "@/components/coach/program-clipboard";
 import { CellInput, ConfirmStrip, InlineText } from "@/components/coach/program-editor-parts";
 import { LoadPreviewLine } from "@/components/coach/load-preview";
 import { ProgramCalendar } from "@/components/coach/program-calendar";
@@ -46,6 +48,7 @@ import {
   placeDay,
   programAnchor,
   rangeLabel,
+  realignPlan,
   redatePlan,
   scheduledOnFor,
   weekIndexOf,
@@ -53,6 +56,7 @@ import {
   WEEKDAYS,
 } from "@/lib/programming/calendar";
 import { copyWeekPlan } from "@/lib/programming/copy";
+import { clearClip, holdClip, newPasteId, useClip, type ClipItem } from "@/lib/programming/clipboard";
 import { bumpPlan, lineAt, type Bump } from "@/lib/programming/bump";
 import type { BlockTree, DayTree, Prescription, ProgramOpInput, ProgramTree, WeekTree } from "@/lib/programming/program";
 import type { EditorLanding, EditorView } from "@/lib/coach/adjust-program";
@@ -108,6 +112,14 @@ import { fetchLoggedDayIds, fetchProgramTree, sendProgramOp } from "@/lib/progra
  * then warm-up, sets, reps and pause, then load with its kilos, then rest
  * and note. Ruairi does edit from his phone (October 2026), so it stays
  * fully editable there.
+ *
+ * Clipboard (F28): "Copy" in a day's or a week's ⋯ holds it, and it stays
+ * held across programs and athletes for the tab (lib/programming/clipboard.ts).
+ * Wherever the coach goes next, "Paste" puts a copy there -- a day into a
+ * week, a week into a block -- through `copyDay` / `copyWeek`, which remap
+ * exercises into the target athlete's library. Days and weeks also move up
+ * and down from their ⋯, or with Alt+Up/Down on a day's name or a week in
+ * the outline, as lines do; a week that moves takes its days' dates with it.
  *
  * Motion (docs/coach-motion.md) says what just happened and nothing more: a
  * view or week arriving, a line, day or week added or going, a cell saved or
@@ -218,6 +230,21 @@ export function ProgramEditor({
   /** The progression view's block, when the coach picked one; else the selected week's. */
   const [progressionBlockId, setProgressionBlockId] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useContextDrawer();
+  /** F28: what is held, live across every editor in the tab. */
+  const clip = useClip();
+  /**
+   * The request id of each paste not yet answered, by what it pastes where.
+   * A paste that failed -- refused, offline, timed out -- keeps its id, so
+   * pressing Paste again finishes that paste on the server instead of making
+   * a second one; a paste that landed forgets it, so the next is new.
+   */
+  const pastes = useRef(new Map<string, string>());
+  /** The last paste, for the cross-athlete notice under it. */
+  const [pasted, setPasted] = useState<{ from: ClipItem; dayIds: string[]; weekId: string | null } | null>(null);
+  /** A day paste into a live week, waiting on the coach's yes. Nothing is written until then. */
+  const [confirmPaste, setConfirmPaste] = useState<{ into: WeekTree; position?: number; item: ClipItem } | null>(null);
+  /** A paste on its way: a second tap before `busy` has rendered is dropped here. */
+  const pasting = useRef(false);
   /** Opened or closed by the coach this visit, so it slides; remembered-open just is. */
   const contextToggled = useChanged(contextOpen);
   const drawer = usePresence(contextOpen);
@@ -576,6 +603,167 @@ export function ProgramEditor({
       return null;
     });
 
+  /* --- F28: copy, paste, move ------------------------------------------- */
+
+  // Whose maxes a percentage pasted here resolves against, in words.
+  const maxesWhose =
+    tree.athleteId === null ? null : tree.athleteId === tree.coachId ? "your own" : `${athleteName ?? "this athlete"}'s own`;
+  /** Pasting here prices the lines off someone else's maxes than the source's. */
+  const crossAthlete = (item: ClipItem | null) => item !== null && tree.athleteId !== null && item.athleteId !== tree.athleteId;
+  const holder = tree.athleteId === null || tree.athleteId === tree.coachId ? null : athleteName;
+
+  const copyDay = (day: DayTree, title: string) =>
+    holdClip({
+      kind: "day",
+      sourceId: day.id,
+      programId: tree.id,
+      programName: tree.name,
+      athleteId: tree.athleteId,
+      athleteName: holder,
+      label: title,
+      days: 1,
+      lines: day.prescriptions.length,
+    });
+  const copyWeek = (source: WeekTree) =>
+    holdClip({
+      kind: "week",
+      sourceId: source.id,
+      programId: tree.id,
+      programName: tree.name,
+      athleteId: tree.athleteId,
+      athleteName: holder,
+      label: weekName(source.id),
+      days: source.days.length,
+      lines: source.days.reduce((n, d) => n + d.prescriptions.length, 0),
+    });
+
+  const requestFor = (key: string) => {
+    let id = pastes.current.get(key);
+    if (!id) {
+      id = newPasteId();
+      pastes.current.set(key, id);
+    }
+    return id;
+  };
+
+  /**
+   * The days of every week whose place in the program changed go with it
+   * (realignPlan). Logged days stay. When the sessions could not be read
+   * nothing is moved, and the answer says so.
+   */
+  const realign = async (after: ProgramTree | null): Promise<"done" | "unchecked"> => {
+    if (!after) return "done";
+    if (!logged) return realignPlan(tree, after, new Set()).length > 0 ? "unchecked" : "done";
+    for (const move of realignPlan(tree, after, logged)) {
+      await sendProgramOp({ op: "updateDay", dayId: move.dayId, scheduledOn: move.scheduledOn });
+    }
+    return "done";
+  };
+  const UNCHECKED = "The other weeks kept their dates: it could not be checked which days were logged.";
+
+  /** Paste the held day into a week: at the end, or at `position`. Opens the week, lands on the day. */
+  const pasteDay = async (into: WeekTree, position?: number) => {
+    if (clip?.kind !== "day") return;
+    // Into a live week the day is on the athlete's Today the moment it lands,
+    // so the coach says yes first. A draft week pastes at once, as before.
+    if (into.status === "published" && tree.status === "published") {
+      setConfirmPaste({ into, position, item: clip });
+      return;
+    }
+    await writeDayPaste(clip, into, position);
+  };
+
+  const writeDayPaste = async (from: ClipItem, into: WeekTree, position?: number) => {
+    if (pasting.current) return;
+    pasting.current = true;
+    const key = `day:${from.sourceId}>${into.id}@${position ?? "end"}`;
+    const id = await run({ op: "copyDay", dayId: from.sourceId, toWeekId: into.id, position, requestId: requestFor(key) }).finally(
+      () => {
+        pasting.current = false;
+      },
+    );
+    if (!id) return;
+    pastes.current.delete(key);
+    setPasted({ from, dayIds: [id], weekId: null });
+    setWeekId(into.id);
+    landingTo.current = { dayId: id, focusDay: true };
+    setLandings((n) => n + 1);
+  };
+
+  /** Paste the held week into a block, as a draft; the weeks after it move on a week. */
+  const pasteWeek = async (into: BlockTree, position?: number) => {
+    if (clip?.kind !== "week") return;
+    const from = clip;
+    const key = `week:${from.sourceId}>${into.id}@${position ?? "end"}`;
+    // Set inside the work, read after it: an object, so the type is not narrowed to "done".
+    const outcome: { dates: "done" | "unchecked" } = { dates: "done" };
+    const id = await runMany(async () => {
+      const { rowId } = await sendProgramOp({
+        op: "copyWeek",
+        weekId: from.sourceId,
+        toBlockId: into.id,
+        position,
+        requestId: requestFor(key),
+      });
+      pastes.current.delete(key);
+      outcome.dates = await realign(await fetchProgramTree(programId));
+      return rowId;
+    });
+    if (!id) return;
+    if (outcome.dates === "unchecked") setError(`Pasted. ${UNCHECKED}`);
+    setPasted({ from, dayIds: [], weekId: id });
+    setWeekId(id);
+  };
+
+  /** A day one place up or down its week. Dates stay: a day's date is its weekday chip. */
+  const moveDay = (into: WeekTree, dayId: string, step: 1 | -1) => {
+    const ids = into.days.map((d) => d.id);
+    const at = ids.indexOf(dayId);
+    const to = at + step;
+    if (busy || at < 0 || to < 0 || to >= ids.length) return;
+    [ids[at], ids[to]] = [ids[to], ids[at]];
+    void run({ op: "reorder", level: "days", parentId: into.id, orderedIds: ids });
+  };
+
+  /** A week one place up or down its block, its days re-dated into the week it now is. */
+  const moveWeek = (weekToMove: string, step: 1 | -1) => {
+    const parent = tree.blocks.find((b) => b.weeks.some((w) => w.id === weekToMove));
+    if (!parent || busy) return;
+    const at = parent.weeks.findIndex((w) => w.id === weekToMove);
+    const to = at + step;
+    if (to < 0 || to >= parent.weeks.length) return;
+    const weeks = [...parent.weeks];
+    [weeks[at], weeks[to]] = [weeks[to], weeks[at]];
+    const after: ProgramTree = { ...tree, blocks: tree.blocks.map((b) => (b.id === parent.id ? { ...b, weeks } : b)) };
+    const outcome: { dates: "done" | "unchecked" } = { dates: "done" };
+    void runMany(async () => {
+      await sendProgramOp({ op: "reorder", level: "weeks", parentId: parent.id, orderedIds: weeks.map((w) => w.id) });
+      outcome.dates = await realign(after);
+      return null;
+    }).then(() => {
+      if (outcome.dates === "unchecked") setError(`Moved. ${UNCHECKED}`);
+    });
+  };
+
+  // Under the last paste, when it crossed athletes: whose maxes, and which lines have none.
+  const pastedNotice = (() => {
+    if (!pasted || !crossAthlete(pasted.from) || !maxesWhose) return null;
+    const days = allWeeks
+      .filter((w) => w.id === pasted.weekId)
+      .flatMap((w) => w.days)
+      .concat(allWeeks.flatMap((w) => w.days).filter((d) => pasted.dayIds.includes(d.id)));
+    if (days.length === 0) return null;
+    const missing = days.flatMap((d) => d.prescriptions.filter((l) => previewFor(l, d)?.tone === "missing")).length;
+    const noMax = missing
+      ? ` ${missing} ${missing === 1 ? "line has" : "lines have"} no max to price off yet: they see the percentage, not kilos.`
+      : "";
+    return `Pasted ${pasted.from.label} from ${pasted.from.programName}. Percentages on it resolve against ${maxesWhose} maxes.${noMax}`;
+  })();
+  const clipNote =
+    clip && crossAthlete(clip) && maxesWhose
+      ? `Pasting here: percentages resolve against ${maxesWhose} maxes${clip.athleteName ? `, not ${clip.athleteName}'s` : ""}.`
+      : null;
+
   const weekAt = week ? weekIndexOf(tree, week.id) : -1;
   const progressionBlock = tree.blocks.find((b) => b.id === progressionBlockId) ?? block;
   // The drawer's exercises: every one on this week's days, in order.
@@ -669,6 +857,45 @@ export function ProgramEditor({
         </p>
       ) : null}
 
+      {editable && clip ? (
+        <div className="px-4 pt-4 md:px-6">
+          <ClipboardBar item={clip} crossNote={clipNote} onClear={clearClip} />
+        </div>
+      ) : null}
+      {editable && confirmPaste ? (
+        // Cancel is the safe default: it has the focus, and Escape or the
+        // backdrop is Cancel too.
+        <Dialog labelledBy="paste-live-q" size="sm" onClose={() => setConfirmPaste(null)}>
+          <h2 id="paste-live-q" className="m-0 text-title font-semibold">
+            Paste {confirmPaste.item.label} into a live week?
+          </h2>
+          <p className="mt-2 mb-0 text-body text-muted">
+            {weekName(confirmPaste.into.id)} is published, so the day goes on{" "}
+            {tree.athleteId === tree.coachId ? "your" : `${athleteName ?? "the athlete"}'s`} Today straight away.
+          </p>
+          <div className="mt-5 flex gap-3">
+            <Button block variant="secondary" autoFocus onClick={() => setConfirmPaste(null)}>
+              Cancel
+            </Button>
+            <Button
+              block
+              onClick={() => {
+                const { item, into, position } = confirmPaste;
+                setConfirmPaste(null);
+                void writeDayPaste(item, into, position);
+              }}
+            >
+              Paste to live week
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
+      {pastedNotice ? (
+        <p role="status" className="mx-4 mt-3 mb-0 text-ui text-muted md:mx-6">
+          {pastedNotice}
+        </p>
+      ) : null}
+
       {shown === "progression" ? (
         <section aria-label="Progression" className="flex min-w-0 flex-1 flex-col gap-5 px-4 py-4 animate-fade-in md:px-6 md:py-5">
           {progressionBlock ? (
@@ -737,6 +964,8 @@ export function ProgramEditor({
             weekName={weekName}
             onAddWeek={(b) => void addWeek(b)}
             onAddBlock={() => void addBlock()}
+            onMoveWeek={moveWeek}
+            pasteWeek={clip?.kind === "week" ? { label: clip.label, onPaste: (b) => void pasteWeek(b) } : null}
             onRenameBlock={(b, name) => void run({ op: "updateBlock", blockId: b.id, name })}
             onRemoveBlock={async (b) => {
               await run({ op: "removeBlock", blockId: b.id });
@@ -803,6 +1032,24 @@ export function ProgramEditor({
                       disabled={busy}
                       className="max-md:[&>button]:size-10"
                       items={[
+                        { label: `Copy ${weekPhrase(week.id)}`, onSelect: () => copyWeek(week) },
+                        clip?.kind === "week" && {
+                          label: `Paste ${clip.label} after ${weekPhrase(week.id)}`,
+                          onSelect: () => {
+                            const inBlock = block.weeks.findIndex((w) => w.id === week.id);
+                            void pasteWeek(block, inBlock + 1);
+                          },
+                        },
+                        {
+                          label: `Move ${weekPhrase(week.id)} up`,
+                          disabled: block.weeks[0]?.id === week.id,
+                          onSelect: () => moveWeek(week.id, -1),
+                        },
+                        {
+                          label: `Move ${weekPhrase(week.id)} down`,
+                          disabled: block.weeks.at(-1)?.id === week.id,
+                          onSelect: () => moveWeek(week.id, 1),
+                        },
                         {
                           // A copy at the end of this block, as a draft.
                           label: `Duplicate ${weekPhrase(week.id)}`,
@@ -881,17 +1128,44 @@ export function ProgramEditor({
                       editLine={editLine}
                       insertLine={insertLine}
                       createExercise={createExercise}
+                      onMove={(step) => moveDay(week, day.id, step)}
+                      actions={(title) => [
+                        { label: `Copy ${title}`, onSelect: () => copyDay(day, title) },
+                        clip?.kind === "day" && {
+                          label: `Paste ${clip.label} above ${title}`,
+                          onSelect: () => void pasteDay(week, at),
+                        },
+                        { label: `Move ${title} up`, disabled: at === 0, onSelect: () => moveDay(week, day.id, -1) },
+                        {
+                          label: `Move ${title} down`,
+                          disabled: at === week.days.length - 1,
+                          onSelect: () => moveDay(week, day.id, 1),
+                        },
+                      ]}
                     />
                   ))}
                   {editable ? (
-                    <div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                       <Button
                         variant="secondary"
+                        className="max-md:h-10"
                         disabled={busy}
                         onClick={() => void run({ op: "addDay", weekId: week.id, scheduledOn: newDayDate(tree, week.id) })}
                       >
                         + Day
                       </Button>
+                      {clip?.kind === "day" ? (
+                        <>
+                          <Button
+                            variant="secondary"
+                            className="max-md:h-10"
+                            disabled={busy}
+                            onClick={() => void pasteDay(week)}
+                          >
+                            Paste {clip.label} here
+                          </Button>
+                        </>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -974,6 +1248,10 @@ interface DayEditorProps {
   editLine: (line: Prescription, op: ProgramOpInput) => Promise<string | null>;
   insertLine: (op: ProgramOpInput, claim: (rowId: string, line: Prescription | null) => ProgramOpInput[]) => Promise<string | null>;
   createExercise: (name: string) => Promise<Exercise | null>;
+  /** F28: Alt+Up/Down on the day's name moves the day one place. */
+  onMove?: (step: 1 | -1) => void;
+  /** F28: copy, paste above, move -- ahead of Remove in the day's ⋯, given its title. */
+  actions?: (title: string) => ReadonlyArray<MenuItem | null | false | undefined>;
 }
 
 /**
@@ -1008,6 +1286,8 @@ function DayEditor({
   editLine,
   insertLine,
   createExercise,
+  onMove,
+  actions,
 }: DayEditorProps) {
   const title = day.label ?? `Day ${index + 1}`;
   const [removing, setRemoving] = useState(false);
@@ -1286,7 +1566,16 @@ function DayEditor({
       )}
     >
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-1">
+        <div
+          className="flex items-center gap-1"
+          onKeyDown={(e) => {
+            // As a line moves in the grid: Alt+Up/Down on the day's name.
+            if (!onMove || !e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+            if ((e.target as Element).closest('[role="menu"]')) return;
+            e.preventDefault();
+            onMove(e.key === "ArrowUp" ? -1 : 1);
+          }}
+        >
           <InlineText
             label={`${title} name`}
             value={day.label ?? ""}
@@ -1300,7 +1589,7 @@ function DayEditor({
               label={`${title} actions`}
               disabled={busy}
               className="max-md:[&>button]:size-10"
-              items={[{ label: `Remove ${title}`, tone: "danger", onSelect: () => setRemoving(true) }]}
+              items={[...(actions?.(title) ?? []), { label: `Remove ${title}`, tone: "danger", onSelect: () => setRemoving(true) }]}
             />
           ) : null}
         </div>
