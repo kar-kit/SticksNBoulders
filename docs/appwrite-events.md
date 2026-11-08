@@ -70,6 +70,13 @@ skips those rows and readers still ignore a forged mark.
 spelling, as `subscribeToClips` already does live. It never subscribes to
 `comment_reactions`, which is what keeps reactions quiet.
 
+Since F27 (schema v25) **`notify`** subscribes to `sets` create and update
+and `set_comments` create, both spellings, and sends web push to coaches
+(docs/push-notifications.md). It was created after `validate-row` on purpose,
+so it runs after it for the same event, and it never fails an execution, for
+the reason below. If both spellings fire for one write it runs twice; the
+service worker collapses the duplicate into a silent replace.
+
 ## What this does and does not change
 
 **Rollups stay in a route.** `app/api/rollup/route.ts` was written as a

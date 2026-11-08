@@ -85,6 +85,8 @@ export function expectedStamp(tableId: string, row: Row): string[] | null {
         return POLICIES.coach_athlete_links({ coachId: str(row, "coach_id"), athleteId: str(row, "athlete_id") });
       case "invite_codes":
         return POLICIES.invite_codes({ coachId: str(row, "coach_id") });
+      case "push_subscriptions":
+        return POLICIES.push_subscriptions({ userId: str(row, "user_id") });
       case "programs":
       case "program_blocks":
       case "program_weeks":
