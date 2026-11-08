@@ -1,5 +1,5 @@
 import { circleTeamId } from "./circle";
-import { exercisePermissions, posterPermissions, reviewPermissions, sessionPermissions, setPermissions, videoPermissions } from "./policy";
+import { exercisePermissions, posterPermissions, reviewPermissions, sessionPermissions, setPermissions, threadReadPermissions, videoPermissions } from "./policy";
 import type { RowWriter } from "./row-writer";
 import {
   attachVideo,
@@ -16,6 +16,8 @@ import {
   EXERCISE_IN_USE,
   finishSession,
   markSetReviewed,
+  markThreadRead,
+  threadReadRowId,
   normaliseSessionName,
   renameExercise,
   SESSION_HAS_SETS,
@@ -906,5 +908,69 @@ describe("cardio (F23, schema v21)", () => {
     await setGlobalExerciseKind(h.deps, { rowId: "ex-bike", kind: "cardio" });
     expect(h.last()).toMatchObject({ rowId: "ex-bike", data: { kind: "cardio" } });
     expect(h.last().permissions).toEqual(exercisePermissions({ athleteId: "library", isGlobal: true }));
+  });
+});
+
+describe("markThreadRead (F26)", () => {
+  const coach = { userId: COACH };
+  const mark = { athleteId: ATHLETE, setId: "set_1", lastReadAt: "2026-11-01T09:30:00.000+00:00" };
+
+  it("writes one mark per coach per thread, at the derived id, stamped for the coach alone", async () => {
+    const { deps, last } = harness();
+    await markThreadRead(deps, coach, mark);
+    expect(last()).toEqual({
+      op: "create",
+      tableId: "thread_reads",
+      rowId: `${COACH}_set_1`,
+      data: {
+        coach_id: COACH,
+        athlete_id: ATHLETE,
+        set_id: "set_1",
+        // Appwrite's offset spelling, stored as the same instant in the browser's.
+        last_read_at: "2026-11-01T09:30:00.000Z",
+      },
+      permissions: threadReadPermissions({ coachId: COACH }),
+    });
+    expect(threadReadRowId(COACH, "set_1")).toBe(`${COACH}_set_1`);
+  });
+
+  it("stores the comment's server time it was given, never the coach's clock", async () => {
+    const { deps, last } = harness();
+    await markThreadRead(deps, coach, mark);
+    expect(last().data.last_read_at).not.toBe(NOW.toISOString());
+  });
+
+  it("moves an existing mark forward on the 409, restamped onto the current policy", async () => {
+    const { deps, calls } = harness();
+    deps.writer.createRow = async () => {
+      throw Object.assign(new Error("Document with the requested ID already exists."), { code: 409 });
+    };
+    await markThreadRead(deps, coach, { ...mark, lastReadAt: "2026-11-02T08:00:00.000Z" });
+    expect(calls).toEqual([
+      {
+        op: "update",
+        tableId: "thread_reads",
+        rowId: `${COACH}_set_1`,
+        data: { last_read_at: "2026-11-02T08:00:00.000Z" },
+        permissions: threadReadPermissions({ coachId: COACH }),
+      },
+    ]);
+  });
+
+  it("throws any other refusal rather than turning it into an update", async () => {
+    const { deps, calls } = harness();
+    deps.writer.createRow = async () => {
+      throw Object.assign(new Error("not authorized"), { code: 401 });
+    };
+    await expect(markThreadRead(deps, coach, mark)).rejects.toMatchObject({ code: 401 });
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses a malformed time or id before any request", async () => {
+    const { deps, calls } = harness();
+    await expect(markThreadRead(deps, coach, { ...mark, lastReadAt: "yesterday" })).rejects.toThrow();
+    await expect(markThreadRead(deps, coach, { ...mark, setId: "" })).rejects.toThrow();
+    await expect(markThreadRead(deps, coach, { ...mark, athleteId: "x".repeat(37) })).rejects.toThrow();
+    expect(calls).toEqual([]);
   });
 });

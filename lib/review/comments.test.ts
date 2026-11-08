@@ -2,6 +2,7 @@ import {
   authorLabel,
   checkComment,
   countBySet,
+  latestThreadId,
   MAX_COMMENT_LENGTH,
   rejectionMessage,
   threadComments,
@@ -149,5 +150,20 @@ describe("countBySet", () => {
     expect(counts.get("s1")).toBe(2);
     expect(counts.get("s2")).toBe(1);
     expect(counts.has("s3")).toBe(false);
+  });
+});
+
+describe("latestThreadId (F26 follow-up)", () => {
+  it("hangs the coach's answer on the newest thread, as the athlete's reply box does", () => {
+    const comments = [
+      comment({ id: "old", createdAt: "2026-09-10T10:00:00.000Z" }),
+      comment({ id: "new", createdAt: "2026-09-12T10:00:00.000Z" }),
+      comment({ id: "reply", authorId: "joey", parentId: "new", createdAt: "2026-09-13T10:00:00.000Z" }),
+    ];
+    expect(latestThreadId(comments)).toBe("new");
+  });
+
+  it("is null on a set nobody has spoken about", () => {
+    expect(latestThreadId([])).toBeNull();
   });
 });

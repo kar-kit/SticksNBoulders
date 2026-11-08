@@ -20,6 +20,7 @@ export type WritableTable =
   | "set_reviews"
   | "set_comments"
   | "comment_reactions"
+  | "thread_reads"
   | "bodyweight_entries";
 export type ServerTable =
   | "stats_rollups"
@@ -441,6 +442,38 @@ export function reactionPermissions(author: CommentAuthor): string[] {
   return commentPermissions(author);
 }
 
+export interface ThreadReader {
+  /** The coach who read the thread. The only person who ever sees the row. */
+  coachId: string;
+}
+
+/**
+ * A coach's read mark on one set's thread (F26, schema v24): how far into
+ * the thread he has read, so the athlete's replies after it light his
+ * Replies badge on every device he signs in on.
+ *
+ * Read, update and delete for the coach by `user:`, and for nobody else --
+ * not the circle, which is the stamp on every other row about a set. That
+ * is the point of the row rather than an oversight. A read mark the athlete
+ * could read is a read receipt, and the blueprint rules those out; it is why
+ * the athlete's own "seen" lives in localStorage (lib/review/feedback-seen.ts).
+ * The coach stamping his own `user:` role is a role he holds, so this is a
+ * stamp a browser can make (Order 17's rule is about naming somebody ELSE).
+ *
+ * Nobody else needs it either. The row says which set he opened and when,
+ * and nothing in it is read by anyone but him. A revoked link leaves his
+ * marks behind and harmless: they name sets he can no longer read, and the
+ * reader drops a mark for an athlete he no longer coaches.
+ *
+ * `update("user:<coach_id>")` is the provenance proof, as on a review, so a
+ * mark planted in his name -- the way to silence a coach's badge -- is never
+ * read and validate-row deletes it.
+ */
+export function threadReadPermissions({ coachId }: ThreadReader): string[] {
+  const id = requireId(coachId, "coachId");
+  return [read(user(id)), update(user(id)), del(user(id))];
+}
+
 /**
  * A weigh-in.
  *
@@ -464,6 +497,7 @@ export const POLICIES = {
   set_reviews: reviewPermissions,
   set_comments: commentPermissions,
   comment_reactions: reactionPermissions,
+  thread_reads: threadReadPermissions,
   bodyweight_entries: bodyweightPermissions,
   stats_rollups: rollupPermissions,
   coach_athlete_links: linkPermissions,
@@ -485,6 +519,7 @@ export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
   "set_reviews",
   "set_comments",
   "comment_reactions",
+  "thread_reads",
   "bodyweight_entries",
 ];
 

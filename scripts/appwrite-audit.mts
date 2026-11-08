@@ -71,6 +71,7 @@ import {
   deleteSet,
   finishSession,
   markSetReviewed,
+  markThreadRead,
   normaliseExerciseName,
   OWN_MESSAGE,
   postComment,
@@ -598,6 +599,14 @@ try {
     })
   ).$id;
 
+  // F26: the coach's read marks, through the helper from his own session. The
+  // target is on A's first set; a second on set2 outlives the delete cells, so
+  // the revocation checks can ask whether he keeps his own.
+  const readMark = (setId: string, at: Date) =>
+    markThreadRead(C.deps, { userId: C.id }, { athleteId: A.id, setId, lastReadAt: at.toISOString() });
+  targets.thread_reads = await ownerCreate("thread_reads", () => readMark(targets.sets, new Date()), "coach");
+  extras.read2 = (await readMark(extras.set2, new Date())).$id;
+
   // Server-only tables, through their routes, with real JWTs.
   const rollup = await callRoute(rollupRoute as Handler, "/api/rollup", A, {
     exerciseId: targets.exercises,
@@ -842,6 +851,14 @@ try {
       const reviewStamp = actor === "athlete" ? commentPermissions({ athleteId: A.id, authorId: A.id }) : readableByEveryone();
       remember(`review:${actor}`, await forged(ruleFor("set_reviews"), actor, "set_reviews", ID.unique(), { coach_id: C.id, athlete_id: A.id, set_id: extras.set2, reviewed_at: now(), client_review_id: `forged-${tag}` }, reviewStamp, `createRow claiming the coach cleared A's clip, ${actor === "athlete" ? "stamped read for A's circle" : EVERYONE}`));
     }
+    if (actor !== "coach") {
+      // F26: a read mark in the coach's name, dated far ahead -- the way to
+      // silence his Replies badge for A's thread for good. A, like everyone,
+      // can stamp read(users) but never the coach's own user role. One set id
+      // per forger, so the unique index on (coach_id, set_id) can never refuse
+      // a forgery for the wrong reason.
+      remember(`read:${actor}`, await forged(ruleFor("thread_reads"), actor, "thread_reads", ID.unique(), { coach_id: C.id, athlete_id: A.id, set_id: `audit-fr${ACTORS.indexOf(actor)}-${stamp}`, last_read_at: "2030-01-01T00:00:00.000Z" }, readableByEveryone(), `createRow of a read mark claiming coach_id = the coach, ${EVERYONE}`));
+    }
     if (actor !== "athlete" && actor !== "coach") {
       // F25: a reaction in A's name on his coach's comment, as if A had said it.
       remember(`reaction:${actor}`, await forged(ruleFor("comment_reactions"), actor, "comment_reactions", ID.unique(), { comment_id: extras[`bare:${actor}`], set_id: extras.set2, athlete_id: A.id, author_id: A.id, emoji: "❓", created_at: now(), client_reaction_id: `forged-${tag}` }, readableByEveryone(), `createRow on the coach's comment with author_id = A, ${EVERYONE}`));
@@ -975,6 +992,14 @@ try {
       (await C.tables.listRows({ databaseId: D, tableId: "comment_reactions", queries: [Query.equal("set_id", extras.set2), Query.limit(100)] })).rows,
     ).map((row) => row.$id);
     check("a reaction forged in A's name never reaches the coach's thread; A's own does", !seen.includes(forgedReaction) && seen.includes(targets.comment_reactions), `coach reads ${seen.length} reactions`);
+  }
+  const forgedRead = forgedBy["read:athlete"] ?? forgedBy["read:otherAthlete"] ?? "";
+  if (forgedRead) {
+    const marks = authenticRows(
+      "thread_reads",
+      (await C.tables.listRows({ databaseId: D, tableId: "thread_reads", queries: [Query.equal("coach_id", C.id), Query.limit(100)] })).rows,
+    ).map((row) => row.$id);
+    check("a read mark forged in the coach's name never silences his Replies badge; his own does count", !marks.includes(forgedRead) && marks.includes(targets.thread_reads), `coach's own marks: ${marks.length}`);
   }
   const forgedLibrary = Object.entries(forgedBy).filter(([k]) => k.startsWith("library:")).map(([, id]) => id);
   if (forgedLibrary.length > 0) {
@@ -1124,6 +1149,8 @@ try {
       // One per actor, and never the target's 👍 or the owner's ❓ below, or
       // a no-op update would pass for permission (see above).
       comment_reactions: { emoji: (["💪", "🔥", "❤️", "😂", "💪"] as const)[n - 1] },
+      // F26: the watermark is the row; moving it is what silences a badge.
+      thread_reads: { last_read_at: new Date(Date.UTC(2030, 0, n)).toISOString() },
       stats_rollups: { tonnage_kg: 90000 + n },
       reference_maxes: { value_kg: 500 + n },
       invite_codes: { coach_id: ID.unique() },
@@ -1151,6 +1178,8 @@ try {
     // F25: tapping a different emoji replaces A's, as an update of the row.
     comment_reactions: () =>
       changeReaction(A.deps, { userId: A.id }, { rowId: targets.comment_reactions, athleteId: A.id, emoji: "❓" }),
+    // F26: opening the thread again moves the mark on (the 409 on the derived id).
+    thread_reads: () => readMark(targets.sets, new Date(Date.now() + 60_000)),
   };
 
   for (const rule of RULES) {
@@ -1299,6 +1328,9 @@ try {
     ["A's reply to him", () => C.tables.getRow({ databaseId: D, tableId: "set_comments", rowId: extras.reply })],
     ["A's reaction to his comment", () => C.tables.getRow({ databaseId: D, tableId: "comment_reactions", rowId: targets.comment_reactions })],
     ["his own reaction to A's reply", () => C.tables.getRow({ databaseId: D, tableId: "comment_reactions", rowId: extras.coachReaction })],
+    // His read mark on A's thread stays readable to him by design (user:, not
+    // the circle): it names a set he can no longer open, and the reader drops
+    // marks for athletes he no longer coaches. What he must lose is the thread.
     ["A's clip", () => C.storage.getFile({ bucketId: BUCKET, fileId: targets.set_videos })],
     ["A's clip's proxy", () => C.storage.getFile({ bucketId: PROXY_BUCKET, fileId: targets.set_video_proxies })],
     ["A's picture", () => C.storage.getFile({ bucketId: AVATAR_BUCKET, fileId: targets.avatars })],
@@ -1337,6 +1369,14 @@ try {
     "while A keeps reading his own reaction, and the coach's on his reply",
     (await attempt(() => A.tables.getRow({ databaseId: D, tableId: "comment_reactions", rowId: targets.comment_reactions }))).kind === "allowed" &&
       (await attempt(() => A.tables.getRow({ databaseId: D, tableId: "comment_reactions", rowId: extras.coachReaction }))).kind === "allowed",
+  );
+  check(
+    "the ex-coach still reads his own read mark on A's thread, which is his and names only a set id (F26)",
+    (await attempt(() => C.tables.getRow({ databaseId: D, tableId: "thread_reads", rowId: extras.read2 }))).kind === "allowed",
+  );
+  check(
+    "and A never can",
+    (await attempt(() => A.tables.getRow({ databaseId: D, tableId: "thread_reads", rowId: extras.read2 }))).kind === "denied",
   );
   check(
     "or clear A's clip from a queue",
@@ -1524,6 +1564,7 @@ async function teardown() {
     set_reviews: ["athlete_id", "coach_id"],
     set_comments: ["athlete_id", "author_id"],
     comment_reactions: ["athlete_id", "author_id"],
+    thread_reads: ["athlete_id", "coach_id"],
     coach_athlete_links: ["athlete_id", "coach_id"],
     invite_codes: ["coach_id"],
     programs: ["athlete_id", "coach_id"],

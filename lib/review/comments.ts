@@ -25,6 +25,14 @@ export interface Comment {
   parentId: string | null;
   /** ISO 8601, as Appwrite stores it. */
   createdAt: string;
+  /**
+   * When the row reached Appwrite: its server `$createdAt` (F26). Unlike
+   * `createdAt`, which the writer's own clock supplies, this is one clock for
+   * both parties, so the coach's unread arithmetic compares like with like
+   * (lib/review/replies.ts). Absent on a comment built locally after posting
+   * and in fixtures; readers fall back to `createdAt`.
+   */
+  postedAt?: string;
 }
 
 export type CommentRejection =
@@ -133,6 +141,17 @@ export function authorLabel(
 ): string {
   if (comment.authorId === viewerId) return "You";
   return names.get(comment.authorId) ?? fallback;
+}
+
+/**
+ * Where a coach's reply from the clip dialog hangs (F26 follow-up): under the
+ * newest thread on the set, the same rule the athlete's reply box uses
+ * (lib/review/feedback.ts `replyParentId`), so his answer lands in the thread
+ * the athlete just wrote in. Null on a set nobody has spoken about.
+ */
+export function latestThreadId(comments: readonly Comment[]): string | null {
+  const threads = threadComments(comments);
+  return threads.length === 0 ? null : threads[threads.length - 1].comment.id;
 }
 
 /** Comment counts per set, for the queue rail and the "already said" marker. */

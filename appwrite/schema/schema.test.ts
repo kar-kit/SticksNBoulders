@@ -39,6 +39,7 @@ describe("schema shape", () => {
       "set_reviews",
       "sets",
       "stats_rollups",
+      "thread_reads",
     ]);
     // Templates are programs with no athlete, not a table of their own. A
     // second model for "the same block, unassigned" is the retrofit to avoid.
@@ -616,7 +617,7 @@ describe("comment reactions (v23, F25)", () => {
   const reactions = () => table("comment_reactions");
 
   it("is a new table, so applying v23 rewrites no existing row", () => {
-    expect(schema.version).toBe(23);
+    expect(schema.version).toBeGreaterThanOrEqual(23);
     // Nothing on set_comments changed: reactions hang off it, not inside it.
     expect(columnKeys("set_comments")).toEqual([
       "set_id",
@@ -667,5 +668,40 @@ describe("comment reactions (v23, F25)", () => {
     expect(reactions().permissions).toEqual(table("set_comments").permissions);
     expect(USER_WRITABLE_TABLES).toContain("comment_reactions");
     expect(reactions().purpose).toMatch(/quiet/i);
+  });
+});
+
+describe("thread reads (v24, F26)", () => {
+  const reads = () => table("thread_reads");
+
+  it("is a new table, so applying v24 rewrites no existing row", () => {
+    expect(schema.version).toBe(24);
+    // Replies hang off comments as they are: nothing on set_comments changed.
+    expect(columnKeys("set_comments")).toEqual([
+      "set_id",
+      "athlete_id",
+      "author_id",
+      "body",
+      "parent_id",
+      "created_at",
+      "client_comment_id",
+    ]);
+  });
+
+  it("carries the coach, the denormalised athlete, the set and a watermark, all required", () => {
+    expect(columnKeys("thread_reads")).toEqual(["coach_id", "athlete_id", "set_id", "last_read_at"]);
+    for (const column of reads().columns) expect(column.required, column.key).toBe(true);
+    expect(reads().columns.find((c) => c.key === "last_read_at")).toMatchObject({ type: "datetime" });
+  });
+
+  it("allows one mark per coach per thread in the database itself", () => {
+    expect(reads().indexes).toEqual([{ key: "idx_coach_set", type: "unique", columns: ["coach_id", "set_id"] }]);
+  });
+
+  it("is stamped per row and created by sessions, and says it is never a read receipt", () => {
+    expect(reads().rowSecurity).toBe(true);
+    expect(reads().permissions).toEqual(table("set_reviews").permissions);
+    expect(USER_WRITABLE_TABLES).toContain("thread_reads");
+    expect(reads().purpose).toMatch(/read receipt/i);
   });
 });

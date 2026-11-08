@@ -26,7 +26,8 @@ import {
  *   - a set carrying `update("user:<athlete_id>")` was written by that athlete
  *   - a comment carrying `update("user:<author_id>")` was written by its author,
  *     and so was a reaction (F25)
- *   - a review carrying `update("user:<coach_id>")` was written by that coach
+ *   - a review carrying `update("user:<coach_id>")` was written by that coach,
+ *     and so was a thread read mark (F26)
  *   - a library exercise carrying `update("team:library")` was written by the
  *     server, because no session can stamp a team it is not in
  *
@@ -78,6 +79,8 @@ export function expectedStamp(tableId: string, row: Row): string[] | null {
         return POLICIES.set_comments({ athleteId: str(row, "athlete_id"), authorId: str(row, "author_id") });
       case "comment_reactions":
         return POLICIES.comment_reactions({ athleteId: str(row, "athlete_id"), authorId: str(row, "author_id") });
+      case "thread_reads":
+        return POLICIES.thread_reads({ coachId: str(row, "coach_id") });
       case "coach_athlete_links":
         return POLICIES.coach_athlete_links({ coachId: str(row, "coach_id"), athleteId: str(row, "athlete_id") });
       case "invite_codes":
@@ -124,6 +127,7 @@ export function ownerProof(tableId: string, row: Row): string[] | null {
       case "bodyweight_entries":
         return [writtenByUser(str(row, "athlete_id"))];
       case "set_reviews":
+      case "thread_reads":
         return [writtenByUser(str(row, "coach_id"))];
       case "set_comments":
       case "comment_reactions":
@@ -289,6 +293,7 @@ function hasForeignAvatar(row: Row): boolean {
 function ownerLabel(tableId: string): string {
   switch (tableId) {
     case "set_reviews":
+    case "thread_reads":
       return "coach";
     case "set_comments":
     case "comment_reactions":
