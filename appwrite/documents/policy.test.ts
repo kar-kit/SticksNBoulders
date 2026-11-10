@@ -353,6 +353,8 @@ describe("a coach's read mark on a thread (F26)", () => {
 describe("policy hygiene", () => {
   it("covers every table, so one cannot be added without a policy", () => {
     expect(Object.keys(POLICIES).sort()).toEqual([
+      "api_requests",
+      "api_tokens",
       "bodyweight_entries",
       "coach_athlete_links",
       "comment_reactions",

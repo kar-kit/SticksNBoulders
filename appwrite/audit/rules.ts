@@ -293,6 +293,31 @@ export const RULES: readonly ResourceRule[] = [
       "Server-only, the owner included: a session that could create a row here could register its own " +
       "device under A's user_id and receive A's notifications. The route takes the user from the JWT.",
   },
+  {
+    key: "api_tokens",
+    kind: "table",
+    resource: "api_tokens",
+    target: "a read API token A minted through POST /api/tokens (F29)",
+    // Nobody, A included. The row holds the token's hash, and a readable hash
+    // is a hash anyone can test guesses against offline; A sees his tokens
+    // through GET /api/tokens, which never returns it.
+    allow: serverOnly(nobody),
+    ownerColumn: "owner_id",
+    invariant: (row) => (row.scope === "read" ? null : `scope is ${JSON.stringify(row.scope)}`),
+    notes:
+      "Server-only in every direction, the owner included: a session that could create a row here could mint " +
+      "a token under A's owner_id and read A's training through /api/v1. The route takes the owner from the JWT.",
+  },
+  {
+    key: "api_requests",
+    kind: "table",
+    resource: "api_requests",
+    target: "a line of A's read API audit trail, written by GET /api/v1/me with A's token (F29)",
+    // An audit trail nobody it describes can read, write or erase.
+    allow: serverOnly(nobody),
+    ownerColumn: "owner_id",
+    notes: "Written only by /api/v1 with the API key. A session that could delete here could erase its own reads.",
+  },
   programTable("programs", "the program A's coach wrote for A, via /api/program"),
   programTable("program_blocks", "a block of that program"),
   programTable("program_weeks", "a week of that program"),

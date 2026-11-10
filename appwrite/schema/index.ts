@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 25,
+  version: 26,
   tables: [
     {
       id: "profiles",
@@ -784,6 +784,68 @@ export const schema: DatabaseSpec = {
         { key: "idx_endpoint_hash", type: "unique", columns: ["endpoint_hash"] },
         // "Which devices does this coach have?" -- on every notification.
         { key: "idx_user", type: "key", columns: ["user_id"] },
+      ],
+    },
+
+    // v26 (F29). Two tables, appended last and self-contained like v25: the
+    // personal read API's tokens and its audit trail. Nothing above changed.
+    {
+      id: "api_tokens",
+      name: "API tokens",
+      purpose:
+        "Personal access tokens for the read-only API (/api/v1): one row per token a user minted on Me, Connections. Holds the sha256 of the token, never the token, so a copy of the table cannot be replayed against the API. Server-only in every direction, the owner included: /api/tokens lists a user's tokens without the hash (docs/read-api.md).",
+      rowSecurity: true,
+      // Nobody, from any session. A session that could create a row here could
+      // mint a token under somebody else's owner_id; one that could read the
+      // hashes could test guesses offline. /api/tokens and /api/v1 are the
+      // only ways in, both with the API key.
+      permissions: [],
+      columns: [
+        { key: "owner_id", type: "string", size: 36, required: true },
+        // sha256 of the whole token, hex. Unique: checking a token is one
+        // indexed lookup on this column.
+        { key: "token_hash", type: "string", size: 64, required: true },
+        // "Rubble", "laptop script": so the owner can tell tokens apart.
+        { key: "label", type: "string", size: 64, required: true },
+        // Always "read" in v1. A column rather than an assumption, so a write
+        // scope later is a new value, not a rewrite of every row. A string,
+        // not an enum: Appwrite wants two elements and v1 has one. The write
+        // helper only ever writes "read" and the audit's invariant checks it.
+        { key: "scope", type: "string", size: 16, required: true },
+        { key: "created_at", type: "datetime", required: true },
+        { key: "expires_at", type: "datetime", required: true },
+        { key: "last_used_at", type: "datetime", required: false },
+        // Set once, never cleared. A revoked token is refused exactly like an
+        // unknown one.
+        { key: "revoked_at", type: "datetime", required: false },
+      ],
+      indexes: [
+        { key: "idx_token_hash", type: "unique", columns: ["token_hash"] },
+        // "Which tokens does this user have?" -- the list and the 5-token cap.
+        { key: "idx_owner", type: "key", columns: ["owner_id"] },
+      ],
+    },
+    {
+      id: "api_requests",
+      name: "API requests",
+      purpose:
+        "The read API's audit trail: one row per call to /api/v1 made with a token that exists, saying which token, whose data, the method, the path and the status. Written by the route with the API key and never edited; no pruning in v1. Server-only, so no session can read, forge or erase a trail, its own included (docs/read-api.md).",
+      rowSecurity: true,
+      permissions: [],
+      columns: [
+        { key: "token_id", type: "string", size: 36, required: true },
+        { key: "owner_id", type: "string", size: 36, required: true },
+        { key: "method", type: "string", size: 8, required: true },
+        // The path plus only the query parameters the endpoint accepts, so a
+        // caller cannot write arbitrary text into the trail through the URL.
+        { key: "path", type: "string", size: 512, required: true },
+        { key: "status", type: "integer", required: true, min: 100, max: 599 },
+        { key: "at", type: "datetime", required: true },
+      ],
+      indexes: [
+        // "What has this token been used for?" and "what was read of mine?"
+        { key: "idx_token_at", type: "key", columns: ["token_id", "at"] },
+        { key: "idx_owner_at", type: "key", columns: ["owner_id", "at"] },
       ],
     },
   ],

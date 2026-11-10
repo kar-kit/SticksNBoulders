@@ -22,6 +22,8 @@ describe("schema shape", () => {
   // the old title named the phases and went stale twice in three tickets.
   it("holds every table the build has agreed on, and none it has not", () => {
     expect(schema.tables.map((t) => t.id).sort()).toEqual([
+      "api_requests",
+      "api_tokens",
       "bodyweight_entries",
       "coach_athlete_links",
       "comment_reactions",
@@ -710,9 +712,11 @@ describe("thread reads (v24, F26)", () => {
 describe("push subscriptions (v25, F27)", () => {
   const push = () => table("push_subscriptions");
 
-  it("is v25, a new table appended last, so applying it rewrites no existing row", () => {
-    expect(schema.version).toBe(25);
-    expect(schema.tables.at(-1)?.id).toBe("push_subscriptions");
+  it("is v25, a new table appended after every earlier one, so applying it rewrites no existing row", () => {
+    expect(schema.version).toBeGreaterThanOrEqual(25);
+    const ids = schema.tables.map((t) => t.id);
+    // Everything before it predates v25; only later versions come after.
+    expect(ids.slice(ids.indexOf("push_subscriptions") + 1)).toEqual(["api_tokens", "api_requests"]);
   });
 
   it("carries the owner, the endpoint and its hash, both keys, a label, the two switches and two times", () => {
@@ -747,5 +751,51 @@ describe("push subscriptions (v25, F27)", () => {
     expect(push().permissions).toEqual([]);
     expect(SERVER_ONLY_TABLES).toContain("push_subscriptions");
     expect(USER_WRITABLE_TABLES).not.toContain("push_subscriptions");
+  });
+});
+
+describe("read API tokens and audit trail (v26, F29)", () => {
+  const tokens = () => table("api_tokens");
+  const requests = () => table("api_requests");
+
+  it("is v26, two new tables appended last, so applying it rewrites no existing row", () => {
+    expect(schema.version).toBe(26);
+    expect(schema.tables.slice(-2).map((t) => t.id)).toEqual(["api_tokens", "api_requests"]);
+  });
+
+  it("stores a token's hash and lifecycle, never the token", () => {
+    expect(columnKeys("api_tokens")).toEqual([
+      "owner_id",
+      "token_hash",
+      "label",
+      "scope",
+      "created_at",
+      "expires_at",
+      "last_used_at",
+      "revoked_at",
+    ]);
+    expect(columnKeys("api_tokens").some((key) => /^(token|secret|plaintext)$/.test(key))).toBe(false);
+    expect(tokens().columns.find((c) => c.key === "token_hash")).toMatchObject({ type: "string", size: 64, required: true });
+    expect(tokens().columns.find((c) => c.key === "scope")).toMatchObject({ type: "string", required: true });
+  });
+
+  it("finds a token by its hash, uniquely, and a user's tokens by owner", () => {
+    expect(tokens().indexes).toContainEqual({ key: "idx_token_hash", type: "unique", columns: ["token_hash"] });
+    expect(tokens().indexes.some((i) => i.columns[0] === "owner_id")).toBe(true);
+  });
+
+  it("records who, which token, what and how it went, per call", () => {
+    expect(columnKeys("api_requests")).toEqual(["token_id", "owner_id", "method", "path", "status", "at"]);
+    expect(requests().columns.find((c) => c.key === "status")).toMatchObject({ type: "integer", min: 100, max: 599 });
+    expect(requests().indexes.map((i) => i.columns[0]).sort()).toEqual(["owner_id", "token_id"]);
+  });
+
+  it("is server-only in every direction: no table-level grant, no session writes", () => {
+    for (const t of [tokens(), requests()]) {
+      expect(t.rowSecurity).toBe(true);
+      expect(t.permissions).toEqual([]);
+      expect(SERVER_ONLY_TABLES).toContain(t.id);
+      expect(USER_WRITABLE_TABLES).not.toContain(t.id);
+    }
   });
 });

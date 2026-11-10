@@ -83,6 +83,17 @@ describe("the audit's rules", () => {
     }
   });
 
+  it("expects nobody, the owner included, to read or write the read API's tables (F29)", () => {
+    for (const key of ["api_tokens", "api_requests"]) {
+      const rule = RULES.find((r) => r.key === key)!;
+      for (const op of OPS) expect(rule.allow[op], `${key} ${op}`).toEqual([]);
+      expect(rule.ownerColumn).toBe("owner_id");
+    }
+    const tokens = RULES.find((r) => r.key === "api_tokens")!;
+    expect(tokens.invariant!({ scope: "read" })).toBeNull();
+    expect(tokens.invariant!({ scope: "write" })).toMatch(/scope/);
+  });
+
   it("checks the one column a coach may change on a link after linking", () => {
     const rule = RULES.find((r) => r.key === "coach_athlete_links")!;
     expect(rule.invariant!({ suggestions_mode: "direct" })).toBeNull();

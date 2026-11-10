@@ -5,6 +5,14 @@ import { isSuggestionMode, type SuggestionMode } from "@/lib/coach/suggestion-mo
 import { isOwnAvatarFileId } from "./avatar";
 import { circleTeamId } from "./circle";
 import { posterIdFor } from "./poster";
+import {
+  API_PATH_MAX,
+  API_REQUESTS_TABLE,
+  API_SCOPE,
+  API_TOKENS_TABLE,
+  isSha256Hex,
+  normaliseTokenLabel,
+} from "./api-token";
 import { PUSH_LABEL_MAX, PUSH_TABLE, isP256dh, isPushAuth, isPushEndpoint, type PushPrefs } from "./push";
 import { REACTION_EMOJIS } from "./reaction";
 import {
@@ -14,6 +22,8 @@ import {
   linkPermissions,
   profilePermissions,
   pushSubscriptionPermissions,
+  apiRequestPermissions,
+  apiTokenPermissions,
   commentPermissions,
   reactionPermissions,
   referenceMaxPermissions,
@@ -1713,6 +1723,100 @@ export async function markPushDelivered(deps: WriteDeps, input: { rowId: string;
  */
 export async function deletePushSubscription(deps: WriteDeps, rowId: string) {
   return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: PUSH_TABLE, rowId });
+}
+
+/* -------------------------------------------------------------------------
+ * Read API tokens and their audit trail (F29)
+ *
+ * Server-only, like push subscriptions: every function here runs with the
+ * API key, behind /api/tokens or /api/v1. The owner is always the caller the
+ * route resolved from the JWT (minting) or from a verified token (the trail),
+ * never an id from a request body. The rows carry no permissions at all
+ * (policy.ts apiTokenPermissions), so the stamp is `[]`, passed explicitly.
+ * ---------------------------------------------------------------------- */
+
+export interface CreateApiTokenInput {
+  rowId: string;
+  /** sha256 hex of the token. The token itself never reaches this module. */
+  tokenHash: string;
+  label: string;
+  expiresAt: Date;
+}
+
+export async function createApiToken(deps: WriteDeps, actor: Actor, input: CreateApiTokenInput) {
+  if (!isSha256Hex(input.tokenHash)) throw new Error("api token: tokenHash must be sha256 hex");
+  const label = normaliseTokenLabel(input.label);
+  if (!label) throw new Error("api token: a label is required");
+  const now = deps.now();
+  if (!(input.expiresAt.getTime() > now.getTime())) throw new Error("api token: expiry must be in the future");
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: API_TOKENS_TABLE,
+    rowId: input.rowId,
+    data: {
+      owner_id: actor.userId,
+      token_hash: input.tokenHash,
+      label,
+      scope: API_SCOPE,
+      created_at: iso(now),
+      expires_at: iso(input.expiresAt),
+      last_used_at: null,
+      revoked_at: null,
+    },
+    permissions: apiTokenPermissions({ ownerId: actor.userId }),
+  });
+}
+
+/** Revoked for good. The route checks the caller owns it first. */
+export async function revokeApiToken(deps: WriteDeps, actor: Actor, input: { rowId: string }) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: API_TOKENS_TABLE,
+    rowId: input.rowId,
+    data: { revoked_at: iso(deps.now()) },
+    permissions: apiTokenPermissions({ ownerId: actor.userId }),
+  });
+}
+
+/** The token was just used. Shown on Connections as "last used". */
+export async function touchApiToken(deps: WriteDeps, input: { rowId: string; ownerId: string }) {
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: API_TOKENS_TABLE,
+    rowId: input.rowId,
+    data: { last_used_at: iso(deps.now()) },
+    permissions: apiTokenPermissions({ ownerId: input.ownerId }),
+  });
+}
+
+export interface RecordApiRequestInput {
+  tokenId: string;
+  ownerId: string;
+  method: string;
+  /** Already reduced to the path and the allowed parameters by the route. */
+  path: string;
+  status: number;
+}
+
+/** One line of the audit trail. Created, never updated. */
+export async function recordApiRequest(deps: WriteDeps, input: RecordApiRequestInput) {
+  if (!Number.isInteger(input.status) || input.status < 100 || input.status > 599) {
+    throw new Error("api request: status must be an HTTP status");
+  }
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: API_REQUESTS_TABLE,
+    rowId: deps.newId(),
+    data: {
+      token_id: input.tokenId,
+      owner_id: input.ownerId,
+      method: input.method.toUpperCase().slice(0, 8),
+      path: input.path.slice(0, API_PATH_MAX),
+      status: input.status,
+      at: iso(deps.now()),
+    },
+    permissions: apiRequestPermissions({ ownerId: input.ownerId }),
+  });
 }
 
 export { circleTeamId };
