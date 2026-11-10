@@ -50,6 +50,12 @@ export const appwrite = {
   writes: [] as Write[],
   /** Every TablesDB call made without the API key. Should stay empty. */
   keylessCalls: [] as string[],
+  /** Every JWT minted with Users.createJWT, and for whom (F29). */
+  minted: [] as Array<{ userId: string; duration?: number; jwt: string }>,
+  /** Every row read through a JWT client rather than the key, by table (F29). */
+  jwtReads: [] as Array<{ userId: string; tableId: string }>,
+  /** Every table read WITH the API key. */
+  adminReads: [] as string[],
 };
 
 export function resetAppwrite(): void {
@@ -60,6 +66,9 @@ export function resetAppwrite(): void {
   appwrite.teams = {};
   appwrite.writes = [];
   appwrite.keylessCalls = [];
+  appwrite.minted = [];
+  appwrite.jwtReads = [];
+  appwrite.adminReads = [];
 }
 
 /** Signs a user in and returns the JWT that proves it. */
@@ -137,10 +146,18 @@ export function applyQueries(rows: Row[], queries: string[] = []): Row[] {
       }
     }),
   );
-  const order = parsed.find((q) => q.method === "orderAsc");
+  const order = parsed.find((q) => q.method === "orderAsc" || q.method === "orderDesc");
   if (order?.attribute) {
     const key = order.attribute;
-    out = [...out].sort((a, b) => String(a[key]).localeCompare(String(b[key])));
+    const sign = order.method === "orderDesc" ? -1 : 1;
+    // $id breaks ties, as Appwrite's internal sequence does.
+    out = [...out].sort((a, b) => sign * String(a[key]).localeCompare(String(b[key])) || a.$id.localeCompare(b.$id));
+  }
+  const cursor = parsed.find((q) => q.method === "cursorAfter")?.values?.[0];
+  if (cursor !== undefined) {
+    const at = out.findIndex((row) => row.$id === cursor);
+    if (at < 0) throw Object.assign(new Error(`cursor ${String(cursor)} not found`), { code: 400 });
+    out = out.slice(at + 1);
   }
   const limit = parsed.find((q) => q.method === "limit");
   // Appwrite's page is 25 rows when no limit is sent.
@@ -148,6 +165,24 @@ export function applyQueries(rows: Row[], queries: string[] = []): Row[] {
 }
 
 const notFound = (what: string) => Object.assign(new Error(`${what} not found`), { code: 404 });
+
+/**
+ * Whether `userId` may read `row`, by its stamped permissions, as Appwrite
+ * decides it for a session: their own user role, any signed-in user, or a
+ * team they are in (with the role, when the permission names one).
+ */
+export function readableBy(row: Row, userId: string): boolean {
+  const permissions = Array.isArray(row.$permissions) ? (row.$permissions as string[]) : [];
+  return permissions.some((permission) => {
+    const match = /^read\("(.*)"\)$/.exec(permission);
+    if (!match) return false;
+    const role = match[1];
+    if (role === "any" || role === "users" || role === `user:${userId}`) return true;
+    const team = /^team:([^/]+)(?:\/(.+))?$/.exec(role);
+    if (!team) return false;
+    return (appwrite.teams[team[1]] ?? []).some((m) => m.userId === userId && (!team[2] || m.roles.includes(team[2])));
+  });
+}
 
 /* -------------------------------------------------------------------------
  * node-appwrite
@@ -191,17 +226,37 @@ export function fakeNodeAppwrite<T extends object>(actual: T) {
     }
   };
 
+  /**
+   * A client carrying a valid JWT and no key reads as that user (F29's read
+   * API): rows they may not read are absent, exactly as Appwrite answers.
+   * Anything else without the key is refused, as before.
+   */
+  const reader = (client: Client, call: string): string | null => {
+    if (client.key) return null;
+    const account = client.jwt ? appwrite.sessions.get(client.jwt) : undefined;
+    if (!account) {
+      admin(client, call);
+      return null;
+    }
+    return account.$id;
+  };
+
   class TablesDB {
     constructor(private client: Client) {}
     async listRows({ tableId, queries }: { tableId: string; queries?: string[] }) {
-      admin(this.client, "listRows");
-      const rows = applyQueries(appwrite.tables[tableId] ?? [], queries).map((row) => ({ ...row }));
+      const asUser = reader(this.client, "listRows");
+      const visible = (appwrite.tables[tableId] ?? []).filter((row) => asUser === null || readableBy(row, asUser));
+      if (asUser !== null) appwrite.jwtReads.push({ userId: asUser, tableId });
+      else appwrite.adminReads.push(tableId);
+      const rows = applyQueries(visible, queries).map((row) => ({ ...row }));
       return { total: rows.length, rows };
     }
     async getRow({ tableId, rowId }: { tableId: string; rowId: string }) {
-      admin(this.client, "getRow");
+      const asUser = reader(this.client, "getRow");
+      if (asUser !== null) appwrite.jwtReads.push({ userId: asUser, tableId });
+      else appwrite.adminReads.push(tableId);
       const row = (appwrite.tables[tableId] ?? []).find((r) => r.$id === rowId);
-      if (!row) throw notFound("row");
+      if (!row || (asUser !== null && !readableBy(row, asUser))) throw notFound("row");
       return { ...row };
     }
     async createRow(p: { tableId: string; rowId: string; data: Record<string, unknown>; permissions?: string[] }) {
@@ -264,6 +319,14 @@ export function fakeNodeAppwrite<T extends object>(actual: T) {
 
   class Users {
     constructor(private client: Client) {}
+    async createJWT({ userId, duration }: { userId: string; duration?: number }) {
+      admin(this.client, "users.createJWT");
+      const account = appwrite.users.find((u) => u.$id === userId) ?? { $id: userId };
+      const jwt = `minted-${userId}-${appwrite.minted.length + 1}`;
+      appwrite.sessions.set(jwt, account);
+      appwrite.minted.push({ userId, duration, jwt });
+      return { jwt };
+    }
     async get({ userId }: { userId: string }) {
       admin(this.client, "users.get");
       const user = appwrite.users.find((u) => u.$id === userId) ?? [...appwrite.sessions.values()].find((u) => u.$id === userId);
