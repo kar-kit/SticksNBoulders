@@ -113,6 +113,8 @@ import { POST as programRoute } from "../app/api/program/route";
 import { POST as referenceMaxRoute, DELETE as referenceMaxDeleteRoute } from "../app/api/reference-max/route";
 import { POST as rollupRoute } from "../app/api/rollup/route";
 import { POST as pushRoute } from "../app/api/push/route";
+import { POST as tokenRoute } from "../app/api/tokens/route";
+import { GET as apiMeRoute } from "../app/api/v1/me/route";
 
 dedupeSdkWarnings();
 
@@ -647,6 +649,33 @@ try {
   if (typeof pushed.body.rowId === "string") targets.push_subscriptions = pushed.body.rowId;
   check("POST /api/push with no session is refused", (await callRoute(pushRoute as Handler, "/api/push", anon, pushBody("anon"))).status === 401);
 
+  // F29: A's read API token, through /api/tokens, and one line of A's audit
+  // trail, through /api/v1/me with that token. Both tables are server-only in
+  // every direction, so the routes are the only way a row gets there. The
+  // allowlist names A for this run only; nothing else reads it.
+  const allowlistBefore = process.env.API_TOKEN_USER_IDS;
+  process.env.API_TOKEN_USER_IDS = A.id;
+  const apiToken = await callRoute(tokenRoute as Handler, "/api/tokens", A, { label: `audit ${stamp}`, expiresInDays: 1 });
+  check("POST /api/tokens mints A's token (api_tokens write)", apiToken.status === 201, `${apiToken.status} ${JSON.stringify({ ...apiToken.body, token: apiToken.body.token ? "[redacted]" : undefined })}`);
+  if (typeof apiToken.body.id === "string") targets.api_tokens = apiToken.body.id;
+  check("POST /api/tokens refuses athlete B, who is not on the allowlist", (await callRoute(tokenRoute as Handler, "/api/tokens", B, { label: "nope" })).status === 403);
+  check("POST /api/tokens with no session is refused", (await callRoute(tokenRoute as Handler, "/api/tokens", anon, { label: "nope" })).status === 401);
+  if (typeof apiToken.body.token === "string") {
+    const read = await (apiMeRoute as Handler)(
+      new Request("http://audit.local/api/v1/me", { headers: { authorization: `Bearer ${apiToken.body.token}` } }),
+    );
+    check("GET /api/v1/me answers A's token (reads through a JWT minted for A)", read.status === 200, `${read.status}`);
+    const trail = await adminDb.listRows({
+      databaseId: D,
+      tableId: "api_requests",
+      queries: [Query.equal("token_id", targets.api_tokens ?? ""), Query.limit(1)],
+    });
+    if (trail.rows[0]) targets.api_requests = trail.rows[0].$id;
+    check("and writes A's audit row (api_requests write)", Boolean(trail.rows[0]));
+  }
+  if (allowlistBefore === undefined) delete process.env.API_TOKEN_USER_IDS;
+  else process.env.API_TOKEN_USER_IDS = allowlistBefore;
+
   const ownMax = await callRoute(referenceMaxRoute as Handler, "/api/reference-max", A, maxBody(A.id, "tested", 185));
   check("POST /api/reference-max: A records his own tested max", ownMax.status === 200, JSON.stringify(ownMax.body));
   if (typeof ownMax.body.rowId === "string") extras.ownMax = ownMax.body.rowId;
@@ -884,6 +913,11 @@ try {
     await forged(ruleFor("stats_rollups"), actor, "stats_rollups", ID.unique(), { athlete_id: A.id, exercise_id: targets.exercises, week_start: "2026-01-05T00:00:00.000Z", set_count: 1, volume_reps: 1, tonnage_kg: 999, best_e1rm_kg: 400, rebuilt_at: now() }, readableByEveryone(), `createRow with athlete_id A, ${EVERYONE}`);
     await forged(ruleFor("reference_maxes"), actor, "reference_maxes", ID.unique(), { athlete_id: A.id, exercise_id: targets.exercises, kind: "training", value_kg: 250, effective_from: now(), recorded_by: forgerId(actor), created_at: now() }, readableByEveryone(), `createRow with athlete_id A, ${EVERYONE}`);
     await forged(ruleFor("push_subscriptions"), actor, "push_subscriptions", ID.unique(), { user_id: A.id, endpoint: `https://fcm.googleapis.com/fcm/send/forged-${tag}`, endpoint_hash: `${tag}`.padEnd(64, "0").slice(0, 64), p256dh: `B${"A".repeat(86)}`, auth: "a".repeat(22), created_at: now() }, readableByEveryone(), `createRow registering a device under A's user_id, ${EVERYONE}`);
+    // F29: a token row under A's owner_id is a token that reads A's training
+    // (if its hash is one the forger knows); an audit row under A is a lie in
+    // A's trail. Neither must land, A included.
+    await forged(ruleFor("api_tokens"), actor, "api_tokens", ID.unique(), { owner_id: A.id, token_hash: `${tag}`.replace(/[^a-f0-9]/g, "").padEnd(64, "f").slice(0, 64), label: "Forged", scope: "read", created_at: now(), expires_at: "2099-01-01T00:00:00.000Z" }, readableByEveryone(), `createRow minting a token for A, ${EVERYONE}`);
+    await forged(ruleFor("api_requests"), actor, "api_requests", ID.unique(), { token_id: targets.api_tokens ?? "audit", owner_id: A.id, method: "GET", path: "/api/v1/forged", status: 200, at: now() }, readableByEveryone(), `createRow writing a line in A's trail, ${EVERYONE}`);
     await forged(ruleFor("invite_codes"), actor, "invite_codes", `AUD-${ACTORS.indexOf(actor)}${stamp.slice(-6)}`, { coach_id: ID.unique(), created_at: now() }, readableByEveryone(), `createRow minting a code, ${EVERYONE}`);
     await forged(ruleFor("coach_athlete_links"), actor, "coach_athlete_links", ID.unique(), { coach_id: forgerId(actor), athlete_id: actor === "coach" ? B.id : A.id, status: "active", linked_at: now() }, readableByEveryone(), "createRow granting themselves a coach link");
     // Programming for A, written by anyone but the route. Every table of it.
@@ -1173,6 +1207,10 @@ try {
       invite_codes: { coach_id: ID.unique() },
       // F27: re-pointing A's device is how a hijacker would read A's lock screen.
       push_subscriptions: { endpoint: `https://fcm.googleapis.com/fcm/send/hijacked-${n}` },
+      // F29: un-revoking or extending a token is how a hijacker keeps one alive;
+      // rewriting a status is how they would launder the trail.
+      api_tokens: { revoked_at: null, expires_at: new Date(Date.UTC(2099, 0, n)).toISOString() },
+      api_requests: { status: 200 + n, path: `/api/v1/hijacked-${n}` },
       coach_athlete_links: { status: "revoked" },
       programs: { name: tag },
       program_blocks: { name: tag },
@@ -1587,6 +1625,8 @@ async function teardown() {
     coach_athlete_links: ["athlete_id", "coach_id"],
     invite_codes: ["coach_id"],
     push_subscriptions: ["user_id"],
+    api_tokens: ["owner_id"],
+    api_requests: ["owner_id"],
     programs: ["athlete_id", "coach_id"],
     program_blocks: ["athlete_id", "coach_id"],
     program_weeks: ["athlete_id", "coach_id"],
