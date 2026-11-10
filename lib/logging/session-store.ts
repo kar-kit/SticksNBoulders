@@ -4,6 +4,7 @@ import { authenticRows, posterOf } from "@/appwrite/documents";
 import { enqueue } from "@/lib/offline/client";
 import type { SessionRecord, SessionSet } from "./session";
 import { cardioColumns } from "./cardio";
+import { asDate, asNumber, toSession, type SessionRow } from "./session-rows";
 
 /**
  * A set as stored. The exercise name is resolved by the caller.
@@ -49,44 +50,6 @@ export type UnnamedSet = Omit<SessionSet, "exerciseName"> & {
 
 /** Enough history for Today's last-session line without paging. */
 const RECENT = 25;
-
-interface SessionRow {
-  $id: string;
-  client_session_id?: unknown;
-  started_at?: unknown;
-  finished_at?: unknown;
-  set_count?: unknown;
-  tonnage_kg?: unknown;
-  notes?: unknown;
-  program_day_id?: unknown;
-  name?: unknown;
-}
-
-const asDate = (value: unknown): Date | null => {
-  if (typeof value !== "string" || !value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
-const asNumber = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value) ? value : 0;
-
-/** Skips a row rather than throwing: one bad row must not hide a live session. */
-function toSession(row: SessionRow): SessionRecord | null {
-  const startedAt = asDate(row.started_at);
-  if (!startedAt) return null;
-  return {
-    id: row.$id,
-    clientSessionId: typeof row.client_session_id === "string" ? row.client_session_id : "",
-    startedAt,
-    finishedAt: asDate(row.finished_at),
-    setCount: asNumber(row.set_count),
-    tonnageKg: asNumber(row.tonnage_kg),
-    notes: typeof row.notes === "string" ? row.notes : null,
-    programDayId: typeof row.program_day_id === "string" && row.program_day_id ? row.program_day_id : null,
-    name: typeof row.name === "string" && row.name.trim() ? row.name : null,
-  };
-}
 
 export async function fetchRecentSessions(athleteId: string): Promise<SessionRecord[]> {
   const { tables, databaseId } = browserAppwrite();

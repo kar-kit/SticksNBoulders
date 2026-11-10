@@ -1,9 +1,6 @@
 import { Query } from "appwrite";
 import { browserAppwrite } from "@/appwrite/browser-client";
-import {
-  visibleProgram,
-  livePrograms,
-} from "./my-program";
+import { listAllFrom, readDayLabels, readMyProgram, readPrograms } from "./program-read";
 import {
   assembleProgram,
   byPosition,
@@ -35,24 +32,10 @@ import {
  * reason every program table is server-only -- see program-admin.ts.
  */
 
-const PAGE = 100;
-
 type TableId = "programs" | "program_blocks" | "program_weeks" | "program_days" | "prescriptions" | "sessions";
 
 async function listAll(tableId: TableId, queries: string[]): Promise<unknown[]> {
-  const { tables, databaseId } = browserAppwrite();
-  const rows: unknown[] = [];
-  let cursor: string | null = null;
-  for (;;) {
-    const page: { rows: Array<{ $id: string }> } = await tables.listRows({
-      databaseId,
-      tableId,
-      queries: [...queries, Query.orderAsc("$id"), Query.limit(PAGE), ...(cursor ? [Query.cursorAfter(cursor)] : [])],
-    });
-    rows.push(...page.rows);
-    if (page.rows.length < PAGE) return rows;
-    cursor = page.rows[page.rows.length - 1].$id;
-  }
+  return listAllFrom(browserAppwrite(), tableId, queries);
 }
 
 async function getOne<T>(tableId: TableId, rowId: string, parse: (row: unknown) => T | null): Promise<T | null> {
@@ -102,73 +85,22 @@ export async function fetchLoggedDayIds(athleteId: string, dayIds: readonly stri
   );
 }
 
-/**
- * The coach's label for each of these program days, for naming the sessions
- * started from them in History. One query on the ids, two columns.
- *
- * A day the athlete can no longer read (unlinked coach, deleted program) is
- * simply absent, and its session falls back to the date.
- */
+/** The coach's label for each of these program days. See program-read.ts. */
 export async function fetchDayLabels(dayIds: readonly string[]): Promise<Map<string, string>> {
-  const unique = [...new Set(dayIds.filter(Boolean))];
-  const labels = new Map<string, string>();
-  if (unique.length === 0) return labels;
-  const rows = await listAll("program_days", [Query.equal("$id", unique), Query.select(["$id", "label"])]);
-  for (const row of rows as Array<{ $id?: unknown; label?: unknown }>) {
-    if (typeof row.$id === "string" && typeof row.label === "string" && row.label.trim()) {
-      labels.set(row.$id, row.label.trim());
-    }
-  }
-  return labels;
+  return readDayLabels(browserAppwrite(), dayIds);
 }
 
-/** Programs for an athlete, or written by a coach, newest first. Templates are `{ coachId, athleteId: null }`. */
+/** Programs for an athlete, or written by a coach, newest first. See program-read.ts. */
 export async function fetchPrograms(filter: { athleteId: string } | { coachId: string }): Promise<Program[]> {
-  const query =
-    "athleteId" in filter ? Query.equal("athlete_id", filter.athleteId) : Query.equal("coach_id", filter.coachId);
-  const rows = parseRows(await listAll("programs", [query]), parseProgram);
-  return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return readPrograms(browserAppwrite(), filter);
 }
 
 /**
- * The athlete's current block, as the athlete may see it. Order 23.
- *
- * The draft rule is enforced here, in the read, and not left to the screen:
- * weeks are read first and only the published ones' days and lines are asked
- * for, so a draft week's rows never leave Appwrite for this caller, let alone
- * reach the cache. `visibleProgram` filters again on the way out, so a change
- * to the queries cannot quietly start leaking. Raw API access by the athlete
- * can still see their own drafts -- that is the permission model, see
- * docs/programs.md -- which is why this is a filter and not a promise.
- *
- * Reads only, through the athlete's own session. Null when no published
- * program with a published week exists. Throws when Appwrite cannot be
- * reached, so the caller can fall back to its cache.
+ * The athlete's current block, as the athlete may see it. Order 23. The read
+ * and its draft rule are in program-read.ts, shared with the read API.
  */
 export async function fetchMyProgram(athleteId: string): Promise<ProgramTree | null> {
-  const programs = livePrograms(await fetchPrograms({ athleteId }), athleteId);
-  for (const program of programs) {
-    const byProgram = [Query.equal("program_id", program.id)];
-    const [blocks, weeks] = await Promise.all([
-      listAll("program_blocks", byProgram),
-      listAll("program_weeks", byProgram),
-    ]);
-    const parsedWeeks = parseRows(weeks, parseWeek).filter((w) => w.status === "published");
-    if (parsedWeeks.length === 0) continue;
-    const byWeek = [Query.equal("week_id", parsedWeeks.map((w) => w.id))];
-    const [days, prescriptions] = await Promise.all([
-      listAll("program_days", byWeek),
-      listAll("prescriptions", byWeek),
-    ]);
-    const tree = visibleProgram(program, {
-      blocks: parseRows(blocks, parseBlock),
-      weeks: parsedWeeks,
-      days: parseRows(days, parseDay),
-      prescriptions: parseRows(prescriptions, parsePrescriptionRow),
-    });
-    if (tree) return tree;
-  }
-  return null;
+  return readMyProgram(browserAppwrite(), athleteId);
 }
 
 /** A prescribed day with everything the athlete needs to see and start it. */

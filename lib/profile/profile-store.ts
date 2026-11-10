@@ -2,15 +2,15 @@
 
 import { browserAppwrite } from "@/appwrite/browser-client";
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
-import { avatarOf, createProfile, isAuthentic, updateProfile, type Actor } from "@/appwrite/documents";
+import { createProfile, isAuthentic, updateProfile, type Actor } from "@/appwrite/documents";
 import { ensureMyCircle } from "@/lib/auth/circle";
 import { rememberAvatars } from "./avatar-cache";
 import {
   DEFAULT_UNITS,
   fallbackName,
-  isSex,
-  isUnits,
+  profileFromRow,
   type Profile,
+  type ProfileRow,
   type Sex,
   type Units,
 } from "./profile";
@@ -29,28 +29,6 @@ import {
  * squat within seconds of it landing.
  */
 
-interface ProfileRow {
-  $id: string;
-  user_id?: unknown;
-  display_name?: unknown;
-  sex?: unknown;
-  units?: unknown;
-  avatar_file_id?: unknown;
-}
-
-function toProfile(raw: ProfileRow): Profile {
-  return {
-    userId: typeof raw.user_id === "string" ? raw.user_id : raw.$id,
-    displayName: typeof raw.display_name === "string" ? raw.display_name : "",
-    // Anything that is not one of the two known values reads as unanswered.
-    // A profile carrying a third value must not resolve to a DOTS coefficient.
-    sex: isSex(raw.sex) ? raw.sex : null,
-    units: isUnits(raw.units) ? raw.units : DEFAULT_UNITS,
-    // Only a picture in the owner's own namespace; see appwrite/documents/avatar.ts.
-    avatarFileId: avatarOf(raw as unknown as Record<string, unknown>),
-  };
-}
-
 /** The profile, or null when there is not one yet. */
 export async function fetchProfile(userId: string): Promise<Profile | null> {
   if (!userId) return null;
@@ -62,7 +40,7 @@ export async function fetchProfile(userId: string): Promise<Profile | null> {
     // absent, so `ensure` writes the real one once the validate-row Function
     // has removed it (appwrite/documents/provenance.ts).
     if (!isAuthentic("profiles", row as unknown as Record<string, unknown>)) return null;
-    const profile = toProfile(row as unknown as ProfileRow);
+    const profile = profileFromRow(row as unknown as ProfileRow);
     rememberAvatars([[profile.userId, profile.avatarFileId]]);
     return profile;
   } catch {
