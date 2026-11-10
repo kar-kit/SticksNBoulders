@@ -9,6 +9,7 @@ import { SuggestionModeNote } from "@/components/profile/suggestion-mode-note";
 import Link from "next/link";
 import { InviteCodePanel } from "@/components/coach/invite-code";
 import { NotificationSettings } from "@/components/profile/notification-settings";
+import { ConnectionsLink } from "@/components/profile/connections-link";
 import { ExportLog } from "@/components/export/export-log";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth/session";
@@ -84,6 +85,10 @@ export function MePanel() {
       {canCoach(state.prefs, state.coach.isCoach) ? <NotificationSettings userId={state.user.id} /> : null}
 
       <ExportLog athleteId={state.user.id} athleteName={state.user.name} audience="athlete" />
+
+      {/* F29. Read API tokens, for the user ids on API_TOKEN_USER_IDS only;
+          the row asks the server and stays hidden for everyone else. */}
+      <ConnectionsLink userId={state.user.id} />
 
       {/* For anyone with athletes linked, and for anyone who has chosen coach
           -- a coach with none yet needs this to reach the invite code on the

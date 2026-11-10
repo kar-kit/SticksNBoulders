@@ -28,6 +28,8 @@ export type ServerTable =
   | "invite_codes"
   | "reference_maxes"
   | "push_subscriptions"
+  | "api_tokens"
+  | "api_requests"
   | ProgramTable;
 
 /** The five tables a program is made of. One policy covers all of them. */
@@ -508,6 +510,36 @@ export function pushSubscriptionPermissions({ userId }: { userId: string }): str
   return [read(user(requireId(userId, "userId")))];
 }
 
+/**
+ * A personal access token for the read API (F29, schema v26).
+ *
+ * No permission at all: not the owner, not the circle, nobody. The row holds
+ * the token's sha256, and a hash anyone can read is a hash anyone can test
+ * guesses against offline; the owner sees their tokens through
+ * GET /api/tokens, which never returns it. A row here also decides whose data
+ * a token reads, so a session that could create one could mint a token for
+ * somebody else. /api/tokens writes it with the API key, owner from the JWT.
+ *
+ * The owner is still required, so a row with no owner is refused here rather
+ * than stored as nobody's.
+ */
+export function apiTokenPermissions({ ownerId }: { ownerId: string }): string[] {
+  requireId(ownerId, "ownerId");
+  return [];
+}
+
+/**
+ * One call to the read API, for the audit trail (F29, schema v26).
+ *
+ * No permission at all, for the reason an audit trail exists: nobody it
+ * describes may read, write or erase it. Only /api/v1 writes it, with the API
+ * key; only an admin reads it.
+ */
+export function apiRequestPermissions({ ownerId }: { ownerId: string }): string[] {
+  requireId(ownerId, "ownerId");
+  return [];
+}
+
 /** Every policy in one place, so a table can never be added without one. */
 export const POLICIES = {
   profiles: profilePermissions,
@@ -524,6 +556,8 @@ export const POLICIES = {
   invite_codes: invitePermissions,
   reference_maxes: referenceMaxPermissions,
   push_subscriptions: pushSubscriptionPermissions,
+  api_tokens: apiTokenPermissions,
+  api_requests: apiRequestPermissions,
   programs: programPermissions,
   program_blocks: programPermissions,
   program_weeks: programPermissions,
@@ -558,5 +592,7 @@ export const SERVER_ONLY_TABLES: readonly ServerTable[] = [
   "invite_codes",
   "reference_maxes",
   "push_subscriptions",
+  "api_tokens",
+  "api_requests",
   ...PROGRAM_TABLES,
 ];

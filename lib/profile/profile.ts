@@ -6,6 +6,8 @@
  * browser and is where a silent DOTS failure would otherwise come from.
  */
 
+import { avatarOf } from "@/appwrite/documents/avatar";
+
 export type Sex = "male" | "female";
 export type Units = "kg" | "lb";
 
@@ -103,4 +105,32 @@ export function fallbackName(accountName: string, email: string): string {
   const local = email.split("@")[0]?.trim() ?? "";
   if (local) return local.slice(0, MAX_NAME_LENGTH);
   return "Athlete";
+}
+
+/** A stored profile row. */
+export interface ProfileRow {
+  $id: string;
+  user_id?: unknown;
+  display_name?: unknown;
+  sex?: unknown;
+  units?: unknown;
+  avatar_file_id?: unknown;
+}
+
+/**
+ * The row as the app reads it. Shared by the browser store and the read API
+ * (F29), so both default a missing or unknown unit the same way. The caller
+ * checks the row is authentic first (provenance.ts).
+ */
+export function profileFromRow(raw: ProfileRow): Profile {
+  return {
+    userId: typeof raw.user_id === "string" ? raw.user_id : raw.$id,
+    displayName: typeof raw.display_name === "string" ? raw.display_name : "",
+    // Anything that is not one of the two known values reads as unanswered.
+    // A profile carrying a third value must not resolve to a DOTS coefficient.
+    sex: isSex(raw.sex) ? raw.sex : null,
+    units: isUnits(raw.units) ? raw.units : DEFAULT_UNITS,
+    // Only a picture in the owner's own namespace; see appwrite/documents/avatar.ts.
+    avatarFileId: avatarOf(raw as unknown as Record<string, unknown>),
+  };
 }
