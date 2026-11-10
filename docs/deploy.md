@@ -37,6 +37,7 @@ Set them before the first build. The three `NEXT_PUBLIC_*` values are inlined in
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | yes | Web push (F27). Same value as the `notify` Function's. docs/push-notifications.md |
 | `VAPID_PRIVATE_KEY` | **secret** | Web push: signs every push. Same value as the Function's. |
 | `VAPID_SUBJECT` | yes | Web push: a `mailto:` contact for the push services. |
+| `API_TOKEN_USER_IDS` | no (ids, not secrets) | Read API (F29): comma-separated Appwrite user ids allowed to mint tokens. Empty is nobody. docs/read-api.md |
 
 Do not set `SNB_BACKUP_DIR` or `SNB_BACKUP_OFFSITE` on Vercel: they belong to the backup scripts, which run on the machine that holds the backups.
 

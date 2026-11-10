@@ -191,6 +191,24 @@ A's `user_id` stamped `read("users")`; the raw update re-points A's endpoint.
 The route refuses a session-less call. [Unverified] until Joey runs it
 against an instance with v25 applied.
 
+## Read API tokens and audit trail (schema v26, F29)
+
+`api_tokens` and `api_requests` grant nobody anything, A included: no
+table-level create and every row stamped `[]` (`apiTokenPermissions`,
+`apiRequestPermissions`). A token row holds a sha256 a reader could test
+guesses against, and decides whose data a token reads; an audit row is only
+worth having if the person it describes cannot edit or erase it. So the rule
+reads nobody for all four operations, the owner included. The audited targets
+are **A's** token, minted through `POST /api/tokens` with A on
+`API_TOKEN_USER_IDS` for that run only, and the audit row `GET /api/v1/me`
+writes when called with it. The forgeries mint a token under A's `owner_id`
+and write a line into A's trail, stamped `read("users")`; the raw updates
+un-revoke and extend the token, and rewrite a status. Beside the matrix: B,
+off the allowlist, gets 403 minting; no session gets 401. The stamp scan
+expects `[]` on every row and `scope = "read"` on every token. [Unverified]
+until Joey runs it against an instance with v26 applied: it also needs the
+audit's API key to be allowed `Users.createJWT`, which `/api/v1` calls.
+
 ## Adding a table
 
 A new table without a rule fails both the audit and `npm test`
