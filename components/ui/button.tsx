@@ -46,6 +46,37 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
 }
 
+/**
+ * The button's classes, for the few places that need a link to look like one:
+ * the public landing page's calls to action, which navigate rather than act.
+ */
+export function buttonClass({
+  variant = "primary",
+  size = "md",
+  block = false,
+  className,
+}: {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  block?: boolean;
+  className?: string;
+} = {}): string {
+  return cn(
+    "inline-flex items-center justify-center whitespace-nowrap",
+    "transition-colors disabled:cursor-not-allowed",
+    // On the coach side the shared transition tokens and a press;
+    // docs/coach-motion.md. On the athlete's, the thumb press with a
+    // spring release; docs/athlete-motion.md.
+    "coach:transition-control coach:press athlete:tap",
+    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
+    VARIANTS[variant],
+    COACH_HOVER[variant],
+    SIZES[size],
+    block && "w-full",
+    className,
+  );
+}
+
 export function Button({
   variant = "primary",
   size = "md",
@@ -58,20 +89,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={cn(
-        "inline-flex items-center justify-center whitespace-nowrap",
-        "transition-colors disabled:cursor-not-allowed",
-        // On the coach side the shared transition tokens and a press;
-        // docs/coach-motion.md. On the athlete's, the thumb press with a
-        // spring release; docs/athlete-motion.md.
-        "coach:transition-control coach:press athlete:tap",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-line",
-        VARIANTS[variant],
-        COACH_HOVER[variant],
-        SIZES[size],
-        block && "w-full",
-        className,
-      )}
+      className={buttonClass({ variant, size, block, className })}
       {...props}
     >
       {children}

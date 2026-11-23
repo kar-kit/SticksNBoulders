@@ -23,7 +23,8 @@ import type { SessionUser } from "./session-context";
  * mode itself lives on the Appwrite account, so signing back in restores it.
  */
 
-const KEY = "snb.last-user";
+export const REMEMBERED_USER_KEY = "snb.last-user";
+const KEY = REMEMBERED_USER_KEY;
 
 interface Stored {
   user: SessionUser;
