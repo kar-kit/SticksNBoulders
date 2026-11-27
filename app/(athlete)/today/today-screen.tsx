@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InstallHint } from "@/components/pwa/install-hint";
+import { CallInSick } from "@/components/sick/call-in-sick";
 import { useSession } from "@/lib/auth/session-context";
 import { useExerciseLibrary } from "@/lib/exercises/library-context";
 import { useTrainingSessions } from "@/lib/logging/session-context";
@@ -106,6 +107,9 @@ export function TodayScreen() {
           )}
         </Link>
       ) : null}
+
+      {/* F31. A row to call in sick; a card once one is made. Absent without a coach. */}
+      <CallInSick athleteId={athleteId} hasCoach={feedback.hasCoach} />
 
       {/* Renders nothing on most visits. See lib/pwa/install.ts for when it does. */}
       <InstallHint />

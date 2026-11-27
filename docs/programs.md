@@ -420,6 +420,9 @@ programDayId })` like Today's. A done day links to its logged session instead.
   finished session = done). Missed is only claimed when the loaded sessions
   (newest 25) reach back to that date and the list actually loaded; otherwise
   the day carries no label. [Inference] Better silent than wrong offline.
+  A dated day inside the athlete's call-in sick (F31) is **Sick**, not Missed,
+  and nothing is paused: it can still be started. While the call-ins are not
+  yet known the screen claims no day was missed (docs/call-in-sick.md).
 - **Offline.** The last tree and the athlete's maxes sit in localStorage
   (`snb.my-program`, scoped to the athlete). Cache paints first, the network
   refreshes behind it, a failed refresh changes nothing, and an unpublished

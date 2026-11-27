@@ -1,7 +1,7 @@
 import type { Row } from "@/appwrite/documents/provenance";
 import { PUSH_TABLE, prefsOf } from "@/appwrite/documents/push";
 import { deliver, targetOf, type DeliverDeps, type DeliverResult } from "./deliver";
-import { clipMessage, replyMessage, type PushMessage } from "./message";
+import { clipMessage, replyMessage, sickMessage, type PushMessage } from "./message";
 import { classifyEvent, isFreshClip, recipientsFor } from "./notify-event";
 
 /**
@@ -55,18 +55,30 @@ export async function dispatch(deps: DispatchDeps, event: string, row: Row): Pro
   const coaches = recipientsFor(links, classified.athleteId);
   if (coaches.length === 0) return { action: "skip", reason: "no active coach to tell" };
 
-  const wants = classified.kind === "clip" ? "clips" : "replies";
+  // A call-in sick has no switch of its own: a coach who muted clips or
+  // replies must still hear that an athlete is ill, and every device that is
+  // on at all gets it. [Inference] -- a third switch is one column on
+  // push_subscriptions if Ruairi wants one (docs/call-in-sick.md).
+  const wants = classified.kind === "clip" ? "clips" : classified.kind === "reply" ? "replies" : null;
   const devices = (await deps.reader.listRows(PUSH_TABLE, { user_id: coaches }, DEVICES_PAGE)).filter(
     // Belt and braces over the query, as for the links: only a recipient's
     // device, and only one that wants this kind.
-    (device) => coaches.includes(device.user_id as string) && prefsOf(device)[wants],
+    (device) => coaches.includes(device.user_id as string) && (wants === null || prefsOf(device)[wants]),
   );
   const targets = devices.map(targetOf).filter((t) => t !== null);
-  if (targets.length === 0) return { action: "skip", reason: `no coach device wants ${wants}` };
+  if (targets.length === 0) return { action: "skip", reason: wants ? `no coach device wants ${wants}` : "no coach device is on" };
 
   const athleteName = str(await deps.reader.getRow("profiles", classified.athleteId).catch(() => null), "display_name");
   const message =
-    classified.kind === "clip"
+    classified.kind === "sick"
+      ? sickMessage({
+          athleteId: classified.athleteId,
+          athleteName,
+          sickId: classified.sickId,
+          startsOn: classified.startsOn,
+          endsOn: classified.endsOn,
+        })
+      : classified.kind === "clip"
       ? clipMessage({
           athleteId: classified.athleteId,
           athleteName,

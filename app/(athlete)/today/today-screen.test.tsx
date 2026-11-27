@@ -48,6 +48,12 @@ vi.mock("@/lib/programming/use-prescribed", () => ({
   usePrescribedToday: () => prescribed.value,
 }));
 
+// F31. The call-in row is tested on its own (components/sick/call-in-sick.test.tsx);
+// here it is only a hook that answers "nothing".
+vi.mock("@/lib/sick/use-my-sick", () => ({
+  useMySick: () => ({ spells: [], known: true, pending: false, callIn: vi.fn(), end: vi.fn() }),
+}));
+
 const badge = vi.hoisted(() => ({ hasCoach: null as boolean | null, unread: 0 }));
 vi.mock("@/lib/review/feedback-context", () => ({
   useFeedbackBadge: () => badge,
@@ -315,5 +321,27 @@ describe("Today, the way into Coach Feedback", () => {
     badge.unread = 3;
     setup();
     expect(screen.getByRole("link", { name: /Coach feedback/ })).toHaveTextContent("3 new");
+  });
+});
+
+describe("the Call in sick entry (F31)", () => {
+  it("is absent, not greyed out, for an athlete with no coach", () => {
+    badge.hasCoach = false;
+    setup();
+    expect(screen.queryByRole("button", { name: /Call in sick/ })).not.toBeInTheDocument();
+  });
+
+  it("waits while it is not known whether there is a coach, rather than flickering in", () => {
+    badge.hasCoach = null;
+    setup();
+    expect(screen.queryByRole("button", { name: /Call in sick/ })).not.toBeInTheDocument();
+  });
+
+  it("is a row above the Start button for an athlete with a coach, and never replaces it", () => {
+    badge.hasCoach = true;
+    setup();
+    const row = screen.getByRole("button", { name: /Call in sick/ });
+    const start = screen.getByRole("button", { name: "Start a session" });
+    expect(row.compareDocumentPosition(start) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

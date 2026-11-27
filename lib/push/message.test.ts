@@ -1,11 +1,13 @@
 import {
   COACH_REVIEW_PATH,
+  COACH_ROSTER_PATH,
   COACH_THREAD_ROUTE,
+  coachAthletePath,
   coachClipPath,
   coachThreadPath,
   isAppPath,
 } from "./links";
-import { UNNAMED_ATHLETE, clipMessage, clipTag, collapsedTitle, replyMessage, replyTag, testMessage } from "./message";
+import { UNNAMED_ATHLETE, clipMessage, clipTag, collapsedTitle, replyMessage, replyTag, sickMessage, sickTag, testMessage } from "./message";
 
 const A = "athlete_a";
 
@@ -37,6 +39,36 @@ describe("clipMessage", () => {
   it("names an athlete with no profile rather than leaving it blank", () => {
     expect(clipMessage({ ...base, athleteName: null }).title).toBe(`${UNNAMED_ATHLETE} uploaded a clip`);
     expect(clipMessage({ ...base, athleteName: "   " }).who).toBe(UNNAMED_ATHLETE);
+  });
+});
+
+describe("sickMessage (F31)", () => {
+  const base = { athleteId: A, athleteName: "Joey", sickId: "sk-1", startsOn: "2026-11-27", endsOn: "2026-11-27" };
+
+  it("collapses per athlete, counts per call-in, and opens the Athlete View or the Roster once several collapse", () => {
+    const m = sickMessage(base);
+    expect(m.tag).toBe(sickTag(A));
+    expect([sickTag(A), clipTag(A), replyTag(A)]).toHaveLength(new Set([sickTag(A), clipTag(A), replyTag(A)]).size);
+    expect(m.key).toBe("sk-1");
+    expect(sickMessage({ ...base, sickId: "sk-2" }).key).not.toBe(m.key);
+    expect(m.url).toBe(coachAthletePath(A));
+    expect(m.groupUrl).toBe(COACH_ROSTER_PATH);
+  });
+
+  it("says who and which days, with the weekday, read in UTC so no zone moves the day", () => {
+    expect(sickMessage(base).title).toBe("Joey called in sick");
+    expect(sickMessage(base).body).toBe("Fri 27 Nov");
+    expect(sickMessage({ ...base, endsOn: "2026-12-01" }).body).toBe("Fri 27 Nov to Tue 1 Dec");
+  });
+
+  it("carries no note: health information stays off the lock screen", () => {
+    expect(Object.keys(sickMessage(base)).sort()).toEqual(
+      ["body", "groupUrl", "key", "kind", "tag", "title", "url", "v", "who"].sort(),
+    );
+  });
+
+  it("names an athlete with no profile rather than leaving it blank", () => {
+    expect(sickMessage({ ...base, athleteName: null }).title).toBe(`${UNNAMED_ATHLETE} called in sick`);
   });
 });
 
@@ -85,6 +117,8 @@ describe("collapsedTitle", () => {
   it("counts clips and replies, and leaves a single one to its own title", () => {
     expect(collapsedTitle("clip", "Joey", 3)).toBe("Joey uploaded 3 clips");
     expect(collapsedTitle("reply", "Joey", 2)).toBe("Joey replied 2 times");
+    expect(collapsedTitle("sick", "Joey", 3)).toBe("Joey called in sick 3 times");
+    expect(collapsedTitle("sick", "Joey", 1)).toBe("");
     expect(collapsedTitle("clip", "Joey", 1)).toBe("");
     expect(collapsedTitle("test", "Joey", 4)).toBe("");
   });

@@ -240,7 +240,7 @@ function readPushMessage(data) {
   const text = (v, fallback) => (typeof v === "string" && v ? v : fallback);
   return {
     v: 1,
-    kind: raw.kind === "clip" || raw.kind === "reply" ? raw.kind : "test",
+    kind: raw.kind === "clip" || raw.kind === "reply" || raw.kind === "sick" ? raw.kind : "test",
     tag: raw.tag,
     key: text(raw.key, ""),
     who: text(raw.who, "Your athlete"),
@@ -254,6 +254,7 @@ function readPushMessage(data) {
 /** Mirrors lib/push/message.ts collapsedTitle; sw-push.test.ts holds them together. */
 function collapsedTitle(kind, who, count) {
   if (count <= 1 || kind === "test") return "";
+  if (kind === "sick") return `${who} called in sick ${count} times`;
   return kind === "clip" ? `${who} uploaded ${count} clips` : `${who} replied ${count} times`;
 }
 

@@ -10,6 +10,7 @@ phone and to any browser he turns it on in.
 |---|---|---|
 | A set gains a clip (create with `video_file_id`, or an update whose clip file is under 10 minutes old) | every coach on an **active** link to the athlete | the athlete; a self-coached athlete; a revoked coach |
 | A comment created by the athlete on their own set (`author_id === athlete_id`) | the same | the coach's own comments; edits; deletes |
+| A call-in sick created by the athlete (F31, schema v27) | the same | the athlete; a revoked coach. Ending or cancelling one never notifies. No per-type switch: a coach who muted clips and replies still hears it. Dates only, never the note. See docs/call-in-sick.md |
 | Anything else: reactions, reviews, weigh-ins, unrelated set edits | nobody | |
 
 Forged rows (a set or comment whose stamp does not prove its author,
@@ -17,7 +18,8 @@ Forged rows (a set or comment whose stamp does not prove its author,
 within seconds and they must not reach a lock screen first.
 
 Each coach has per-type switches, **New clips** and **Athlete replies**,
-stored on each device row and applied to all of that coach's devices.
+stored on each device row and applied to all of that coach's devices. The
+call-in sick event of F31 has none; see docs/call-in-sick.md.
 
 ## Pieces
 

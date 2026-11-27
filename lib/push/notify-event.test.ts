@@ -100,6 +100,46 @@ describe("classifyEvent: a reply", () => {
   });
 });
 
+const sickDay = (over: Record<string, unknown> = {}) => ({
+  $id: "sk-1",
+  $tableId: "sick_days",
+  athlete_id: A,
+  starts_on: "2026-11-27",
+  ends_on: "2026-11-28",
+  note: "Flu, back Thursday",
+  $permissions: POLICIES.sick_days({ athleteId: A }),
+  ...over,
+});
+
+describe("classifyEvent: calling in sick (F31)", () => {
+  it("is news when an athlete calls in, with the days and never the note", () => {
+    const event = classifyEvent(ROWS("sick_days", "create"), sickDay());
+    expect(event).toEqual({ kind: "sick", athleteId: A, sickId: "sk-1", startsOn: "2026-11-27", endsOn: "2026-11-28" });
+    // The note is health information: it does not leave the database in a push.
+    expect(JSON.stringify(event)).not.toContain("Flu");
+  });
+
+  it("reads either event spelling", () => {
+    expect(classifyEvent(DOCS("sick_days", "create"), { ...sickDay(), $tableId: undefined, $collectionId: "sick_days" }).kind).toBe("sick");
+  });
+
+  it("is not news when the athlete ends it or cancels it", () => {
+    expect(classifyEvent(DOCS("sick_days", "update"), sickDay()).kind).toBe("skip");
+    expect(classifyEvent(DOCS("sick_days", "delete"), sickDay()).kind).toBe("skip");
+  });
+
+  it("skips one written in the athlete's name by somebody else, before validate-row deletes it", () => {
+    const forged = sickDay({ $permissions: ['read("users")', `update("user:${STRANGER}")`] });
+    expect(classifyEvent(DOCS("sick_days", "create"), forged)).toEqual({ kind: "skip", reason: "sick day fails the authorship check" });
+  });
+
+  it("skips a range that is not one, and a row that names no athlete", () => {
+    expect(classifyEvent(DOCS("sick_days", "create"), sickDay({ starts_on: "2026-11-29" })).kind).toBe("skip");
+    expect(classifyEvent(DOCS("sick_days", "create"), sickDay({ ends_on: "2062-01-01" })).kind).toBe("skip");
+    expect(classifyEvent(DOCS("sick_days", "create"), sickDay({ athlete_id: "" })).kind).toBe("skip");
+  });
+});
+
 describe("classifyEvent: everything else", () => {
   it.each(["comment_reactions", "set_reviews", "bodyweight_entries", "push_subscriptions", ""])("never notifies on %s", (table) => {
     const row = { $id: "r", $tableId: table, athlete_id: A, author_id: A, video_file_id: "f" };

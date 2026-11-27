@@ -36,7 +36,7 @@ of his review day is still open.
 | --- | --- | --- |
 | Videos | ≥1 clip this coach hasn't cleared, any age | yes |
 | Unprompted RPE 10 | an RPE 10 where the prescription asked for less, in the last 7 days | yes, from `fetchProgramSignals` |
-| Missed sessions | ≥1 prescribed session this week whose day passed with nothing logged | yes, from `fetchProgramSignals` |
+| Missed sessions | ≥1 prescribed session this week whose day passed with nothing logged, **not counting a day inside the athlete's call-in sick** (F31) | yes, from `fetchProgramSignals` |
 | No bodyweight | last weigh-in more than 7 days ago; never-logged once linked over 7 days | yes |
 | Weight-class drift near a meet | in the blueprint | not built, no meet data |
 
@@ -45,6 +45,17 @@ bodyweight; then by name. Videos first is [Fact] (above); the order of the other
 three is [Inference] and unchanged. An athlete whose circle the coach can't see
 yet fires nothing, because every read for them came back empty and none of that
 is a fact about them.
+
+## Off sick (F31)
+
+An athlete whose call-in covers the coach's today (`sickNow`) gets a **Sick**
+mark beside their name in the table, and an **Off sick** heading under Needs you
+lists them with their dates and note, linking to the Athlete View. It is
+information, not a to-do, so it is not a Needs-you item and the heading is
+absent when nobody is. The read (`fetchSickDays`, one query for the whole
+roster, a week back) is an improvement, not a dependency: if it fails the
+Roster loads as it always did. Today is the coach's calendar day, so an athlete
+a day ahead or behind shows a day early or late. docs/call-in-sick.md.
 
 ## Order 19 wiring
 

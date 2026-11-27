@@ -1,12 +1,14 @@
 import { isAuthentic, type Row } from "@/appwrite/documents/provenance";
+import { sickRangeProblem } from "@/appwrite/documents/sick";
 
 /**
  * Which database events are worth a coach's attention (F27). Pure.
  *
  * Two things notify, both from the coach's ask: an athlete putting a clip on
- * a set, and an athlete answering in a thread. Nothing else does -- not a
- * coach's own comment or review, not a reaction, not a set edit that leaves
- * the clip alone.
+ * a set, and an athlete answering in a thread. Since F31 a third: an athlete
+ * calling in sick. Nothing else does -- not a coach's own comment or review,
+ * not a reaction, not a set edit that leaves the clip alone, and not an
+ * athlete ending or cancelling a call-in.
  */
 
 export type NotifyEvent =
@@ -25,6 +27,11 @@ export type NotifyEvent =
       needsFreshFile: boolean;
     }
   | { kind: "reply"; athleteId: string; setId: string; commentId: string; body: string }
+  /**
+   * F31. The note is deliberately not carried: it is health information, and
+   * a lock screen is the one place a coach's phone shows it to whoever holds it.
+   */
+  | { kind: "sick"; athleteId: string; sickId: string; startsOn: string; endsOn: string }
   | { kind: "skip"; reason: string };
 
 const str = (row: Row, key: string): string => (typeof row[key] === "string" ? (row[key] as string) : "");
@@ -69,6 +76,26 @@ export function classifyEvent(event: string, row: Row): NotifyEvent {
       setId: str(row, "set_id"),
       commentId: str(row, "$id"),
       body: str(row, "body"),
+    };
+  }
+
+  if (tableId === "sick_days") {
+    // Only a call-in being made. Shortening one ("I'm better") is an update and
+    // cancelling one a delete, and neither is news the coach needs buzzed.
+    if (op !== "create") return { kind: "skip", reason: `sick_days ${op || "?"}` };
+    const athleteId = str(row, "athlete_id");
+    if (!athleteId) return { kind: "skip", reason: "sick day names no athlete" };
+    // A call-in in somebody else's name is deleted by validate-row within
+    // seconds; it must not put an athlete "off sick" on a lock screen first.
+    if (!isAuthentic("sick_days", row)) return { kind: "skip", reason: "sick day fails the authorship check" };
+    const problem = sickRangeProblem(row.starts_on, row.ends_on);
+    if (problem) return { kind: "skip", reason: `sick day is not a valid range: ${problem}` };
+    return {
+      kind: "sick",
+      athleteId,
+      sickId: str(row, "$id"),
+      startsOn: str(row, "starts_on"),
+      endsOn: str(row, "ends_on"),
     };
   }
 

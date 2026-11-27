@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { AthleteBodyweight } from "@/components/coach/athlete-bodyweight";
 import { AthleteLifts } from "@/components/coach/athlete-lifts";
 import { AthleteProgram } from "@/components/coach/athlete-program";
+import { AthleteSick } from "@/components/coach/athlete-sick";
 import { AthleteSessions } from "@/components/coach/athlete-sessions";
 import { AthleteVideos } from "@/components/coach/athlete-videos";
 import { CurrentMaxes } from "@/components/coach/current-maxes";
@@ -47,7 +48,8 @@ import { UserAvatar } from "@/components/profile/user-avatar";
  * - **Header**: name, a small "linked" pill, the bodyweight figure (which
  *   opens its history over the page), and load suggestions as a compact
  *   setting on the right -- set once per athlete, so it shows its value and
- *   folds its explanation away.
+ *   folds its explanation away. Under it, only when there is one, the
+ *   athlete's call-in sick with its dates and note (F31).
  * - **Top, two columns**: CURRENT MAXES (squat, bench, deadlift and DOTS in
  *   one table) with the videos under it; THIS BLOCK, the current week at a
  *   glance, beside them. The program takes a full column because it is the
@@ -193,6 +195,9 @@ export function AthleteView({ athleteId }: { athleteId: string }) {
       ) : (
         <p className="m-0 text-ui text-muted">Loading…</p>
       )}
+
+      {/* F31. Only once the link says so: it reads through the circle. */}
+      {linked ? <AthleteSick athleteId={athleteId} /> : null}
 
       {/* Mounted while checking so the reads start now; hidden until the link
           says they may be shown. */}

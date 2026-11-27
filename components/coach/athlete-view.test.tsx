@@ -37,6 +37,7 @@ const { panel } = vi.hoisted(() => ({
 }));
 vi.mock("@/components/coach/current-maxes", () => ({ CurrentMaxes: panel("Current maxes panel") }));
 vi.mock("@/components/coach/athlete-lifts", () => ({ AthleteLifts: panel("Lifts panel") }));
+vi.mock("@/components/coach/athlete-sick", () => ({ AthleteSick: panel("Sick panel") }));
 vi.mock("@/components/coach/athlete-sessions", () => ({ AthleteSessions: panel("Sessions panel") }));
 vi.mock("@/components/coach/athlete-program", () => ({ AthleteProgram: panel("Program panel") }));
 vi.mock("@/components/coach/suggestion-switch", () => ({ SuggestionSwitch: panel("Suggestions panel") }));
@@ -97,6 +98,14 @@ describe("a linked athlete", () => {
       expect(screen.getByRole("region", { name: label })).toBeVisible();
     }
     expect(store.fetchLinkRows).toHaveBeenCalledWith("coach", "joey");
+  });
+
+  it("shows the call-in sick under the header, once the link says so (F31)", async () => {
+    store.fetchLinkRows.mockResolvedValue([row()]);
+    render(<AthleteView athleteId="joey" />);
+    const sick = await screen.findByRole("region", { name: "Sick panel" });
+    const heading = screen.getByRole("heading", { name: "Joey Pang" });
+    expect(heading.compareDocumentPosition(sick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("puts the bodyweight and the load-suggestion setting in the header, beside the name", async () => {
@@ -178,6 +187,12 @@ describe("before the link is confirmed", () => {
     expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
 
+  it("does not ask for the call-in sick, which would be refused them", () => {
+    store.fetchLinkRows.mockReturnValue(new Promise(() => {}));
+    render(<AthleteView athleteId="joey" />);
+    expect(screen.queryByRole("region", { name: "Sick panel" })).not.toBeInTheDocument();
+  });
+
   it("opens no clip over the hidden panels, even when the URL asks", () => {
     store.fetchLinkRows.mockReturnValue(new Promise(() => {}));
     nav.search = "clip=set-9";
@@ -194,6 +209,7 @@ describe("an athlete who ended the link", () => {
     expect(await screen.findByText("No longer linked")).toBeInTheDocument();
     expect(screen.getByText(/ended the link on 20 Sep/)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Current maxes panel" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Sick panel" })).not.toBeInTheDocument();
     // Not named: whether a coach is told who left is Ruairi's call (Order 16.6).
     expect(screen.queryByText(/Joey Pang/)).not.toBeInTheDocument();
   });

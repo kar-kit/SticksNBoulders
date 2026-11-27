@@ -60,6 +60,7 @@ import {
   attachVideo,
   setProfileAvatar,
   bodyweightRowId,
+  callInSick,
   changeReaction,
   createExercise,
   createGlobalExercise,
@@ -69,6 +70,7 @@ import {
   deleteBodyweight,
   deleteComment,
   deleteSet,
+  endSick,
   finishSession,
   markSetReviewed,
   markThreadRead,
@@ -432,6 +434,10 @@ try {
   targets.sets = await ownerCreate("sets", () => createSet(A.deps, { userId: A.id }, setInput("set1", 140)));
   targets.bodyweight_entries = await ownerCreate("bodyweight_entries", () =>
     recordBodyweight(A.deps, { userId: A.id }, { weightKg: 82.4, measuredOn: "2026-01-05" }),
+  );
+  // F31: A calls in sick, through the helper, from A's own session.
+  targets.sick_days = await ownerCreate("sick_days", () =>
+    callInSick(A.deps, { userId: A.id }, { sickId: `sk-a-${stamp}`, startsOn: "2026-01-05", endsOn: "2026-01-08", note: "Audit: flu" }),
   );
 
   // The clip: uploaded from A's session, stamped by the policy, then recorded
@@ -889,6 +895,9 @@ try {
       remember(`set:${actor}`, await forged(ruleFor("sets"), actor, "sets", ID.unique(), { session_id: targets.sessions, athlete_id: A.id, exercise_id: targets.exercises, set_index: 9, load_kg: 300, reps: 1, rpe: 10, e1rm_kg: 400, is_warmup: false, logged_at: loggedAt.toISOString(), client_set_id: `forged-${tag}`, video_file_id: targets.set_videos }, readableByEveryone(), `createRow with athlete_id A and e1rm 400, ${EVERYONE}`));
       const day = `2026-01-${String(10 + ACTORS.indexOf(actor)).padStart(2, "0")}`;
       await forged(ruleFor("bodyweight_entries"), actor, "bodyweight_entries", bodyweightRowId(A.id, day), { athlete_id: A.id, weight_kg: 140, measured_on: day, recorded_at: now() }, readableByEveryone(), `createRow at A's derived weigh-in id, ${EVERYONE}`);
+      // F31: a call-in in A's name -- the way to put A "off sick" on his coach's
+      // Roster, or to hide A's missed sessions. Carries no update(user:A).
+      await forged(ruleFor("sick_days"), actor, "sick_days", ID.unique(), { athlete_id: A.id, starts_on: day, ends_on: day, note: `Forged ${tag}`, created_at: now(), client_sick_id: `forged-sick-${tag}` }, readableByEveryone(), `createRow with athlete_id A, ${EVERYONE}`);
     }
     if (actor !== "coach") {
       // The athlete forges with what he holds -- his circle -- which is enough
@@ -1192,6 +1201,8 @@ try {
       // hijacking.
       sets: { load_kg: 900 + n, failed: true, duration_seconds: 60 + n },
       bodyweight_entries: { weight_kg: 300 + n },
+      // F31: the note is what the coach reads beside A's name.
+      sick_days: { note: tag },
       // v18: re-pointing the review at another clip is what decides whether a
       // replaced clip comes back, so it is the column worth hijacking.
       set_reviews: { reviewed_at: new Date(Date.UTC(2020, 0, n)).toISOString(), video_file_id: `hijacked-${n}` },
@@ -1227,6 +1238,8 @@ try {
     sessions: () => finishSession(A.deps, { userId: A.id }, { sessionId: targets.sessions, setCount: 2, tonnageKg: 1425 }),
     sets: () => updateSet(A.deps, { userId: A.id }, { rowId: targets.sets, loadKg: 142.5, reps: 5, rpe: 8, isWarmup: false, failed: false }),
     bodyweight_entries: () => reviseBodyweight(A.deps, { userId: A.id }, { weightKg: 82.1, measuredOn: "2026-01-05" }),
+    // F31: "I'm better" -- A shortens her own call-in, which restamps the row.
+    sick_days: () => endSick(A.deps, { userId: A.id }, { sickId: targets.sick_days, endsOn: "2026-01-07" }),
     // v18: clearing a replaced clip meets the review the old one left (same
     // derived id), so the helper answers the 409 by moving the row onto the
     // new clip, from the coach's own session.
@@ -1378,6 +1391,7 @@ try {
     ["A's session", () => C.tables.getRow({ databaseId: D, tableId: "sessions", rowId: targets.sessions })],
     ["a set logged while he was linked", () => C.tables.getRow({ databaseId: D, tableId: "sets", rowId: extras.set2 })],
     ["A's weigh-ins", () => C.tables.getRow({ databaseId: D, tableId: "bodyweight_entries", rowId: bodyweightRowId(A.id, "2026-01-05") })],
+    ["A's call-in sick", () => C.tables.getRow({ databaseId: D, tableId: "sick_days", rowId: targets.sick_days })],
     ["A's rollup", () => C.tables.getRow({ databaseId: D, tableId: "stats_rollups", rowId: targets.stats_rollups })],
     ["the max he set himself", () => C.tables.getRow({ databaseId: D, tableId: "reference_maxes", rowId: targets.reference_maxes })],
     ["his own review of A's clip", () => C.tables.getRow({ databaseId: D, tableId: "set_reviews", rowId: extras.review2 })],
@@ -1616,6 +1630,7 @@ async function teardown() {
     sessions: ["athlete_id"],
     sets: ["athlete_id"],
     bodyweight_entries: ["athlete_id"],
+    sick_days: ["athlete_id"],
     stats_rollups: ["athlete_id"],
     reference_maxes: ["athlete_id", "recorded_by"],
     set_reviews: ["athlete_id", "coach_id"],

@@ -161,6 +161,23 @@ export const RULES: readonly ResourceRule[] = [
     ownerColumn: "athlete_id",
   },
   {
+    key: "sick_days",
+    kind: "table",
+    resource: "sick_days",
+    target: "A's call-in sick (F31)",
+    // A weigh-in's matrix, and for the same reason: A's own statement about
+    // themselves, read by A's coach, never rewritten by them.
+    allow: loggedWork,
+    ownerColumn: "athlete_id",
+    // A stamp cannot police a value, and the days are strings: a range that is
+    // not one, or runs past the cap, would silence A's missed-session signals.
+    // validate-row deletes it (provenance.ts contentProblem).
+    invariant: (row) => contentProblem("sick_days", row),
+    notes:
+      "Stamped as a weigh-in is (policy.ts sickDayPermissions), so a coach unlinked from A cannot read it and a call-in " +
+      "forged in A's name lacks update(user:A), which no reader trusts and validate-row deletes.",
+  },
+  {
     key: "set_reviews",
     kind: "table",
     resource: "set_reviews",

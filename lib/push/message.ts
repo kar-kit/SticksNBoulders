@@ -1,4 +1,4 @@
-import { COACH_REVIEW_PATH, PUSH_SETTINGS_PATH, coachClipPath, coachThreadPath } from "./links";
+import { COACH_REVIEW_PATH, COACH_ROSTER_PATH, PUSH_SETTINGS_PATH, coachAthletePath, coachClipPath, coachThreadPath } from "./links";
 
 /**
  * What a push carries (F27). The service worker in public/sw.js reads it.
@@ -16,7 +16,7 @@ import { COACH_REVIEW_PATH, PUSH_SETTINGS_PATH, coachClipPath, coachThreadPath }
  * looked" is the number that is useful on a lock screen. [Inference]
  */
 
-export type PushKind = "clip" | "reply" | "test";
+export type PushKind = "clip" | "reply" | "sick" | "test";
 
 export interface PushMessage {
   /** Payload version, so a worker from an older build can tell. */
@@ -56,6 +56,59 @@ export function clipTag(athleteId: string): string {
 
 export function replyTag(athleteId: string): string {
   return `replies:${athleteId}`;
+}
+
+export function sickTag(athleteId: string): string {
+  return `sick:${athleteId}`;
+}
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * "Fri 28 Nov" for a YYYY-MM-DD calendar day. By hand, in UTC, rather than
+ * through Intl: the Function has no locale to ask, the day is already the
+ * athlete's own, and a zone must never move it.
+ */
+function dayLabel(day: string): string {
+  const date = new Date(`${day}T12:00:00Z`);
+  return `${DAY_NAMES[date.getUTCDay()]} ${date.getUTCDate()} ${MONTH_NAMES[date.getUTCMonth()]}`;
+}
+
+export interface SickMessageInput {
+  athleteId: string;
+  athleteName: string | null;
+  sickId: string;
+  startsOn: string;
+  endsOn: string;
+}
+
+/**
+ * The athlete called in sick (F31). The dates and nothing about why: the note
+ * is health information and stays in the app, behind the coach's sign-in, not
+ * on a lock screen. [SME to confirm] -- whether Ruairi wants the name there at
+ * all follows the same question docs/push-notifications.md already asks of
+ * reply text.
+ */
+export function sickMessage(input: SickMessageInput): PushMessage {
+  const who = nameOf(input.athleteName);
+  const url = coachAthletePath(input.athleteId);
+  return {
+    v: 1,
+    kind: "sick",
+    tag: sickTag(input.athleteId),
+    key: input.sickId,
+    who,
+    title: `${who} called in sick`,
+    body:
+      input.startsOn === input.endsOn
+        ? dayLabel(input.startsOn)
+        : `${dayLabel(input.startsOn)} to ${dayLabel(input.endsOn)}`,
+    url,
+    // Several call-ins from one athlete collapse into one, and the Roster
+    // is where everyone who is off sick is marked.
+    groupUrl: COACH_ROSTER_PATH,
+  };
 }
 
 export interface ClipMessageInput {
@@ -130,5 +183,6 @@ export function testMessage(now: Date): PushMessage {
  */
 export function collapsedTitle(kind: PushKind, who: string, count: number): string {
   if (count <= 1 || kind === "test") return "";
+  if (kind === "sick") return `${who} called in sick ${count} times`;
   return kind === "clip" ? `${who} uploaded ${count} clips` : `${who} replied ${count} times`;
 }

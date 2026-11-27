@@ -1,8 +1,10 @@
 import { circleTeamId } from "./circle";
-import { exercisePermissions, posterPermissions, reviewPermissions, sessionPermissions, setPermissions, threadReadPermissions, videoPermissions } from "./policy";
+import { bodyweightPermissions, exercisePermissions, posterPermissions, reviewPermissions, sessionPermissions, setPermissions, sickDayPermissions, threadReadPermissions, videoPermissions } from "./policy";
 import type { RowWriter } from "./row-writer";
 import {
   attachVideo,
+  callInSick,
+  endSick,
   createCoachLink,
   createExercise,
   createGlobalExercise,
@@ -971,6 +973,98 @@ describe("markThreadRead (F26)", () => {
     await expect(markThreadRead(deps, coach, { ...mark, lastReadAt: "yesterday" })).rejects.toThrow();
     await expect(markThreadRead(deps, coach, { ...mark, setId: "" })).rejects.toThrow();
     await expect(markThreadRead(deps, coach, { ...mark, athleteId: "x".repeat(37) })).rejects.toThrow();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("callInSick (F31)", () => {
+  const call = { sickId: "sk-abc", startsOn: "2026-11-27", endsOn: "2026-11-29", note: "Flu, back Monday" };
+
+  it("writes one row at the client's own id, the athlete's days, stamped for the athlete and their circle", async () => {
+    const { deps, actor, last } = harness();
+    await callInSick(deps, actor, call);
+    expect(last()).toEqual({
+      op: "create",
+      tableId: "sick_days",
+      rowId: "sk-abc",
+      data: {
+        athlete_id: ATHLETE,
+        starts_on: "2026-11-27",
+        ends_on: "2026-11-29",
+        note: "Flu, back Monday",
+        created_at: NOW.toISOString(),
+        client_sick_id: "sk-abc",
+      },
+      permissions: sickDayPermissions({ athleteId: ATHLETE }),
+    });
+    expect(last().permissions).toEqual(bodyweightPermissions({ athleteId: ATHLETE }));
+  });
+
+  it("takes the athlete from the signed-in actor, never from the input", async () => {
+    const { deps, last } = harness();
+    await callInSick(deps, { userId: "athlete_other" }, { ...call, athleteId: ATHLETE } as typeof call);
+    expect(last().data.athlete_id).toBe("athlete_other");
+    expect(last().permissions).toEqual(sickDayPermissions({ athleteId: "athlete_other" }));
+  });
+
+  it("stores no note for an empty box, and a long one cut to the column", async () => {
+    const { deps, actor, last } = harness();
+    await callInSick(deps, actor, { ...call, note: "   " });
+    expect(last().data.note).toBeNull();
+    await callInSick(deps, actor, { ...call, note: undefined });
+    expect(last().data.note).toBeNull();
+    await callInSick(deps, actor, { ...call, note: "y".repeat(500) });
+    expect((last().data.note as string).length).toBe(200);
+  });
+
+  it("is one day when the two ends are the same day", async () => {
+    const { deps, actor, last } = harness();
+    await callInSick(deps, actor, { ...call, endsOn: "2026-11-27" });
+    expect(last().data).toMatchObject({ starts_on: "2026-11-27", ends_on: "2026-11-27" });
+  });
+
+  it.each([
+    ["ends before it starts", { startsOn: "2026-11-29", endsOn: "2026-11-27" }, /before/],
+    ["runs past the cap", { startsOn: "2026-11-01", endsOn: "2026-12-02" }, /longer than 31 days/],
+    ["is not a real day", { startsOn: "2026-13-45", endsOn: "2026-11-27" }, /startsOn/],
+    ["is a timestamp, not a day", { startsOn: "2026-11-27T10:00:00Z", endsOn: "2026-11-27" }, /startsOn/],
+  ])("refuses a range that %s, before anything is sent", async (_why, range, message) => {
+    const { deps, actor, calls } = harness();
+    await expect(callInSick(deps, actor, { ...call, ...range })).rejects.toThrow(message);
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses a missing or oversized id", async () => {
+    const { deps, actor, calls } = harness();
+    await expect(callInSick(deps, actor, { ...call, sickId: "" })).rejects.toThrow();
+    await expect(callInSick(deps, actor, { ...call, sickId: "s".repeat(37) })).rejects.toThrow();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("endSick (F31)", () => {
+  it("shortens a call-in to its new last day, restamped, touching nothing else", async () => {
+    const { deps, actor, last } = harness();
+    await endSick(deps, actor, { sickId: "sk-abc", endsOn: "2026-11-27" });
+    expect(last()).toEqual({
+      op: "update",
+      tableId: "sick_days",
+      rowId: "sk-abc",
+      data: { ends_on: "2026-11-27" },
+      permissions: sickDayPermissions({ athleteId: ATHLETE }),
+    });
+  });
+
+  it("deletes a call-in outright when there is nothing left of it to keep", async () => {
+    const { deps, actor, last } = harness();
+    await endSick(deps, actor, { sickId: "sk-abc", endsOn: null });
+    expect(last()).toEqual({ op: "delete", tableId: "sick_days", rowId: "sk-abc", data: {} });
+  });
+
+  it("refuses an end that is not a day, and an id that is missing", async () => {
+    const { deps, actor, calls } = harness();
+    await expect(endSick(deps, actor, { sickId: "sk-abc", endsOn: "yesterday" })).rejects.toThrow(/endsOn/);
+    await expect(endSick(deps, actor, { sickId: "", endsOn: null })).rejects.toThrow();
     expect(calls).toEqual([]);
   });
 });

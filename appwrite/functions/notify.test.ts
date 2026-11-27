@@ -8,19 +8,23 @@ const C = "coach_c";
 const spec = () => FUNCTIONS.find((f) => f.id === "notify")!;
 
 describe("the notify Function's spec", () => {
-  it("hears sets created and updated and comments created, in both spellings, and nothing else", () => {
+  it("hears sets created and updated, comments created and sick days created, in both spellings, and nothing else", () => {
     const events = [...spec().events].sort();
     expect(events).toEqual(
       [
         "databases.sticksnboulders.collections.set_comments.documents.*.create",
         "databases.sticksnboulders.collections.sets.documents.*.create",
         "databases.sticksnboulders.collections.sets.documents.*.update",
+        "databases.sticksnboulders.collections.sick_days.documents.*.create",
         "databases.sticksnboulders.tables.set_comments.rows.*.create",
         "databases.sticksnboulders.tables.sets.rows.*.create",
         "databases.sticksnboulders.tables.sets.rows.*.update",
+        "databases.sticksnboulders.tables.sick_days.rows.*.create",
       ].sort(),
     );
     expect(events.some((e) => e.includes("comment_reactions") || e.includes("set_reviews"))).toBe(false);
+    // Ending a call-in is an update and cancelling one a delete: neither is news.
+    expect(events.some((e) => e.includes("sick_days") && !e.endsWith(".create"))).toBe(false);
   });
 
   it("comes after validate-row, which must never depend on it", () => {
@@ -98,6 +102,27 @@ describe("the notify Function", () => {
     const t = run(reply);
     await main(t.ctx);
     expect(t.result()?.body).toMatchObject({ action: "sent", kind: "reply", devices: 1, delivered: 1, dryRun: true });
+    expect(routes.filter((r) => r.method !== "GET")).toEqual([]);
+  });
+
+  it("in a dry run, tells the coach an athlete called in sick, with no note in it", async () => {
+    const sick = {
+      $id: "sk-1",
+      $tableId: "sick_days",
+      $databaseId: "sticksnboulders",
+      athlete_id: A,
+      starts_on: "2026-11-27",
+      ends_on: "2026-11-28",
+      note: "Flu, back Thursday",
+      $permissions: POLICIES.sick_days({ athleteId: A }),
+    };
+    const t = run(sick, {
+      "x-appwrite-trigger": "event",
+      "x-appwrite-key": "k",
+      "x-appwrite-event": "databases.sticksnboulders.tables.sick_days.rows.sk-1.create",
+    });
+    await main(t.ctx);
+    expect(t.result()?.body).toMatchObject({ action: "sent", kind: "sick", tag: `sick:${A}`, recipients: 1, devices: 1, dryRun: true });
     expect(routes.filter((r) => r.method !== "GET")).toEqual([]);
   });
 

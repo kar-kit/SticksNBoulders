@@ -20,7 +20,10 @@ Ops carry their own Appwrite row id: `session.create`, `session.finish`,
 for a lift typed on the spot, and `rollup.refresh` behind every set write.
 History and My exercises add `session.update`, `session.delete`,
 `exercise.rename`, `exercise.bodyweight`, `exercise.kind`, `exercise.delete`
-and `clip.delete` (see the last sections).
+and `clip.delete` (see the last sections). Calling in sick (F31) adds
+`sick.create` and `sick.end`: the row id is the client's `sk-<unique>`, a
+payload that can never be written is a permanent 400, and an end for a call-in
+already gone is done (docs/call-in-sick.md).
 
 ## One id, not two
 

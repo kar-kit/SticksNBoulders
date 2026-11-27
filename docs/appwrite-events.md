@@ -77,6 +77,15 @@ so it runs after it for the same event, and it never fails an execution, for
 the reason below. If both spellings fire for one write it runs twice; the
 service worker collapses the duplicate into a silent replace.
 
+Since F31 (schema v27) `validate-row` covers **`sick_days`** with no change to
+its subscriptions (the table is user-writable, so `VALIDATED_TABLES` picks it
+up; it also deletes a call-in whose range is not one, `contentProblem`), and
+**`notify`** gains `sick_days` creates, both spellings, to tell a coach an
+athlete called in sick (docs/call-in-sick.md). Both must be **redeployed**
+(`npm run appwrite:functions`): they bundle `provenance.ts` and the event
+classifier at deploy time. Updates and deletes of `sick_days` are not
+subscribed: ending a call-in is not news.
+
 ## What this does and does not change
 
 **Rollups stay in a route.** `app/api/rollup/route.ts` was written as a

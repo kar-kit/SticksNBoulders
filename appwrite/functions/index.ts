@@ -62,9 +62,10 @@ const commentDeleteEvents = [
 /**
  * F27. A set gaining a clip arrives as a create (rare: the offline queue
  * writes the set first) or as an update (attachVideo), and an athlete's reply
- * as a comment create. Sets and comments only, never every table: this one
- * does network I/O per execution, and an execution per weigh-in or rollup to
- * do nothing is waste. Both spellings, for the reason `rowEvents` has both.
+ * as a comment create. Sets, comments and (F31) sick days only, never every
+ * table: this one does network I/O per execution, and an execution per
+ * weigh-in or rollup to do nothing is waste. Both spellings, for the reason
+ * `rowEvents` has both.
  */
 const notifyEvents = [
   ...(["create", "update"] as const).flatMap((op) => [
@@ -73,6 +74,10 @@ const notifyEvents = [
   ]),
   `databases.${DATABASE_ID}.collections.set_comments.documents.*.create`,
   `databases.${DATABASE_ID}.tables.set_comments.rows.*.create`,
+  // F31: an athlete calling in sick. Creates only: ending or cancelling one
+  // is an update or a delete, and neither is news.
+  `databases.${DATABASE_ID}.collections.sick_days.documents.*.create`,
+  `databases.${DATABASE_ID}.tables.sick_days.rows.*.create`,
 ];
 
 export const FUNCTIONS: readonly FunctionSpec[] = [
@@ -81,7 +86,8 @@ export const FUNCTIONS: readonly FunctionSpec[] = [
     name: "validate-row",
     purpose:
       `Deletes a row in ${VALIDATED_TABLES.join(", ")} whose stored permissions do not prove its ` +
-      "owner wrote it, or that carries a value no honest write produces (a reaction outside the six). " +
+      "owner wrote it, or that carries a value no honest write produces (a reaction outside the six, a " +
+      "sick range that is not a range). " +
       "Appwrite polices who reads a row, not what the row claims; this is the server half of the fix " +
       "for the 27 Sep 2026 forgery finding (docs/permission-audit.md). Since F25 it also removes a " +
       "deleted comment's reactions, which its author has no right to delete themselves.",
@@ -106,7 +112,8 @@ export const FUNCTIONS: readonly FunctionSpec[] = [
     id: "notify",
     name: "notify",
     purpose:
-      "Web push to a coach's devices when an athlete puts a clip on a set or replies in a thread (F27). " +
+      "Web push to a coach's devices when an athlete puts a clip on a set, replies in a thread (F27) or " +
+      "calls in sick (F31). " +
       "Recipients are the coaches on an active link to the athlete, never the athlete themselves; " +
       "collapse per athlete happens in the service worker. Removes a device the push service says is gone " +
       "(docs/push-notifications.md).",

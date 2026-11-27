@@ -26,6 +26,7 @@ import { fetchRoster } from "@/lib/coach/roster-store";
 import { needsYou, type NeedsYouItem } from "@/lib/coach/roster-triggers";
 import { shortDate } from "@/lib/coach/athlete-view";
 import { dayDate } from "@/lib/bodyweight/bodyweight";
+import { sickShortRange } from "@/lib/sick/labels";
 import { subscribeToClips } from "@/lib/review/queue-store";
 import { cn } from "@/lib/cn";
 
@@ -172,6 +173,8 @@ export function Roster() {
 
       <NeedsYou items={items} />
 
+      <OffSick rows={rows} now={current.now} />
+
       <section aria-labelledby="roster-everyone" className="flex flex-col gap-3">
         <h2 id="roster-everyone" className="m-0 text-label uppercase tracking-wide text-muted">
           Everyone
@@ -226,6 +229,41 @@ function NeedsYou({ items }: { items: NeedsYouItem[] }) {
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+/**
+ * F31: who is off sick today, with their dates and the note they left. Absent
+ * when nobody is, rather than an empty heading: it is information, not a to-do,
+ * which is why it sits under "Needs you" and not in it. A row links to Athlete
+ * View, which carries the same call-in.
+ */
+function OffSick({ rows, now }: { rows: RosterRow[]; now: Date }) {
+  const sick = rows.filter((row) => row.sick !== null);
+  if (sick.length === 0) return null;
+  return (
+    <section aria-labelledby="roster-off-sick" className="flex flex-col gap-3">
+      <h2 id="roster-off-sick" className="m-0 text-label uppercase tracking-wide text-muted">
+        Off sick
+      </h2>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {sick.map((row) => (
+          <li key={row.athleteId}>
+            <Link
+              href={`/coach/athletes/${row.athleteId}`}
+              className="flex min-h-10 items-center gap-3 rounded-chip px-3 py-2 text-ui transition-control press-wide hover:bg-surface focus-visible:bg-surface md:h-10 md:py-0"
+            >
+              <span aria-hidden className="block size-1.5 flex-none rounded-full bg-muted-2" />
+              <span className="flex min-w-0 flex-wrap gap-x-3">
+                <span className="font-semibold">{row.name}</span>
+                <span className="text-muted">{sickShortRange(row.sick!.startsOn, row.sick!.endsOn, now)}</span>
+                {row.sick!.note ? <span className="text-muted">&ldquo;{row.sick!.note}&rdquo;</span> : null}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -288,6 +326,11 @@ function RosterTable({ rows, sort, onSort }: { rows: RosterRow[]; sort: Sort; on
           <span role="cell" className="col-span-2 flex min-w-0 items-center gap-2.5 font-semibold md:col-span-1">
             <UserAvatar userId={row.athleteId} name={row.name} size={24} />
             <span className="truncate">{row.name}</span>
+            {row.sick ? (
+              <span className="inline-flex h-5 flex-none items-center rounded-chip border border-accent-line px-1.5 font-mono text-label-xs uppercase">
+                Sick
+              </span>
+            ) : null}
           </span>
           {row.visible ? (
             <>

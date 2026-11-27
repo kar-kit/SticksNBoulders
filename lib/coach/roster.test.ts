@@ -1,5 +1,6 @@
 import type { BodyweightEntry } from "@/lib/bodyweight/bodyweight";
 import type { ClipSet } from "@/lib/review/queue";
+import type { SickSpell } from "@/lib/sick/sick";
 import {
   buildRoster,
   changeLabel,
@@ -158,7 +159,61 @@ const row = (over: Partial<RosterRow>): RosterRow => ({
   videosWaiting: 0,
   bodyweight: null,
   block: null,
+  sick: null,
   ...over,
+});
+
+describe("an athlete off sick (F31)", () => {
+  const spell = (over: Partial<SickSpell> = {}): SickSpell => ({
+    id: "sk-1",
+    athleteId: "joey",
+    startsOn: "2026-10-05",
+    endsOn: "2026-10-08",
+    note: "Flu, back Friday",
+    createdAt: "2026-10-05T08:00:00.000Z",
+    ...over,
+  });
+  // Local noon on Tuesday 6 Oct, so "today" is the 6th in every zone the suite
+  // runs in: the Roster's today is the coach's own calendar day.
+  const TODAY_NOON = new Date(2026, 9, 6, 12, 0);
+  const sickOf = (sick: SickSpell[]) => buildRoster(inputs({ sick }), TODAY_NOON).rows[0].sick;
+
+  it("marks an athlete whose call-in covers today, with the run's dates and the note", () => {
+    expect(sickOf([spell()])).toEqual({ startsOn: "2026-10-05", endsOn: "2026-10-08", note: "Flu, back Friday" });
+  });
+
+  it("marks nobody when there are no call-ins, or the field is absent altogether", () => {
+    expect(sickOf([])).toBeNull();
+    expect(buildRoster(inputs(), TODAY_NOON).rows[0].sick).toBeNull();
+  });
+
+  it("does not mark a call-in that ended yesterday or has not begun", () => {
+    expect(sickOf([spell({ startsOn: "2026-10-01", endsOn: "2026-10-05" })])).toBeNull();
+    expect(sickOf([spell({ startsOn: "2026-10-07", endsOn: "2026-10-08" })])).toBeNull();
+  });
+
+  it("marks an athlete on the last day of a call-in, and on the first", () => {
+    expect(sickOf([spell({ startsOn: "2026-10-06", endsOn: "2026-10-06" })])).not.toBeNull();
+  });
+
+  it("is about each athlete alone: Sam being sick marks nobody else", () => {
+    const { rows } = buildRoster(
+      inputs({
+        links: [
+          { athleteId: "joey", linkedAt: null },
+          { athleteId: "sam", linkedAt: null },
+        ],
+        names: new Map([["joey", "Joey"], ["sam", "Sam"]]),
+        visible: new Map([["joey", true], ["sam", true]]),
+        sick: [spell({ athleteId: "sam" })],
+      }),
+      TODAY_NOON,
+    );
+    expect(rows.map((r) => [r.athleteId, r.sick !== null])).toEqual([
+      ["joey", false],
+      ["sam", true],
+    ]);
+  });
 });
 
 describe("sorting", () => {

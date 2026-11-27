@@ -41,6 +41,7 @@ describe("schema shape", () => {
       "set_comments",
       "set_reviews",
       "sets",
+      "sick_days",
       "stats_rollups",
       "thread_reads",
     ]);
@@ -716,7 +717,7 @@ describe("push subscriptions (v25, F27)", () => {
     expect(schema.version).toBeGreaterThanOrEqual(25);
     const ids = schema.tables.map((t) => t.id);
     // Everything before it predates v25; only later versions come after.
-    expect(ids.slice(ids.indexOf("push_subscriptions") + 1)).toEqual(["api_tokens", "api_requests"]);
+    expect(ids.slice(ids.indexOf("push_subscriptions") + 1)).toEqual(["api_tokens", "api_requests", "sick_days"]);
   });
 
   it("carries the owner, the endpoint and its hash, both keys, a label, the two switches and two times", () => {
@@ -758,9 +759,10 @@ describe("read API tokens and audit trail (v26, F29)", () => {
   const tokens = () => table("api_tokens");
   const requests = () => table("api_requests");
 
-  it("is v26, two new tables appended last, so applying it rewrites no existing row", () => {
-    expect(schema.version).toBe(26);
-    expect(schema.tables.slice(-2).map((t) => t.id)).toEqual(["api_tokens", "api_requests"]);
+  it("is v26, two new tables appended after v25's, so applying it rewrites no existing row", () => {
+    expect(schema.version).toBeGreaterThanOrEqual(26);
+    const ids = schema.tables.map((t) => t.id);
+    expect(ids.slice(ids.indexOf("api_tokens"), ids.indexOf("api_tokens") + 2)).toEqual(["api_tokens", "api_requests"]);
   });
 
   it("stores a token's hash and lifecycle, never the token", () => {
@@ -797,5 +799,48 @@ describe("read API tokens and audit trail (v26, F29)", () => {
       expect(SERVER_ONLY_TABLES).toContain(t.id);
       expect(USER_WRITABLE_TABLES).not.toContain(t.id);
     }
+  });
+});
+
+describe("sick days (v27, F31)", () => {
+  const sick = () => table("sick_days");
+
+  it("is v27, one new table appended last, so applying it rewrites no existing row", () => {
+    expect(schema.version).toBe(27);
+    expect(schema.tables.at(-1)?.id).toBe("sick_days");
+  });
+
+  it("carries the athlete, a run of days, an optional note, a time and an idempotency key", () => {
+    expect(columnKeys("sick_days")).toEqual(["athlete_id", "starts_on", "ends_on", "note", "created_at", "client_sick_id"]);
+    for (const key of ["athlete_id", "starts_on", "ends_on", "created_at", "client_sick_id"]) {
+      expect(sick().columns.find((c) => c.key === key)?.required, key).toBe(true);
+    }
+    expect(sick().columns.find((c) => c.key === "note")).toMatchObject({ type: "string", size: 200, required: false });
+  });
+
+  it("holds days as YYYY-MM-DD strings, like measured_on, never as instants", () => {
+    for (const key of ["starts_on", "ends_on"]) {
+      expect(sick().columns.find((c) => c.key === key)).toMatchObject({ type: "string", size: 10 });
+    }
+    expect(table("bodyweight_entries").columns.find((c) => c.key === "measured_on")).toMatchObject({ type: "string", size: 10 });
+  });
+
+  it("is read by athlete, finishing day, and unique by its client id", () => {
+    expect(sick().indexes).toContainEqual({ key: "idx_athlete_ends", type: "key", columns: ["athlete_id", "ends_on"], orders: ["asc", "desc"] });
+    expect(sick().indexes).toContainEqual({ key: "idx_client_sick_id", type: "unique", columns: ["client_sick_id"] });
+  });
+
+  it("is stamped per row and created by sessions, like a weigh-in, and says it pauses nothing", () => {
+    expect(sick().rowSecurity).toBe(true);
+    expect(sick().permissions).toEqual(table("bodyweight_entries").permissions);
+    expect(USER_WRITABLE_TABLES).toContain("sick_days");
+    expect(SERVER_ONLY_TABLES).not.toContain("sick_days");
+    expect(sick().purpose).toMatch(/pauses and moves nothing/i);
+  });
+
+  it("changes no table that was already there", () => {
+    expect(columnKeys("push_subscriptions")).not.toContain("notify_sick");
+    expect(columnKeys("sessions")).not.toContain("sick");
+    expect(columnKeys("program_days").some((k) => /sick/.test(k))).toBe(false);
   });
 });

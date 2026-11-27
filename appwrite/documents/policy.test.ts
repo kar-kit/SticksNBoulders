@@ -17,6 +17,7 @@ import {
   rollupPermissions,
   sessionPermissions,
   setPermissions,
+  sickDayPermissions,
   threadReadPermissions,
   SERVER_ONLY_TABLES,
   USER_WRITABLE_TABLES,
@@ -40,6 +41,8 @@ const OWNED = [
   // as everywhere else, because a coach who could edit a bodyweight could edit
   // a DOTS score.
   ["bodyweight_entries", bodyweightPermissions],
+  // F31: an athlete's own statement about their own body, as a weigh-in is.
+  ["sick_days", sickDayPermissions],
 ] as const;
 
 describe("who can read an athlete's rows", () => {
@@ -327,6 +330,37 @@ describe("a reaction on a comment (F25)", () => {
   });
 });
 
+describe("an athlete calling in sick (F31)", () => {
+  it("is a weigh-in's stamp exactly, so the two cannot drift", () => {
+    expect(sickDayPermissions({ athleteId: ATHLETE })).toEqual(bodyweightPermissions({ athleteId: ATHLETE }));
+    expect(POLICIES.sick_days).toBe(sickDayPermissions);
+  });
+
+  it("is read by the athlete and their circle, and changed or removed by the athlete alone", () => {
+    expect(sickDayPermissions({ athleteId: ATHLETE })).toEqual([
+      `read("user:${ATHLETE}")`,
+      `read("team:${circle}")`,
+      `update("user:${ATHLETE}")`,
+      `delete("user:${ATHLETE}")`,
+    ]);
+  });
+
+  it("names no coach and grants none an update, so a coach can neither rewrite nor clear it", () => {
+    const stamp = sickDayPermissions({ athleteId: ATHLETE }).join(" ");
+    expect(stamp).not.toContain(COACH);
+    for (const permission of sickDayPermissions({ athleteId: ATHLETE })) {
+      if (permission.startsWith("update(") || permission.startsWith("delete(")) {
+        expect(permission).toContain(`user:${ATHLETE}`);
+      }
+    }
+  });
+
+  it("is a table a session writes, so the validator and the readers cover it", () => {
+    expect(USER_WRITABLE_TABLES).toContain("sick_days");
+    expect(() => sickDayPermissions({ athleteId: "" })).toThrow(/athleteId/);
+  });
+});
+
 describe("a coach's read mark on a thread (F26)", () => {
   it("is the coach's alone: read, update and delete by user, and nothing else", () => {
     expect(threadReadPermissions({ coachId: COACH })).toEqual([
@@ -372,6 +406,7 @@ describe("policy hygiene", () => {
       "set_comments",
       "set_reviews",
       "sets",
+      "sick_days",
       "stats_rollups",
       "thread_reads",
     ]);
