@@ -509,3 +509,48 @@ describe("v21 -> v22 on a live instance", () => {
     expect((await applySchema(driver, schema)).noop).toBe(true);
   });
 });
+
+describe("v26 -> v27 on a live instance", () => {
+  // A v26 instance is this schema minus the sick_days table.
+  const v26: DatabaseSpec = { ...schema, version: 26, tables: schema.tables.filter((t) => t.id !== "sick_days") };
+
+  it("plans exactly the new table, its columns and its two indexes, touching nothing else", async () => {
+    // These lines are what `npm run appwrite:setup -- --dry-run` should print
+    // on the live instance. Anything more means it has drifted from v26.
+    const { driver } = fakeDriver();
+    await applySchema(driver, v26);
+    const lines: string[] = [];
+    const result = await applySchema(driver, schema, { dryRun: true, log: (m) => lines.push(m) });
+    expect(lines).toEqual([
+      "  would create table sick_days",
+      "  would create column sick_days.athlete_id (string)",
+      "  would create column sick_days.starts_on (string)",
+      "  would create column sick_days.ends_on (string)",
+      "  would create column sick_days.note (string)",
+      "  would create column sick_days.created_at (datetime)",
+      "  would create column sick_days.client_sick_id (string)",
+      "  would create index sick_days.idx_athlete_ends",
+      "  would create index sick_days.idx_client_sick_id",
+    ]);
+    expect(result.reported).toEqual([]);
+    expect(result.noop).toBe(false);
+
+    const plan = planSchema(await driver.readState(schema.id), schema);
+    expect(plan.every(isExecutable)).toBe(true);
+    expect(plan.filter((a) => a.kind === "create-table").map((a) => (a as { table: { id: string } }).table.id)).toEqual(["sick_days"]);
+  });
+
+  it("writes nothing on the dry run, then creates the table and settles", async () => {
+    const { driver, calls } = fakeDriver();
+    await applySchema(driver, v26);
+    calls.length = 0;
+    expect((await applySchema(driver, schema, { dryRun: true })).applied).toEqual([]);
+    expect(calls).toEqual([]);
+
+    const applied = await applySchema(driver, schema);
+    expect(calls.every((c) => /sick_days/.test(c))).toBe(true);
+    expect(calls).toContain("createTable:sick_days");
+    expect(applied.reported).toEqual([]);
+    expect((await applySchema(driver, schema)).noop).toBe(true);
+  });
+});

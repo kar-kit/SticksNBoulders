@@ -209,6 +209,24 @@ expects `[]` on every row and `scope = "read"` on every token. [Unverified]
 until Joey runs it against an instance with v26 applied: it also needs the
 audit's API key to be allowed `Users.createJWT`, which `/api/v1` calls.
 
+## Sick days (schema v27, F31)
+
+`sick_days` has a weigh-in's matrix: `loggedWork`, so A and A's coach read,
+A alone creates, updates and deletes (`sickDayPermissions`, a test pins it
+equal to `bodyweightPermissions`). The audited target is **A's** call-in,
+written through `callInSick` from A's own session; A's update is `endSick`
+shortening it ("I'm better", which restamps the row). The forgeries, from
+everyone but A, claim `athlete_id` = A with a one-day range stamped
+`read("users")`: the way to put A "off sick" on his coach's Roster, or to hide
+A's missed sessions. Each carries no `update(user:A)`, so no reader trusts it
+and `validate-row` deletes it. The raw update hijacks the note, which is what
+the coach reads beside A's name. The stamp scan also runs `contentProblem` on
+every row: a range that is not one, or longer than 31 days, is a failure,
+because it would silence A's missed-session signals. After revocation the
+ex-coach cannot read A's call-in. [Unverified] until Joey runs it against an
+instance with v27 applied and `validate-row` redeployed: it has not been run
+against any instance.
+
 ## Adding a table
 
 A new table without a rule fails both the audit and `npm test`

@@ -39,6 +39,7 @@ describe("the proof of authorship", () => {
     ["sessions", { athlete_id: A }, writtenByUser(A)],
     ["sets", { athlete_id: A }, writtenByUser(A)],
     ["bodyweight_entries", { athlete_id: A }, writtenByUser(A)],
+    ["sick_days", { athlete_id: A }, writtenByUser(A)],
     ["set_reviews", { athlete_id: A, coach_id: C }, writtenByUser(C)],
     ["set_comments", { athlete_id: A, author_id: C }, writtenByUser(C)],
     ["comment_reactions", { athlete_id: A, author_id: C }, writtenByUser(C)],
@@ -93,6 +94,10 @@ describe("isAuthentic", () => {
     it("a session and a weigh-in under A's id", () => {
       expect(isAuthentic("sessions", { $id: "f", athlete_id: A, $permissions: EVERYONE })).toBe(false);
       expect(isAuthentic("bodyweight_entries", { $id: "f", athlete_id: A, $permissions: EVERYONE })).toBe(false);
+    });
+
+    it("a call-in sick under A's id, which would put A off sick on the Roster (F31)", () => {
+      expect(isAuthentic("sick_days", { $id: "f", athlete_id: A, starts_on: "2026-11-27", ends_on: "2026-11-27", $permissions: EVERYONE })).toBe(false);
     });
 
     it("a custom exercise with owner_id A", () => {
@@ -284,7 +289,7 @@ describe("reactions (F25)", () => {
     expect(verdict.reason).toContain(writtenByUser(C));
   });
 
-  it("checks content on reactions only, so no other table's honest rows are touched", () => {
+  it("checks content on reactions and sick ranges only, so no other table's honest rows are touched", () => {
     expect(contentProblem("set_comments", { body: "🍆" })).toBeNull();
     expect(contentProblem("sets", {})).toBeNull();
   });
@@ -316,6 +321,49 @@ describe("thread read marks (F26)", () => {
     expect(VALIDATED_TABLES).toContain("thread_reads");
     expect(cascadeFor("thread_reads", mark())).toBeNull();
     expect(contentProblem("thread_reads", mark())).toBeNull();
+  });
+});
+
+describe("sick days (F31)", () => {
+  const day = (over: Record<string, unknown> = {}) =>
+    stamped("sick_days", { athlete_id: A, starts_on: "2026-11-27", ends_on: "2026-11-29", note: "Flu", created_at: "2026-11-27T08:00:00.000Z", ...over });
+
+  it("trusts a call-in its athlete stamped, and keeps it", () => {
+    expect(isAuthentic("sick_days", day())).toBe(true);
+    expect(verdictFor("sick_days", day()).action).toBe("keep");
+    expect(ownerProof("sick_days", day())).toEqual([writtenByUser(A)]);
+  });
+
+  it("deletes one written in A's name by anybody else, whatever it stamps", () => {
+    const forged = { $id: "f", athlete_id: A, starts_on: "2026-11-27", ends_on: "2026-11-27" };
+    // A stranger stamping what every session holds, and B stamping his own role.
+    for (const $permissions of [EVERYONE, [writtenByUser(B), `read("user:${B}")`]]) {
+      const verdict = verdictFor("sick_days", { ...forged, $permissions });
+      expect(verdict.action).toBe("delete");
+      expect(verdict.reason).toContain(writtenByUser(A));
+    }
+  });
+
+  it("is validated, since a session writes it, and cascades from nothing", () => {
+    expect(VALIDATED_TABLES).toContain("sick_days");
+    expect(cascadeFor("sick_days", day())).toBeNull();
+  });
+
+  it("deletes a call-in its athlete did write but that is not a range, because it would silence her missed sessions", () => {
+    expect(contentProblem("sick_days", day())).toBeNull();
+    const backwards = day({ starts_on: "2026-11-29", ends_on: "2026-11-27" });
+    expect(contentProblem("sick_days", backwards)).toMatch(/before/);
+    expect(verdictFor("sick_days", backwards)).toMatchObject({ action: "delete" });
+    const forever = day({ ends_on: "2062-11-27" });
+    expect(verdictFor("sick_days", forever)).toMatchObject({ action: "delete" });
+    expect(verdictFor("sick_days", forever).reason).toMatch(/longer than 31 days/);
+    // Not a day at all: the shape is right and the date is not (it would roll over into 2027).
+    expect(verdictFor("sick_days", day({ starts_on: "2026-13-45", ends_on: "2026-13-45" }))).toMatchObject({ action: "delete" });
+  });
+
+  it("judges authorship before content, as for a reaction", () => {
+    const verdict = verdictFor("sick_days", { $id: "f", athlete_id: A, starts_on: "2062-01-01", ends_on: "2026-01-01", $permissions: EVERYONE });
+    expect(verdict.reason).toContain(writtenByUser(A));
   });
 });
 

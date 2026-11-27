@@ -48,6 +48,7 @@ export {
   invitePermissions,
   linkPermissions,
   bodyweightPermissions,
+  sickDayPermissions,
   commentPermissions,
   reactionPermissions,
   threadReadPermissions,
@@ -76,6 +77,8 @@ export {
 
 export type { RowWriter } from "./row-writer";
 
+export { SICK_MAX_DAYS, SICK_NOTE_MAX, SICK_TABLE, inclusiveDays, isDayKey, normaliseSickNote, sickRangeProblem } from "./sick";
+
 export { ensureLibraryTeam, libraryTeamMembers } from "./library-admin";
 
 export {
@@ -101,6 +104,8 @@ export {
   createSet,
   attachVideo,
   bodyweightRowId,
+  callInSick,
+  endSick,
   changeReaction,
   deleteBodyweight,
   deleteComment,
@@ -147,7 +152,9 @@ export {
   type CreateSessionInput,
   type ChangeReactionInput,
   type ReactToCommentInput,
+  type CallInSickInput,
   type CreateSetInput,
+  type EndSickInput,
   type DeleteExerciseGuard,
   type DeleteSessionGuard,
   type DeleteSetGuard,

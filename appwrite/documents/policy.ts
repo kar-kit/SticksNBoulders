@@ -21,7 +21,8 @@ export type WritableTable =
   | "set_comments"
   | "comment_reactions"
   | "thread_reads"
-  | "bodyweight_entries";
+  | "bodyweight_entries"
+  | "sick_days";
 export type ServerTable =
   | "stats_rollups"
   | "coach_athlete_links"
@@ -492,6 +493,32 @@ export function bodyweightPermissions({ athleteId }: RowOwner): string[] {
 }
 
 /**
+ * An athlete calling in sick (F31, schema v27): a range of calendar days, an
+ * optional note.
+ *
+ * Exactly a weigh-in's stamp, and a test asserts the two are equal so they
+ * cannot drift: it is the athlete's own statement about themselves, written by
+ * them and read by whoever coaches them, and the coach seeing it is the entire
+ * feature. Read for the athlete and their circle; update and delete for the
+ * athlete alone.
+ *
+ *   - Read through the circle, so a coach unlinked from the athlete leaves the
+ *     team and can no longer read a call-in they were once told about, and an
+ *     unlinked coach never could. Nothing here names the coach.
+ *   - The athlete may end it (an update that shortens it) or cancel it (a
+ *     delete): "I'm better" is theirs to say. A coach cannot edit or clear
+ *     it, for the reason a coach cannot edit a bodyweight: what somebody says
+ *     about their own body is not the coach's to rewrite.
+ *   - `update("user:<athlete_id>")` is the provenance proof, as on a set, so a
+ *     call-in written in somebody else's name -- the way to put an athlete
+ *     "off sick" on their coach's roster, or to hide their missed sessions --
+ *     is never read and validate-row deletes it.
+ */
+export function sickDayPermissions({ athleteId }: RowOwner): string[] {
+  return ownedByAthlete(requireId(athleteId, "athleteId"), true);
+}
+
+/**
  * A device a user turned push notifications on for (F27, schema v25).
  *
  * Read by its owner and nobody else -- not the circle, not a coach. It says
@@ -551,6 +578,7 @@ export const POLICIES = {
   comment_reactions: reactionPermissions,
   thread_reads: threadReadPermissions,
   bodyweight_entries: bodyweightPermissions,
+  sick_days: sickDayPermissions,
   stats_rollups: rollupPermissions,
   coach_athlete_links: linkPermissions,
   invite_codes: invitePermissions,
@@ -576,6 +604,7 @@ export const USER_WRITABLE_TABLES: readonly WritableTable[] = [
   "comment_reactions",
   "thread_reads",
   "bodyweight_entries",
+  "sick_days",
 ];
 
 export const PROGRAM_TABLES: readonly ProgramTable[] = [

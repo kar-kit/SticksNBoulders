@@ -29,7 +29,7 @@ export const DATABASE_ID = "sticksnboulders";
 export const schema: DatabaseSpec = {
   id: DATABASE_ID,
   name: "SticksNBoulders",
-  version: 26,
+  version: 27,
   tables: [
     {
       id: "profiles",
@@ -846,6 +846,47 @@ export const schema: DatabaseSpec = {
         // "What has this token been used for?" and "what was read of mine?"
         { key: "idx_token_at", type: "key", columns: ["token_id", "at"] },
         { key: "idx_owner_at", type: "key", columns: ["owner_id", "at"] },
+      ],
+    },
+
+    // v27 (F31). One table, appended last and self-contained like v25 and v26:
+    // nothing above changed for it, so applying it rewrites no existing row.
+    {
+      id: "sick_days",
+      name: "Sick days",
+      purpose:
+        "An athlete calling in sick (F31): a run of calendar days and an optional note, written by the athlete and read by them and their coach. It is what puts an athlete off sick on the Roster, what tells Ruairi by push, and what makes a prescribed session inside the range read as skipped rather than missed (docs/call-in-sick.md). It pauses and moves nothing: no program day, session or prescription is touched.",
+      rowSecurity: true,
+      permissions: [perm.createUsers],
+      columns: [
+        { key: "athlete_id", type: "string", size: 36, required: true },
+        // The ATHLETE's own calendar days, YYYY-MM-DD, both included -- the
+        // convention `sessions` and `bodyweight_entries.measured_on` already
+        // use, and the shape of a program day's `scheduled_on`, so "is this
+        // prescribed day inside the range" is a string comparison with no
+        // timezone in it. Strings, not datetimes: a sick day belongs to a
+        // date rather than to an instant, and a datetime would put the
+        // athlete's midnight on a UTC clock that disagrees with them for
+        // part of every day. Real, ordered and at most 31 days apart is
+        // checked in the write helper, by the readers and by validate-row
+        // (appwrite/documents/sick.ts); Appwrite cannot express it.
+        { key: "starts_on", type: "string", size: 10, required: true },
+        { key: "ends_on", type: "string", size: 10, required: true },
+        // "Flu, back Thursday." A line, not a diary: the coach reads it on the
+        // Roster. Null for none. 200 because it is shown beside a name, and a
+        // column sized for a sentence is one nobody can park an essay in.
+        { key: "note", type: "string", size: 200, required: false },
+        { key: "created_at", type: "datetime", required: true },
+        // The idempotency key, as on sessions and comments: generated where
+        // the tap happens, so a queued write that is retried is the same row.
+        // It is also the row id.
+        { key: "client_sick_id", type: "string", size: 64, required: true },
+      ],
+      indexes: [
+        // How every screen reads them: "this athlete's call-ins that have not
+        // finished before a given day". Newest end first.
+        { key: "idx_athlete_ends", type: "key", columns: ["athlete_id", "ends_on"], orders: ["asc", "desc"] },
+        { key: "idx_client_sick_id", type: "unique", columns: ["client_sick_id"] },
       ],
     },
   ],

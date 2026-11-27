@@ -1,5 +1,6 @@
 import { avatarOf } from "./avatar";
 import { isReactionEmoji, REACTION_EMOJIS } from "./reaction";
+import { sickRangeProblem } from "./sick";
 import {
   LIBRARY_TEAM_ID,
   POLICIES,
@@ -24,6 +25,8 @@ import {
  * stored permissions carry a proof of authorship the data columns do not:
  *
  *   - a set carrying `update("user:<athlete_id>")` was written by that athlete
+ *   - a sick day (F31) carrying `update("user:<athlete_id>")` was written by that
+ *     athlete, as a set is
  *   - a comment carrying `update("user:<author_id>")` was written by its author,
  *     and so was a reaction (F25)
  *   - a review carrying `update("user:<coach_id>")` was written by that coach,
@@ -70,6 +73,7 @@ export function expectedStamp(tableId: string, row: Row): string[] | null {
       case "sessions":
       case "sets":
       case "bodyweight_entries":
+      case "sick_days":
       case "stats_rollups":
       case "reference_maxes":
         return POLICIES[tableId]({ athleteId: str(row, "athlete_id") });
@@ -130,6 +134,7 @@ export function ownerProof(tableId: string, row: Row): string[] | null {
       case "sessions":
       case "sets":
       case "bodyweight_entries":
+      case "sick_days":
         return [writtenByUser(str(row, "athlete_id"))];
       case "set_reviews":
       case "thread_reads":
@@ -181,11 +186,18 @@ export function authenticRows<T extends Row>(tableId: string, rows: readonly T[]
  * outside a fixed set is the only content judgement here, because it is the
  * only one cheap to state exactly and impossible to get wrong for an honest
  * row -- the helper refuses the same values before they are sent.
+ *
+ * The second (F31): a sick range that is not a range, or runs past the cap
+ * (`sickRangeProblem`). The same reasoning, and it matters for a reason a
+ * reaction does not have: a call-in decides which of an athlete's prescribed
+ * days read as skipped rather than missed, so one stretching to the year 2062
+ * would quietly silence every missed-session signal about them.
  */
 export function contentProblem(tableId: string, row: Row): string | null {
   if (tableId === "comment_reactions" && !isReactionEmoji(row.emoji)) {
     return `emoji ${JSON.stringify(row.emoji ?? null)} is not one of ${REACTION_EMOJIS.join(" ")}`;
   }
+  if (tableId === "sick_days") return sickRangeProblem(row.starts_on, row.ends_on);
   return null;
 }
 
@@ -220,10 +232,11 @@ export type Verdict =
  * being a mass delete.
  *
  * The one addition (F25): a row its owner did write, carrying a value
- * `contentProblem` rules out -- a reaction outside the six. Joey asked for
- * those refused in the validator as well as at the write boundary, and an
- * honest write never produces one, so the scope argument still holds: the
- * only rows this can reach were written around the helper.
+ * `contentProblem` rules out -- a reaction outside the six, and since F31 a
+ * sick range that is not one. Joey asked for the first refused in the
+ * validator as well as at the write boundary, and an honest write never
+ * produces either, so the scope argument still holds: the only rows this can
+ * reach were written around the helper.
  */
 export function verdictFor(tableId: string, row: Row): Verdict {
   if (!VALIDATED_TABLES.includes(tableId)) {

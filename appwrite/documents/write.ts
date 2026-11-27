@@ -15,6 +15,7 @@ import {
 } from "./api-token";
 import { PUSH_LABEL_MAX, PUSH_TABLE, isP256dh, isPushAuth, isPushEndpoint, type PushPrefs } from "./push";
 import { REACTION_EMOJIS } from "./reaction";
+import { isDayKey, normaliseSickNote, sickRangeProblem } from "./sick";
 import {
   bodyweightPermissions,
   exercisePermissions,
@@ -31,6 +32,7 @@ import {
   rollupPermissions,
   sessionPermissions,
   setPermissions,
+  sickDayPermissions,
   threadReadPermissions,
 } from "./policy";
 import type { RowWriter } from "./row-writer";
@@ -1325,6 +1327,96 @@ export async function deleteBodyweight(deps: WriteDeps, actor: Actor, measuredOn
     databaseId: deps.databaseId,
     tableId: "bodyweight_entries",
     rowId: bodyweightRowId(actor.userId, measuredOn),
+  });
+}
+
+/* -------------------------------------------------------------------------
+ * Sick days (F31, schema v27)
+ * ---------------------------------------------------------------------- */
+
+const CallInSickInput = z.object({
+  /**
+   * Generated on the device and used as the row id as well, so a queued
+   * write is idempotent on retry: the second attempt is the same row, and a
+   * 409 means the first one landed (lib/offline/queue.ts, `classify`). `sk-`
+   * plus Appwrite's 20 unique characters is 23, a legal id.
+   */
+  sickId: appwriteId,
+  /** The athlete's own calendar days, YYYY-MM-DD, both included. */
+  startsOn: z.string().refine(isDayKey, "startsOn must be a YYYY-MM-DD day"),
+  endsOn: z.string().refine(isDayKey, "endsOn must be a YYYY-MM-DD day"),
+  /** Cut to the column and trimmed rather than refused: a note is not worth losing a call-in over. */
+  note: z.string().max(10_000).nullish(),
+});
+export type CallInSickInput = z.input<typeof CallInSickInput>;
+
+/**
+ * An athlete calls in sick for a day or a run of days.
+ *
+ * The range is checked here with the one rule the readers and validate-row
+ * share (`sickRangeProblem`), so a row any of them would refuse never gets
+ * written. Stamped by `sickDayPermissions`: the athlete and their circle read
+ * it, the athlete alone changes it.
+ *
+ * Created at the client's own id, with no read first and no upsert: a retry
+ * is the same row, and two calls in for overlapping days are simply two rows
+ * whose union is what "sick" means (lib/sick/sick.ts). Nothing here writes a
+ * session, a program day or a prescription: calling in sick pauses and moves
+ * nothing, it only changes how a missed day reads.
+ */
+export async function callInSick(deps: WriteDeps, actor: Actor, raw: CallInSickInput) {
+  const input = CallInSickInput.parse(raw);
+  const problem = sickRangeProblem(input.startsOn, input.endsOn);
+  if (problem) throw new Error(`callInSick: ${problem}`);
+  return deps.writer.createRow({
+    databaseId: deps.databaseId,
+    tableId: "sick_days",
+    rowId: input.sickId,
+    data: {
+      athlete_id: actor.userId,
+      starts_on: input.startsOn,
+      ends_on: input.endsOn,
+      note: normaliseSickNote(input.note),
+      created_at: iso(deps.now()),
+      client_sick_id: input.sickId,
+    },
+    permissions: sickDayPermissions({ athleteId: actor.userId }),
+  });
+}
+
+const EndSickInput = z.object({
+  sickId: appwriteId,
+  /** The last day still sick, which must not be before the call-in began. Null cancels it outright. */
+  endsOn: z.string().refine(isDayKey, "endsOn must be a YYYY-MM-DD day").nullable(),
+});
+export type EndSickInput = z.input<typeof EndSickInput>;
+
+/**
+ * "I'm better", or "I was never going to be": the athlete ends a call-in.
+ *
+ * Two shapes. A call-in that began before today is shortened to end
+ * yesterday, so the days already spent sick stay a record (and stay skipped
+ * rather than missed); one that has not begun, or began today, is deleted,
+ * because there is nothing left of it to keep. Which one is the caller's to
+ * decide (`planEnd`, lib/sick/sick.ts), from the athlete's own today, which
+ * this helper has no way to know.
+ *
+ * The shortened row is restamped like every other update. `endsOn` is
+ * checked against nothing here -- the helper has no read -- so the rule that
+ * it must not precede `starts_on` is `planEnd`'s, and validate-row's
+ * `sickRangeProblem` is the backstop for a write that skipped it.
+ */
+export async function endSick(deps: WriteDeps, actor: Actor, raw: EndSickInput) {
+  const input = EndSickInput.parse(raw);
+  if (input.endsOn === null) {
+    return deps.writer.deleteRow({ databaseId: deps.databaseId, tableId: "sick_days", rowId: input.sickId });
+  }
+  return deps.writer.updateRow({
+    databaseId: deps.databaseId,
+    tableId: "sick_days",
+    rowId: input.sickId,
+    data: { ends_on: input.endsOn },
+    permissions: sickDayPermissions({ athleteId: actor.userId }),
   });
 }
 

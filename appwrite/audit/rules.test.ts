@@ -102,8 +102,16 @@ describe("the audit's rules", () => {
     expect(rule.invariant!({ suggestions_mode: "always" })).toMatch(/suggestions_mode/);
   });
 
+  it("checks a sick day's range on every row, so one that is not a range fails the stamp scan", () => {
+    const rule = RULES.find((r) => r.key === "sick_days")!;
+    expect(rule.invariant!({ starts_on: "2026-11-27", ends_on: "2026-11-29" })).toBeNull();
+    expect(rule.invariant!({ starts_on: "2026-11-29", ends_on: "2026-11-27" })).toMatch(/before/);
+    expect(rule.invariant!({ starts_on: "2026-11-27", ends_on: "2062-11-27" })).toMatch(/longer than/);
+    expect(rule.invariant!({ starts_on: "2026-13-45", ends_on: "2026-11-27" })).toMatch(/YYYY-MM-DD/);
+  });
+
   it("never lets a coach rewrite logged work", () => {
-    for (const key of ["sessions", "sets", "bodyweight_entries", "profiles", "exercises"]) {
+    for (const key of ["sessions", "sets", "bodyweight_entries", "sick_days", "profiles", "exercises"]) {
       const rule = RULES.find((r) => r.key === key)!;
       expect(isAllowed(rule, "update", "coach"), key).toBe(false);
       expect(isAllowed(rule, "delete", "coach"), key).toBe(false);
