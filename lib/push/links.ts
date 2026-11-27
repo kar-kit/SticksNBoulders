@@ -16,6 +16,17 @@ export function coachClipPath(athleteId: string, setId: string): string {
   return `/coach/athletes/${enc(athleteId)}?clip=${enc(setId)}`;
 }
 
+/**
+ * An athlete who called in sick (F31): their Athlete View, where the call-in
+ * shows with its dates and note.
+ */
+export function coachAthletePath(athleteId: string): string {
+  return `/coach/athletes/${enc(athleteId)}`;
+}
+
+/** Several call-ins collapsed into one notification: the Roster, where everyone off sick is marked. */
+export const COACH_ROSTER_PATH = "/coach/roster";
+
 /** Several clips collapsed into one notification: the queue, oldest first. */
 export const COACH_REVIEW_PATH = "/coach/review";
 

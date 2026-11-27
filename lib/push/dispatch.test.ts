@@ -149,6 +149,90 @@ describe("dispatch: a reply", () => {
   });
 });
 
+const sick = (over: Record<string, unknown> = {}) => ({
+  $id: "sk-1",
+  $tableId: "sick_days",
+  $databaseId: "sticksnboulders",
+  athlete_id: A,
+  starts_on: "2026-11-27",
+  ends_on: "2026-11-28",
+  note: "Flu, back Thursday",
+  $permissions: POLICIES.sick_days({ athleteId: A }),
+  ...over,
+});
+const SICK = "databases.sticksnboulders.tables.sick_days.rows.sk-1.create";
+
+describe("dispatch: calling in sick (F31)", () => {
+  it("tells the athlete's coach, with the days and no note", async () => {
+    const { sent, deps } = setup();
+    const result = await dispatch(deps, SICK, sick());
+    expect(result).toMatchObject({ action: "sent", kind: "sick", recipients: 1, devices: 1, delivered: 1 });
+    expect(sent[0].message).toMatchObject({
+      title: "Joey called in sick",
+      body: "Fri 27 Nov to Sat 28 Nov",
+      tag: `sick:${A}`,
+      key: "sk-1",
+      url: `/coach/athletes/${A}`,
+      groupUrl: "/coach/roster",
+    });
+    expect(JSON.stringify(sent[0].message)).not.toContain("Flu");
+  });
+
+  it("says one day as one day", async () => {
+    const { sent, deps } = setup();
+    await dispatch(deps, SICK, sick({ ends_on: "2026-11-27" }));
+    expect(sent[0].message.body).toBe("Fri 27 Nov");
+  });
+
+  it("tells every active coach and only them, never an unlinked or former one", async () => {
+    const { sent, deps } = setup({
+      links: [
+        { coach_id: C, athlete_id: A, status: "active" },
+        { coach_id: L, athlete_id: A, status: "active" },
+        { coach_id: "coach_former", athlete_id: A, status: "revoked" },
+      ],
+      devices: [device("c", C), device("l", L), device("f", "coach_former"), device("stranger", "user_x")],
+    });
+    await dispatch(deps, SICK, sick());
+    expect(sent.map((s) => s.target.userId).sort()).toEqual([C, L]);
+  });
+
+  it("does not tell an athlete who coaches themselves, or one with no coach", async () => {
+    const own = setup({ links: [{ coach_id: A, athlete_id: A, status: "active" }], devices: [device("own", A)] });
+    expect(await dispatch(own.deps, SICK, sick())).toEqual({ action: "skip", reason: "no active coach to tell" });
+    const none = setup({ links: [] });
+    expect(await dispatch(none.deps, SICK, sick())).toEqual({ action: "skip", reason: "no active coach to tell" });
+    expect([...own.sent, ...none.sent]).toEqual([]);
+  });
+
+  it("is not switched off by muting clips and replies: a coach must still hear an athlete is ill", async () => {
+    const { sent, deps } = setup({ devices: [device("phone", C, { notify_clips: false, notify_replies: false })] });
+    await dispatch(deps, SICK, sick());
+    expect(sent).toHaveLength(1);
+  });
+
+  it("says so when the coach has no device on", async () => {
+    const { sent, deps } = setup({ devices: [] });
+    expect(await dispatch(deps, SICK, sick())).toEqual({ action: "skip", reason: "no coach device is on" });
+    expect(sent).toEqual([]);
+  });
+
+  it("never fires for a forged call-in, an update or a delete", async () => {
+    const { sent, deps } = setup();
+    await dispatch(deps, SICK, sick({ $permissions: ['read("users")', 'update("user:user_x")'] }));
+    await dispatch(deps, "databases.sticksnboulders.tables.sick_days.rows.sk-1.update", sick());
+    await dispatch(deps, "databases.sticksnboulders.tables.sick_days.rows.sk-1.delete", sick());
+    expect(sent).toEqual([]);
+  });
+
+  it("works without a profile name", async () => {
+    const { sent, deps } = setup();
+    deps.reader.getRow = async () => null;
+    await dispatch(deps, SICK, sick());
+    expect(sent[0].message.title).toBe("Your athlete called in sick");
+  });
+});
+
 describe("dispatch: cleanup", () => {
   it("removes a device the push service says is gone, keeps one that merely failed, and stamps the one that worked", async () => {
     const { db, deps } = setup({

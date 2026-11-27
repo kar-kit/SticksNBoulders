@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
-import { collapsedTitle as appCollapsedTitle, clipMessage, replyMessage, type PushMessage } from "@/lib/push/message";
+import { collapsedTitle as appCollapsedTitle, clipMessage, replyMessage, sickMessage, type PushMessage } from "@/lib/push/message";
 
 /**
  * public/sw.js's push half (F27), run as the browser would run it: the real
@@ -122,9 +122,25 @@ describe("push: collapse per athlete", () => {
     expect(w.shown.map((n) => n.tag).sort()).toEqual(["clips:athlete_a", "clips:athlete_b", "replies:athlete_a"]);
   });
 
+  it("shows a call-in sick as itself, opening that athlete, and collapses several into the Roster (F31)", async () => {
+    const w = loadWorker();
+    const sick = (id: string) =>
+      sickMessage({ athleteId: "athlete_a", athleteName: "Joey", sickId: id, startsOn: "2026-11-27", endsOn: "2026-11-27" });
+    await w.push(sick("sk-1"));
+    expect(w.shown[0]).toMatchObject({ title: "Joey called in sick", tag: "sick:athlete_a", renotify: true });
+    expect(w.shown[0].data).toMatchObject({ url: "/coach/athletes/athlete_a", kind: "sick" });
+    await w.push(sick("sk-2"));
+    expect(w.shown).toHaveLength(1);
+    expect(w.shown[0].title).toBe("Joey called in sick 2 times");
+    expect(w.shown[0].data.url).toBe("/coach/roster");
+    // The same call-in twice (both event spellings) replaces quietly.
+    await w.push(sick("sk-2"));
+    expect(w.shown[0].renotify).toBe(false);
+  });
+
   it("agrees with the app on every collapsed title", () => {
     const { sw } = loadWorker();
-    for (const kind of ["clip", "reply", "test"] as const) {
+    for (const kind of ["clip", "reply", "sick", "test"] as const) {
       for (const n of [1, 2, 7]) expect(sw.collapsedTitle(kind, "Joey", n)).toBe(appCollapsedTitle(kind, "Joey", n));
     }
   });
