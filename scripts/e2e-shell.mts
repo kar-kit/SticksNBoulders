@@ -115,7 +115,7 @@ await coachPage.getByRole("button", { name: "Athlete mode" }).click();
 await coachPage.waitForURL("**/today", { timeout: 10000 }).catch(() => {});
 check("athlete mode switches on the same account", coachPage.url().endsWith("/today"));
 check(
-  "the athlete side shows the way back on every screen",
+  "the athlete home screen shows the way back",
   await coachPage.getByRole("link", { name: "Coach mode" }).waitFor({ timeout: 10000 }).then(() => true).catch(() => false),
 );
 await coachPage.waitForTimeout(1500);
@@ -125,6 +125,13 @@ await coachPage.waitForTimeout(2000);
 check(
   "and the way back is on Me",
   await coachPage.getByRole("button", { name: /Coach mode/ }).waitFor({ timeout: 10000 }).then(() => true).catch(() => false),
+);
+await coachPage.goto(`${BASE}/log`);
+await coachPage.getByRole("navigation", { name: "Main" }).waitFor({ timeout: 10000 }).catch(() => {});
+await coachPage.waitForTimeout(1500);
+check(
+  "but the chip is off Log, so nothing sits above a set being logged",
+  (await coachPage.getByRole("link", { name: "Coach mode" }).count()) === 0,
 );
 
 console.log("\nEvery link in the coach nav goes somewhere");

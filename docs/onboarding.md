@@ -81,7 +81,8 @@ That rule creates one trap, and `snb_chose_coach` exists to close it. A coach
 with no athletes who looks at Athlete mode now has mode `"athlete"` and no
 links, so a button gated on either would vanish. The way back is shown for
 anyone with links **or** `snb_chose_coach`: a "Coach mode" chip at the top of
-every athlete screen, and the button on Me.
+the athlete home screen (`/today` exactly, not Log or the other athlete screens),
+and the button on Me.
 
 ## The welcome screen
 

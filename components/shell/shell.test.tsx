@@ -94,6 +94,39 @@ describe("AthleteShell", () => {
       render(<AthleteShell><p>Content</p></AthleteShell>);
       expect(coachLink()).toHaveAttribute("href", "/coach/roster");
     });
+
+    describe("for a coach, off the home screen", () => {
+      beforeEach(() => {
+        session.state = { ...SIGNED_IN, coach: { isCoach: true, athleteIds: ["a1"] } };
+      });
+
+      it("is there on Today itself", () => {
+        nav.pathname = "/today";
+        render(<AthleteShell><p>Content</p></AthleteShell>);
+        expect(coachLink()).toHaveAttribute("href", "/coach/roster");
+      });
+
+      it("is not there on Log, where nothing should sit above a set being logged", () => {
+        nav.pathname = "/log";
+        render(<AthleteShell><p>Content</p></AthleteShell>);
+        expect(coachLink()).not.toBeInTheDocument();
+      });
+
+      it.each(["/history", "/me", "/lift/squat", "/log/squat"])("is not there on %s", (path) => {
+        nav.pathname = path;
+        render(<AthleteShell><p>Content</p></AthleteShell>);
+        expect(coachLink()).not.toBeInTheDocument();
+      });
+
+      it.each(["/today/program", "/today/feedback"])(
+        "is not there on %s, the drill-ins under Today",
+        (path) => {
+          nav.pathname = path;
+          render(<AthleteShell><p>Content</p></AthleteShell>);
+          expect(coachLink()).not.toBeInTheDocument();
+        },
+      );
+    });
   });
 
   it("keeps the tab bar outside the scrolling region", () => {

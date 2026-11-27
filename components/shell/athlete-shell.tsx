@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { TabBar } from "@/components/ui/tab-bar";
 import { COACH_HOME } from "@/lib/auth/destinations";
 import { canCoach } from "@/lib/auth/mode";
@@ -26,6 +27,11 @@ import { ScreenTransition } from "./screen-transition";
 export function AthleteShell({ children }: { children: React.ReactNode }) {
   const state = useRequireSession();
   const coaching = state.status === "signed-in" && canCoach(state.prefs, state.coach.isCoach);
+  const pathname = usePathname();
+  // The chip belongs to the home screen only. Exactly /today: the drill-ins
+  // under it (/today/program, /today/feedback) are one level deeper and read
+  // as sub-screens, and /log is a mid-set screen that should stay clear of it.
+  const showCoachChip = coaching && pathname === "/today";
   // The pinned shell below gives the document nowhere to scroll, but iOS
   // scrolls it anyway to clear the keyboard and can leave it there, a blank
   // keyboard-sized band under the tab bar (F24, lib/ui/keyboard-gap.ts).
@@ -42,11 +48,13 @@ export function AthleteShell({ children }: { children: React.ReactNode }) {
       {/* The one safe-area inset for every athlete screen. Screens pad with
           pt-8, not pt-safe-8, or the notch is counted twice. */}
       <div className="pt-safe flex-none" />
-      {/* The way back to the roster, on every athlete screen, for anyone who
-          coaches. Not a fifth tab: athletes who never coach never see it.
-          Mirrors the always-visible "Athlete mode" in the coach header; a
-          coach with no athletes yet would otherwise have to type the URL. */}
-      {coaching ? (
+      {/* The way back to the roster, on the Today screen only, for anyone who
+          coaches. Not a fifth tab: athletes who never coach never see it, and
+          it stays off /log and the other screens so nothing sits above a set
+          being logged. Me keeps its own "Coach mode" button as the other way
+          back. A coach with no athletes yet would otherwise have to type the
+          URL. */}
+      {showCoachChip ? (
         <div className="flex flex-none justify-end px-4 pt-2">
           <Link
             href={COACH_HOME}
