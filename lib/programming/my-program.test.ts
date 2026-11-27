@@ -145,6 +145,60 @@ describe("day state", () => {
     expect(states.get("logged")).toEqual({ kind: "earlier" });
   });
 
+  describe("a call-in sick (F31)", () => {
+    const sickOn = (startsOn: string, endsOn: string) => [{ startsOn, endsOn }];
+
+    it("reads a past day inside the range as sick, not missed, and leaves the days outside it alone", () => {
+      const states = dayStates(tree, [], today, null, sickOn("2026-09-28", "2026-09-28"));
+      expect(states.get("past")).toEqual({ kind: "sick" });
+      expect(states.get("logged")).toEqual({ kind: "missed" });
+    });
+
+    it("reads today and a day still to come as sick too: it says what the athlete said", () => {
+      const states = dayStates(tree, [], today, null, sickOn("2026-10-02", "2026-10-05"));
+      expect(states.get("now")).toEqual({ kind: "sick" });
+      expect(states.get("later")).toEqual({ kind: "sick" });
+      expect(states.get("past")).toEqual({ kind: "missed" });
+    });
+
+    it("includes both ends of the range", () => {
+      const states = dayStates(tree, [], today, null, sickOn("2026-09-28", "2026-09-29"));
+      expect(states.get("past")).toEqual({ kind: "sick" });
+      expect(states.get("logged")).toEqual({ kind: "sick" });
+    });
+
+    it("never overrides what the athlete did: a logged or running session still wins", () => {
+      const done = dayStates(tree, [session({ id: "sx", programDayId: "logged" })], today, null, sickOn("2026-09-29", "2026-09-29"));
+      expect(done.get("logged")).toEqual({ kind: "done", sessionId: "sx" });
+      const active = dayStates(tree, [session({ programDayId: "now", finishedAt: null })], today, null, sickOn("2026-10-02", "2026-10-02"));
+      expect(active.get("now")).toEqual({ kind: "active" });
+    });
+
+    it("never reads an undated day as sick: there is no date to put inside a range", () => {
+      const states = dayStates(tree, [], today, null, sickOn("2000-01-01", "2099-12-31"));
+      expect(states.get("undated")).toEqual({ kind: "upcoming" });
+    });
+
+    it("is sick even for a day older than the loaded sessions reach: it is a fact, not an absence", () => {
+      const states = dayStates(tree, [], today, "2026-09-30", sickOn("2026-09-28", "2026-09-28"));
+      expect(states.get("past")).toEqual({ kind: "sick" });
+      expect(states.get("logged")).toEqual({ kind: "earlier" });
+    });
+
+    it("with no call-ins, changes nothing: the same answers as before", () => {
+      expect(dayStates(tree, [], today, null, [])).toEqual(dayStates(tree, [], today, null));
+    });
+
+    it("claims no day was missed while the call-ins are not known, rather than call a sick day missed", () => {
+      const states = dayStates(tree, [], today, null, null);
+      expect(states.get("past")).toEqual({ kind: "earlier" });
+      expect(states.get("logged")).toEqual({ kind: "earlier" });
+      // What needs no call-in to say is still said.
+      expect(states.get("now")).toEqual({ kind: "today" });
+      expect(states.get("later")).toEqual({ kind: "upcoming" });
+    });
+  });
+
   it("links the latest finished session when a day was logged twice", () => {
     const states = dayStates(
       tree,

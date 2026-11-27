@@ -40,6 +40,8 @@ export type OpKind =
   | "exercise.kind"
   | "exercise.delete"
   | "clip.delete"
+  | "sick.create"
+  | "sick.end"
   | "rollup.refresh";
 
 export interface QueuedOp {

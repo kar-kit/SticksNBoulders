@@ -2,6 +2,7 @@
 
 import { browserWriteDeps } from "@/appwrite/documents/browser-writer";
 import {
+  callInSick,
   createExercise,
   createSession,
   createSet,
@@ -9,6 +10,7 @@ import {
   deleteExercise,
   deleteSession,
   deleteSet,
+  endSick,
   finishSession,
   renameExercise,
   setExerciseBodyweight,
@@ -16,6 +18,8 @@ import {
   updateSession,
   updateSet,
   posterIdFor,
+  isDayKey,
+  sickRangeProblem,
   type Actor,
 } from "@/appwrite/documents";
 import { ensureMyCircle } from "@/lib/auth/circle";
@@ -40,6 +44,8 @@ const asString = (value: unknown): string => (typeof value === "string" ? value 
 const asNumber = (value: unknown): number => (typeof value === "number" ? value : 0);
 const asDate = (value: unknown): Date => new Date(asString(value));
 const isNotFound = (error: unknown): boolean => (error as { code?: unknown })?.code === 404;
+/** A payload that can never be written: a 400, which `classify` keeps as evidence instead of retrying. */
+const unwritable = (message: string) => Object.assign(new Error(message), { code: 400 });
 
 /**
  * A set op's cardio values (F23), only when it carries them: a number
@@ -246,6 +252,39 @@ export async function runOp(actor: Actor, op: QueuedOp): Promise<void> {
       // Not a row write: a file in storage, deleted with the athlete's own
       // session, which the file's stamp allows and the coach's does not.
       await deleteClipIfUnused(asString(p.setId), asString(p.fileId));
+      return;
+    }
+    case "sick.create": {
+      // F31. Checked here, before the helper: it refuses a range that is not
+      // one with a plain Error, which the queue would classify as retryable,
+      // and one bad payload would then wedge every set queued behind it. A
+      // 400 is permanent: the op is kept as evidence and the queue moves on.
+      const startsOn = asString(p.startsOn);
+      const endsOn = asString(p.endsOn);
+      const sickId = asString(p.sickId);
+      const problem = sickRangeProblem(startsOn, endsOn) ?? (sickId ? null : "a call-in needs an id");
+      if (problem) throw unwritable(problem);
+      await callInSick(browserWriteDeps(() => sickId), actor, {
+        sickId,
+        startsOn,
+        endsOn,
+        note: typeof p.note === "string" ? p.note : null,
+      });
+      return;
+    }
+    case "sick.end": {
+      const sickId = asString(p.sickId);
+      // Null is a real value: it deletes the call-in outright.
+      const endsOn = typeof p.endsOn === "string" ? p.endsOn : null;
+      if (!sickId || (endsOn !== null && !isDayKey(endsOn))) throw unwritable("a call-in end needs an id and a day or null");
+      try {
+        await endSick(browserWriteDeps(() => ""), actor, { sickId, endsOn });
+      } catch (error) {
+        // Gone already: cancelled from another device, or a first attempt
+        // that landed with the response lost. That is what an end wants.
+        if (isNotFound(error)) return;
+        throw error;
+      }
       return;
     }
     case "set.attachVideo": {

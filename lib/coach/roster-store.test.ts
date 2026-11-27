@@ -1,5 +1,5 @@
 import { circleTeamId } from "@/appwrite/documents/circle";
-import { profilePermissions, reviewPermissions, sessionPermissions, setPermissions } from "@/appwrite/documents/policy";
+import { profilePermissions, reviewPermissions, sessionPermissions, setPermissions, sickDayPermissions } from "@/appwrite/documents/policy";
 import { FakeTables, type FakeRow } from "@/lib/testing/fake-tables";
 import { buildRoster, UNNAMED_ATHLETE } from "./roster";
 import { fetchRoster } from "./roster-store";
@@ -126,5 +126,96 @@ describe("fetchRoster", () => {
 
     const rows = await roster(["joey"]);
     expect(rows[0].videosWaiting).toBe(1);
+  });
+});
+
+describe("fetchRoster and a call-in sick (F31)", () => {
+  const sick = (id: string, athleteId: string, startsOn: string, endsOn: string, over: Partial<FakeRow> = {}): FakeRow => ({
+    $id: id,
+    $permissions: sickDayPermissions({ athleteId }),
+    athlete_id: athleteId,
+    starts_on: startsOn,
+    ends_on: endsOn,
+    note: "Flu",
+    created_at: "2026-10-06T08:00:00.000Z",
+    client_sick_id: id,
+    ...over,
+  });
+
+  // Local noon on Wednesday 7 October, so the coach's "today" is the 7th in
+  // every zone the suite runs in (the Roster reads the coach's own calendar day).
+  const WED = new Date(2026, 9, 7, 12, 0);
+  const rosterOn = async (athleteIds: string[]) => {
+    const inputs = await fetchRoster("ruairi", athleteIds, WED);
+    return buildRoster({ ...inputs, links: athleteIds.map((athleteId) => ({ athleteId, linkedAt: null })) }, WED).rows;
+  };
+
+  // A published block with one day yesterday (Tuesday) that nobody started.
+  const block = () => {
+    db.current!.seed("programs", [
+      {
+        $id: "p1",
+        athlete_id: "joey",
+        coach_id: "ruairi",
+        name: "Block",
+        status: "published",
+        start_on: "2026-09-28",
+        updated_at: "2026-09-27T00:00:00.000Z",
+        created_at: "2026-09-27T00:00:00.000Z",
+      },
+    ]);
+    db.current!.seed("program_weeks", [
+      { $id: "w1", program_id: "p1", block_id: "b1", position: 0, label: null, status: "published", notes: null },
+    ]);
+    db.current!.seed("program_days", [
+      { $id: "d1", program_id: "p1", block_id: "b1", week_id: "w1", position: 0, label: "Squat", scheduled_on: "2026-10-06", notes: null },
+    ]);
+  };
+
+  it("marks the athlete who is sick today, with the dates and the note, and nobody else", async () => {
+    db.current!.seed("sick_days", [sick("a", "joey", "2026-10-06", "2026-10-09"), sick("b", "anon", "2026-09-01", "2026-09-02")]);
+    const rows = await rosterOn(["joey", "anon"]);
+    expect(rows.map((r) => [r.athleteId, r.sick])).toEqual([
+      ["joey", { startsOn: "2026-10-06", endsOn: "2026-10-09", note: "Flu" }],
+      ["anon", null],
+    ]);
+  });
+
+  it("asks only for the athletes on the roster, and for a week back at most", async () => {
+    db.current!.seed("sick_days", [sick("a", "joey", "2026-10-06", "2026-10-09"), sick("far", "joey", "2026-01-01", "2026-01-03")]);
+    const rows = await rosterOn(["joey"]);
+    expect(rows[0].sick?.endsOn).toBe("2026-10-09");
+    const asked = db.current!.callsTo("sick_days");
+    expect(asked).toHaveLength(1);
+    expect(asked[0].queries).toContainEqual({ method: "equal", attribute: "athlete_id", values: ["joey"] });
+    // Today is Wednesday 7 October: a week back is the 30th of September.
+    expect(asked[0].queries).toContainEqual({ method: "greaterThanEqual", attribute: "ends_on", values: ["2026-09-30"] });
+  });
+
+  it("does not count the missed session of a day the athlete was sick for", async () => {
+    block();
+    const before = await fetchRoster("ruairi", ["joey"], WED);
+    expect(before.program.get("joey")?.missedSessions).toBe(1);
+
+    db.current!.seed("sick_days", [sick("a", "joey", "2026-10-06", "2026-10-06")]);
+    const after = await fetchRoster("ruairi", ["joey"], WED);
+    expect(after.program.get("joey")?.missedSessions).toBe(0);
+  });
+
+  it("ignores a call-in written in the athlete's name by somebody else", async () => {
+    block();
+    db.current!.seed("sick_days", [sick("forged", "joey", "2026-10-06", "2026-10-09", { $permissions: ['read("users")'] })]);
+    const [row] = await rosterOn(["joey"]);
+    expect(row.sick).toBeNull();
+    expect((await fetchRoster("ruairi", ["joey"], WED)).program.get("joey")?.missedSessions).toBe(1);
+  });
+
+  it("still loads the Roster when the call-ins cannot be read -- no table yet, no signal", async () => {
+    db.current!.listRows = async ({ tableId }: { tableId: string }) => {
+      if (tableId === "sick_days") throw Object.assign(new Error("Table not found"), { code: 404 });
+      return { rows: [], total: 0 };
+    };
+    const [row] = await rosterOn(["joey"]);
+    expect(row.sick).toBeNull();
   });
 });

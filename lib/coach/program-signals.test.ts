@@ -87,6 +87,32 @@ describe("missed sessions", () => {
   });
 });
 
+describe("missed sessions and a call-in sick (F31)", () => {
+  // d3 is yesterday, the only day this week that counts as missed.
+  it("does not count a missed day the athlete was sick for", () => {
+    expect(signals({ sickDays: [{ athleteId: "joey", startsOn: "2026-10-06", endsOn: "2026-10-06" }] })?.missedSessions).toBe(0);
+  });
+
+  it("counts both ends of a range, and a range that began before the week", () => {
+    expect(signals({ sickDays: [{ athleteId: "joey", startsOn: "2026-10-01", endsOn: "2026-10-06" }] })?.missedSessions).toBe(0);
+    expect(signals({ sickDays: [{ athleteId: "joey", startsOn: "2026-10-06", endsOn: "2026-10-09" }] })?.missedSessions).toBe(0);
+  });
+
+  it("still counts a missed day just outside the range", () => {
+    expect(signals({ sickDays: [{ athleteId: "joey", startsOn: "2026-10-07", endsOn: "2026-10-09" }] })?.missedSessions).toBe(1);
+    expect(signals({ sickDays: [{ athleteId: "joey", startsOn: "2026-10-01", endsOn: "2026-10-05" }] })?.missedSessions).toBe(1);
+  });
+
+  it("is about this athlete only: somebody else's call-in excuses nothing", () => {
+    expect(signals({ sickDays: [{ athleteId: "sam", startsOn: "2026-10-06", endsOn: "2026-10-06" }] })?.missedSessions).toBe(1);
+  });
+
+  it("changes nothing without call-ins, so every earlier caller is unaffected", () => {
+    expect(signals({ sickDays: [] })?.missedSessions).toBe(1);
+    expect(signals()?.missedSessions).toBe(1);
+  });
+});
+
 describe("an RPE 10 nobody prescribed", () => {
   const set = (prescriptionId: string) => ({ id: `s-${prescriptionId}`, athleteId: "joey", loggedAt: "2026-10-06T10:00:00Z", prescriptionId });
 

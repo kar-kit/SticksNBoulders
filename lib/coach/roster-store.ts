@@ -11,7 +11,9 @@ import { canSeeCircle } from "./coach-links-store";
 import type { RosterInputs, WeekRollup, WeekSession } from "./roster";
 import type { ProgramSignals } from "./roster-triggers";
 import { computeProgramSignals } from "./program-signals";
-import { localDay, parseDay, parseProgram, parseRows, parseWeek } from "@/lib/programming/program";
+import { addDays, localDay, parseDay, parseProgram, parseRows, parseWeek } from "@/lib/programming/program";
+import { fetchSickDays } from "@/lib/sick/sick-store";
+import type { SickSpell } from "@/lib/sick/sick";
 
 /**
  * The Roster's reads. Nothing here writes, and nothing uses the server key:
@@ -134,6 +136,12 @@ export async function fetchRosterBodyweight(athleteIds: readonly string[], now: 
 export async function fetchProgramSignals(
   athleteIds: readonly string[],
   now: Date = new Date(),
+  /**
+   * The athletes' call-ins (F31), or the read of them, so it runs beside the
+   * program reads rather than before them. A day inside one is skipped, not
+   * missed (lib/coach/program-signals.ts).
+   */
+  sick: PromiseLike<readonly SickSpell[]> | readonly SickSpell[] = [],
 ): Promise<Map<string, ProgramSignals>> {
   if (athleteIds.length === 0) return new Map();
   const ids = [...athleteIds];
@@ -165,9 +173,11 @@ export async function fetchProgramSignals(
     programIds.length ? listAll("program_days", [Query.equal("program_id", programIds)]) : [],
     lineIds.length ? listAll("prescriptions", [Query.equal("$id", lineIds), Query.select(["$id", "load"])]) : [],
   ]);
+  const sickDays = await sick;
   return computeProgramSignals(
     ids,
     {
+      sickDays,
       programs,
       weeks: parseRows(weekRows, parseWeek),
       days: parseRows(dayRows, parseDay),
@@ -191,7 +201,12 @@ export async function fetchRoster(
   now: Date,
 ): Promise<Omit<RosterInputs, "links">> {
   const ids = [...athleteIds];
-  const [names, visibility, sessions, rollups, clips, reviews, bodyweight, program] = await Promise.all([
+  // F31. A week back covers Monday on, which is as far as a missed session
+  // counts, and anything still going. An improvement, not a dependency: with
+  // no table yet or no signal the Roster loads without it, and says what it
+  // always said.
+  const sickRead = fetchSickDays(ids, addDays(localDay(now), -7)).catch(() => [] as SickSpell[]);
+  const [names, visibility, sessions, rollups, clips, reviews, bodyweight, program, sick] = await Promise.all([
     fetchAthleteNames(ids),
     Promise.all(ids.map(async (id) => [id, await canSeeCircle(id)] as const)),
     fetchWeekSessions(ids, now),
@@ -199,7 +214,8 @@ export async function fetchRoster(
     fetchClips(ids),
     fetchReviews(coachId),
     fetchRosterBodyweight(ids, now),
-    fetchProgramSignals(ids, now),
+    fetchProgramSignals(ids, now, sickRead),
+    sickRead,
   ]);
   return {
     names: new Map(names.map((a) => [a.id, a.name])),
@@ -210,5 +226,6 @@ export async function fetchRoster(
     reviewedSetIds: stillReviewed(clips, reviews),
     bodyweight,
     program,
+    sick,
   };
 }

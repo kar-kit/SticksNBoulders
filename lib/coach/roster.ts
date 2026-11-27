@@ -14,6 +14,7 @@
 import { latestEntry, trend, dayKey, type BodyweightEntry } from "@/lib/bodyweight/bodyweight";
 import type { ClipSet } from "@/lib/review/queue";
 import { weekStart } from "@/lib/strength/rollup";
+import { sickNow, type SickNow, type SickSpell } from "@/lib/sick/sick";
 import type { AthleteSignals, ProgramSignals } from "./roster-triggers";
 
 /** Same words as the Review Queue for an athlete with no profile row yet. */
@@ -48,6 +49,8 @@ export interface RosterInputs {
   bodyweight: readonly BodyweightEntry[];
   /** Order 19 seam: empty until the program exists. */
   program: ReadonlyMap<string, ProgramSignals>;
+  /** F31: the athletes' call-ins sick, from the circle. Absent is none. */
+  sick?: readonly SickSpell[];
 }
 
 export interface RosterBodyweight {
@@ -69,6 +72,13 @@ export interface RosterRow {
   bodyweight: RosterBodyweight | null;
   /** Order 19 seam. */
   block: string | null;
+  /**
+   * F31: set while the athlete is off sick today -- their call-in covers it
+   * -- with the unbroken run's dates and the note. Today is the COACH's
+   * calendar day here, the one clock the Roster has; an athlete a day ahead
+   * or behind them shows from, or until, a day late. [Inference]
+   */
+  sick: SickNow | null;
 }
 
 const sameWeek = (iso: string, week: Date): boolean => {
@@ -111,6 +121,7 @@ export function buildRoster(input: RosterInputs, now: Date): { rows: RosterRow[]
       : null;
 
     const program = input.program.get(id) ?? null;
+    const sick = sickNow((input.sick ?? []).filter((s) => s.athleteId === id), today);
 
     rows.push({
       athleteId: id,
@@ -121,6 +132,7 @@ export function buildRoster(input: RosterInputs, now: Date): { rows: RosterRow[]
       videosWaiting,
       bodyweight,
       block: program?.blockLabel ?? null,
+      sick,
     });
     signals.push({
       athleteId: id,

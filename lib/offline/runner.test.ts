@@ -448,3 +448,69 @@ describe("cardio sets and exercise kinds (F23)", () => {
     expect(rows.map((row) => row.data)).toEqual([{ kind: "cardio" }, { kind: "strength" }, { kind: "strength" }]);
   });
 });
+
+describe("call in sick (F31)", () => {
+  const CALL = { sickId: "sk-abc", startsOn: "2026-11-27", endsOn: "2026-11-29", note: "Flu" };
+
+  it("creates the call-in at the client's own id, as the athlete, through the helper", async () => {
+    await runOp(ACTOR, op("sick.create", CALL));
+    expect(rows).toEqual([
+      {
+        op: "create",
+        tableId: "sick_days",
+        rowId: "sk-abc",
+        data: {
+          athlete_id: "athlete-1",
+          starts_on: "2026-11-27",
+          ends_on: "2026-11-29",
+          note: "Flu",
+          created_at: "2026-10-07T09:00:00.000Z",
+          client_sick_id: "sk-abc",
+        },
+      },
+    ]);
+  });
+
+  it("stores no note when the op carries none", async () => {
+    await runOp(ACTOR, op("sick.create", { ...CALL, note: null }));
+    expect(rows[0].data?.note).toBeNull();
+  });
+
+  it("refuses a range that is not one as a permanent 400, never as a retryable error that would wedge the queue", async () => {
+    for (const bad of [
+      { ...CALL, startsOn: "2026-11-30" },
+      { ...CALL, endsOn: "2062-11-27" },
+      { ...CALL, startsOn: "2026-13-45" },
+      { ...CALL, sickId: "" },
+    ]) {
+      await expect(runOp(ACTOR, op("sick.create", bad))).rejects.toMatchObject({ code: 400 });
+    }
+    expect(rows).toEqual([]);
+  });
+
+  it("shortens a call-in, writing only its last day", async () => {
+    await runOp(ACTOR, op("sick.end", { sickId: "sk-abc", endsOn: "2026-11-26" }));
+    expect(rows).toEqual([{ op: "update", tableId: "sick_days", rowId: "sk-abc", data: { ends_on: "2026-11-26" } }]);
+  });
+
+  it("deletes a call-in when the op carries no day", async () => {
+    await runOp(ACTOR, op("sick.end", { sickId: "sk-abc", endsOn: null }));
+    expect(rows).toEqual([{ op: "delete", tableId: "sick_days", rowId: "sk-abc" }]);
+  });
+
+  it("treats an end for a call-in that is already gone as done", async () => {
+    failure.next = Object.assign(new Error("Row not found"), { code: 404 });
+    await expect(runOp(ACTOR, op("sick.end", { sickId: "sk-abc", endsOn: null }))).resolves.toBeUndefined();
+  });
+
+  it("lets any other refusal through for the queue to classify", async () => {
+    failure.next = Object.assign(new Error("Forbidden"), { code: 401 });
+    await expect(runOp(ACTOR, op("sick.end", { sickId: "sk-abc", endsOn: null }))).rejects.toMatchObject({ code: 401 });
+  });
+
+  it("refuses an end with no id, or a day that is not one, as a permanent 400", async () => {
+    await expect(runOp(ACTOR, op("sick.end", { sickId: "", endsOn: null }))).rejects.toMatchObject({ code: 400 });
+    await expect(runOp(ACTOR, op("sick.end", { sickId: "sk-abc", endsOn: "yesterday" }))).rejects.toMatchObject({ code: 400 });
+    expect(rows).toEqual([]);
+  });
+});

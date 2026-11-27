@@ -41,6 +41,12 @@ vi.mock("@/lib/review/feedback-context", () => ({ useFeedbackBadge: () => badge 
 const loaded = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock("@/lib/programming/use-my-program", () => ({ useMyProgram: () => loaded.value }));
 
+// F31. The athlete's call-ins; known and none unless a test says otherwise.
+const mySick = vi.hoisted(() => ({
+  value: { spells: [] as unknown[], known: true, pending: false, callIn: vi.fn(), end: vi.fn() },
+}));
+vi.mock("@/lib/sick/use-my-sick", () => ({ useMySick: () => mySick.value }));
+
 const NO_MAXES: AthleteMaxes = { entries: [], estimated: new Map() };
 const day = (id: string, weekId: string, scheduledOn: string | null, label: string, over = {}) => ({
   id,
@@ -129,6 +135,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-10-06T12:00:00"));
   badge.hasCoach = true;
   loaded.value = { status: "loading", program: null, maxes: NO_MAXES };
+  mySick.value = { spells: [], known: true, pending: false, callIn: vi.fn(), end: vi.fn() };
 });
 afterEach(() => vi.useRealTimers());
 
@@ -203,6 +210,62 @@ describe("My Program, with a block", () => {
     expect(within(screen.getByRole("button", { name: /Bench/ })).queryByText(/Done|Missed|Today/)).toBeNull();
     expect(screen.getByText("1 of 4 sessions logged")).toBeInTheDocument();
     expect(screen.queryByText(/streak|keep it up|well done/i)).not.toBeInTheDocument();
+  });
+
+  describe("a call-in sick (F31)", () => {
+    const spell = (startsOn: string, endsOn: string) => ({
+      id: "sk-1",
+      athleteId: "joey",
+      startsOn,
+      endsOn,
+      note: null,
+      createdAt: "2026-10-01T08:00:00.000Z",
+    });
+
+    it("labels a past day inside the call-in Sick, not Missed", async () => {
+      loaded.value = ready(block());
+      mySick.value.spells = [spell("2026-10-01", "2026-10-02")];
+      const { user } = setup();
+      await user.click(screen.getByRole("button", { name: /Week 1/ }));
+      const opener = screen.getByRole("button", { name: /Opener/ });
+      expect(within(opener).getByText("Sick")).toBeInTheDocument();
+      expect(within(opener).queryByText("Missed")).toBeNull();
+    });
+
+    it("labels a day still to come Sick too, and says nothing has moved on opening it", async () => {
+      loaded.value = ready(block());
+      mySick.value.spells = [spell("2026-10-09", "2026-10-10")];
+      const { user } = setup();
+      const bench = screen.getByRole("button", { name: /Bench/ });
+      expect(within(bench).getByText("Sick")).toBeInTheDocument();
+      await user.click(bench);
+      expect(screen.getByText(/called in sick for this day/i)).toBeInTheDocument();
+      // Nothing is paused: it can still be started.
+      expect(screen.getByRole("button", { name: "Start this session" })).toBeEnabled();
+    });
+
+    it("still calls a day Missed when the call-in does not reach it", async () => {
+      loaded.value = ready(block());
+      mySick.value.spells = [spell("2026-10-02", "2026-10-03")];
+      const { user } = setup();
+      await user.click(screen.getByRole("button", { name: /Week 1/ }));
+      expect(within(screen.getByRole("button", { name: /Opener/ })).getByText("Missed")).toBeInTheDocument();
+    });
+
+    it("keeps Done for a day the athlete logged inside the call-in", async () => {
+      loaded.value = ready(block());
+      mySick.value.spells = [spell("2026-10-05", "2026-10-05")];
+      setup({ state: { status: "ready", sessions: [session({ programDayId: "d2" })] } });
+      expect(within(screen.getByRole("button", { name: /Heavy squat/ })).getByText("Done")).toBeInTheDocument();
+    });
+
+    it("claims no day was missed until the call-ins are known, rather than call a sick day missed", async () => {
+      loaded.value = ready(block());
+      mySick.value.known = false;
+      const { user } = setup();
+      await user.click(screen.getByRole("button", { name: /Week 1/ }));
+      expect(screen.queryByText("Missed")).toBeNull();
+    });
   });
 
   it("opens a day to its lines with percentages already in kilos, and the coach's note", async () => {

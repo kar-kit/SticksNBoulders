@@ -160,6 +160,58 @@ describe("linked athletes", () => {
     expect(item).toHaveAttribute("href", "/coach/review");
   });
 
+  describe("off sick (F31)", () => {
+    const sick = (athleteId: string, startsOn: string, endsOn: string, note: string | null = null) => ({
+      id: `sk-${athleteId}`,
+      athleteId,
+      startsOn,
+      endsOn,
+      note,
+      createdAt: "2026-11-27T08:00:00.000Z",
+    });
+    const day = (offset: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + offset);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
+
+    it("marks an athlete who is sick today in the table, and lists them with their dates and note", async () => {
+      store.fetchRoster.mockResolvedValue(data({ sick: [sick("sam", day(-1), day(2), "Flu, back Friday")] }));
+      render(<Roster />);
+      const section = await screen.findByRole("region", { name: "Off sick" });
+      const entry = within(section).getByRole("link", { name: /Sam Okafor/ });
+      expect(entry).toHaveAttribute("href", "/coach/athletes/sam");
+      expect(entry).toHaveTextContent("Flu, back Friday");
+      expect(entry).toHaveTextContent(/\d+ \w{3} to \d+ \w{3}/);
+
+      const table = screen.getByRole("table", { name: "Athletes" });
+      const [joey, sam] = within(table).getAllByRole("row").slice(1);
+      expect(within(sam).getByText("Sick")).toBeInTheDocument();
+      expect(within(joey).queryByText("Sick")).not.toBeInTheDocument();
+    });
+
+    it("says one day as one day", async () => {
+      store.fetchRoster.mockResolvedValue(data({ sick: [sick("joey", day(0), day(0))] }));
+      render(<Roster />);
+      const entry = within(await screen.findByRole("region", { name: "Off sick" })).getByRole("link", { name: /Joey Pang/ });
+      expect(entry.textContent).not.toMatch(/ to /);
+    });
+
+    it("shows no heading at all when nobody is off sick, and nothing for a call-in that has ended", async () => {
+      store.fetchRoster.mockResolvedValue(data({ sick: [sick("sam", day(-5), day(-1))] }));
+      render(<Roster />);
+      await screen.findByRole("table", { name: "Athletes" });
+      expect(screen.queryByRole("region", { name: "Off sick" })).not.toBeInTheDocument();
+      expect(screen.queryByText("Sick")).not.toBeInTheDocument();
+    });
+
+    it("is information, not a to-do: an athlete off sick is not in Needs you", async () => {
+      store.fetchRoster.mockResolvedValue(data({ sick: [sick("sam", day(0), day(1))] }));
+      render(<Roster />);
+      expect(await screen.findByText("Nothing needs you today.")).toBeInTheDocument();
+    });
+  });
+
   it("sorts when a header is clicked", async () => {
     store.fetchRoster.mockResolvedValue(data());
     render(<Roster />);

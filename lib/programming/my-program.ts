@@ -9,6 +9,7 @@ import {
   type WeekTree,
 } from "./program";
 import type { SessionRecord } from "@/lib/logging/session";
+import { isSickOn, type SickSpan } from "@/lib/sick/sick";
 
 /**
  * My Program, the athlete's read-only view of their block. Order 23.
@@ -72,6 +73,12 @@ export type DayState =
   | { kind: "today" }
   | { kind: "upcoming" }
   | { kind: "missed" }
+  /**
+   * F31: the athlete called in sick for this day. Skipped, not missed, and
+   * not "upcoming" either when it is still to come: it says what they said.
+   * Nothing is moved or paused -- the day can still be started and logged.
+   */
+  | { kind: "sick" }
   /** In the past, with no way to know: the sessions we hold do not reach back that far. */
   | { kind: "earlier" };
 
@@ -84,12 +91,20 @@ export type DayState =
  * sessions cover the date -- `SessionRecord`s come newest-first and capped, and
  * calling a day missed because its session fell off the list would be wrong in
  * exactly the way that makes someone distrust the screen.
+ *
+ * F31: a dated day inside one of the athlete's call-ins reads "sick", unless a
+ * session was logged from it (done and active still win: what they did is
+ * what they did). `sick` is the athlete's call-ins, or null while they are
+ * not known -- a read that has not landed, offline with nothing cached. Then
+ * a past day is not called missed either, for the reason `coversFrom` exists:
+ * the screen cannot tell a missed day from a sick one, so it says nothing.
  */
 export function dayStates(
   tree: ProgramTree,
   sessions: readonly SessionRecord[],
   today: string,
   coversFrom: string | null,
+  sick: readonly SickSpan[] | null = [],
 ): Map<string, DayState> {
   const done = new Map<string, SessionRecord>();
   const active = new Set<string>();
@@ -106,9 +121,10 @@ export function dayStates(
     const logged = done.get(day.id);
     if (logged) states.set(day.id, { kind: "done", sessionId: logged.id });
     else if (active.has(day.id)) states.set(day.id, { kind: "active" });
+    else if (day.scheduledOn !== null && sick !== null && isSickOn(sick, day.scheduledOn)) states.set(day.id, { kind: "sick" });
     else if (day.scheduledOn === null || day.scheduledOn > today) states.set(day.id, { kind: "upcoming" });
     else if (day.scheduledOn === today) states.set(day.id, { kind: "today" });
-    else if (coversFrom !== null && day.scheduledOn < coversFrom) states.set(day.id, { kind: "earlier" });
+    else if ((coversFrom !== null && day.scheduledOn < coversFrom) || sick === null) states.set(day.id, { kind: "earlier" });
     else states.set(day.id, { kind: "missed" });
   }
   return states;

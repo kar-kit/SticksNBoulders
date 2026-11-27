@@ -21,7 +21,9 @@ import {
 } from "@/lib/programming/my-program";
 import { basisMaxesFor, lineSummaries, planDay, referenceLookup, targetsFor } from "@/lib/programming/session-plan";
 import { useUnits } from "@/lib/profile/units-context";
+import type { SickSpan } from "@/lib/sick/sick";
 import { useMyProgram } from "@/lib/programming/use-my-program";
+import { useMySick } from "@/lib/sick/use-my-sick";
 import type { AthleteMaxes } from "@/lib/programming/use-prescribed";
 
 /** Matches fetchRecentSessions: past this many, "missed" stops being a safe claim. */
@@ -33,6 +35,8 @@ const STATE_LABEL: Record<DayState["kind"], string> = {
   today: "Today",
   upcoming: "",
   missed: "Missed",
+  // F31: skipped on purpose, in the athlete's own words -- not a gap to explain.
+  sick: "Sick",
   earlier: "",
 };
 
@@ -55,6 +59,7 @@ export function ProgramScreen() {
   const athleteId = auth.status === "signed-in" ? auth.user.id : null;
   const { hasCoach } = useFeedbackBadge();
   const loaded = useMyProgram(athleteId);
+  const sick = useMySick(athleteId);
 
   return (
     <div className="pt-8 flex flex-1 flex-col gap-5 pb-6">
@@ -70,7 +75,8 @@ export function ProgramScreen() {
         // Today never links here without a coach; this is a typed URL or a stale tab.
         <EmptyState title="No coach linked" body="Your program shows here once a coach links to you." />
       ) : loaded.status === "ready" ? (
-        <ProgramBody program={loaded.program} maxes={loaded.maxes} />
+        // Null until the call-ins are known, so a sick day is never called missed by default.
+        <ProgramBody program={loaded.program} maxes={loaded.maxes} sick={sick.known ? sick.spells : null} />
       ) : loaded.status === "none" ? (
         <EmptyState
           title="No program yet"
@@ -83,7 +89,15 @@ export function ProgramScreen() {
   );
 }
 
-function ProgramBody({ program, maxes }: { program: ProgramTree; maxes: AthleteMaxes }) {
+function ProgramBody({
+  program,
+  maxes,
+  sick,
+}: {
+  program: ProgramTree;
+  maxes: AthleteMaxes;
+  sick: readonly SickSpan[] | null;
+}) {
   const router = useRouter();
   const { state, active, start } = useTrainingSessions();
   const { state: library } = useExerciseLibrary();
@@ -101,8 +115,9 @@ function ProgramBody({ program, maxes }: { program: ProgramTree; maxes: AthleteM
         state.sessions,
         today,
         known ? sessionsCoverFrom(state.sessions, SESSION_WINDOW, localDay) : "9999-12-31",
+        sick,
       ),
-    [program, state.sessions, today, known],
+    [program, state.sessions, today, known, sick],
   );
   const progress = blockProgress(program, states, today);
   const weeks = allWeeks(program);
@@ -269,6 +284,9 @@ function DayDetail({
         <p className="m-0 border-t border-border pt-3 text-ui" aria-label="Coach's note">
           {day.notes}
         </p>
+      ) : null}
+      {dayState.kind === "sick" ? (
+        <p className="m-0 text-ui text-muted">You called in sick for this day. Nothing has moved, and you can still do it.</p>
       ) : null}
       {dayState.kind === "done" ? (
         <>
